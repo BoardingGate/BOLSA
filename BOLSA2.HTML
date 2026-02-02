@@ -125,7 +125,10 @@
       };
 
 
-    const PortfolioTab = ({ portfolio, setPortfolio, apiKey, isAuth, baseCurrency }) => {
+
+
+      // --- PESTAÑA 1: CARTERA (REVISIÓN FINAL: LÓGICA FX MULTIPLICADORA Y ETIQUETAS) ---
+      const PortfolioTab = ({ portfolio, setPortfolio, apiKey, isAuth, baseCurrency }) => {
           const [isModalOpen, setIsModalOpen] = useState(false);
           const [editingId, setEditingId] = useState(null);
           const [updating, setUpdating] = useState(false);
@@ -145,7 +148,6 @@
               stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, dividends: []
           });
 
-          // Estado del formulario de dividendos (dentro del modal)
           const [divForm, setDivForm] = useState({ year: new Date().getFullYear(), net: 0, taxOrigin: 0, taxDest: 0 });
 
           const handleEdit = (item) => {
@@ -200,10 +202,13 @@
               try {
                   const updates = [];
                   for (const item of portfolio) {
-                      const prompt = `Busca datos financieros actuales de: "${item.ticker}" (${item.stockCurrency}). 
-                      REGLA FX: Necesito el valor de 1 unidad de ${item.stockCurrency} en ${baseCurrency}. 
+                      const prompt = `Busca datos financieros de: "${item.ticker}" (${item.stockCurrency}). 
+                      REGLA MATEMÁTICA FX: Necesito el valor de 1 unidad de ${item.stockCurrency} expresado en ${baseCurrency}. 
+                      (Si 1 Euro = 1.05 Dólares, entonces el dato es 1 / 1.05 = 0.9523). DAME EL 0.9523.
+                      
                       Responde SOLO JSON en ESPAÑOL:
-                      {"name": "Nombre Empresa", "price": precio_actual, "fx_stock_to_base": valor_1_extranjera_en_local, "high52": max, "low52": min}`;
+                      {"name": "Nombre Empresa", "price": precio_actual_en_moneda_origen, "fx_stock_to_base": valor_de_1_moneda_extranjera_en_moneda_local, "high52": max, "low52": min}`;
+                      
                       const res = await askGemini(apiKey, prompt);
                       const json = extractJSON(res);
                       if (json) updates.push({ id: item.id, ...json });
@@ -218,10 +223,14 @@
           const analyzePortfolio = async () => {
               if (!apiKey) return alert("Falta API Key");
               setAnalyzingPortfolio(true);
-              const summary = portfolio.map(p => `${p.name}: ${p.shares} acc compradas a ${p.buyPrice} ${p.stockCurrency}`).join('; ');
+              const summary = portfolio.map(p => `${p.name} (${p.ticker}): ${p.shares} acc. Precio Compra: ${p.buyPrice} ${p.stockCurrency}, Precio Actual: ${p.currentPrice} ${p.stockCurrency}.`).join('; ');
               try {
                   const prompt = `Analiza esta cartera: [${summary}]. Moneda local: ${baseCurrency}.
-                  INSTRUCCIONES: IDIOMA ESPAÑOL. NO SALUDES. DIRECTO AL GRANO. Analiza diversificación y riesgos.`;
+                  INSTRUCCIONES CRÍTICAS:
+                  - IDIOMA: ESPAÑOL.
+                  - PROHIBIDO SALUDAR o presentarte.
+                  - Ve DIRECTO al análisis de diversificación, rentabilidad y riesgos.
+                  - Traduce términos técnicos al castellano.`;
                   const text = await askGemini(apiKey, prompt);
                   setAnalysisReport(text);
               } catch(e) { alert(e.message); } finally { setAnalyzingPortfolio(false); }
@@ -230,10 +239,13 @@
           const totals = useMemo(() => {
               let invested = 0, currentVal = 0, totalDivsNet = 0, totalTaxOrig = 0, totalTaxDest = 0, fxImpactTotal = 0;
               portfolio.forEach(p => {
+                  // Lógica Multiplicadora: Precio * Shares * FX (Valor de 1 moneda origen en local)
                   const costBase = (p.buyPrice * p.shares * p.buyFx) + (p.adjustments || 0);
                   const valBase = (p.currentPrice * p.shares * p.currentFx) - (p.adjustments || 0) - p.fees;
-                  const valConstantPrice = (p.buyPrice * p.shares * p.currentFx);
-                  const fxImpact = valConstantPrice - (p.buyPrice * p.shares * p.buyFx);
+                  
+                  // Desviación Divisa: (Precio Compra * Unidades * FX Actual) - (Precio Compra * Unidades * FX Compra)
+                  const fxImpact = (p.buyPrice * p.shares * p.currentFx) - (p.buyPrice * p.shares * p.buyFx);
+                  
                   invested += costBase;
                   currentVal += valBase;
                   fxImpactTotal += fxImpact;
@@ -248,36 +260,23 @@
 
           return (
               <div className="h-full flex flex-col p-4 md:p-6 overflow-hidden relative">
-                  {/* DASHBOARD ESTADÍSTICO */}
+                  {/* DASHBOARD */}
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4 mb-4 shrink-0 overflow-x-auto">
-                      <div className="glass-panel p-3 md:p-4 rounded-xl flex flex-col justify-center min-w-[140px]">
-                          <span className="text-[9px] md:text-[10px] uppercase text-slate-400 font-bold tracking-wider">Total Invertido</span>
-                          <span className="text-lg md:text-xl font-bold font-display text-white">{formatMoney(totals.invested, baseCurrency)}</span>
-                      </div>
-                      <div className="glass-panel p-3 md:p-4 rounded-xl flex flex-col justify-center min-w-[140px]">
-                          <span className="text-[9px] md:text-[10px] uppercase text-slate-400 font-bold tracking-wider">Valoración Actual</span>
-                          <span className="text-lg md:text-xl font-bold font-display text-blue-200">{formatMoney(totals.currentVal, baseCurrency)}</span>
-                      </div>
-                      <div className="glass-panel p-3 md:p-4 rounded-xl flex flex-col justify-center min-w-[140px]">
-                          <span className="text-[9px] md:text-[10px] uppercase text-slate-400 font-bold tracking-wider">Beneficio/Pérdida Actual</span>
-                          <span className={`text-lg md:text-xl font-bold font-display ${totals.pl >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(totals.pl, baseCurrency)}</span>
-                          <span className="text-[9px] text-slate-500">({totals.plPct.toFixed(2)}%)</span>
-                      </div>
-                      <div className="glass-panel p-3 md:p-4 rounded-xl flex flex-col justify-center min-w-[140px]">
-                          <span className="text-[9px] md:text-[10px] uppercase text-slate-400 font-bold tracking-wider">Dividendos Netos</span>
-                          <span className="text-lg md:text-xl font-bold font-display text-blue-400">{formatMoney(totals.totalDivs, baseCurrency)}</span>
-                          <div className="text-[8px] text-slate-500 leading-tight mt-1">
-                             Retenido: {formatMoney(totals.totalTaxOrig + totals.totalTaxDest, baseCurrency)}<br/>
-                             (Orig: {formatMoney(totals.totalTaxOrig, baseCurrency)} | Dest: {formatMoney(totals.totalTaxDest, baseCurrency)})
+                      {[
+                          { l: "Total Invertido", v: formatMoney(totals.invested, baseCurrency), c: "text-white" },
+                          { l: "Valoración Actual", v: formatMoney(totals.currentVal, baseCurrency), c: "text-blue-200" },
+                          { l: "Beneficio/Pérdida Actual", v: `${formatMoney(totals.pl, baseCurrency)}`, c: totals.pl >= 0 ? 'text-green-400' : 'text-red-400', s: `(${totals.plPct.toFixed(2)}%)` },
+                          { l: "Dividendos Netos", v: formatMoney(totals.totalDivs, baseCurrency), c: "text-blue-400", s: `Ret. Orig: ${formatMoney(totals.totalTaxOrig, baseCurrency)} | Dest: ${formatMoney(totals.totalTaxDest, baseCurrency)}` },
+                          { l: "Desviación Divisa", v: formatMoney(totals.fxImpactTotal, baseCurrency), c: totals.fxImpactTotal >= 0 ? 'text-green-400' : 'text-red-400' }
+                      ].map((d, i) => (
+                          <div key={i} className="glass-panel p-3 md:p-4 rounded-xl flex flex-col justify-center min-w-[140px]">
+                              <span className="text-[9px] md:text-[10px] uppercase text-slate-400 font-bold tracking-wider">{d.l}</span>
+                              <span className={`text-lg md:text-xl font-bold font-display ${d.c}`}>{d.v}</span>
+                              {d.s && <span className="text-[8px] text-slate-500 mt-1 leading-tight">{d.s}</span>}
                           </div>
-                      </div>
-                      <div className="glass-panel p-3 md:p-4 rounded-xl flex flex-col justify-center min-w-[140px]">
-                          <span className="text-[9px] md:text-[10px] uppercase text-slate-400 font-bold tracking-wider">Desviación Divisa</span>
-                          <span className={`text-lg md:text-xl font-bold font-display ${totals.fxImpactTotal >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(totals.fxImpactTotal, baseCurrency)}</span>
-                      </div>
+                      ))}
                   </div>
 
-                  {/* TOOLBAR */}
                   <div className="flex justify-between items-center mb-4 shrink-0 gap-2 overflow-x-auto">
                       <div className="flex gap-2">
                           <button onClick={updatePrices} disabled={updating} className="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-300 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all">
@@ -292,7 +291,7 @@
                       </button>
                   </div>
 
-                  {/* TABLA DE POSICIONES */}
+                  {/* LISTADO */}
                   <div className="flex-1 overflow-y-auto custom-scrollbar overflow-x-hidden flex flex-col gap-4 pb-20">
                       <div className="bg-slate-900/50 border border-slate-800 rounded-xl overflow-x-auto custom-scrollbar">
                           <table className="w-full text-left border-collapse min-w-[950px]">
@@ -313,15 +312,14 @@
                                       const valBase = (p.currentPrice * p.shares * p.currentFx) - (p.adjustments || 0) - p.fees;
                                       const pl = valBase - costBase;
                                       const plPct = costBase ? (pl / costBase) * 100 : 0;
-                                      const valConstantPrice = (p.buyPrice * p.shares * p.currentFx);
-                                      const fxDev = valConstantPrice - (p.buyPrice * p.shares * p.buyFx);
+                                      const fxDev = (p.buyPrice * p.shares * p.currentFx) - (p.buyPrice * p.shares * p.buyFx);
                                       const isSelected = selectedStock?.id === p.id;
 
                                       return (
                                           <tr key={p.id} onClick={() => setSelectedStock(p)} className={`transition-colors cursor-pointer ${isSelected ? 'bg-blue-900/20 border-l-2 border-blue-500' : 'table-row-hover'}`}>
                                               <td className="p-3 flex items-center gap-3">
-                                                  <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center overflow-hidden shrink-0 border border-slate-700 shadow-md">
-                                                      <div className="w-full h-full text-white flex items-center justify-center font-bold text-[10px] bg-gradient-to-br from-blue-600 to-blue-900 px-1 text-center">{p.ticker}</div>
+                                                  <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center shrink-0 border border-slate-700 shadow-md">
+                                                      <div className="text-white font-bold text-[10px]">{p.ticker}</div>
                                                   </div>
                                                   <div>
                                                       <div className="font-bold text-white text-base leading-tight">{p.name || p.ticker}</div>
@@ -335,13 +333,13 @@
                                               </td>
                                               <td className="p-3 text-right text-xs bg-slate-800/30 border-l border-slate-700/50">
                                                   <div className="text-slate-300 font-mono">{formatMoney(costBase, baseCurrency)}</div>
-                                                  <div className="text-[9px] text-slate-500">FX: {p.buyFx.toFixed(4)}</div>
+                                                  <div className="text-[9px] text-slate-500">FX C: {p.buyFx.toFixed(4)}</div>
                                               </td>
                                               <td className="p-3 text-right text-xs bg-slate-800/30 border-r border-slate-700/50">
                                                   <div className="text-white font-bold font-mono text-sm">{formatMoney(valBase, baseCurrency)}</div>
                                                   {p.stockCurrency !== baseCurrency && (
                                                       <div className={`text-[9px] mt-1 font-bold ${fxDev >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                                                          Divisa: {fxDev > 0 ? '+' : ''}{formatMoney(fxDev, baseCurrency)}
+                                                          Imp. Divisa: {fxDev > 0 ? '+' : ''}{formatMoney(fxDev, baseCurrency)}
                                                       </div>
                                                   )}
                                               </td>
@@ -360,14 +358,14 @@
                           </table>
                       </div>
 
-                      {/* PANEL GRÁFICO DETALLE */}
+                      {/* DETALLE GRAFICO */}
                       {selectedStock && (
                           <div ref={detailRef} className="glass-panel p-6 rounded-xl animate-pulse-slow border-t-2 border-blue-500 fade-in flex flex-col md:flex-row gap-6 relative shrink-0 min-h-[300px]">
                               <button onClick={() => setSelectedStock(null)} className="absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-900/50 rounded-full p-1"><Icons.X size={20}/></button>
                               <div className="flex-1 flex flex-col justify-center">
                                   <div className="flex items-center gap-3 mb-4">
                                        <div className="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-sm">{selectedStock.ticker}</div>
-                                       <div><h3 className="text-2xl font-display font-bold text-white leading-tight">{selectedStock.name}</h3><span className="text-sm text-slate-400 uppercase tracking-tighter">{selectedStock.ticker} | {selectedStock.stockCurrency}</span></div>
+                                       <div><h3 className="text-2xl font-display font-bold text-white leading-tight">{selectedStock.name}</h3><span className="text-sm text-slate-400 uppercase">{selectedStock.ticker} | {selectedStock.stockCurrency}</span></div>
                                   </div>
                                   <div className="grid grid-cols-2 gap-4 mt-4 p-4 bg-slate-900/40 rounded-xl border border-slate-700/50">
                                       <div>
@@ -382,11 +380,11 @@
                                           </div>
                                       </div>
                                       <div>
-                                          <div className="text-[10px] uppercase text-slate-500 font-bold mb-1">Valor Neto ({baseCurrency})</div>
+                                          <div className="text-[10px] uppercase text-slate-500 font-bold mb-1">Valoración en {baseCurrency}</div>
                                           <div className="text-2xl font-bold text-white font-display">
-                                              {formatMoney((selectedStock.currentPrice * selectedStock.shares * selectedStock.currentFx) - selectedStock.fees - (selectedStock.adjustments || 0), baseCurrency)}
+                                              {formatMoney((selectedStock.currentPrice * selectedStock.shares * selectedStock.currentFx), baseCurrency)}
                                           </div>
-                                          <div className="text-[9px] text-slate-400 mt-1 uppercase">Deducidos Ajustes y Venta</div>
+                                          <div className="text-[9px] text-slate-400 mt-1 uppercase">Basado en FX: {selectedStock.currentFx.toFixed(4)}</div>
                                       </div>
                                   </div>
                               </div>
@@ -410,30 +408,30 @@
                           <div className="grid grid-cols-3 gap-4">
                               <div><label className="text-xs text-slate-400">Acciones</label><input type="number" value={form.shares} onChange={e => setForm({...form, shares: parseFloat(e.target.value)})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-right" /></div>
                               <div><label className="text-xs text-slate-400">Precio (Moneda Origen)</label><input type="number" step="0.01" value={form.buyPrice} onChange={e => setForm({...form, buyPrice: parseFloat(e.target.value)})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-right" /></div>
-                              <div><label className="text-xs text-slate-400">Divisa</label><select value={form.stockCurrency} onChange={e => setForm({...form, stockCurrency: e.target.value})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white"><option value="USD">USD</option><option value="EUR">EUR</option><option value="GBP">GBP</option><option value="CHF">CHF</option></select></div>
+                              <div><label className="text-xs text-slate-400">Divisa Acción</label><select value={form.stockCurrency} onChange={e => setForm({...form, stockCurrency: e.target.value})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white"><option value="USD">USD</option><option value="EUR">EUR</option><option value="GBP">GBP</option><option value="CHF">CHF</option></select></div>
                           </div>
                           <div className="grid grid-cols-3 gap-4">
                               <div><label className="text-xs text-slate-400">FX (1 {form.stockCurrency} = ? {baseCurrency})</label><input type="number" step="0.0001" value={form.buyFx} onChange={e => setForm({...form, buyFx: parseFloat(e.target.value)})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-right" /></div>
-                              <div><label className="text-xs text-slate-400">Comis. Venta (Inf)</label><input type="number" step="0.01" value={form.fees} onChange={e => setForm({...form, fees: parseFloat(e.target.value)})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-right" /></div>
+                              <div><label className="text-xs text-slate-400">Comisiones (Venta)</label><input type="number" step="0.01" value={form.fees} onChange={e => setForm({...form, fees: parseFloat(e.target.value)})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-right" /></div>
                               <div><label className="text-xs text-slate-400">Ajustes (+/-)</label><input type="number" step="0.01" value={form.adjustments} onChange={e => setForm({...form, adjustments: parseFloat(e.target.value)})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-right" /></div>
                           </div>
 
-                          {/* SECCIÓN RESTAURADA: HISTÓRICO DIVIDENDOS */}
+                          {/* SECCIÓN DIVIDENDOS CON ETIQUETAS */}
                           <div className="mt-6 border-t border-slate-700 pt-4">
-                              <h4 className="text-sm font-bold text-blue-400 mb-2 flex items-center gap-2"><Icons.DollarSign size={16}/> Histórico Dividendos</h4>
-                              <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700 mb-3">
-                                  <div className="grid grid-cols-5 gap-2 mb-2">
-                                      <input type="number" placeholder="Año" value={divForm.year} onChange={e => setDivForm({...divForm, year: parseInt(e.target.value)})} className="bg-slate-900 border border-slate-600 rounded p-1 text-[10px] text-white" />
-                                      <input type="number" placeholder={`Neto ${baseCurrency}`} value={divForm.net} onChange={e => setDivForm({...divForm, net: parseFloat(e.target.value)})} className="bg-slate-900 border border-slate-600 rounded p-1 text-[10px] text-white" />
-                                      <input type="number" placeholder="Ret. Orig" value={divForm.taxOrigin} onChange={e => setDivForm({...divForm, taxOrigin: parseFloat(e.target.value)})} className="bg-slate-900 border border-slate-600 rounded p-1 text-[10px] text-white" />
-                                      <input type="number" placeholder="Ret. Dest" value={divForm.taxDest} onChange={e => setDivForm({...divForm, taxDest: parseFloat(e.target.value)})} className="bg-slate-900 border border-slate-600 rounded p-1 text-[10px] text-white" />
-                                      <button onClick={addDividend} className="bg-blue-600 text-white rounded text-[10px] font-bold">Añadir</button>
+                              <h4 className="text-sm font-bold text-blue-400 mb-4 flex items-center gap-2"><Icons.DollarSign size={16}/> Histórico Dividendos</h4>
+                              <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700 mb-3">
+                                  <div className="grid grid-cols-5 gap-3 mb-2">
+                                      <div className="flex flex-col"><label className="text-[8px] text-slate-500 uppercase font-bold mb-1">Año</label><input type="number" value={divForm.year} onChange={e => setDivForm({...divForm, year: parseInt(e.target.value)})} className="bg-slate-900 border border-slate-600 rounded p-1 text-[10px] text-white" /></div>
+                                      <div className="flex flex-col"><label className="text-[8px] text-slate-500 uppercase font-bold mb-1">Importe Neto</label><input type="number" value={divForm.net} onChange={e => setDivForm({...divForm, net: parseFloat(e.target.value)})} className="bg-slate-900 border border-slate-600 rounded p-1 text-[10px] text-white" /></div>
+                                      <div className="flex flex-col"><label className="text-[8px] text-slate-500 uppercase font-bold mb-1">Ret. Origen</label><input type="number" value={divForm.taxOrigin} onChange={e => setDivForm({...divForm, taxOrigin: parseFloat(e.target.value)})} className="bg-slate-900 border border-slate-600 rounded p-1 text-[10px] text-white" /></div>
+                                      <div className="flex flex-col"><label className="text-[8px] text-slate-500 uppercase font-bold mb-1">Ret. Destino</label><input type="number" value={divForm.taxDest} onChange={e => setDivForm({...divForm, taxDest: parseFloat(e.target.value)})} className="bg-slate-900 border border-slate-600 rounded p-1 text-[10px] text-white" /></div>
+                                      <div className="flex flex-col justify-end"><button onClick={addDividend} className="bg-blue-600 text-white rounded py-1 text-[10px] font-bold">Añadir</button></div>
                                   </div>
                                   <div className="max-h-32 overflow-y-auto space-y-1 custom-scrollbar">
                                       {(form.dividends || []).map(d => (
                                           <div key={d.id} className="flex justify-between items-center text-[10px] bg-slate-900 p-2 rounded border border-slate-700">
                                               <span className="text-slate-300 font-bold">{d.year}</span>
-                                              <span className="text-green-400">+{d.net.toFixed(2)}</span>
+                                              <span className="text-green-400">+{d.net.toFixed(2)} {baseCurrency}</span>
                                               <span className="text-slate-500">Orig: {d.taxOrigin?.toFixed(2)} | Dest: {d.taxDest?.toFixed(2)}</span>
                                               <button onClick={() => removeDividend(d.id)} className="text-red-400 hover:text-white"><Icons.Trash2 size={12}/></button>
                                           </div>
@@ -444,27 +442,34 @@
 
                           {editingId && (
                               <div className="bg-blue-900/20 border border-blue-600/30 p-3 rounded-lg">
-                                  <h4 className="text-[10px] uppercase text-blue-400 font-bold mb-1 italic">Verificación de cálculo actual:</h4>
-                                  <div className="flex justify-between text-[11px] font-mono">
-                                      <span className="text-slate-400">Mercado: {portfolio.find(p=>p.id===editingId)?.currentPrice} × {form.shares} × {portfolio.find(p=>p.id===editingId)?.currentFx.toFixed(4)}</span>
-                                      <span className="text-blue-300">Neto: {formatMoney((portfolio.find(p=>p.id===editingId)?.currentPrice * form.shares * portfolio.find(p=>p.id===editingId)?.currentFx) - form.fees - form.adjustments, baseCurrency)}</span>
+                                  <h4 className="text-[10px] uppercase text-blue-400 font-bold mb-1 italic">Matemática del cálculo actual:</h4>
+                                  <div className="flex justify-between text-[11px] font-mono leading-relaxed">
+                                      <div className="text-slate-400">
+                                         ({portfolio.find(p=>p.id===editingId)?.currentPrice} × {form.shares} × {portfolio.find(p=>p.id===editingId)?.currentFx.toFixed(4)})<br/>
+                                         <span className="text-[9px]">Deducción: - {form.fees} (Comis) - {form.adjustments} (Ajuste)</span>
+                                      </div>
+                                      <div className="text-blue-300 font-bold self-end">
+                                         Neto: {formatMoney((portfolio.find(p=>p.id===editingId)?.currentPrice * form.shares * portfolio.find(p=>p.id===editingId)?.currentFx) - form.fees - form.adjustments, baseCurrency)}
+                                      </div>
                                   </div>
                               </div>
                           )}
 
                           <div className="flex gap-4 mt-6">
-                              <button onClick={() => setIsModalOpen(false)} className="flex-1 py-3 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-xl font-bold">Cancelar</button>
-                              <button onClick={saveHolding} className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold shadow-lg shadow-blue-900/30">Guardar</button>
+                              <button onClick={() => setIsModalOpen(false)} className="flex-1 py-3 bg-slate-700 rounded-xl font-bold text-slate-300">Cancelar</button>
+                              <button onClick={saveHolding} className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold shadow-lg">Guardar</button>
                           </div>
                       </div>
                   </Modal>
 
-                  <Modal isOpen={!!analysisReport} title="Análisis Estratégico (IA)" onClose={() => setAnalysisReport(null)} size="lg">
-                       <div className="prose prose-invert prose-sm max-w-none pb-10"><pre className="whitespace-pre-wrap font-sans text-slate-300 leading-relaxed">{analysisReport}</pre></div>
+                  <Modal isOpen={!!analysisReport} title="Informe Estratégico de Cartera" onClose={() => setAnalysisReport(null)} size="lg">
+                       <div className="prose prose-invert prose-sm max-w-none pb-10">
+                           <pre className="whitespace-pre-wrap font-sans text-slate-300 leading-relaxed">{analysisReport}</pre>
+                       </div>
                   </Modal>
               </div>
           );
-      };  
+      };   
 
 
 
