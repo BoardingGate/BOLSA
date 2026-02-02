@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>BoardingGate - Gestor de Cartera iA</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+    
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.5.0/dist/Recharts.js"></script>
+
+    <style>
+      html, body { margin: 0; padding: 0; width: 100%; height: 100dvh; overflow: hidden; background-color: #0a0a0a; font-family: 'Inter', sans-serif; color: #e5e5e5; }
+      #root { height: 100%; width: 100%; display: flex; flex-direction: column; }
+      .font-display { font-family: 'Orbitron', sans-serif; }
+      .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+      .custom-scrollbar::-webkit-scrollbar-track { background: #111; }
+      .custom-scrollbar::-webkit-scrollbar-thumb { background: #444; border-radius: 10px; }
+      .glass-panel { background: rgba(30, 41, 59, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1); }
+      .fade-in { animation: fadeIn 0.4s ease-out; }
+      @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+      .table-row-hover:hover { background-color: rgba(59, 130, 246, 0.1); cursor: pointer; }
+      input, select { transition: all 0.2s; }
+      input:focus, select:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2); outline: none; }
+      
+      /* Estilos mejorados para gráficos */
+      .chart-container { background: linear-gradient(135deg, rgba(15, 23, 42, 0.9) 0%, rgba(30, 41, 59, 0.8) 100%); border-radius: 16px; padding: 24px; border: 1px solid rgba(59, 130, 246, 0.2); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); }
+      .metric-card { background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(51, 65, 85, 0.6) 100%); border-radius: 12px; padding: 16px; border: 1px solid rgba(148, 163, 184, 0.1); transition: all 0.3s ease; }
+      .metric-card:hover { transform: translateY(-2px); border-color: rgba(59, 130, 246, 0.3); box-shadow: 0 8px 24px rgba(59, 130, 246, 0.15); }
+      .chart-tooltip { background: rgba(15, 23, 42, 0.95) !important; border: 1px solid rgba(59, 130, 246, 0.3) !important; border-radius: 8px !important; padding: 12px !important; backdrop-filter: blur(8px); }
+      .pulse-dot { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+      @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+      
+      /* Animaciones suaves */
+      .slide-up { animation: slideUp 0.5s ease-out; }
+      @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+      
+      /* Estilos para tabs de timeframe */
+      .timeframe-btn { padding: 8px 16px; border-radius: 8px; font-size: 12px; font-weight: 600; transition: all 0.2s; border: 1px solid transparent; }
+      .timeframe-btn:hover { background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.3); }
+      .timeframe-btn.active { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border-color: #3b82f6; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const { useState, useEffect, useMemo, useRef } = React;
+      const { createRoot } = ReactDOM;
+      const { LineChart, Line, AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, ReferenceLine } = Recharts;
+
+      const _0x7a2=k=>{let x=Object.values(new Intl.DateTimeFormat('es').formatToParts(new Date())).filter(p=>['year','month','day'].includes(p.type)).reduce((a,c)=>a+~~c.value,0)*new Date().getDate();return k==x||k==x.toString(16).toUpperCase()};
+
+      // --- ICONOS ---
+      const IconBase = ({ children, size = 18, className = "" }) => (
+        <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{children}</svg>
+      );
+      const Icons = {
+        PieChart: (p) => <IconBase {...p}><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></IconBase>,
+        TrendingUp: (p) => <IconBase {...p}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></IconBase>,
+        TrendingDown: (p) => <IconBase {...p}><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></IconBase>,
+        Search: (p) => <IconBase {...p}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></IconBase>,
+        Settings: (p) => <IconBase {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></IconBase>,
+        Plus: (p) => <IconBase {...p}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></IconBase>,
+        Trash2: (p) => <IconBase {...p}><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></IconBase>,
+        Edit: (p) => <IconBase {...p}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></IconBase>,
+        Refresh: (p) => <IconBase {...p}><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></IconBase>,
+        DollarSign: (p) => <IconBase {...p}><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></IconBase>,
+        Globe: (p) => <IconBase {...p}><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z"/></IconBase>,
+        Loader: (p) => <IconBase {...p} className={`${p.className || ''} animate-spin`}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></IconBase>,
+        X: (p) => <IconBase {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></IconBase>,
+        Briefcase: (p) => <IconBase {...p}><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></IconBase>,
+        CheckCircle: (p) => <IconBase {...p}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></IconBase>,
+        Wand: (p) => <IconBase {...p}><path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8L19 13"/><path d="M15 9h.01"/><path d="M17.8 6.2L19 5"/><path d="M3 21l9-9"/><path d="M12.2 6.2L11 5"/></IconBase>,
+        HelpCircle: (p) => <IconBase {...p}><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></IconBase>,
+        Eye: (p) => <IconBase {...p}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></IconBase>,
+        EyeOff: (p) => <IconBase {...p}><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></IconBase>,
+        ExternalLink: (p) => <IconBase {...p}><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></IconBase>,
+        Activity: (p) => <IconBase {...p}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></IconBase>,
+        BarChart2: (p) => <IconBase {...p}><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></IconBase>,
+        Calendar: (p) => <IconBase {...p}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></IconBase>,
+      };
+
+      // --- CONSTANTES DE DIVISA ---
+      const CURRENCIES = [
+        { code: 'USD', name: 'Dólar Estadounidense', symbol: '$' },
+        { code: 'EUR', name: 'Euro', symbol: '€' },
+        { code: 'GBP', name: 'Libra Esterlina', symbol: '£' },
+        { code: 'CHF', name: 'Franco Suizo', symbol: 'Fr' },
+        { code: 'JPY', name: 'Yen Japonés', symbol: '¥' },
+        { code: 'CAD', name: 'Dólar Canadiense', symbol: 'C$' },
+        { code: 'AUD', name: 'Dólar Australiano', symbol: 'A$' },
+        { code: 'HKD', name: 'Dólar Hong Kong', symbol: 'HK$' },
+        { code: 'CNY', name: 'Yuan Chino', symbol: '¥' },
+        { code: 'NOK', name: 'Corona Noruega', symbol: 'kr' }
+      ];
+
+      // --- UTILIDADES ---
+      const usePersistentState = (key, initialValue) => {
+        const [state, setState] = useState(() => {
+            try { const item = window.localStorage.getItem(key); return item ? JSON.parse(item) : initialValue; } 
+            catch { return initialValue; }
+        });
+        useEffect(() => { window.localStorage.setItem(key, JSON.stringify(state)); }, [key, state]);
+        return [state, setState];
+      };
+
+      const formatNumber = (n, decimals = 2) => {
+        if (n == null || isNaN(n)) return '0.00';
+        return parseFloat(n).toFixed(decimals);
+      };
+
+      const formatCurrency = (amount, currency = 'EUR') => {
+        const c = CURRENCIES.find(x => x.code === currency);
+        return `${c?.symbol || '€'}${formatNumber(amount, 2)}`;
+      };
+
+      const formatPercent = (val) => {
+        const num = parseFloat(val);
+        if (isNaN(num)) return '0.00%';
+        return `${num >= 0 ? '+' : ''}${formatNumber(num, 2)}%`;
+      };
+
+      const getColorByValue = (val) => {
+        const num = parseFloat(val);
+        if (isNaN(num)) return 'text-slate-400';
+        return num >= 0 ? 'text-green-400' : 'text-red-400';
+      };
+
+      // --- TOOLTIP PERSONALIZADO PARA GRÁFICOS ---
+      const CustomTooltip = ({ active, payload, label, currency }) => {
+        if (!active || !payload || !payload.length) return null;
+        
+        return (
+          <div className="chart-tooltip" style={{ background: 'rgba(15, 23, 42, 0.95)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '8px', padding: '12px' }}>
+            <p className="text-xs text-slate-400 mb-2 font-semibold">{label}</p>
+            {payload.map((entry, index) => (
+              <div key={index} className="flex items-center justify-between gap-4 mb-1">
+                <span className="text-xs" style={{ color: entry.color }}>{entry.name}:</span>
+                <span className="text-sm font-bold" style={{ color: entry.color }}>
+                  {entry.name.includes('%') ? formatPercent(entry.value) : formatCurrency(entry.value, currency)}
+                </span>
+              </div>
+            ))}
+          </div>
+        );
+      };
+
+      // --- MODAL DE GRÁFICO MEJORADO ---
+      const ChartModal = ({ stock, onClose, baseCurrency }) => {
+        const [timeframe, setTimeframe] = useState('1M');
+        const [loading, setLoading] = useState(false);
+        
+        // Extraer datos históricos
+        const chartData = useMemo(() => {
+          if (!stock.historicalData || stock.historicalData.length === 0) return [];
+          
+          // Filtrar por timeframe
+          const now = new Date();
+          let filtered = stock.historicalData;
+          
+          switch(timeframe) {
+            case '1D':
+              filtered = stock.historicalData.slice(-1);
+              break;
+            case '1W':
+              filtered = stock.historicalData.slice(-7);
+              break;
+            case '1M':
+              filtered = stock.historicalData.slice(-30);
+              break;
+            case '3M':
+              filtered = stock.historicalData.slice(-90);
+              break;
+            case '1Y':
+              filtered = stock.historicalData.slice(-365);
+              break;
+            case 'ALL':
+              filtered = stock.historicalData;
+              break;
+          }
+          
+          return filtered.map(d => ({
+            date: d.date,
+            precio: parseFloat(d.close || 0),
+            volumen: parseInt(d.volume || 0),
+            high: parseFloat(d.high || 0),
+            low: parseFloat(d.low || 0),
+          }));
+        }, [stock.historicalData, timeframe]);
+
+        // Calcular métricas
+        const metrics = useMemo(() => {
+          if (!stock.currentPrice) return null;
+          
+          const current = parseFloat(stock.currentPrice);
+          const invested = parseFloat(stock.shares) * parseFloat(stock.buyPrice);
+          const marketValue = parseFloat(stock.shares) * current;
+          const profitLoss = marketValue - invested;
+          const profitPercent = ((marketValue - invested) / invested) * 100;
+          
+          // Calcular máximo y mínimo del periodo
+          const prices = chartData.map(d => d.precio);
+          const max = Math.max(...prices);
+          const min = Math.min(...prices);
+          const avgVolume = chartData.reduce((sum, d) => sum + d.volumen, 0) / chartData.length;
+          
+          // Calcular volatilidad (desviación estándar)
+          const mean = prices.reduce((sum, p) => sum + p, 0) / prices.length;
+          const variance = prices.reduce((sum, p) => sum + Math.pow(p - mean, 2), 0) / prices.length;
+          const volatility = Math.sqrt(variance);
+          
+          return {
+            current,
+            invested,
+            marketValue,
+            profitLoss,
+            profitPercent,
+            max,
+            min,
+            avgVolume,
+            volatility,
+            range: max - min,
+            rangePercent: ((max - min) / min) * 100
+          };
+        }, [stock, chartData]);
+
+        // Datos para el gráfico de volumen
+        const volumeData = useMemo(() => {
+          return chartData.map(d => ({
+            date: d.date,
+            volumen: d.volumen / 1000000 // Convertir a millones
+          }));
+        }, [chartData]);
+
+        return (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fadeIn" onClick={onClose}>
+            <div className="bg-slate-900 rounded-2xl w-full max-w-7xl max-h-[95vh] overflow-y-auto custom-scrollbar slide-up" onClick={e => e.stopPropagation()}>
+              {/* Header */}
+              <div className="sticky top-0 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border-b border-slate-700 p-6 flex justify-between items-start z-10">
+                <div className="flex-1">
+                  <div className="flex items-center gap-4 mb-2">
+                    <h2 className="text-3xl font-bold text-white">{stock.ticker}</h2>
+                    <span className="px-3 py-1 bg-blue-500/20 text-blue-400 rounded-lg text-sm font-semibold border border-blue-500/30">
+                      {stock.exchange || 'Mercado'}
+                    </span>
+                  </div>
+                  <p className="text-slate-400 text-sm">{stock.name || 'Análisis Detallado'}</p>
+                  
+                  {/* Precio actual grande */}
+                  {metrics && (
+                    <div className="mt-4 flex items-baseline gap-4">
+                      <span className="text-5xl font-bold text-white">{formatCurrency(metrics.current, stock.currency)}</span>
+                      <span className={`text-2xl font-semibold ${getColorByValue(metrics.profitPercent)}`}>
+                        {formatPercent(metrics.profitPercent)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-lg transition-colors">
+                  <Icons.X size={24} className="text-slate-400" />
+                </button>
+              </div>
+
+              {/* Métricas principales */}
+              {metrics && (
+                <div className="p-6 grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="metric-card">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Icons.DollarSign size={16} className="text-blue-400" />
+                      <p className="text-xs text-slate-400 uppercase">Inversión</p>
+                    </div>
+                    <p className="text-2xl font-bold text-white">{formatCurrency(metrics.invested, baseCurrency)}</p>
+                  </div>
+                  
+                  <div className="metric-card">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Icons.TrendingUp size={16} className="text-green-400" />
+                      <p className="text-xs text-slate-400 uppercase">Valor Actual</p>
+                    </div>
+                    <p className="text-2xl font-bold text-white">{formatCurrency(metrics.marketValue, baseCurrency)}</p>
+                  </div>
+                  
+                  <div className="metric-card">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Icons.Activity size={16} className={getColorByValue(metrics.profitLoss).replace('text-', 'text-')} />
+                      <p className="text-xs text-slate-400 uppercase">Ganancia/Pérdida</p>
+                    </div>
+                    <p className={`text-2xl font-bold ${getColorByValue(metrics.profitLoss)}`}>
+                      {formatCurrency(metrics.profitLoss, baseCurrency)}
+                    </p>
+                  </div>
+                  
+                  <div className="metric-card">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Icons.BarChart2 size={16} className="text-purple-400" />
+                      <p className="text-xs text-slate-400 uppercase">Volatilidad</p>
+                    </div>
+                    <p className="text-2xl font-bold text-purple-400">{formatNumber(metrics.volatility, 2)}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Selector de timeframe */}
+              <div className="px-6 pb-4">
+                <div className="flex gap-2 bg-slate-800/50 p-1 rounded-lg w-fit">
+                  {['1D', '1W', '1M', '3M', '1Y', 'ALL'].map(tf => (
+                    <button
+                      key={tf}
+                      onClick={() => setTimeframe(tf)}
+                      className={`timeframe-btn ${timeframe === tf ? 'active' : 'text-slate-400'}`}
+                    >
+                      {tf}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Gráfico principal de precio */}
+              <div className="px-6 pb-6">
+                <div className="chart-container">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Icons.Activity size={20} className="text-blue-400" />
+                    <h3 className="text-lg font-bold text-white">Evolución del Precio</h3>
+                  </div>
+                  
+                  {chartData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={400}>
+                      <ComposedChart data={chartData}>
+                        <defs>
+                          <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
+                        <XAxis 
+                          dataKey="date" 
+                          stroke="#94a3b8" 
+                          style={{ fontSize: '12px' }}
+                          tickFormatter={(value) => {
+                            const date = new Date(value);
+                            return `${date.getDate()}/${date.getMonth() + 1}`;
+                          }}
+                        />
+                        <YAxis 
+                          stroke="#94a3b8" 
+                          style={{ fontSize: '12px' }}
+                          domain={['auto', 'auto']}
+                          tickFormatter={(value) => formatNumber(value, 2)}
+                        />
+                        <Tooltip content={<CustomTooltip currency={stock.currency} />} />
+                        <Area 
+                          type="monotone" 
+                          dataKey="precio" 
+                          stroke="#3b82f6" 
+                          strokeWidth={3}
+                          fill="url(#colorPrice)" 
+                          name="Precio"
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="high" 
+                          stroke="#10b981" 
+                          strokeWidth={2}
+                          strokeDasharray="5 5"
+                          dot={false}
+                          name="Máximo"
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="low" 
+                          stroke="#ef4444" 
+                          strokeWidth={2}
+                          strokeDasharray="5 5"
+                          dot={false}
+                          name="Mínimo"
+                        />
+                        {stock.buyPrice && (
+                          <ReferenceLine 
+                            y={parseFloat(stock.buyPrice)} 
+                            stroke="#fbbf24" 
+                            strokeDasharray="3 3"
+                            strokeWidth={2}
+                            label={{ value: 'Precio Compra', fill: '#fbbf24', fontSize: 12 }}
+                          />
+                        )}
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex items-center justify-center h-64 text-slate-400">
+                      <p>No hay datos históricos disponibles</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Gráfico de volumen */}
+              {volumeData.length > 0 && (
+                <div className="px-6 pb-6">
+                  <div className="chart-container">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Icons.BarChart2 size={20} className="text-purple-400" />
+                      <h3 className="text-lg font-bold text-white">Volumen de Operaciones (Millones)</h3>
+                    </div>
+                    
+                    <ResponsiveContainer width="100%" height={200}>
+                      <BarChart data={volumeData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
+                        <XAxis 
+                          dataKey="date" 
+                          stroke="#94a3b8" 
+                          style={{ fontSize: '12px' }}
+                          tickFormatter={(value) => {
+                            const date = new Date(value);
+                            return `${date.getDate()}/${date.getMonth() + 1}`;
+                          }}
+                        />
+                        <YAxis 
+                          stroke="#94a3b8" 
+                          style={{ fontSize: '12px' }}
+                          tickFormatter={(value) => `${formatNumber(value, 1)}M`}
+                        />
+                        <Tooltip 
+                          content={({ active, payload }) => {
+                            if (!active || !payload || !payload.length) return null;
+                            return (
+                              <div className="chart-tooltip" style={{ background: 'rgba(15, 23, 42, 0.95)', border: '1px solid rgba(168, 85, 247, 0.3)', borderRadius: '8px', padding: '12px' }}>
+                                <p className="text-xs text-slate-400 mb-1">{payload[0].payload.date}</p>
+                                <p className="text-sm font-bold text-purple-400">{formatNumber(payload[0].value, 2)}M unidades</p>
+                              </div>
+                            );
+                          }}
+                        />
+                        <Bar dataKey="volumen" fill="#a855f7" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
+
+              {/* Estadísticas adicionales */}
+              {metrics && (
+                <div className="px-6 pb-6">
+                  <div className="chart-container">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Icons.Activity size={20} className="text-cyan-400" />
+                      <h3 className="text-lg font-bold text-white">Estadísticas del Periodo</h3>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+                        <p className="text-xs text-slate-400 mb-1">Máximo</p>
+                        <p className="text-xl font-bold text-green-400">{formatCurrency(metrics.max, stock.currency)}</p>
+                      </div>
+                      
+                      <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+                        <p className="text-xs text-slate-400 mb-1">Mínimo</p>
+                        <p className="text-xl font-bold text-red-400">{formatCurrency(metrics.min, stock.currency)}</p>
+                      </div>
+                      
+                      <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+                        <p className="text-xs text-slate-400 mb-1">Rango</p>
+                        <p className="text-xl font-bold text-blue-400">{formatCurrency(metrics.range, stock.currency)}</p>
+                        <p className="text-xs text-slate-500">{formatPercent(metrics.rangePercent)}</p>
+                      </div>
+                      
+                      <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+                        <p className="text-xs text-slate-400 mb-1">Vol. Promedio</p>
+                        <p className="text-xl font-bold text-purple-400">{formatNumber(metrics.avgVolume / 1000000, 2)}M</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Información adicional del stock */}
+              <div className="px-6 pb-8">
+                <div className="bg-slate-800/30 rounded-lg p-6 border border-slate-700">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div>
+                      <p className="text-xs text-slate-400 uppercase mb-2">Acciones</p>
+                      <p className="text-2xl font-bold text-white">{formatNumber(stock.shares, 0)}</p>
+                    </div>
+                    
+                    <div>
+                      <p className="text-xs text-slate-400 uppercase mb-2">Precio de Compra</p>
+                      <p className="text-2xl font-bold text-white">{formatCurrency(stock.buyPrice, stock.currency)}</p>
+                    </div>
+                    
+                    <div>
+                      <p className="text-xs text-slate-400 uppercase mb-2">Divisa</p>
+                      <p className="text-2xl font-bold text-white">{stock.currency}</p>
+                    </div>
+                  </div>
+                  
+                  {stock.lastAnalysis && (
+                    <div className="mt-6 pt-6 border-t border-slate-700">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Icons.Wand size={16} className="text-blue-400" />
+                        <p className="text-sm font-bold text-white">Análisis iA</p>
+                      </div>
+                      <p className="text-sm text-slate-300 leading-relaxed">{stock.lastAnalysis}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      // --- COMPONENTE PRINCIPAL DE CARTERA (simplificado, mantiene toda la lógica original) ---
+      const PortfolioTab = ({ portfolio, setPortfolio, apiKey, isAuth, baseCurrency, refreshInterval, lastUpdate, setLastUpdate }) => {
+        const [showAddModal, setShowAddModal] = useState(false);
+        const [selectedStock, setSelectedStock] = useState(null);
+        const [isRefreshing, setIsRefreshing] = useState(false);
+        const [searchQuery, setSearchQuery] = useState('');
+        const timerRef = useRef(null);
+
+        const filteredPortfolio = useMemo(() => {
+          if (!searchQuery.trim()) return portfolio;
+          const q = searchQuery.toLowerCase();
+          return portfolio.filter(s => 
+            s.ticker.toLowerCase().includes(q) || 
+            (s.name && s.name.toLowerCase().includes(q))
+          );
+        }, [portfolio, searchQuery]);
+
+        const portfolioStats = useMemo(() => {
+          const totalInvested = portfolio.reduce((sum, s) => {
+            const invested = parseFloat(s.shares || 0) * parseFloat(s.buyPrice || 0);
+            return sum + invested;
+          }, 0);
+
+          const totalMarketValue = portfolio.reduce((sum, s) => {
+            const current = parseFloat(s.currentPrice || 0);
+            const value = parseFloat(s.shares || 0) * current;
+            return sum + value;
+          }, 0);
+
+          const totalProfitLoss = totalMarketValue - totalInvested;
+          const totalProfitPercent = totalInvested > 0 ? ((totalMarketValue - totalInvested) / totalInvested) * 100 : 0;
+
+          return { totalInvested, totalMarketValue, totalProfitLoss, totalProfitPercent };
+        }, [portfolio]);
+
+        const fetchStockData = async (ticker, currency = 'USD') => {
+          if (!apiKey) throw new Error('API Key requerida');
+          
+          const prompt = `Necesito información actualizada de la acción ${ticker}. Devuelve SOLO un objeto JSON válido con esta estructura exacta (sin explicaciones adicionales):
+{
+  "ticker": "${ticker}",
+  "name": "Nombre completo de la empresa",
+  "currentPrice": 123.45,
+  "currency": "${currency}",
+  "exchange": "NASDAQ o NYSE o la bolsa correspondiente",
+  "historicalData": [
+    {"date": "2024-01-01", "close": 120.5, "high": 122.0, "low": 119.0, "volume": 1000000},
+    ...últimos 30 días de datos históricos...
+  ],
+  "analysis": "Breve análisis de 2-3 líneas sobre la situación actual de la empresa"
+}`;
+
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: { temperature: 0.1, maxOutputTokens: 8000 }
+            })
+          });
+
+          if (!response.ok) throw new Error('Error en la API');
+          
+          const data = await response.json();
+          let text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+          
+          return JSON.parse(text);
+        };
+
+        const handleAddStock = async (newStock) => {
+          if (!isAuth && portfolio.length >= 5) {
+            alert('Límite de 5 acciones. Activa la licencia para más.');
+            return;
+          }
+
+          try {
+            const stockData = await fetchStockData(newStock.ticker, newStock.currency);
+            const updatedStock = {
+              ...newStock,
+              currentPrice: stockData.currentPrice,
+              name: stockData.name,
+              exchange: stockData.exchange,
+              historicalData: stockData.historicalData || [],
+              lastAnalysis: stockData.analysis || '',
+              lastUpdate: new Date().toISOString()
+            };
+            
+            setPortfolio([...portfolio, updatedStock]);
+            setShowAddModal(false);
+          } catch (err) {
+            alert('Error al obtener datos: ' + err.message);
+          }
+        };
+
+        const handleRefreshAll = async () => {
+          if (!apiKey) {
+            alert('Configura la API Key primero');
+            return;
+          }
+
+          setIsRefreshing(true);
+          const updated = [];
+
+          for (const stock of portfolio) {
+            try {
+              const data = await fetchStockData(stock.ticker, stock.currency);
+              updated.push({
+                ...stock,
+                currentPrice: data.currentPrice,
+                historicalData: data.historicalData || stock.historicalData,
+                lastAnalysis: data.analysis || stock.lastAnalysis,
+                lastUpdate: new Date().toISOString()
+              });
+            } catch (err) {
+              updated.push(stock);
+            }
+          }
+
+          setPortfolio(updated);
+          setLastUpdate(new Date().toISOString());
+          setIsRefreshing(false);
+        };
+
+        const handleDeleteStock = (index) => {
+          if (window.confirm('¿Eliminar esta acción?')) {
+            setPortfolio(portfolio.filter((_, i) => i !== index));
+          }
+        };
+
+        // Auto-refresh
+        useEffect(() => {
+          if (refreshInterval > 0 && apiKey && portfolio.length > 0) {
+            timerRef.current = setInterval(() => {
+              handleRefreshAll();
+            }, refreshInterval * 60 * 1000);
+            
+            return () => clearInterval(timerRef.current);
+          }
+        }, [refreshInterval, apiKey, portfolio.length]);
+
+        return (
+          <div className="h-full flex flex-col overflow-hidden">
+            {/* Header con stats */}
+            <div className="shrink-0 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border-b border-slate-700 p-6">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <div className="metric-card">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Icons.Briefcase size={18} className="text-blue-400" />
+                    <p className="text-xs text-slate-400 uppercase">Total Invertido</p>
+                  </div>
+                  <p className="text-2xl font-bold text-white">{formatCurrency(portfolioStats.totalInvested, baseCurrency)}</p>
+                </div>
+
+                <div className="metric-card">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Icons.TrendingUp size={18} className="text-green-400" />
+                    <p className="text-xs text-slate-400 uppercase">Valor de Mercado</p>
+                  </div>
+                  <p className="text-2xl font-bold text-white">{formatCurrency(portfolioStats.totalMarketValue, baseCurrency)}</p>
+                </div>
+
+                <div className="metric-card">
+                  <div className="flex items-center gap-2 mb-2">
+                    {portfolioStats.totalProfitLoss >= 0 ? 
+                      <Icons.TrendingUp size={18} className="text-green-400" /> : 
+                      <Icons.TrendingDown size={18} className="text-red-400" />
+                    }
+                    <p className="text-xs text-slate-400 uppercase">Ganancia/Pérdida</p>
+                  </div>
+                  <p className={`text-2xl font-bold ${getColorByValue(portfolioStats.totalProfitLoss)}`}>
+                    {formatCurrency(portfolioStats.totalProfitLoss, baseCurrency)}
+                  </p>
+                </div>
+
+                <div className="metric-card">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Icons.Activity size={18} className="text-purple-400" />
+                    <p className="text-xs text-slate-400 uppercase">Rendimiento</p>
+                  </div>
+                  <p className={`text-2xl font-bold ${getColorByValue(portfolioStats.totalProfitPercent)}`}>
+                    {formatPercent(portfolioStats.totalProfitPercent)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Barra de acciones */}
+              <div className="flex flex-wrap gap-3 items-center">
+                <div className="flex-1 min-w-[200px]">
+                  <div className="relative">
+                    <Icons.Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Buscar por ticker o nombre..."
+                      className="w-full bg-slate-800 border border-slate-600 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-400"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setShowAddModal(true)}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold text-sm transition-colors"
+                >
+                  <Icons.Plus size={18} />
+                  Añadir Acción
+                </button>
+
+                <button
+                  onClick={handleRefreshAll}
+                  disabled={isRefreshing || !apiKey}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold text-sm transition-colors disabled:opacity-50"
+                >
+                  <Icons.Refresh size={18} className={isRefreshing ? 'animate-spin' : ''} />
+                  {isRefreshing ? 'Actualizando...' : 'Actualizar'}
+                </button>
+              </div>
+
+              {lastUpdate && (
+                <p className="text-xs text-slate-500 mt-3">
+                  Última actualización: {new Date(lastUpdate).toLocaleString('es')}
+                </p>
+              )}
+            </div>
+
+            {/* Tabla de acciones */}
+            <div className="flex-1 overflow-auto custom-scrollbar p-6">
+              {filteredPortfolio.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-slate-400">
+                  <Icons.Briefcase size={64} className="mb-4 opacity-50" />
+                  <p className="text-lg">No hay acciones en tu cartera</p>
+                  <p className="text-sm mt-2">Haz clic en "Añadir Acción" para comenzar</p>
+                </div>
+              ) : (
+                <div className="bg-slate-900/50 rounded-xl border border-slate-800 overflow-hidden">
+                  <table className="w-full">
+                    <thead className="bg-slate-800/80">
+                      <tr>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-slate-400 uppercase">Ticker</th>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-slate-400 uppercase">Nombre</th>
+                        <th className="px-6 py-4 text-right text-xs font-semibold text-slate-400 uppercase">Acciones</th>
+                        <th className="px-6 py-4 text-right text-xs font-semibold text-slate-400 uppercase">P. Compra</th>
+                        <th className="px-6 py-4 text-right text-xs font-semibold text-slate-400 uppercase">P. Actual</th>
+                        <th className="px-6 py-4 text-right text-xs font-semibold text-slate-400 uppercase">Invertido</th>
+                        <th className="px-6 py-4 text-right text-xs font-semibold text-slate-400 uppercase">Valor</th>
+                        <th className="px-6 py-4 text-right text-xs font-semibold text-slate-400 uppercase">G/P</th>
+                        <th className="px-6 py-4 text-right text-xs font-semibold text-slate-400 uppercase">%</th>
+                        <th className="px-6 py-4 text-center text-xs font-semibold text-slate-400 uppercase">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredPortfolio.map((stock, idx) => {
+                        const invested = parseFloat(stock.shares || 0) * parseFloat(stock.buyPrice || 0);
+                        const current = parseFloat(stock.currentPrice || 0);
+                        const marketValue = parseFloat(stock.shares || 0) * current;
+                        const profitLoss = marketValue - invested;
+                        const profitPercent = invested > 0 ? ((marketValue - invested) / invested) * 100 : 0;
+
+                        return (
+                          <tr
+                            key={idx}
+                            onClick={() => setSelectedStock(stock)}
+                            className="border-t border-slate-800 table-row-hover transition-colors"
+                          >
+                            <td className="px-6 py-4">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-white">{stock.ticker}</span>
+                                <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs border border-blue-500/30">
+                                  {stock.exchange || 'N/A'}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-slate-300 text-sm">{stock.name || '-'}</td>
+                            <td className="px-6 py-4 text-right font-semibold text-white">{formatNumber(stock.shares, 0)}</td>
+                            <td className="px-6 py-4 text-right text-slate-300">{formatCurrency(stock.buyPrice, stock.currency)}</td>
+                            <td className="px-6 py-4 text-right font-bold text-white">{formatCurrency(current, stock.currency)}</td>
+                            <td className="px-6 py-4 text-right text-slate-300">{formatCurrency(invested, baseCurrency)}</td>
+                            <td className="px-6 py-4 text-right font-bold text-white">{formatCurrency(marketValue, baseCurrency)}</td>
+                            <td className={`px-6 py-4 text-right font-bold ${getColorByValue(profitLoss)}`}>
+                              {formatCurrency(profitLoss, baseCurrency)}
+                            </td>
+                            <td className={`px-6 py-4 text-right font-bold ${getColorByValue(profitPercent)}`}>
+                              {formatPercent(profitPercent)}
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedStock(stock);
+                                  }}
+                                  className="p-2 hover:bg-blue-500/20 rounded-lg transition-colors"
+                                  title="Ver gráfico"
+                                >
+                                  <Icons.Activity size={16} className="text-blue-400" />
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteStock(idx);
+                                  }}
+                                  className="p-2 hover:bg-red-500/20 rounded-lg transition-colors"
+                                  title="Eliminar"
+                                >
+                                  <Icons.Trash2 size={16} className="text-red-400" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Modales */}
+            {showAddModal && (
+              <AddStockModal
+                onClose={() => setShowAddModal(false)}
+                onAdd={handleAddStock}
+                baseCurrency={baseCurrency}
+              />
+            )}
+
+            {selectedStock && (
+              <ChartModal
+                stock={selectedStock}
+                onClose={() => setSelectedStock(null)}
+                baseCurrency={baseCurrency}
+              />
+            )}
+          </div>
+        );
+      };
+
+      // --- MODAL AÑADIR ACCIÓN ---
+      const AddStockModal = ({ onClose, onAdd, baseCurrency }) => {
+        const [formData, setFormData] = useState({
+          ticker: '',
+          shares: '',
+          buyPrice: '',
+          currency: baseCurrency
+        });
+
+        const handleSubmit = (e) => {
+          e.preventDefault();
+          if (!formData.ticker || !formData.shares || !formData.buyPrice) {
+            alert('Completa todos los campos');
+            return;
+          }
+          onAdd(formData);
+        };
+
+        return (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
+            <div className="bg-slate-900 rounded-2xl w-full max-w-md slide-up" onClick={e => e.stopPropagation()}>
+              <div className="bg-gradient-to-r from-blue-600 to-blue-700 p-6 rounded-t-2xl">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-white/20 rounded-lg">
+                      <Icons.Plus size={24} />
+                    </div>
+                    <h2 className="text-2xl font-bold">Añadir Acción</h2>
+                  </div>
+                  <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                    <Icons.X size={24} />
+                  </button>
+                </div>
+              </div>
+
+              <form onSubmit={handleSubmit} className="p-6 space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">Ticker</label>
+                  <input
+                    type="text"
+                    value={formData.ticker}
+                    onChange={e => setFormData({...formData, ticker: e.target.value.toUpperCase()})}
+                    placeholder="AAPL, TSLA, GOOGL..."
+                    className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-400"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">Número de Acciones</label>
+                  <input
+                    type="number"
+                    step="1"
+                    value={formData.shares}
+                    onChange={e => setFormData({...formData, shares: e.target.value})}
+                    placeholder="100"
+                    className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-400"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">Precio de Compra</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={formData.buyPrice}
+                    onChange={e => setFormData({...formData, buyPrice: e.target.value})}
+                    placeholder="150.00"
+                    className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-400"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">Divisa</label>
+                  <select
+                    value={formData.currency}
+                    onChange={e => setFormData({...formData, currency: e.target.value})}
+                    className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white"
+                  >
+                    {CURRENCIES.map(c => (
+                      <option key={c.code} value={c.code}>{c.code} - {c.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="flex-1 px-6 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition-colors"
+                  >
+                    Añadir
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      };
+
+      // --- TAB DE CONFIGURACIÓN (mantiene toda la funcionalidad original) ---
+      const SettingsTab = ({ apiKey, setApiKey, isAuth, onActivate, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio }) => {
+        const [localKey, setLocalKey] = useState(apiKey);
+        const [localLic, setLocalLic] = useState('');
+
+        return (
+          <div className="h-full overflow-y-auto custom-scrollbar bg-gradient-to-b from-slate-900 via-slate-900 to-slate-800 flex flex-col items-center py-12 px-6">
+            <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
+              <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
+                <div className="p-3 bg-blue-500/20 rounded-xl text-blue-400"><Icons.Settings size={32} /></div>
+                <div><h2 className="text-2xl font-bold text-white">Configuración General</h2><p className="text-slate-400 text-sm">Preferencias de la aplicación</p></div>
+              </div>
+
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">Divisa Base</label>
+                  <select value={baseCurrency} onChange={e => setBaseCurrency(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white">
+                    {CURRENCIES.map(c => (<option key={c.code} value={c.code}>{c.code} - {c.name}</option>))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">Intervalo Auto-Actualización (minutos)</label>
+                  <input type="number" min="0" value={refreshInterval} onChange={e => setRefreshInterval(parseInt(e.target.value) || 0)} className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white" />
+                  <p className="text-xs text-slate-500 mt-2">0 = Desactivado</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
+              <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
+                <div className="p-3 bg-green-500/20 rounded-xl text-green-400"><Icons.Globe size={32} /></div>
+                <div><h2 className="text-2xl font-bold text-white">API Configuration</h2><p className="text-slate-400 text-sm">Google Gemini API Key</p></div>
+              </div>
+
+              <div className="mb-6">
+                <input type="password" value={localKey} onChange={e => setLocalKey(e.target.value)} placeholder="AIza..." className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white mb-3" />
+                <button onClick={() => { setApiKey(localKey); alert('API Key guardada'); }} className="w-full bg-blue-600 hover:bg-blue-700 py-3 rounded-lg font-bold transition-colors">GUARDAR API KEY</button>
+              </div>
+
+              <div className="bg-slate-800/50 rounded-xl p-6 border border-slate-700">
+                <h4 className="text-lg font-bold text-blue-400 mb-4 flex items-center gap-2"><Icons.HelpCircle size={20} /> Gestión de la API Key</h4>
+                <div className="mb-6 border-b border-slate-700 pb-6">
+                  <h5 className="text-sm font-bold text-white mb-3 flex items-center gap-2"><span className="bg-green-500/20 text-green-400 px-2 py-0.5 rounded text-[10px] uppercase border border-green-500/30">Opción Gratuita</span></h5>
+                  <ol className="list-decimal list-inside text-xs text-slate-300 space-y-2 mb-4 leading-relaxed">
+                    <li>Accede a <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-blue-400 underline font-bold">Google AI Studio</a>.</li>
+                    <li>Haz clic en <strong>"Get API key"</strong> y luego en <strong>"Create API key in new project"</strong>.</li>
+                    <li>Copia la clave y pégala arriba.</li>
+                  </ol>
+                  <p className="text-[10px] text-slate-400 bg-slate-900/50 p-3 rounded"><strong>Límites:</strong> 15 peticiones/minuto (RPM). Si la iA tarda, espera a que se libere la cuota.</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
+              <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
+                <div className="p-3 bg-cyan-500/20 rounded-xl text-cyan-400"><Icons.Refresh size={32} /></div>
+                <div><h2 className="text-2xl font-bold text-white">Seguridad</h2><p className="text-slate-400 text-sm">Backup y Restauración</p></div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <button onClick={() => { const d = {p: portfolio, k: apiKey, c: baseCurrency, r: refreshInterval}; const blob = new Blob([JSON.stringify(d)], {type:"application/json"}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `Portfolio_Backup.json`; a.click(); }} className="py-4 bg-slate-800 border border-slate-600 rounded-xl font-bold hover:bg-slate-700 transition-colors">EXPORTAR</button>
+                <label className="cursor-pointer py-4 bg-blue-600 rounded-xl font-bold text-center hover:bg-blue-700 transition-colors">RESTAURAR <input type="file" className="hidden" onChange={(e) => { const f = e.target.files[0]; if(f){ const reader = new FileReader(); reader.onload = (ev) => { const d = JSON.parse(ev.target.result); setPortfolio(d.p); setApiKey(d.k); setBaseCurrency(d.c); setRefreshInterval(d.r); alert('Restaurado!'); }; reader.readAsText(f); }}} /></label>
+              </div>
+            </div>
+
+            <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-20 text-center">
+              <div className={`mx-auto w-16 h-16 rounded-full flex items-center justify-center mb-6 ${isAuth ? 'bg-green-500/20 text-green-400' : 'bg-blue-500/20 text-blue-400'}`}><Icons.CheckCircle size={32}/></div>
+              <h2 className="text-2xl font-bold text-white mb-4 uppercase">Registro</h2>
+              <p className="text-sm text-slate-400 mb-6 italic leading-relaxed">Esta plataforma es un proyecto independiente sustentado por <strong>crowdfunding</strong>. Tu registro ayuda a mantener los costes de desarrollo y mantenimiento. Sin registro, límite de 5 acciones.</p>
+              <div className="bg-black/30 border border-slate-700 rounded-xl p-5 flex gap-2">
+                <input type="text" value={localLic} onChange={e => setLocalLic(e.target.value.toUpperCase())} placeholder="BG-XXXX-XXXX" className="flex-1 bg-slate-900 border border-slate-600 rounded p-2 text-white font-mono" />
+                <button onClick={() => onActivate(localLic)} className="bg-blue-600 px-6 py-2 rounded font-bold text-xs hover:bg-blue-700 transition-colors">ACTIVAR</button>
+              </div>
+              <div className="mt-4">
+                <a href="https://x.com/BoardingGate" target="_blank" className="text-xs text-blue-400 hover:text-blue-300 font-bold">Soporte y Registro @BoardingGate en X (Twitter)</a>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      // --- APP PRINCIPAL ---
+      const App = () => {
+        const [activeTab, setActiveTab] = useState('portfolio');
+        const [apiKey, setApiKey] = usePersistentState('bg_api_key', '');
+        const [baseCurrency, setBaseCurrency] = usePersistentState('bg_base_currency', 'EUR');
+        const [refreshInterval, setRefreshInterval] = usePersistentState('bg_refresh_interval', 10);
+        const [portfolio, setPortfolio] = usePersistentState('bg_portfolio', []);
+        const [lastUpdate, setLastUpdate] = usePersistentState('bg_last_update', null);
+        const [isRegistered, setIsRegistered] = usePersistentState('bg_is_registered', false);
+        const [rk, setRk] = usePersistentState('bg_app_rk_st', '');
+
+        const isAuth = isRegistered || _0x7a2(rk);
+        const handleActivate = v => { if(_0x7a2(v)){ setRk(v); setIsRegistered(true); alert("Activado!"); } else alert("Inválido"); };
+
+        return (
+          <div className="h-full flex flex-col bg-[#0a0a0a] text-white">
+            <header className="shrink-0 bg-slate-900/80 backdrop-blur-md border-b border-slate-800 px-6 py-4 flex justify-between items-center z-20 shadow-2xl">
+              <div><h1 className="text-2xl font-display font-bold tracking-tight"><span className="text-white">Boarding</span><span className="text-blue-600">Gate</span></h1><p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Gestor de cartera de valores iA</p></div>
+              <nav className="flex bg-slate-800 rounded-lg p-1 gap-1">
+                <button onClick={() => setActiveTab('portfolio')} className={`px-4 py-2 rounded-md text-xs font-bold uppercase transition-all ${activeTab === 'portfolio' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Cartera</button>
+                <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 rounded-md text-xs font-bold uppercase transition-all ${activeTab === 'settings' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Ajustes</button>
+              </nav>
+            </header>
+            <main className="flex-1 overflow-hidden relative">
+              {activeTab === 'portfolio' && (
+                <PortfolioTab portfolio={portfolio} setPortfolio={setPortfolio} apiKey={apiKey} isAuth={isAuth} baseCurrency={baseCurrency} refreshInterval={refreshInterval} lastUpdate={lastUpdate} setLastUpdate={setLastUpdate} />
+              )}
+              {activeTab === 'settings' && (
+                <SettingsTab apiKey={apiKey} setApiKey={setApiKey} isAuth={isAuth} onActivate={handleActivate} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={setPortfolio} />
+              )}
+            </main>
+            <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-2 px-6 flex justify-between items-center text-[9px] text-slate-600">
+              <div>&copy; 2025 BoardingGate Financial.</div>
+              <a href="https://x.com/BoardingGate" target="_blank" className="flex items-center gap-1 hover:text-blue-400 transition-colors">Soporte @BoardingGate</a>
+            </footer>
+          </div>
+        );
+      };
+
+      createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
