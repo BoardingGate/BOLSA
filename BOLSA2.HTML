@@ -124,7 +124,8 @@
           return new Intl.NumberFormat('es-ES', { style: 'currency', currency: currency }).format(amount);
       };
 
-      // --- PESTAÑA 1: CARTERA ---
+
+      // --- PESTAÑA 1: CARTERA (CORREGIDA VISUALIZACIÓN Y CÁLCULOS) ---
       const PortfolioTab = ({ portfolio, setPortfolio, apiKey, isAuth, baseCurrency }) => {
           const [isModalOpen, setIsModalOpen] = useState(false);
           const [editingId, setEditingId] = useState(null);
@@ -133,6 +134,14 @@
           const [analysisReport, setAnalysisReport] = useState(null);
           const [analyzingPortfolio, setAnalyzingPortfolio] = useState(false);
           
+          // Referencia para scroll automático al abrir gráfica
+          const detailRef = useRef(null);
+          useEffect(() => {
+              if (selectedStock && detailRef.current) {
+                  detailRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+              }
+          }, [selectedStock]);
+
           const [form, setForm] = useState({
               ticker: '', name: '', shares: 0, buyPrice: 0, buyDate: '', 
               stockCurrency: 'USD', buyFx: 1, fees: 0, dividends: []
@@ -231,7 +240,8 @@
 
           return (
               <div className="h-full flex flex-col p-4 md:p-6 overflow-hidden relative">
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4 mb-6 shrink-0">
+                  {/* DASHBOARD SUPERIOR (FIJO) */}
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4 mb-4 shrink-0">
                       {[
                           { l: "Invertido", v: formatMoney(totals.invested, baseCurrency), c: "text-white" },
                           { l: "Valor Actual", v: formatMoney(totals.currentVal, baseCurrency), c: "text-blue-200" },
@@ -239,7 +249,7 @@
                           { l: "Dividendos", v: formatMoney(totals.totalDivs, baseCurrency), c: "text-blue-400", s: `Tax: ${formatMoney(totals.totalTax, baseCurrency)}` },
                           { l: "Impacto Divisa", v: formatMoney(totals.fxImpactTotal, baseCurrency), c: totals.fxImpactTotal >= 0 ? 'text-green-400' : 'text-red-400' }
                       ].map((d, i) => (
-                          <div key={i} className="glass-panel p-3 md:p-4 rounded-xl flex flex-col justify-center">
+                          <div key={i} className="glass-panel p-3 md:p-4 rounded-xl flex flex-col justify-center min-w-[140px]">
                               <span className="text-[9px] md:text-[10px] uppercase text-slate-400 font-bold tracking-wider">{d.l}</span>
                               <span className={`text-lg md:text-xl font-bold font-display ${d.c}`}>{d.v}</span>
                               {d.s && <span className="text-[9px] text-slate-500">{d.s}</span>}
@@ -247,83 +257,182 @@
                       ))}
                   </div>
 
-                  <div className="flex justify-between items-center mb-4 shrink-0">
+                  {/* TOOLBAR (FIJO) */}
+                  <div className="flex justify-between items-center mb-4 shrink-0 gap-2 overflow-x-auto">
                       <div className="flex gap-2">
-                          <button onClick={updatePrices} disabled={updating} className="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-300 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all">
+                          <button onClick={updatePrices} disabled={updating} className="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-300 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all whitespace-nowrap">
                               {updating ? <Icons.Loader size={14}/> : <Icons.Refresh size={14}/>} <span className="hidden sm:inline">ACTUALIZAR</span>
                           </button>
-                          <button onClick={analyzePortfolio} disabled={analyzingPortfolio} className="bg-purple-900/40 hover:bg-purple-900/60 border border-purple-500/50 text-purple-300 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all">
+                          <button onClick={analyzePortfolio} disabled={analyzingPortfolio} className="bg-purple-900/40 hover:bg-purple-900/60 border border-purple-500/50 text-purple-300 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all whitespace-nowrap">
                               {analyzingPortfolio ? <Icons.Loader size={14}/> : <Icons.Wand size={14}/>} <span className="hidden sm:inline">ANÁLISIS IA</span>
                           </button>
                       </div>
-                      <button onClick={handleNew} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow-lg shadow-blue-900/20">
+                      <button onClick={handleNew} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow-lg shadow-blue-900/20 whitespace-nowrap">
                           <Icons.Plus size={16}/> <span className="hidden sm:inline">AÑADIR</span> POSICIÓN
                       </button>
                   </div>
 
-                  <div className="flex-1 overflow-auto custom-scrollbar bg-slate-900/50 border border-slate-800 rounded-xl relative">
-                      <table className="w-full text-left border-collapse">
-                          <thead className="bg-slate-800 text-slate-400 text-[10px] uppercase tracking-wider sticky top-0 z-10 shadow-lg">
-                              <tr><th className="p-3">Empresa</th><th className="p-3 text-right">Acciones</th><th className="p-3 text-right">Compra</th><th className="p-3 text-right">Actual</th><th className="p-3 text-right">Divisa (Desv)</th><th className="p-3 text-right">Retorno</th><th className="p-3 text-center">Acciones</th></tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-800 text-sm">
-                              {portfolio.map(p => {
-                                  const costBase = (p.buyPrice * p.shares) / p.buyFx + p.fees;
-                                  const valBase = (p.currentPrice * p.shares) / p.currentFx;
-                                  const pl = valBase - costBase;
-                                  const plPct = costBase ? (pl / costBase) * 100 : 0;
-                                  const valConstantFx = (p.currentPrice * p.shares) / p.buyFx;
-                                  const fxDev = valBase - valConstantFx;
-                                  const isSelected = selectedStock?.id === p.id;
+                  {/* CONTENEDOR SCROLLABLE (TABLA + DETALLE) */}
+                  <div className="flex-1 overflow-y-auto custom-scrollbar overflow-x-hidden flex flex-col gap-4 pb-20">
+                      
+                      {/* TABLA CON SCROLL HORIZONTAL INTERNO */}
+                      <div className="bg-slate-900/50 border border-slate-800 rounded-xl overflow-x-auto custom-scrollbar">
+                          <table className="w-full text-left border-collapse min-w-[800px]">
+                              <thead className="bg-slate-800 text-slate-400 text-[10px] uppercase tracking-wider sticky top-0 z-10 shadow-lg">
+                                  <tr>
+                                      <th className="p-3">Empresa</th>
+                                      <th className="p-3 text-right">Acciones</th>
+                                      <th className="p-3 text-right">Precios (Origen)</th>
+                                      <th className="p-3 text-right bg-slate-800/80 border-l border-slate-700">Total Invertido</th>
+                                      <th className="p-3 text-right bg-slate-800/80 border-r border-slate-700">Valoración</th>
+                                      <th className="p-3 text-right">Divisa (Desv)</th>
+                                      <th className="p-3 text-right">Retorno</th>
+                                      <th className="p-3 text-center">Acciones</th>
+                                  </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-800 text-sm">
+                                  {portfolio.map(p => {
+                                      // CÁLCULOS TRANSPARENTES
+                                      // 1. Coste Total en Base = (Precio Compra * Acciones / FX Compra) + Comisiones
+                                      const costBase = (p.buyPrice * p.shares) / p.buyFx + p.fees;
+                                      
+                                      // 2. Valor Total en Base = (Precio Actual * Acciones / FX Actual)
+                                      const valBase = (p.currentPrice * p.shares) / p.currentFx;
+                                      
+                                      const pl = valBase - costBase;
+                                      const plPct = costBase ? (pl / costBase) * 100 : 0;
+                                      
+                                      const valConstantFx = (p.currentPrice * p.shares) / p.buyFx;
+                                      const fxDev = valBase - valConstantFx;
+                                      
+                                      const isSelected = selectedStock?.id === p.id;
 
-                                  return (
-                                      <tr key={p.id} onClick={() => setSelectedStock(p)} className={`transition-colors cursor-pointer ${isSelected ? 'bg-blue-900/20 border-l-2 border-blue-500' : 'table-row-hover'}`}>
-                                          <td className="p-3 flex items-center gap-3">
-                                              <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center overflow-hidden shrink-0 border border-slate-700">
-                                                  <img src={`https://logo.clearbit.com/${p.ticker.toLowerCase()}.com`} onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }} className="w-full h-full object-contain" alt="" />
-                                                  <div className="hidden w-full h-full text-white items-center justify-center font-bold text-xs bg-gradient-to-br from-blue-600 to-blue-800">{p.ticker.slice(0,2)}</div>
-                                              </div>
-                                              <div>
-                                                  <div className="font-bold text-white text-sm">{p.ticker}</div>
-                                                  <div className="text-[10px] text-slate-400 truncate max-w-[100px] sm:max-w-[150px]">{p.name || p.ticker}</div>
-                                              </div>
-                                          </td>
-                                          <td className="p-3 text-right font-mono text-slate-300">{p.shares}</td>
-                                          <td className="p-3 text-right text-xs"><div className="text-slate-300">{p.buyPrice.toFixed(2)} {p.stockCurrency}</div></td>
-                                          <td className="p-3 text-right text-xs">
-                                              <div className="font-bold text-white">{p.currentPrice.toFixed(2)} {p.stockCurrency}</div>
-                                              <div className="text-[9px] text-slate-500 font-mono">FX: {p.currentFx.toFixed(4)}</div>
-                                          </td>
-                                          <td className="p-3 text-right text-xs"><div className="text-slate-500">{p.stockCurrency}</div>{p.stockCurrency !== baseCurrency && (<div className={`font-bold ${fxDev >= 0 ? 'text-green-500' : 'text-red-500'}`}>{fxDev > 0 ? '+' : ''}{formatMoney(fxDev, baseCurrency)}</div>)}</td>
-                                          <td className="p-3 text-right"><div className={`font-bold ${pl >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(pl, baseCurrency)}</div><div className={`text-[10px] ${pl >= 0 ? 'text-green-500/70' : 'text-red-500/70'}`}>{plPct > 0 ? '+' : ''}{plPct.toFixed(2)}%</div></td>
-                                          <td className="p-3 text-center"><button onClick={(e) => {e.stopPropagation(); handleEdit(p)}} className="p-1 text-blue-400 hover:text-white"><Icons.Edit size={14}/></button><button onClick={(e) => {e.stopPropagation(); deleteHolding(p.id)}} className="p-1 text-red-400 hover:text-white"><Icons.Trash2 size={14}/></button></td>
-                                      </tr>
-                                  );
-                              })}
-                          </tbody>
-                      </table>
-                  </div>
+                                      return (
+                                          <tr key={p.id} onClick={() => setSelectedStock(p)} className={`transition-colors cursor-pointer ${isSelected ? 'bg-blue-900/20 border-l-2 border-blue-500' : 'table-row-hover'}`}>
+                                              <td className="p-3 flex items-center gap-3">
+                                                  <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center overflow-hidden shrink-0 border border-slate-700">
+                                                      <img src={`https://logo.clearbit.com/${p.ticker.toLowerCase()}.com`} onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }} className="w-full h-full object-contain" alt="" />
+                                                      <div className="hidden w-full h-full text-white items-center justify-center font-bold text-xs bg-gradient-to-br from-blue-600 to-blue-800">{p.ticker.slice(0,2)}</div>
+                                                  </div>
+                                                  <div>
+                                                      <div className="font-bold text-white text-sm">{p.ticker}</div>
+                                                      <div className="text-[10px] text-slate-400 truncate max-w-[100px]">{p.name || p.ticker}</div>
+                                                  </div>
+                                              </td>
+                                              <td className="p-3 text-right font-mono text-slate-300">{p.shares}</td>
+                                              <td className="p-3 text-right text-xs">
+                                                  <div className="text-slate-400">C: {p.buyPrice.toFixed(2)} {p.stockCurrency}</div>
+                                                  <div className="font-bold text-white">A: {p.currentPrice.toFixed(2)} {p.stockCurrency}</div>
+                                              </td>
+                                              
+                                              {/* COLUMNA TOTAL INVERTIDO */}
+                                              <td className="p-3 text-right text-xs bg-slate-800/30 border-l border-slate-700/50">
+                                                  <div className="text-slate-300 font-mono">{formatMoney(costBase, baseCurrency)}</div>
+                                                  <div className="text-[9px] text-slate-500">FX C: {p.buyFx.toFixed(4)}</div>
+                                              </td>
+                                              
+                                              {/* COLUMNA VALORACIÓN ACTUAL */}
+                                              <td className="p-3 text-right text-xs bg-slate-800/30 border-r border-slate-700/50">
+                                                  <div className="text-white font-bold font-mono">{formatMoney(valBase, baseCurrency)}</div>
+                                                  <div className="text-[9px] text-slate-500">FX A: {p.currentFx.toFixed(4)}</div>
+                                              </td>
 
-                  {selectedStock && (
-                      <div className="mt-4 glass-panel p-6 rounded-xl animate-pulse-slow border-t-2 border-blue-500 fade-in h-64 shrink-0 flex flex-col md:flex-row gap-6 relative">
-                          <button onClick={() => setSelectedStock(null)} className="absolute top-2 right-2 text-slate-500 hover:text-white"><Icons.X size={20}/></button>
-                          <div className="flex-1 flex flex-col justify-center">
-                              <h3 className="text-2xl font-display font-bold text-white flex items-center gap-3">{selectedStock.ticker} <span className="text-sm font-sans text-slate-400 font-normal">{selectedStock.name}</span></h3>
-                              <div className="grid grid-cols-2 gap-4 mt-4">
-                                  <div><div className="text-[10px] uppercase text-slate-500">Rango 52 Semanas</div><div className="text-sm font-mono text-slate-300">{selectedStock.low52?.toFixed(2)} - {selectedStock.high52?.toFixed(2)} {selectedStock.stockCurrency}</div><div className="w-full h-1.5 bg-slate-800 rounded-full mt-1 overflow-hidden"><div className="h-full bg-blue-500" style={{width: `${Math.min(100, Math.max(0, ((selectedStock.currentPrice - selectedStock.low52) / (selectedStock.high52 - selectedStock.low52)) * 100))}%`}}></div></div></div>
-                                  <div><div className="text-[10px] uppercase text-slate-500">Valor en {baseCurrency}</div><div className="text-lg font-bold text-white">{formatMoney((selectedStock.currentPrice * selectedStock.shares) / selectedStock.currentFx, baseCurrency)}</div></div>
+                                              <td className="p-3 text-right text-xs">
+                                                  <div className="text-slate-500">{p.stockCurrency}</div>
+                                                  {p.stockCurrency !== baseCurrency && (
+                                                      <div className={`font-bold ${fxDev >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                                                          {fxDev > 0 ? '+' : ''}{formatMoney(fxDev, baseCurrency)}
+                                                      </div>
+                                                  )}
+                                              </td>
+                                              <td className="p-3 text-right">
+                                                  <div className={`font-bold ${pl >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(pl, baseCurrency)}</div>
+                                                  <div className={`text-[10px] ${pl >= 0 ? 'text-green-500/70' : 'text-red-500/70'}`}>{plPct > 0 ? '+' : ''}{plPct.toFixed(2)}%</div>
+                                              </td>
+                                              <td className="p-3 text-center">
+                                                  <button onClick={(e) => {e.stopPropagation(); handleEdit(p)}} className="p-1 text-blue-400 hover:text-white"><Icons.Edit size={14}/></button>
+                                                  <button onClick={(e) => {e.stopPropagation(); deleteHolding(p.id)}} className="p-1 text-red-400 hover:text-white"><Icons.Trash2 size={14}/></button>
+                                              </td>
+                                          </tr>
+                                      );
+                                  })}
+                              </tbody>
+                          </table>
+                      </div>
+
+                      {/* PANEL DETALLE INFERIOR (SCROLLABLE) */}
+                      {selectedStock && (
+                          <div ref={detailRef} className="glass-panel p-6 rounded-xl animate-pulse-slow border-t-2 border-blue-500 fade-in flex flex-col md:flex-row gap-6 relative shrink-0 min-h-[300px]">
+                              <button onClick={() => setSelectedStock(null)} className="absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-900/50 rounded-full p-1"><Icons.X size={20}/></button>
+                              
+                              <div className="flex-1 flex flex-col justify-center">
+                                  <div className="flex items-center gap-3 mb-4">
+                                       <img src={`https://logo.clearbit.com/${selectedStock.ticker.toLowerCase()}.com`} onError={(e) => e.target.style.display='none'} className="w-10 h-10 rounded-full bg-white object-contain" />
+                                       <div>
+                                           <h3 className="text-2xl font-display font-bold text-white">{selectedStock.ticker}</h3>
+                                           <span className="text-sm font-sans text-slate-400 font-normal">{selectedStock.name}</span>
+                                       </div>
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-6 mt-4 p-4 bg-slate-900/40 rounded-xl border border-slate-700/50">
+                                      <div>
+                                          <div className="text-[10px] uppercase text-slate-500 font-bold mb-1">Rango 52 Semanas ({selectedStock.stockCurrency})</div>
+                                          <div className="flex justify-between text-xs text-slate-400 font-mono mb-1">
+                                              <span>L: {selectedStock.low52?.toFixed(2)}</span>
+                                              <span>H: {selectedStock.high52?.toFixed(2)}</span>
+                                          </div>
+                                          <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden shadow-inner">
+                                              <div className="h-full bg-gradient-to-r from-blue-600 to-cyan-400" style={{width: `${Math.min(100, Math.max(0, ((selectedStock.currentPrice - selectedStock.low52) / (selectedStock.high52 - selectedStock.low52)) * 100))}%`}}></div>
+                                          </div>
+                                          <div className="text-center mt-1 text-[10px] text-white font-bold">Actual: {selectedStock.currentPrice}</div>
+                                      </div>
+                                      <div>
+                                          <div className="text-[10px] uppercase text-slate-500 font-bold mb-1">Posición Total ({baseCurrency})</div>
+                                          <div className="text-2xl font-bold text-white font-display">
+                                              {formatMoney((selectedStock.currentPrice * selectedStock.shares) / selectedStock.currentFx, baseCurrency)}
+                                          </div>
+                                          <div className="text-xs text-slate-400 mt-1">
+                                              Invertido: {formatMoney(((selectedStock.buyPrice * selectedStock.shares) / selectedStock.buyFx) + selectedStock.fees, baseCurrency)}
+                                          </div>
+                                      </div>
+                                  </div>
+                              </div>
+
+                              <div className="flex-[2] bg-slate-900/50 rounded-lg border border-slate-700 p-4 relative flex items-center justify-center min-h-[200px]">
+                                  <svg width="100%" height="100%" viewBox="0 0 400 150" preserveAspectRatio="none">
+                                      <defs>
+                                          <linearGradient id="gradPrice" x1="0%" y1="0%" x2="0%" y2="100%">
+                                              <stop offset="0%" stopColor={selectedStock.currentPrice >= selectedStock.buyPrice ? "#4ade80" : "#f87171"} stopOpacity="0.2" />
+                                              <stop offset="100%" stopColor={selectedStock.currentPrice >= selectedStock.buyPrice ? "#4ade80" : "#f87171"} stopOpacity="0" />
+                                          </linearGradient>
+                                      </defs>
+                                      
+                                      {/* Linea Compra */}
+                                      <line x1="0" y1={75} x2="400" y2={75} stroke="#fb923c" strokeWidth="2" strokeDasharray="5,3" opacity="0.6"/>
+                                      <text x="10" y="70" fill="#fb923c" fontSize="12" fontWeight="bold">Compra: {selectedStock.buyPrice}</text>
+                                      
+                                      {/* Curva simulada */}
+                                      {(() => { 
+                                          const isProfit = selectedStock.currentPrice >= selectedStock.buyPrice; 
+                                          const yEnd = isProfit ? 25 : 125; 
+                                          const color = isProfit ? "#4ade80" : "#f87171"; 
+                                          return (
+                                              <>
+                                                  <path d={`M0 75 C 100 75, 180 ${yEnd}, 400 ${yEnd}`} fill="url(#gradPrice)" stroke={color} strokeWidth="3" />
+                                                  <circle cx="400" cy={yEnd} r="6" fill={color} stroke="white" strokeWidth="2" />
+                                                  <text x="390" y={yEnd + (isProfit ? 20 : -15)} textAnchor="end" fill="white" fontSize="14" fontWeight="bold" className="drop-shadow-md">
+                                                      {selectedStock.currentPrice} {selectedStock.stockCurrency}
+                                                  </text>
+                                              </>
+                                          ); 
+                                      })()}
+                                  </svg>
                               </div>
                           </div>
-                          <div className="flex-[2] bg-slate-900/50 rounded-lg border border-slate-700 p-4 relative flex items-center justify-center">
-                              <svg width="100%" height="100%" viewBox="0 0 400 150" preserveAspectRatio="none">
-                                  <line x1="0" y1={75} x2="400" y2={75} stroke="#fb923c" strokeWidth="1" strokeDasharray="4,4" opacity="0.5"/>
-                                  <text x="5" y="72" fill="#fb923c" fontSize="10">Compra: {selectedStock.buyPrice}</text>
-                                  {(() => { const isProfit = selectedStock.currentPrice >= selectedStock.buyPrice; const yEnd = isProfit ? 20 : 130; const color = isProfit ? "#4ade80" : "#f87171"; return (<><path d={`M0 75 C 150 75, 250 ${yEnd}, 400 ${yEnd}`} fill="none" stroke={color} strokeWidth="3" /><circle cx="400" cy={yEnd} r="4" fill={color} /><text x="395" y={yEnd - 10} textAnchor="end" fill={color} fontSize="12" fontWeight="bold">Actual: {selectedStock.currentPrice}</text></>); })()}
-                              </svg>
-                          </div>
-                      </div>
-                  )}
+                      )}
+                  </div>
 
+                  {/* MODAL EDICIÓN */}
                   <Modal isOpen={isModalOpen} title={editingId ? "Editar Posición" : "Nueva Compra"} onClose={() => setIsModalOpen(false)}>
                       <div className="space-y-4">
                           <div className="grid grid-cols-2 gap-4">
@@ -339,6 +448,7 @@
                               <div><label className="text-xs text-slate-400">FX (1 {baseCurrency} = ? {form.stockCurrency})</label><input type="number" step="0.0001" value={form.buyFx} onChange={e => setForm({...form, buyFx: parseFloat(e.target.value)})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-right" /></div>
                               <div><label className="text-xs text-slate-400">Comisiones ({baseCurrency})</label><input type="number" step="0.01" value={form.fees} onChange={e => setForm({...form, fees: parseFloat(e.target.value)})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-right" /></div>
                           </div>
+                          
                           <div className="mt-6 border-t border-slate-700 pt-4">
                               <h4 className="text-sm font-bold text-blue-400 mb-2 flex items-center gap-2"><Icons.DollarSign size={16}/> Histórico Dividendos</h4>
                               <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700 mb-3">
@@ -365,6 +475,7 @@
               </div>
           );
       };
+
 
       // --- PESTAÑA 2: ESTUDIO ---
       const AnalysisTab = ({ apiKey, baseCurrency }) => {
