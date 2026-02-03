@@ -11,20 +11,7 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/recharts@2.10.3/dist/Recharts.js"></script>
-
-<script src="//cdn.jsdelivr.net/npm/eruda"></script>
-<script>
-    eruda.init();  const consoleTool = eruda.get('console');
-    const patternsToIgnore = [
-        'AbortError',  /AbortError/i,
-        /This page appears to be missing CSS declarations for Mapbox GL/i,
-        /featureNamespace place-A of featureset place-labels/,
-        /Raster DEM source .* is used both for terrain and as layer source/,
-        /Cutoff is currently disabled on terrain/
-    ];
-    const customFilter = (log) => {  const messageString = log.args.join(' '); const shouldBeIgnored = patternsToIgnore.some(pattern => { if (pattern instanceof RegExp) { return pattern.test(messageString);} return messageString.includes(pattern); }); return !shouldBeIgnored; }; consoleTool.filter(customFilter);
-</script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
     <style>
       html, body { margin: 0; padding: 0; width: 100%; height: 100dvh; overflow: hidden; background-color: #0a0a0a; font-family: 'Inter', sans-serif; color: #e5e5e5; }
@@ -44,9 +31,6 @@
       .chart-container { background: linear-gradient(135deg, rgba(15, 23, 42, 0.9) 0%, rgba(30, 41, 59, 0.8) 100%); border-radius: 16px; padding: 24px; border: 1px solid rgba(59, 130, 246, 0.2); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); }
       .metric-card { background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(51, 65, 85, 0.6) 100%); border-radius: 12px; padding: 16px; border: 1px solid rgba(148, 163, 184, 0.1); transition: all 0.3s ease; }
       .metric-card:hover { transform: translateY(-2px); border-color: rgba(59, 130, 246, 0.3); box-shadow: 0 8px 24px rgba(59, 130, 246, 0.15); }
-      .chart-tooltip { background: rgba(15, 23, 42, 0.95) !important; border: 1px solid rgba(59, 130, 246, 0.3) !important; border-radius: 8px !important; padding: 12px !important; backdrop-filter: blur(8px); }
-      .pulse-dot { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-      @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
       
       /* Animaciones suaves */
       .slide-up { animation: slideUp 0.5s ease-out; }
@@ -64,9 +48,6 @@
     <script type="text/babel">
       const { useState, useEffect, useMemo, useRef } = React;
       const { createRoot } = ReactDOM;
-      
-      // Esperar a que Recharts esté disponible
-      const { LineChart, Line, AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, ReferenceLine } = window.Recharts || {};
 
       const _0x7a2=k=>{let x=Object.values(new Intl.DateTimeFormat('es').formatToParts(new Date())).filter(p=>['year','month','day'].includes(p.type)).reduce((a,c)=>a+~~c.value,0)*new Date().getDate();return k==x||k==x.toString(16).toUpperCase()};
 
@@ -146,66 +127,30 @@
         return num >= 0 ? 'text-green-400' : 'text-red-400';
       };
 
-      // --- TOOLTIP PERSONALIZADO PARA GRÁFICOS ---
-      const CustomTooltip = ({ active, payload, label, currency }) => {
-        if (!active || !payload || !payload.length) return null;
-        
-        return (
-          <div className="chart-tooltip" style={{ background: 'rgba(15, 23, 42, 0.95)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '8px', padding: '12px' }}>
-            <p className="text-xs text-slate-400 mb-2 font-semibold">{label}</p>
-            {payload.map((entry, index) => (
-              <div key={index} className="flex items-center justify-between gap-4 mb-1">
-                <span className="text-xs" style={{ color: entry.color }}>{entry.name}:</span>
-                <span className="text-sm font-bold" style={{ color: entry.color }}>
-                  {entry.name.includes('%') ? formatPercent(entry.value) : formatCurrency(entry.value, currency)}
-                </span>
-              </div>
-            ))}
-          </div>
-        );
-      };
-
-      // --- MODAL DE GRÁFICO MEJORADO ---
+      // --- COMPONENTE DE GRÁFICO CON CHART.JS ---
       const ChartModal = ({ stock, onClose, baseCurrency }) => {
         const [timeframe, setTimeframe] = useState('1M');
-        const [loading, setLoading] = useState(false);
-        
-        // Extraer datos históricos
+        const chartRef = useRef(null);
+        const chartInstance = useRef(null);
+        const volumeChartRef = useRef(null);
+        const volumeChartInstance = useRef(null);
+
+        // Extraer datos históricos filtrados por timeframe
         const chartData = useMemo(() => {
           if (!stock.historicalData || stock.historicalData.length === 0) return [];
           
-          // Filtrar por timeframe
-          const now = new Date();
           let filtered = stock.historicalData;
           
           switch(timeframe) {
-            case '1D':
-              filtered = stock.historicalData.slice(-1);
-              break;
-            case '1W':
-              filtered = stock.historicalData.slice(-7);
-              break;
-            case '1M':
-              filtered = stock.historicalData.slice(-30);
-              break;
-            case '3M':
-              filtered = stock.historicalData.slice(-90);
-              break;
-            case '1Y':
-              filtered = stock.historicalData.slice(-365);
-              break;
-            case 'ALL':
-              filtered = stock.historicalData;
-              break;
+            case '1D': filtered = stock.historicalData.slice(-1); break;
+            case '1W': filtered = stock.historicalData.slice(-7); break;
+            case '1M': filtered = stock.historicalData.slice(-30); break;
+            case '3M': filtered = stock.historicalData.slice(-90); break;
+            case '1Y': filtered = stock.historicalData.slice(-365); break;
+            case 'ALL': filtered = stock.historicalData; break;
           }
           
-          return filtered.map(d => ({
-            date: d.date,
-            precio: parseFloat(d.close || 0),
-            volumen: parseInt(d.volume || 0),
-            high: parseFloat(d.high || 0),
-            low: parseFloat(d.low || 0),
-          }));
+          return filtered;
         }, [stock.historicalData, timeframe]);
 
         // Calcular métricas
@@ -218,38 +163,202 @@
           const profitLoss = marketValue - invested;
           const profitPercent = ((marketValue - invested) / invested) * 100;
           
-          // Calcular máximo y mínimo del periodo
-          const prices = chartData.map(d => d.precio);
+          const prices = chartData.map(d => parseFloat(d.close || 0));
           const max = Math.max(...prices);
           const min = Math.min(...prices);
-          const avgVolume = chartData.reduce((sum, d) => sum + d.volumen, 0) / chartData.length;
+          const avgVolume = chartData.reduce((sum, d) => sum + parseInt(d.volume || 0), 0) / chartData.length;
           
-          // Calcular volatilidad (desviación estándar)
           const mean = prices.reduce((sum, p) => sum + p, 0) / prices.length;
           const variance = prices.reduce((sum, p) => sum + Math.pow(p - mean, 2), 0) / prices.length;
           const volatility = Math.sqrt(variance);
           
           return {
-            current,
-            invested,
-            marketValue,
-            profitLoss,
-            profitPercent,
-            max,
-            min,
-            avgVolume,
-            volatility,
+            current, invested, marketValue, profitLoss, profitPercent,
+            max, min, avgVolume, volatility,
             range: max - min,
             rangePercent: ((max - min) / min) * 100
           };
         }, [stock, chartData]);
 
-        // Datos para el gráfico de volumen
-        const volumeData = useMemo(() => {
-          return chartData.map(d => ({
-            date: d.date,
-            volumen: d.volumen / 1000000 // Convertir a millones
-          }));
+        // Crear gráfico de precio
+        useEffect(() => {
+          if (!chartRef.current || chartData.length === 0) return;
+
+          // Destruir gráfico anterior si existe
+          if (chartInstance.current) {
+            chartInstance.current.destroy();
+          }
+
+          const ctx = chartRef.current.getContext('2d');
+          
+          const labels = chartData.map(d => {
+            const date = new Date(d.date);
+            return `${date.getDate()}/${date.getMonth() + 1}`;
+          });
+
+          const prices = chartData.map(d => parseFloat(d.close || 0));
+          const highs = chartData.map(d => parseFloat(d.high || 0));
+          const lows = chartData.map(d => parseFloat(d.low || 0));
+
+          chartInstance.current = new Chart(ctx, {
+            type: 'line',
+            data: {
+              labels: labels,
+              datasets: [
+                {
+                  label: 'Precio',
+                  data: prices,
+                  borderColor: '#3b82f6',
+                  backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                  fill: true,
+                  tension: 0.4,
+                  borderWidth: 3,
+                  pointRadius: 3,
+                  pointHoverRadius: 6,
+                  pointBackgroundColor: '#3b82f6',
+                },
+                {
+                  label: 'Máximo',
+                  data: highs,
+                  borderColor: '#10b981',
+                  borderDash: [5, 5],
+                  fill: false,
+                  tension: 0.4,
+                  borderWidth: 2,
+                  pointRadius: 0,
+                },
+                {
+                  label: 'Mínimo',
+                  data: lows,
+                  borderColor: '#ef4444',
+                  borderDash: [5, 5],
+                  fill: false,
+                  tension: 0.4,
+                  borderWidth: 2,
+                  pointRadius: 0,
+                }
+              ]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: {
+                  labels: { color: '#94a3b8', font: { size: 12 } }
+                },
+                tooltip: {
+                  backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                  titleColor: '#e2e8f0',
+                  bodyColor: '#e2e8f0',
+                  borderColor: 'rgba(59, 130, 246, 0.5)',
+                  borderWidth: 1,
+                  padding: 12,
+                  displayColors: true,
+                  callbacks: {
+                    label: function(context) {
+                      return context.dataset.label + ': ' + formatCurrency(context.parsed.y, stock.currency);
+                    }
+                  }
+                }
+              },
+              scales: {
+                y: {
+                  grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                  ticks: { 
+                    color: '#94a3b8',
+                    callback: function(value) {
+                      return formatCurrency(value, stock.currency);
+                    }
+                  }
+                },
+                x: {
+                  grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                  ticks: { color: '#94a3b8' }
+                }
+              }
+            }
+          });
+
+          return () => {
+            if (chartInstance.current) {
+              chartInstance.current.destroy();
+            }
+          };
+        }, [chartData, stock.currency]);
+
+        // Crear gráfico de volumen
+        useEffect(() => {
+          if (!volumeChartRef.current || chartData.length === 0) return;
+
+          if (volumeChartInstance.current) {
+            volumeChartInstance.current.destroy();
+          }
+
+          const ctx = volumeChartRef.current.getContext('2d');
+          
+          const labels = chartData.map(d => {
+            const date = new Date(d.date);
+            return `${date.getDate()}/${date.getMonth() + 1}`;
+          });
+
+          const volumes = chartData.map(d => parseInt(d.volume || 0) / 1000000);
+
+          volumeChartInstance.current = new Chart(ctx, {
+            type: 'bar',
+            data: {
+              labels: labels,
+              datasets: [{
+                label: 'Volumen (M)',
+                data: volumes,
+                backgroundColor: 'rgba(168, 85, 247, 0.6)',
+                borderColor: '#a855f7',
+                borderWidth: 1,
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: {
+                  labels: { color: '#94a3b8', font: { size: 12 } }
+                },
+                tooltip: {
+                  backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                  titleColor: '#e2e8f0',
+                  bodyColor: '#e2e8f0',
+                  borderColor: 'rgba(168, 85, 247, 0.5)',
+                  borderWidth: 1,
+                  padding: 12,
+                  callbacks: {
+                    label: function(context) {
+                      return 'Volumen: ' + formatNumber(context.parsed.y, 2) + 'M';
+                    }
+                  }
+                }
+              },
+              scales: {
+                y: {
+                  grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                  ticks: { 
+                    color: '#94a3b8',
+                    callback: function(value) {
+                      return formatNumber(value, 1) + 'M';
+                    }
+                  }
+                },
+                x: {
+                  grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                  ticks: { color: '#94a3b8' }
+                }
+              }
+            }
+          });
+
+          return () => {
+            if (volumeChartInstance.current) {
+              volumeChartInstance.current.destroy();
+            }
+          };
         }, [chartData]);
 
         return (
@@ -266,7 +375,6 @@
                   </div>
                   <p className="text-slate-400 text-sm">{stock.name || 'Análisis Detallado'}</p>
                   
-                  {/* Precio actual grande */}
                   {metrics && (
                     <div className="mt-4 flex items-baseline gap-4">
                       <span className="text-5xl font-bold text-white">{formatCurrency(metrics.current, stock.currency)}</span>
@@ -344,68 +452,9 @@
                   </div>
                   
                   {chartData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height={400}>
-                      <ComposedChart data={chartData}>
-                        <defs>
-                          <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
-                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
-                        <XAxis 
-                          dataKey="date" 
-                          stroke="#94a3b8" 
-                          style={{ fontSize: '12px' }}
-                          tickFormatter={(value) => {
-                            const date = new Date(value);
-                            return `${date.getDate()}/${date.getMonth() + 1}`;
-                          }}
-                        />
-                        <YAxis 
-                          stroke="#94a3b8" 
-                          style={{ fontSize: '12px' }}
-                          domain={['auto', 'auto']}
-                          tickFormatter={(value) => formatNumber(value, 2)}
-                        />
-                        <Tooltip content={<CustomTooltip currency={stock.currency} />} />
-                        <Area 
-                          type="monotone" 
-                          dataKey="precio" 
-                          stroke="#3b82f6" 
-                          strokeWidth={3}
-                          fill="url(#colorPrice)" 
-                          name="Precio"
-                        />
-                        <Line 
-                          type="monotone" 
-                          dataKey="high" 
-                          stroke="#10b981" 
-                          strokeWidth={2}
-                          strokeDasharray="5 5"
-                          dot={false}
-                          name="Máximo"
-                        />
-                        <Line 
-                          type="monotone" 
-                          dataKey="low" 
-                          stroke="#ef4444" 
-                          strokeWidth={2}
-                          strokeDasharray="5 5"
-                          dot={false}
-                          name="Mínimo"
-                        />
-                        {stock.buyPrice && (
-                          <ReferenceLine 
-                            y={parseFloat(stock.buyPrice)} 
-                            stroke="#fbbf24" 
-                            strokeDasharray="3 3"
-                            strokeWidth={2}
-                            label={{ value: 'Precio Compra', fill: '#fbbf24', fontSize: 12 }}
-                          />
-                        )}
-                      </ComposedChart>
-                    </ResponsiveContainer>
+                    <div style={{ height: '400px' }}>
+                      <canvas ref={chartRef}></canvas>
+                    </div>
                   ) : (
                     <div className="flex items-center justify-center h-64 text-slate-400">
                       <p>No hay datos históricos disponibles</p>
@@ -415,7 +464,7 @@
               </div>
 
               {/* Gráfico de volumen */}
-              {volumeData.length > 0 && (
+              {chartData.length > 0 && (
                 <div className="px-6 pb-6">
                   <div className="chart-container">
                     <div className="flex items-center gap-2 mb-4">
@@ -423,37 +472,9 @@
                       <h3 className="text-lg font-bold text-white">Volumen de Operaciones (Millones)</h3>
                     </div>
                     
-                    <ResponsiveContainer width="100%" height={200}>
-                      <BarChart data={volumeData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
-                        <XAxis 
-                          dataKey="date" 
-                          stroke="#94a3b8" 
-                          style={{ fontSize: '12px' }}
-                          tickFormatter={(value) => {
-                            const date = new Date(value);
-                            return `${date.getDate()}/${date.getMonth() + 1}`;
-                          }}
-                        />
-                        <YAxis 
-                          stroke="#94a3b8" 
-                          style={{ fontSize: '12px' }}
-                          tickFormatter={(value) => `${formatNumber(value, 1)}M`}
-                        />
-                        <Tooltip 
-                          content={({ active, payload }) => {
-                            if (!active || !payload || !payload.length) return null;
-                            return (
-                              <div className="chart-tooltip" style={{ background: 'rgba(15, 23, 42, 0.95)', border: '1px solid rgba(168, 85, 247, 0.3)', borderRadius: '8px', padding: '12px' }}>
-                                <p className="text-xs text-slate-400 mb-1">{payload[0].payload.date}</p>
-                                <p className="text-sm font-bold text-purple-400">{formatNumber(payload[0].value, 2)}M unidades</p>
-                              </div>
-                            );
-                          }}
-                        />
-                        <Bar dataKey="volumen" fill="#a855f7" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
+                    <div style={{ height: '200px' }}>
+                      <canvas ref={volumeChartRef}></canvas>
+                    </div>
                   </div>
                 </div>
               )}
@@ -529,7 +550,7 @@
         );
       };
 
-      // --- COMPONENTE PRINCIPAL DE CARTERA (simplificado, mantiene toda la lógica original) ---
+      // --- COMPONENTE PRINCIPAL DE CARTERA ---
       const PortfolioTab = ({ portfolio, setPortfolio, apiKey, isAuth, baseCurrency, refreshInterval, lastUpdate, setLastUpdate }) => {
         const [showAddModal, setShowAddModal] = useState(false);
         const [selectedStock, setSelectedStock] = useState(null);
@@ -659,7 +680,6 @@
           }
         };
 
-        // Auto-refresh
         useEffect(() => {
           if (refreshInterval > 0 && apiKey && portfolio.length > 0) {
             timerRef.current = setInterval(() => {
@@ -972,7 +992,7 @@
         );
       };
 
-      // --- TAB DE CONFIGURACIÓN (mantiene toda la funcionalidad original) ---
+      // --- TAB DE CONFIGURACIÓN ---
       const SettingsTab = ({ apiKey, setApiKey, isAuth, onActivate, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio }) => {
         const [localKey, setLocalKey] = useState(apiKey);
         const [localLic, setLocalLic] = useState('');
@@ -1092,22 +1112,7 @@
         );
       };
 
-      // Esperar a que Recharts esté completamente cargado
-      const initApp = () => {
-        if (typeof window.Recharts !== 'undefined') {
-          createRoot(document.getElementById('root')).render(<App />);
-        } else {
-          console.log('Esperando a que Recharts se cargue...');
-          setTimeout(initApp, 100);
-        }
-      };
-
-      // Iniciar cuando el DOM esté listo
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initApp);
-      } else {
-        initApp();
-      }
+      createRoot(document.getElementById('root')).render(<App />);
     </script>
 </body>
 </html>
