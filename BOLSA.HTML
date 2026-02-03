@@ -142,7 +142,7 @@
           const [analysisReport, setAnalysisReport] = useState(null);
           const [analyzingPortfolio, setAnalyzingPortfolio] = useState(false);
           const [now, setNow] = useState(new Date());
-          const [form, setForm] = useState({ ticker: '', name: '', shares: 0, buyPrice: 0, buyDate: '', stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, dividends: [] });
+          const [form, setForm] = useState({ ticker: '', name: '', shares: 0, buyPrice: 0, buyDate: '', stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, dividends: [] });
           const [divForm, setDivForm] = useState({ year: new Date().getFullYear(), net: 0, taxOrigin: 0, taxDest: 0 });
 
           const detailRef = useRef(null);
@@ -170,12 +170,12 @@
               try {
                   const updates = [];
                   for (const item of portfolio) {
-                      // Se añade la petición de valor intrínseco ligero a la actualización
+                      // Se pide Intrinsic Value y también Current PER (pe_ratio)
                       const prompt = `Datos actuales de: "${item.ticker}" (${item.stockCurrency}). 
-                      REGLA FX: Necesito el multiplicador para pasar de ${item.stockCurrency} a ${baseCurrency}.
+                      REGLA FX: Multiplicador para pasar ${item.stockCurrency} -> ${baseCurrency}.
                       Si 1 ${baseCurrency} = 1.08 ${item.stockCurrency}, dame 0.9259 (1/1.08).
-                      Calcula un "intrinsic_value" aproximado (Graham/DCF simplificado).
-                      Responde SOLO JSON en ESPAÑOL: {"price": number, "fx_multiplier": number, "high52": number, "low52": number, "name": "string", "intrinsic_value": number}`;
+                      Calcula un "intrinsic_value" aproximado (Graham/DCF) y dame el "pe_ratio" (PER) actual.
+                      Responde SOLO JSON en ESPAÑOL: {"price": number, "fx_multiplier": number, "high52": number, "low52": number, "name": "string", "intrinsic_value": number, "pe_ratio": number}`;
                       const res = await askGemini(apiKey, prompt);
                       const json = extractJSON(res);
                       if (json) {
@@ -186,7 +186,16 @@
                   }
                   setPortfolio(prev => prev.map(p => {
                       const up = updates.find(u => u.id === p.id);
-                      return up ? { ...p, currentPrice: up.price, currentFx: up.fx, high52: up.high52, low52: up.low52, name: up.name, intrinsicValue: up.intrinsic_value } : p;
+                      return up ? { 
+                        ...p, 
+                        currentPrice: up.price, 
+                        currentFx: up.fx, 
+                        high52: up.high52, 
+                        low52: up.low52, 
+                        name: up.name, 
+                        intrinsicValue: up.intrinsic_value,
+                        currentPE: up.pe_ratio 
+                      } : p;
                   }));
                   setLastUpdate(new Date().toISOString());
               } catch (e) { console.error(e); } finally { setUpdating(false); }
@@ -205,21 +214,21 @@
 
           const handleNew = () => {
               if (!isAuth && portfolio.length >= 5) return alert("Límite de 5 acciones alcanzado. Registra la aplicación en Ajustes.");
-              setForm({ ticker: '', name: '', shares: 0, buyPrice: 0, buyDate: new Date().toISOString().slice(0,10), stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, dividends: [] });
+              setForm({ ticker: '', name: '', shares: 0, buyPrice: 0, buyDate: new Date().toISOString().slice(0,10), stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, dividends: [] });
               setEditingId(null);
               setIsModalOpen(true);
           };
 
           const handleEdit = (item) => {
-              setForm({ ...item, adjustments: item.adjustments || 0, dividends: item.dividends || [] });
+              setForm({ ...item, adjustments: item.adjustments || 0, dividends: item.dividends || [], buyPE: item.buyPE || 0 });
               setEditingId(item.id);
               setIsModalOpen(true);
           };
 
           const handleSave = () => {
               const enriched = { ...form, name: form.name || form.ticker };
-              if (editingId) setPortfolio(prev => prev.map(p => p.id === editingId ? { ...enriched, currentPrice: p.currentPrice, currentFx: p.currentFx, high52: p.high52, low52: p.low52, intrinsicValue: p.intrinsicValue } : p));
-              else setPortfolio(prev => [...prev, { ...enriched, id: Date.now(), currentPrice: form.buyPrice, currentFx: form.buyFx, high52: form.buyPrice*1.1, low52: form.buyPrice*0.9, intrinsicValue: form.buyPrice }]);
+              if (editingId) setPortfolio(prev => prev.map(p => p.id === editingId ? { ...enriched, currentPrice: p.currentPrice, currentFx: p.currentFx, high52: p.high52, low52: p.low52, intrinsicValue: p.intrinsicValue, currentPE: p.currentPE } : p));
+              else setPortfolio(prev => [...prev, { ...enriched, id: Date.now(), currentPrice: form.buyPrice, currentFx: form.buyFx, high52: form.buyPrice*1.1, low52: form.buyPrice*0.9, intrinsicValue: form.buyPrice, currentPE: form.buyPE }]);
               setIsModalOpen(false);
           };
 
@@ -330,8 +339,15 @@
                           <table className="w-full text-left border-collapse min-w-[1000px]">
                               <thead className="bg-slate-800 text-slate-400 text-[10px] uppercase sticky top-0 z-10 shadow-lg">
                                   <tr>
-                                      <th className="p-3">Valor</th><th className="p-3 text-right">Acciones</th><th className="p-3 text-right">Precio (Comp/Act)</th>
-                                      <th className="p-3 text-right">Invertido</th><th className="p-3 text-right">Valoración</th><th className="p-3 text-right">Rendimiento (Días)</th><th className="p-3 text-right">G/P</th><th className="p-3 text-center">Acción</th>
+                                      <th className="p-3">Valor</th>
+                                      <th className="p-3 text-right">Acciones</th>
+                                      <th className="p-3 text-right">Precio (Comp/Act)</th>
+                                      <th className="p-3 text-right">PER (Ini/Act)</th>
+                                      <th className="p-3 text-right">Invertido</th>
+                                      <th className="p-3 text-right">Valoración</th>
+                                      <th className="p-3 text-right">Rendimiento (Días)</th>
+                                      <th className="p-3 text-right">G/P</th>
+                                      <th className="p-3 text-center">Acción</th>
                                   </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-800 text-sm">
@@ -352,6 +368,10 @@
                                                   <div className="text-slate-400 font-mono">{p.buyPrice.toFixed(2)}</div>
                                                   <div className="font-bold text-white font-mono">{p.currentPrice.toFixed(2)}</div>
                                               </td>
+                                              <td className="p-3 text-right text-xs font-mono">
+                                                  <div className="text-slate-500">{p.buyPE > 0 ? p.buyPE.toFixed(1) : '--'}</div>
+                                                  <div className="text-blue-300 font-bold">{p.currentPE ? p.currentPE.toFixed(1) : '--'}</div>
+                                              </td>
                                               <td className="p-3 text-right font-mono text-slate-300">{formatMoney(cB, baseCurrency)}</td>
                                               <td className="p-3 text-right font-mono text-white font-bold">{formatMoney(vB, baseCurrency)}</td>
                                               <td className="p-3 text-right text-xs leading-tight">
@@ -370,7 +390,7 @@
                           </table>
                       </div>
 
-                      {/* DETALLE GRAFICO ACTUALIZADO CON VALOR INTRINSECO */}
+                      {/* DETALLE GRAFICO ACTUALIZADO */}
                       {selectedStock && (
                           <div ref={detailRef} className="glass-panel p-6 rounded-xl border-t-2 border-blue-500 fade-in flex flex-col md:flex-row gap-6 shrink-0 min-h-[400px] relative">
                               <button onClick={() => setSelectedStock(null)} className="absolute top-2 right-2 text-slate-500 hover:text-white"><Icons.X size={24}/></button>
@@ -384,8 +404,15 @@
                                           <span className="text-xl font-bold font-display text-white">{selectedStock.currentPrice}</span>
                                       </div>
                                       <div className="flex justify-between items-center pb-2 border-b border-slate-700">
-                                          <span className="text-xs text-slate-400 uppercase">Coste Medio</span>
+                                          <span className="text-xs text-slate-400 uppercase">Precio Medio (Compra)</span>
                                           <span className="text-lg font-bold font-mono text-slate-300">{selectedStock.buyPrice.toFixed(2)}</span>
+                                      </div>
+                                      <div className="flex justify-between items-center pb-2 border-b border-slate-700">
+                                           <span className="text-xs text-slate-400 uppercase">PER (Compra vs Actual)</span>
+                                           <div className="text-right">
+                                              <span className="text-xs text-slate-500 block">C: {selectedStock.buyPE > 0 ? selectedStock.buyPE : '--'}</span>
+                                              <span className="text-sm font-bold text-blue-300 block">A: {selectedStock.currentPE ? selectedStock.currentPE.toFixed(1) : '--'}</span>
+                                           </div>
                                       </div>
                                       {selectedStock.intrinsicValue && (
                                         <div className="flex justify-between items-center">
@@ -396,44 +423,54 @@
                                   </div>
                               </div>
                               <div className="flex-[2] bg-slate-950 rounded-lg p-6 border border-slate-800 relative min-h-[250px] shadow-inner">
-                                  <svg width="100%" height="100%" viewBox="0 0 500 200" preserveAspectRatio="none">
-                                      {/* Grid lines */}
-                                      {[0, 50, 100, 150, 200].map(y => <line key={y} x1="50" y1={y} x2="500" y2={y} stroke="rgba(255,255,255,0.06)" strokeWidth="1" />)}
-                                      
+                                  <svg width="100%" height="100%" viewBox="0 0 500 250" preserveAspectRatio="none">
                                       {(() => {
+                                          // Calcular rangos estrictos para graduar el eje
                                           const iv = selectedStock.intrinsicValue || selectedStock.currentPrice;
                                           const vals = [selectedStock.buyPrice, selectedStock.currentPrice, selectedStock.high52, selectedStock.low52, iv];
-                                          const max = Math.max(...vals) * 1.1;
-                                          const min = Math.min(...vals) * 0.9;
-                                          const range = max - min;
-                                          const getY = (v) => 200 - ((v - min) / range) * 200;
+                                          const minVal = Math.min(...vals) * 0.9;
+                                          const maxVal = Math.max(...vals) * 1.1;
+                                          const range = maxVal - minVal;
+                                          
+                                          // Función para convertir valor a coordenada Y
+                                          const getY = (v) => 220 - ((v - minVal) / range) * 200;
+
+                                          // Generar 5 ticks para el eje Y
+                                          const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => minVal + (range * f));
 
                                           return (
                                               <g>
-                                                  {/* Y Axis Labels */}
-                                                  <text x="5" y="15" fill="#555" fontSize="9" fontFamily="monospace">{max.toFixed(0)}</text>
-                                                  <text x="5" y="200" fill="#555" fontSize="9" fontFamily="monospace">{min.toFixed(0)}</text>
+                                                  {/* Grid lines & Labels */}
+                                                  {ticks.map(t => {
+                                                      const y = getY(t);
+                                                      return (
+                                                          <g key={t}>
+                                                              <line x1="50" y1={y} x2="500" y2={y} stroke="rgba(255,255,255,0.1)" strokeWidth="1" strokeDasharray="2,2"/>
+                                                              <text x="45" y={y+3} fill="#666" fontSize="10" fontFamily="monospace" textAnchor="end">{t.toFixed(1)}</text>
+                                                          </g>
+                                                      )
+                                                  })}
 
                                                   {/* Zones (Min/Max 52 range area) */}
                                                   <rect x="50" y={getY(selectedStock.high52)} width="450" height={getY(selectedStock.low52) - getY(selectedStock.high52)} fill="rgba(59, 130, 246, 0.05)" />
-                                                  <line x1="50" y1={getY(selectedStock.high52)} x2="500" y2={getY(selectedStock.high52)} stroke="#3b82f6" strokeWidth="0.5" strokeDasharray="2,2" />
-                                                  <line x1="50" y1={getY(selectedStock.low52)} x2="500" y2={getY(selectedStock.low52)} stroke="#3b82f6" strokeWidth="0.5" strokeDasharray="2,2" />
-                                                  <text x="52" y={getY(selectedStock.high52)-5} fill="#3b82f6" fontSize="8">Max 52w</text>
-                                                  <text x="52" y={getY(selectedStock.low52)+10} fill="#3b82f6" fontSize="8">Min 52w</text>
+                                                  <line x1="50" y1={getY(selectedStock.high52)} x2="500" y2={getY(selectedStock.high52)} stroke="#3b82f6" strokeWidth="1" strokeDasharray="4,4" />
+                                                  <text x="505" y={getY(selectedStock.high52)+3} fill="#3b82f6" fontSize="9" textAnchor="start">Max 52s</text>
+
+                                                  <line x1="50" y1={getY(selectedStock.low52)} x2="500" y2={getY(selectedStock.low52)} stroke="#3b82f6" strokeWidth="1" strokeDasharray="4,4" />
+                                                  <text x="505" y={getY(selectedStock.low52)+3} fill="#3b82f6" fontSize="9" textAnchor="start">Min 52s</text>
 
                                                   {/* Intrinsic Value Line */}
                                                   <line x1="50" y1={getY(iv)} x2="500" y2={getY(iv)} stroke="#a855f7" strokeWidth="2" strokeDasharray="8,4" />
-                                                  <text x="495" y={getY(iv)-5} fill="#a855f7" fontSize="10" textAnchor="end" fontWeight="bold">Valor Intrínseco</text>
+                                                  <text x="55" y={getY(iv)-5} fill="#a855f7" fontSize="10" fontWeight="bold">Valor Intrínseco</text>
 
                                                   {/* Buy Price Line */}
                                                   <line x1="50" y1={getY(selectedStock.buyPrice)} x2="500" y2={getY(selectedStock.buyPrice)} stroke="#fb923c" strokeWidth="1.5" strokeDasharray="4,4" />
-                                                  <text x="52" y={getY(selectedStock.buyPrice)-5} fill="#fb923c" fontSize="9">Compra</text>
+                                                  <text x="55" y={getY(selectedStock.buyPrice)-5} fill="#fb923c" fontSize="9">Precio Compra</text>
 
-                                                  {/* Current Price Curve (Bézier for visual effect) */}
-                                                  <path d={`M50 ${getY(selectedStock.buyPrice)} C 200 ${getY(selectedStock.buyPrice)}, 300 ${getY(selectedStock.currentPrice)}, 500 ${getY(selectedStock.currentPrice)}`} fill="none" stroke={selectedStock.currentPrice >= selectedStock.buyPrice ? "#4ade80" : "#f87171"} strokeWidth="4" strokeLinecap="round" />
-                                                  
-                                                  {/* Current Point */}
-                                                  <circle cx="500" cy={getY(selectedStock.currentPrice)} r="6" fill="white" stroke={selectedStock.currentPrice >= selectedStock.buyPrice ? "#4ade80" : "#f87171"} strokeWidth="2"/>
+                                                  {/* Current Price Marker */}
+                                                  <line x1="50" y1={getY(selectedStock.currentPrice)} x2="500" y2={getY(selectedStock.currentPrice)} stroke={selectedStock.currentPrice >= selectedStock.buyPrice ? "#4ade80" : "#f87171"} strokeWidth="1" />
+                                                  <circle cx="275" cy={getY(selectedStock.currentPrice)} r="6" fill="white" stroke={selectedStock.currentPrice >= selectedStock.buyPrice ? "#4ade80" : "#f87171"} strokeWidth="2"/>
+                                                  <text x="285" y={getY(selectedStock.currentPrice)+3} fill="white" fontSize="12" fontWeight="bold">ACTUAL: {selectedStock.currentPrice}</text>
                                               </g>
                                           );
                                       })()}
@@ -459,17 +496,19 @@
                               <div className="flex flex-col"><label className="text-[10px] text-slate-500 uppercase font-bold mb-1">Comis. Venta</label><input type="number" step="0.01" value={form.fees} onChange={e => setForm({...form, fees: parseFloat(e.target.value)})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-right font-mono" /></div>
                               <div className="flex flex-col"><label className="text-[10px] text-slate-500 uppercase font-bold mb-1">Ajustes</label><input type="number" step="0.01" value={form.adjustments} onChange={e => setForm({...form, adjustments: parseFloat(e.target.value)})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-right font-mono" /></div>
                           </div>
+                          <div className="grid grid-cols-2 gap-4">
+                               <div className="flex flex-col"><label className="text-[10px] text-slate-500 uppercase font-bold mb-1">PER (Compra)</label><input type="number" step="0.01" value={form.buyPE} onChange={e => setForm({...form, buyPE: parseFloat(e.target.value)})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-right font-mono" placeholder="Opcional" /></div>
+                          </div>
                           
-                          {/* RESUMEN DE LA POSICIÓN (Añadido) */}
+                          {/* RESUMEN DE LA POSICIÓN (Añadido FORMULA EXPLICITA) */}
                           <div className="bg-blue-900/10 border border-blue-500/30 rounded-xl p-4 mt-2">
-                             <h4 className="text-[10px] font-bold text-blue-400 uppercase mb-2 flex items-center gap-2"><Icons.Activity size={12}/> Resumen en tiempo real</h4>
-                             <div className="flex justify-between text-xs">
-                                <span className="text-slate-400">Inversión Total:</span>
-                                <span className="font-mono text-white font-bold">{((form.shares * form.buyPrice * form.buyFx) + (form.adjustments || 0)).toFixed(2)} {baseCurrency}</span>
+                             <h4 className="text-[10px] font-bold text-blue-400 uppercase mb-2 flex items-center gap-2"><Icons.Activity size={12}/> Resumen en tiempo real (Cálculo)</h4>
+                             <div className="text-xs font-mono text-slate-300 text-center py-2 bg-slate-900/50 rounded mb-2 border border-slate-700">
+                                {form.shares} acc x ({form.buyPrice} {form.stockCurrency} x {form.buyFx} FX) + {form.adjustments} Adj =
                              </div>
-                             <div className="flex justify-between text-xs mt-1">
-                                <span className="text-slate-400">Coste por acción (Local):</span>
-                                <span className="font-mono text-white">{((form.shares * form.buyPrice * form.buyFx) / (form.shares || 1)).toFixed(2)} {baseCurrency}</span>
+                             <div className="flex justify-between text-xs border-t border-slate-700 pt-2">
+                                <span className="text-slate-400 font-bold">COSTE TOTAL:</span>
+                                <span className="font-mono text-white font-bold text-sm">{((form.shares * form.buyPrice * form.buyFx) + (form.adjustments || 0)).toFixed(2)} {baseCurrency}</span>
                              </div>
                           </div>
 
@@ -503,7 +542,7 @@
           );
       };
 
-      // --- PESTAÑA ESTUDIO (MUY MEJORADA) ---
+      // --- PESTAÑA ESTUDIO (MUY MEJORADA + COMENTARIOS SECTOR) ---
       const AnalysisTab = ({ apiKey, baseCurrency }) => {
           const [ticker, setTicker] = useState('');
           const [question, setQuestion] = useState('');
@@ -562,6 +601,15 @@
                       if (json) setData(json); else throw new Error("No se pudo generar el análisis financiero.");
                   }
               } catch (e) { alert("Error: " + e.message); } finally { setLoading(false); }
+          };
+
+          const getComparisonVerdict = (metric, sVal, iVal) => {
+              if(!sVal || !iVal) return "";
+              if(metric === 'yield') {
+                  return sVal > iVal ? "✅ Paga mejor dividendo que la media" : "❌ Dividendo inferior a la media";
+              }
+              // Para PER y PEG, menor es mejor (generalmente)
+              return sVal < iVal ? "✅ Más barata/eficiente que la media" : "❌ Más cara que el promedio del sector";
           };
 
           return (
@@ -625,21 +673,22 @@
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                   <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
                                       <h3 className="text-sm font-bold text-slate-300 mb-4 flex items-center gap-2"><Icons.BarChart size={16}/> Comparativa Sectorial</h3>
-                                      <div className="space-y-4">
+                                      <div className="space-y-5">
                                           {[
-                                              {k: 'PER (Ratio Precio/Bº)', v: data.industry_comparison?.per}, 
-                                              {k: 'PEG (Crecimiento)', v: data.industry_comparison?.peg},
-                                              {k: 'Div. Yield %', v: data.industry_comparison?.yield}
+                                              {k: 'PER (Ratio Precio/Bº)', v: data.industry_comparison?.per, key: 'per'}, 
+                                              {k: 'PEG (Crecimiento)', v: data.industry_comparison?.peg, key: 'peg'},
+                                              {k: 'Div. Yield %', v: data.industry_comparison?.yield, key: 'yield'}
                                           ].map((metric, i) => (
                                               <div key={i} className="space-y-1">
                                                   <div className="flex justify-between text-xs font-bold text-slate-400">
                                                       <span>{metric.k}</span>
+                                                      <span className="text-[9px] font-normal italic opacity-75">{getComparisonVerdict(metric.key, metric.v?.stock, metric.v?.industry)}</span>
                                                   </div>
                                                   <div className="flex items-center gap-2 text-xs">
                                                       <div className="w-16 text-right text-blue-400 font-bold">{metric.v?.stock}</div>
                                                       <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden relative">
-                                                          <div className="absolute top-0 bottom-0 bg-blue-500 w-1 rounded-full" style={{left: '40%'}}></div> {/* Marca Stock */}
-                                                          <div className="absolute top-0 bottom-0 bg-slate-500 w-1 rounded-full" style={{left: metric.v?.stock < metric.v?.industry ? '60%' : '20%'}}></div> {/* Marca Industria (ficticia visual para ejemplo, ajustar lógica real si se desea) */}
+                                                          <div className="absolute top-0 bottom-0 bg-blue-500 w-1 rounded-full" style={{left: '40%'}}></div> 
+                                                          <div className="absolute top-0 bottom-0 bg-slate-500 w-1 rounded-full" style={{left: metric.v?.stock < metric.v?.industry ? '60%' : '20%'}}></div>
                                                       </div>
                                                       <div className="w-16 text-left text-slate-500">{metric.v?.industry} (Ind.)</div>
                                                   </div>
@@ -902,48 +951,6 @@
                           </div>
                       </div>
                   </div>
-              </div>
-          );
-      };
-      
-
-      // --- APP ---
-      const App = () => {
-          const [activeTab, setActiveTab] = useState('portfolio');
-          const [apiKey, setApiKey] = usePersistentState('bg_api_key', '');
-          const [baseCurrency, setBaseCurrency] = usePersistentState('bg_base_currency', 'EUR');
-          const [refreshInterval, setRefreshInterval] = usePersistentState('bg_refresh_interval', 10);
-          const [portfolio, setPortfolio] = usePersistentState('bg_portfolio', []);
-          const [lastUpdate, setLastUpdate] = usePersistentState('bg_last_update', null);
-          const [isRegistered, setIsRegistered] = usePersistentState('bg_is_registered', false);
-          const [rk, setRk] = usePersistentState('bg_app_rk_st', '');
-
-          const isAuth = isRegistered || _0x7a2(rk);
-          const handleActivate = v => { if(_0x7a2(v)){ setRk(v); setIsRegistered(true); alert("¡Activado!"); } else alert("Inválido"); };
-
-          return (
-              <div className="h-full flex flex-col bg-[#0a0a0a] text-white">
-                  <header className="shrink-0 bg-slate-900/80 backdrop-blur-md border-b border-slate-800 px-6 py-4 flex justify-between items-center z-20 shadow-xl">
-                      <div><h1 className="text-2xl font-display font-bold tracking-tight"><span className="text-white">Boarding</span><span className="text-blue-600">Gate</span></h1><p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Gestor de cartera iA</p></div>
-                      <nav className="flex bg-slate-800 rounded-lg p-1 gap-1">
-                          <button onClick={() => setActiveTab('portfolio')} className={`px-4 py-2 rounded-md text-xs font-bold uppercase transition-all ${activeTab === 'portfolio' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}><Icons.Briefcase size={16}/> <span className="hidden sm:inline">Cartera</span></button>
-                          <button onClick={() => setActiveTab('analysis')} className={`px-4 py-2 rounded-md text-xs font-bold uppercase transition-all ${activeTab === 'analysis' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}><Icons.Search size={16}/> <span className="hidden sm:inline">Estudio</span></button>
-                          <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 rounded-md text-xs font-bold uppercase transition-all ${activeTab === 'settings' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}><Icons.Settings size={16}/> <span className="hidden sm:inline">Ajustes</span></button>
-                      </nav>
-                  </header>
-                  <main className="flex-1 overflow-hidden relative">
-                      {activeTab === 'portfolio' && (
-                        <PortfolioTab portfolio={portfolio} setPortfolio={setPortfolio} apiKey={apiKey} isAuth={isAuth} baseCurrency={baseCurrency} refreshInterval={refreshInterval} lastUpdate={lastUpdate} setLastUpdate={setLastUpdate} />
-                      )}
-                      {activeTab === 'analysis' && <AnalysisTab apiKey={apiKey} baseCurrency={baseCurrency} />}
-                      {activeTab === 'settings' && (
-                        <SettingsTab apiKey={apiKey} setApiKey={setApiKey} isAuth={isAuth} onActivate={handleActivate} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={setPortfolio} />
-                      )}
-                  </main>
-                  <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-2 px-6 flex justify-between items-center text-[9px] text-slate-600">
-                      <div>&copy; 2025 BoardingGate Financial.</div>
-                      <a href="https://x.com/BoardingGate" target="_blank" className="flex items-center gap-1 hover:text-blue-400 transition-colors">Soporte @BoardingGate en X</a>
-                  </footer>
               </div>
           );
       };
