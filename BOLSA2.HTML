@@ -136,7 +136,9 @@
       };
 
 
-      // --- PESTAÑA CARTERA (CON CÁLCULO DE ÍNDICES/DIVISOR Y FX) ---
+
+
+// --- PESTAÑA CARTERA (CORREGIDA: LÓGICA ÍNDICE + FX + DIVISOR) ---
       const PortfolioTab = ({ portfolio, setPortfolio, apiKey, isAuth, baseCurrency, refreshInterval, lastUpdate, setLastUpdate }) => {
           const [updating, setUpdating] = useState(false);
           const [isModalOpen, setIsModalOpen] = useState(false);
@@ -146,7 +148,7 @@
           const [analyzingPortfolio, setAnalyzingPortfolio] = useState(false);
           const [now, setNow] = useState(new Date());
           
-          // AÑADIDO: indexDivisor (defecto 1)
+          // Formulario con campos para Índice y Divisor
           const [form, setForm] = useState({ ticker: '', name: '', isIndex: false, indexDivisor: 1, shares: 0, buyPrice: 0, buyDate: '', stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, dividends: [] });
           const [divForm, setDivForm] = useState({ year: new Date().getFullYear(), net: 0, taxOrigin: 0, taxDest: 0 });
 
@@ -169,9 +171,10 @@
               }
           }, [selectedStock]);
 
-          // HELPER CLAVE: Calcula el precio real unitario (Puntos / Divisor)
+          // HELPER: Calcula el precio real unitario (Puntos / Divisor) para visualizar en tabla
           const getEffectivePrice = (p, priceToUse) => {
               const rawPrice = priceToUse !== undefined ? priceToUse : p.currentPrice;
+              // Si es índice y tiene divisor, dividimos
               if (p.isIndex && p.indexDivisor && p.indexDivisor > 0) {
                   return rawPrice / p.indexDivisor;
               }
@@ -208,7 +211,7 @@
                       const up = updates.find(u => u.id === p.id);
                       return up ? { 
                         ...p, 
-                        currentPrice: up.price, // Aquí guardamos los puntos crudos si es índice
+                        currentPrice: up.price, // Guardamos los PUNTOS brutos si es índice
                         currentFx: up.fx, 
                         high52: up.high52, 
                         low52: up.low52, 
@@ -234,7 +237,7 @@
 
           const handleNew = () => {
               if (!isAuth && portfolio.length >= 5) return alert("Límite de 5 acciones alcanzado. Registra la aplicación en Ajustes.");
-              // Default divisor 1 to avoid division by zero
+              // Reset, divisor a 1 por defecto
               setForm({ ticker: '', name: '', isIndex: false, indexDivisor: 1, shares: 0, buyPrice: 0, buyDate: new Date().toISOString().slice(0,10), stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, dividends: [] });
               setEditingId(null);
               setIsModalOpen(true);
@@ -248,11 +251,37 @@
 
           const handleSave = () => {
               const enriched = { ...form, name: form.name || form.ticker };
-              // Ensure divisor is never 0
+              // Asegurar que divisor no es 0
               if (enriched.isIndex && (!enriched.indexDivisor || enriched.indexDivisor === 0)) enriched.indexDivisor = 1;
 
-              if (editingId) setPortfolio(prev => prev.map(p => p.id === editingId ? { ...enriched, currentPrice: p.currentPrice, currentFx: p.currentFx, high52: p.high52, low52: p.low52, intrinsicValue: p.intrinsicValue, currentPE: p.currentPE, isActive: p.isActive } : p));
-              else setPortfolio(prev => [...prev, { ...enriched, id: Date.now(), currentPrice: form.buyPrice * (enriched.isIndex ? enriched.indexDivisor : 1), currentFx: form.buyFx, high52: form.buyPrice*1.1, low52: form.buyPrice*0.9, intrinsicValue: form.buyPrice, currentPE: form.buyPE, isActive: true }]);
+              if (editingId) {
+                  // Editar existente
+                  setPortfolio(prev => prev.map(p => p.id === editingId ? { 
+                      ...enriched, 
+                      currentPrice: p.currentPrice, // Mantenemos precio actual actualizado
+                      currentFx: p.currentFx, 
+                      high52: p.high52, 
+                      low52: p.low52, 
+                      intrinsicValue: p.intrinsicValue, 
+                      currentPE: p.currentPE, 
+                      isActive: p.isActive 
+                  } : p));
+              } else {
+                  // Nuevo: Calculamos el "precio actual" inicial basándonos en la compra
+                  // Si es índice, multiplicamos por divisor para simular los "puntos" brutos
+                  const initialRawPrice = form.buyPrice * (enriched.isIndex ? enriched.indexDivisor : 1);
+                  setPortfolio(prev => [...prev, { 
+                      ...enriched, 
+                      id: Date.now(), 
+                      currentPrice: initialRawPrice, 
+                      currentFx: form.buyFx, 
+                      high52: initialRawPrice*1.1, 
+                      low52: initialRawPrice*0.9, 
+                      intrinsicValue: initialRawPrice, 
+                      currentPE: form.buyPE, 
+                      isActive: true 
+                  }]);
+              }
               setIsModalOpen(false);
           };
 
@@ -261,22 +290,24 @@
               setPortfolio(prev => prev.map(p => p.id === id ? { ...p, isActive: !p.isActive } : p));
           };
 
+          // --- CÁLCULOS TOTALES ---
           const totals = useMemo(() => {
               let inv = 0, cur = 0, divN = 0, taxO = 0, taxD = 0, fX = 0, weightedDays = 0;
               const activePortfolio = portfolio.filter(p => p.isActive !== false);
               
               activePortfolio.forEach(p => {
                   const d = calculateDays(p.buyDate);
-                  // Coste: Acciones * PrecioCompra * FxCompra
+                  
+                  // Coste: Siempre es (PrecioCompraUnitario * Acciones * FXCompra) + Ajustes
                   const cost = (p.buyPrice * p.shares * p.buyFx) + (p.adjustments || 0);
                   
-                  // Valor Actual: Acciones * (PrecioActual / Divisor) * FxActual
+                  // Valor Actual: (PrecioBruto / Divisor) * Acciones * FXActual
                   const effectivePrice = getEffectivePrice(p);
                   const val = (effectivePrice * p.shares * p.currentFx) - (p.adjustments || 0) - p.fees;
                   
                   inv += cost; cur += val; weightedDays += (d * cost);
                   
-                  // FX Impact calculation adjusted for indices
+                  // Efecto FX: Diferencia solo por cambio de divisa
                   const valueAtBuyFx = effectivePrice * p.shares * p.buyFx;
                   const valueAtCurrentFx = effectivePrice * p.shares * p.currentFx;
                   fX += (valueAtCurrentFx - valueAtBuyFx);
@@ -298,23 +329,39 @@
 
           const timeElapsed = lastUpdate ? Math.floor((now - new Date(lastUpdate)) / 60000) : 0;
 
-          // Helper para obtener precio actual en modal (considerando divisor)
-          const getModalCurrentValuation = () => {
-              let p, price, fx, shares, fees, adj;
+          // --- FUNCIONES AUXILIARES MODAL (DEFINIDAS ANTES DEL RETURN) ---
+          
+          // 1. Obtener precio bruto (Puntos o precio acción)
+          const getModalCurrentPrice = () => {
               if (editingId) {
-                  p = portfolio.find(x => x.id === editingId);
-                  price = p ? p.currentPrice : form.buyPrice;
-                  fx = p ? p.currentFx : form.buyFx;
-              } else {
-                  // Nueva compra: simulamos que el precio actual es el precio de compra * divisor (para que cuadre la logica inversa)
-                  price = form.buyPrice * (form.isIndex ? form.indexDivisor : 1);
-                  fx = form.buyFx;
+                  const p = portfolio.find(x => x.id === editingId);
+                  return p ? p.currentPrice : form.buyPrice;
               }
+              // Si es nuevo y es índice, simulamos los puntos "reversos" desde el precio de compra
+              const multiplier = (form.isIndex && form.indexDivisor > 0) ? form.indexDivisor : 1;
+              return form.buyPrice * multiplier; 
+          };
+
+          // 2. Obtener FX actual
+          const getModalCurrentFx = () => {
+              if (editingId) {
+                  const p = portfolio.find(x => x.id === editingId);
+                  return p ? p.currentFx : form.buyFx;
+              }
+              return form.buyFx;
+          };
+
+          // 3. Calcular Valoración Total en Modal usando la lógica de Índices
+          const getModalCurrentValuation = () => {
+              const rawPrice = getModalCurrentPrice();
+              const currentFx = getModalCurrentFx();
+              const divisor = (form.isIndex && form.indexDivisor > 0) ? form.indexDivisor : 1;
               
-              const divisor = form.isIndex && form.indexDivisor > 0 ? form.indexDivisor : 1;
-              const effectivePrice = price / divisor;
+              // Lógica solicitada: (PrecioBruto / Divisor) * FX * Shares
+              const effectivePrice = rawPrice / divisor;
+              const value = (effectivePrice * form.shares * currentFx);
               
-              return (form.shares * effectivePrice * fx) - (form.fees||0) - (form.adjustments||0);
+              return value - (form.fees || 0) - (form.adjustments || 0);
           };
 
           return (
@@ -665,6 +712,7 @@
               </div>
           );
       };
+ 
 
 
      
