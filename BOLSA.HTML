@@ -41,7 +41,7 @@
 
       const _0x7a2=k=>{let x=Object.values(new Intl.DateTimeFormat('es').formatToParts(new Date())).filter(p=>['year','month','day'].includes(p.type)).reduce((a,c)=>a+~~c.value,0)*new Date().getDate();return k==x||k==x.toString(16).toUpperCase()};
 
-      // --- UTILIDADES GLOBALES (Formato ES estricto: 1.000,00) ---
+      // --- UTILIDADES GLOBALES (Punto millar ES estricto) ---
       const formatN = (v, dec = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: dec, maximumFractionDigits: dec }).format(v || 0);
       const formatMoney = (v, c = 'EUR') => new Intl.NumberFormat('es-ES', { style: 'currency', currency: c }).format(v || 0);
       const calculateDays = (d1, d2 = new Date()) => Math.max(1, Math.ceil(Math.abs(new Date(d2) - new Date(d1)) / (1000 * 60 * 60 * 24)));
@@ -62,7 +62,7 @@
       ];
       const MONTHS = ["ENERO", "FEBRE", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOST", "SEPTIE", "OCTUB", "NOVIEM", "DICIE"];
 
-      // --- ICONOS ---
+      // --- ICONOS (COMPLETOS PARA EVITAR ERROR 0,0) ---
       const Icons = {
         Briefcase: (p) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>,
         DollarSign: (p) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
@@ -92,6 +92,17 @@
         MessageCircle: (p) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
       };
 
+      const askGemini = async (apiKey, prompt) => {
+          if (!apiKey) throw new Error("Falta API Key");
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }] })
+          });
+          const data = await response.json();
+          if (data.error) throw new Error(data.error.message);
+          return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      };
+
       const Modal = ({ isOpen, title, onClose, children, size = "md" }) => {
           if (!isOpen) return null;
           return (
@@ -107,17 +118,6 @@
           );
       };
 
-      const askGemini = async (apiKey, prompt) => {
-          if (!apiKey) throw new Error("Falta API Key");
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }] })
-          });
-          const data = await response.json();
-          if (data.error) throw new Error(data.error.message);
-          return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      };
-
       // --- PESTAÑA CARTERA ---
       const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, lastUpdate, setLastUpdate }) => {
           const [viewMode, setViewMode] = useState('active');
@@ -129,7 +129,7 @@
           const [analysisReport, setAnalysisReport] = useState(null);
           const [analyzingPortfolio, setAnalyzingPortfolio] = useState(false);
 
-          const [form, setForm] = useState({ ticker: '', name: '', isIndex: false, indexDivisor: 1, shares: 0, buyPrice: 0, buyDate: '', stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, sellDate:'', sellPrice:0, sellFx:1, sellFees:0, sellAdjustments:0 });
+          const [form, setForm] = useState({ ticker: '', name: '', isIndex: false, indexDivisor: 1, shares: 0, buyPrice: 0, buyDate: '', stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, sellDate: '', sellPrice: 0, sellFx: 1, sellFees: 0, sellAdjustments: 0 });
           const [sellForm, setSellForm] = useState({ sellPrice: 0, sellDate: new Date().toISOString().slice(0,10), sellFx: 1, sellFees: 0, sellAdjustments: 0 });
 
           const updatePrices = async () => {
@@ -159,9 +159,10 @@
                   items.forEach(p => {
                       const d = calculateDays(p.buyDate, p.sellDate || new Date());
                       const cost = (p.buyPrice * p.shares * p.buyFx) + (p.adjustments || 0);
-                      const effPrice = p.sellDate ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
-                      const fxActual = p.sellDate ? p.sellFx : p.currentFx;
-                      const val = (effPrice * p.shares * fxActual) - (p.sellDate ? (p.sellFees + (p.sellAdjustments||0)) : (p.fees + p.adjustments));
+                      const isS = !!p.sellDate;
+                      const effPrice = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
+                      const fxActual = isS ? p.sellFx : p.currentFx;
+                      const val = (effPrice * p.shares * fxActual) - (isS ? (p.sellFees + (p.sellAdjustments||0)) : (p.fees + p.adjustments));
                       inv += cost; cur += val; weightedDays += (d * cost);
                       fX += (effPrice * p.shares * fxActual) - (effPrice * p.shares * p.buyFx);
                       (p.dividends || []).forEach(dv => divN += dv.net);
@@ -189,11 +190,11 @@
                 </div>
                 <div className="grid grid-cols-2 gap-2 mb-2">
                     <div>
-                        <div className="text-[8px] text-slate-500 uppercase">Invertido</div>
+                        <div className="text-[8px] text-slate-500 uppercase font-bold">Invertido</div>
                         <div className="text-[14px] font-black text-white">{formatMoney(data.inv, baseCurrency)}</div>
                     </div>
                     <div className="text-right">
-                        <div className="text-[8px] text-slate-500 uppercase">Valor Actual</div>
+                        <div className="text-[8px] text-slate-500 uppercase font-bold">Valor Actual</div>
                         <div className="text-[14px] font-bold" style={{color: color}}>{formatMoney(data.cur, baseCurrency)}</div>
                     </div>
                 </div>
@@ -294,7 +295,7 @@
                                               <div className="flex gap-2 justify-center">
                                                   {!p.sellDate && p.isActive !== false && <button onClick={(e)=>{e.stopPropagation(); setSellItem(p); setSellForm({sellPrice:effPrice, sellDate:new Date().toISOString().slice(0,10), sellFx:p.currentFx, sellFees:0, sellAdjustments:0}); setIsSellModalOpen(true); }} className="bg-green-600/20 text-green-400 border border-green-500/50 px-2 py-1 rounded text-[9px] font-bold h-7">VENDER</button>}
                                                   <button onClick={(e)=>{e.stopPropagation(); setForm(p); setEditingId(p.id); setIsModalOpen(true); }} className="text-blue-400 hover:text-white"><Icons.Edit size={16}/></button>
-                                                  <button onClick={(e)=>{e.stopPropagation(); if(confirm('¿Borrar?')) setPortfolio(prev=>prev.filter(x=>x.id!==p.id)) }} className="text-red-400 hover:text-white"><Icons.Trash2 size={16}/></button>
+                                                  <button onClick={(e)=>{e.stopPropagation(); if(confirm('¿Borrar?')) setPortfolio(prev=>prev.filter(x=>x.id!==p.id)) }} className="text-red-400 hover:text-white"><Icons.Trash2 size={14}/></button>
                                               </div>
                                           </td>
                                       </tr>
@@ -325,26 +326,26 @@
                              <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500 mb-1">Gastos</label><input type="number" step="0.01" value={form.fees} onChange={e=>setForm({...form, fees: parseFloat(e.target.value)})} /></div>
                              <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500 mb-1">Ajustes</label><input type="number" step="0.01" value={form.adjustments} onChange={e=>setForm({...form, adjustments: parseFloat(e.target.value)})} /></div>
                           </div>
-
-                          {editingId && portfolio.find(x=>x.id===editingId)?.sellDate && (
+                          
+                          {editingId && portfolio.find(x => x.id === editingId)?.sellDate && (
                               <div className="border-t border-slate-700 pt-4 space-y-4">
                                   <h4 className="text-xs font-bold text-orange-400 uppercase tracking-widest">Datos de la Venta</h4>
-                                  <div className="grid grid-cols-2 gap-3">
+                                  <div className="grid grid-cols-2 gap-4">
                                       <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">Fecha Venta</label><input type="date" value={form.sellDate} onChange={e=>setForm({...form, sellDate: e.target.value})} /></div>
                                       <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">Precio Venta</label><input type="number" step="0.001" value={form.sellPrice} onChange={e=>setForm({...form, sellPrice: parseFloat(e.target.value)})} /></div>
                                   </div>
-                                  <div className="grid grid-cols-2 gap-3">
+                                  <div className="grid grid-cols-2 gap-4">
                                       <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">FX Venta</label><input type="number" step="0.0001" value={form.sellFx} onChange={e=>setForm({...form, sellFx: parseFloat(e.target.value)})} /></div>
-                                      <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">Gastos Venta</label><input type="number" step="0.01" value={form.sellFees} onChange={e=>setForm({...form, sellFees: parseFloat(e.target.value)})} /></div>
+                                      <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">Comisiones Venta</label><input type="number" step="0.01" value={form.sellFees} onChange={e=>setForm({...form, sellFees: parseFloat(e.target.value)})} /></div>
                                   </div>
                               </div>
                           )}
 
-                          <div className="grid grid-cols-2 gap-4">
+                          <div className="grid grid-cols-2 gap-4 pt-2">
                               <div className="bg-slate-800/80 p-3 rounded-lg border border-slate-700">
                                  <div className="text-[8px] uppercase font-bold text-slate-500 mb-1">A la compra</div>
                                  <div className="text-[8px] text-slate-500 italic mb-1">({formatN(form.shares, 0)} x {formatN(form.buyPrice)} x {formatN(form.buyFx, 4)}) + {formatN(form.adjustments)}</div>
-                                 <div className="flex justify-between border-t border-slate-700 pt-1"><span className="text-[10px] font-bold">Invertido:</span><span className="text-white font-bold">{formatMoney((form.shares * form.buyPrice * form.buyFx) + form.adjustments, baseCurrency)}</span></div>
+                                 <div className="flex justify-between border-t border-slate-700 pt-1"><span className="text-[10px] font-bold text-slate-300">Invertido:</span><span className="text-white font-bold">{formatMoney((form.shares * form.buyPrice * form.buyFx) + form.adjustments, baseCurrency)}</span></div>
                               </div>
                               <div className="bg-blue-900/10 p-3 rounded-lg border border-blue-500/30">
                                  <div className="text-[8px] uppercase font-bold text-blue-400 mb-1">Valoración / Final</div>
@@ -364,13 +365,13 @@
                       <div className="space-y-4">
                           <div className="grid grid-cols-2 gap-4">
                               <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">Fecha Venta</label><input type="date" value={sellForm.sellDate} onChange={e=>setSellForm({...sellForm, sellDate: e.target.value})} /></div>
-                              <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">Precio Venta (Unit)</label><input type="number" step="0.001" value={sellForm.sellPrice} onChange={e=>setSellForm({...sellForm, sellPrice: parseFloat(e.target.value)})} /></div>
+                              <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">Precio Venta</label><input type="number" step="0.001" value={sellForm.sellPrice} onChange={e=>setSellForm({...sellForm, sellPrice: parseFloat(e.target.value)})} /></div>
                           </div>
                           <div className="grid grid-cols-2 gap-4">
                               <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">FX Venta</label><input type="number" step="0.0001" value={sellForm.sellFx} onChange={e=>setSellForm({...sellForm, sellFx: parseFloat(e.target.value)})} /></div>
                               <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">Gastos Venta</label><input type="number" step="0.01" value={sellForm.sellFees} onChange={e=>setSellForm({...sellForm, sellFees: parseFloat(e.target.value)})} /></div>
                           </div>
-                          <button onClick={()=>{ setPortfolio(prev=>prev.map(p=>p.id===sellItem.id?{...p, isActive:false, sellDate:sellForm.sellDate, sellPrice:sellForm.sellPrice, sellFx:sellForm.sellFx, sellFees:sellForm.sellFees, sellAdjustments:sellForm.sellAdjustments}:p)); setIsSellModalOpen(false); }} className="w-full bg-green-600 py-3 rounded-xl font-bold uppercase">Confirmar Venta</button>
+                          <button onClick={()=>{ setPortfolio(prev=>prev.map(p=>p.id===sellItem.id?{...p, isActive:false, sellDate:sellForm.sellDate, sellPrice:sellForm.sellPrice, sellFx:sellForm.sellFx, sellFees:sellForm.sellFees}:p)); setIsSellModalOpen(false); }} className="w-full bg-green-600 py-3 rounded-xl font-bold uppercase shadow-lg">Confirmar Venta</button>
                       </div>
                   </Modal>
 
@@ -379,7 +380,7 @@
           );
       };
 
-      // --- PESTAÑA DIVIDENDOS (RESTAURADA CON CONFECCIONAR RENTA) ---
+      // --- PESTAÑA DIVIDENDOS (RESTAURADA ORIGINAL) ---
       const DividendTab = ({ portfolio, setPortfolio, baseCurrency }) => {
           const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
           const filtered = useMemo(() => portfolio.filter(p => {
@@ -499,7 +500,7 @@
                       const res = await askGemini(apiKey, `Sobre "${ticker}": ${question}. Español conciso.`);
                       setSpecificAnswer(res);
                   } else {
-                      const prompt = `Análisis fundamental de inversión experto para "${ticker}". JSON: {"company":"..","current_price":number,"intrinsic_value":number,"intrinsic_method":"..","valuation_status":"..","forecast_5y":{"pessimistic":number,"realistic":number,"optimistic":number,"rationale":".."},"industry_comparison":{"per":{"stock":number,"industry":number},"peg":{"stock":number,"industry":number},"yield":{"stock":number,"industry":number}},"fundamentals":{"per":"..","eps":"..","beta":"..","market_cap":".."},"technical_levels":"..","pros_cons":{"pros":[],"cons":[]},"investment_verdict":"..","peers":[]}`;
+                      const prompt = `Realiza un análisis experto de "${ticker}". JSON: {"company":"..","current_price":number,"intrinsic_value":number,"intrinsic_method":"..","valuation_status":"..","forecast_5y":{"pessimistic":number,"realistic":number,"optimistic":number,"rationale":".."},"industry_comparison":{"per":{"stock":number,"industry":number},"peg":{"stock":number,"industry":number},"yield":{"stock":number,"industry":number}},"fundamentals":{"per":"..","eps":"..","beta":"..","market_cap":".."},"technical_levels":"..","pros_cons":{"pros":[],"cons":[]},"investment_verdict":"..","peers":[]}`;
                       const res = await askGemini(apiKey, prompt);
                       const json = extractJSON(res);
                       if (json) setData(json); else throw new Error("IA no devolvió JSON.");
@@ -515,13 +516,13 @@
                                <Icons.Search className="absolute left-3 top-3 text-slate-500" size={18}/>
                                <input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} placeholder="Ticker (ej. AAPL)" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-white font-bold tracking-wider" />
                            </div>
-                           <button onClick={analyze} disabled={loading} className="bg-blue-600 px-6 rounded-xl font-bold flex items-center gap-2 shadow-lg hover:bg-blue-500 transition-colors">
+                           <button onClick={analyze} disabled={loading || !ticker} className="bg-blue-600 px-6 rounded-xl font-bold flex items-center gap-2 shadow-lg hover:bg-blue-500 transition-colors">
                                {loading ? <Icons.Loader/> : <Icons.Wand/>} CONSULTAR
                            </button>
                        </div>
                        <div className="relative">
                             <Icons.MessageCircle className="absolute left-3 top-3 text-slate-500" size={18}/>
-                            <input type="text" value={question} onChange={e => setQuestion(e.target.value)} placeholder="¿Alguna pregunta específica?" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-sm" />
+                            <input type="text" value={question} onChange={e => setQuestion(e.target.value)} placeholder="¿Alguna pregunta específica?" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-sm text-white" />
                        </div>
                   </div>
                   <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -535,10 +536,10 @@
                                       <div><div className="text-[10px] text-purple-400 uppercase font-bold">Valor iA</div><div className="text-2xl font-bold text-purple-400 font-mono">{formatN(data.intrinsic_value)}</div><div className="text-[8px] opacity-60 max-w-[120px]">{data.intrinsic_method}</div></div>
                                   </div>
                               </div>
-                              <div className="grid grid-cols-3 gap-4">
-                                  <div className="bg-red-900/10 border border-red-500/20 p-4 rounded-xl text-center"><div className="text-[10px] uppercase font-bold text-red-400">Pesimista 5Y</div><div className="text-xl font-bold">{formatN(data.forecast_5y.pessimistic)}</div></div>
-                                  <div className="bg-blue-900/10 border border-blue-500/20 p-4 rounded-xl text-center"><div className="text-[10px] uppercase font-bold text-blue-400">Realista 5Y</div><div className="text-xl font-bold">{formatN(data.forecast_5y.realistic)}</div></div>
-                                  <div className="bg-green-900/10 border border-green-500/20 p-4 rounded-xl text-center"><div className="text-[10px] uppercase font-bold text-green-400">Optimista 5Y</div><div className="text-xl font-bold">{formatN(data.forecast_5y.optimistic)}</div></div>
+                              <div className="grid grid-cols-3 gap-4 text-center">
+                                  <div className="bg-red-900/10 border border-red-500/20 p-4 rounded-xl"><div className="text-[10px] uppercase font-bold text-red-400">Pesimista 5Y</div><div className="text-xl font-bold">{formatN(data.forecast_5y.pessimistic)}</div></div>
+                                  <div className="bg-blue-900/10 border border-blue-500/20 p-4 rounded-xl"><div className="text-[10px] uppercase font-bold text-blue-400">Realista 5Y</div><div className="text-xl font-bold">{formatN(data.forecast_5y.realistic)}</div></div>
+                                  <div className="bg-green-900/10 border border-green-500/20 p-4 rounded-xl"><div className="text-[10px] uppercase font-bold text-green-400">Optimista 5Y</div><div className="text-xl font-bold">{formatN(data.forecast_5y.optimistic)}</div></div>
                               </div>
                               <div className="glass-panel p-6 rounded-2xl"><h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2"><Icons.Award size={18}/> Veredicto iA</h3><p className="text-slate-300 text-sm leading-relaxed italic">"{data.investment_verdict}"</p></div>
                           </div>
@@ -548,7 +549,7 @@
           );
       };
 
-      // --- PESTAÑA CONFIGURACIÓN (RESTAURADA ORIGINAL 100%) ---
+      // --- PESTAÑA CONFIGURACIÓN (RESTAURADA ORIGINAL DETALLE) ---
       const SettingsTab = ({ apiKey, setApiKey, isAuth, onActivate, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio }) => {
           const [localLic, setLocalLic] = useState('');
           const [showKey, setShowKey] = useState(false);
@@ -569,7 +570,7 @@
                   const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 2 };
                   const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"});
                   const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a'); a.href = url; a.download = `Backup_BoardingGate_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+                  const a = document.createElement('a'); a.href = url; a.download = `Backup_BG_${new Date().toISOString().slice(0,10)}.json`; a.click();
                   setIoStatus('success'); setTimeout(() => setIoStatus('idle'), 2000);
               } catch (e) { alert("Error: " + e.message); setIoStatus('error'); }
           };
@@ -577,8 +578,7 @@
           const handleRunImport = (e) => {
               const file = e.target.files[0];
               if (!file) return;
-              if(!confirm("⚠️ IMPORTANTE:\n\nEsta acción reemplazará TODA tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) { e.target.value = null; return; }
-              setIoStatus('processing');
+              if(!confirm("⚠️ IMPORTANTE: Se reemplazará toda tu cartera y configuración actual.")) return;
               const reader = new FileReader();
               reader.onload = (ev) => {
                   try {
@@ -586,9 +586,8 @@
                       if (d.portfolio) setPortfolio(d.portfolio);
                       if (d.apiKey) setApiKey(d.apiKey);
                       if (d.baseCurrency) setBaseCurrency(d.baseCurrency);
-                      if (d.refreshInterval) setRefreshInterval(d.refreshInterval);
-                      setIoStatus('success'); alert("✅ Restauración completada."); window.location.reload();
-                  } catch (err) { alert("Archivo inválido."); setIoStatus('error'); }
+                      setIoStatus('success'); window.location.reload();
+                  } catch (err) { alert("Archivo inválido."); }
               };
               reader.readAsText(file);
           };
@@ -611,7 +610,7 @@
                           <div>
                                <label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">Refresco Automático</label>
                                <div className="bg-slate-800 p-3 rounded-xl border border-slate-600 flex items-center gap-4">
-                                   <input type="range" min="5" max="60" step="5" value={refreshInterval} onChange={(e) => setRefreshInterval(parseInt(e.target.value))} className="flex-1 accent-blue-500" />
+                                   <input type="range" min="5" max="60" step="5" value={refreshInterval} onChange={(e) => setRefreshInterval(parseInt(e.target.value))} className="flex-1 accent-blue-500 h-2 bg-slate-600 rounded-lg" />
                                    <div className="font-mono font-bold text-blue-400 w-16 text-right">{refreshInterval} min</div>
                                </div>
                                <p className="text-[10px] text-slate-500 mt-2">Frecuencia de actualización de precios.</p>
@@ -637,7 +636,11 @@
                                   <h4 className="text-lg font-bold text-blue-400 mb-4 flex items-center gap-2"><Icons.HelpCircle size={20} /> Gestión de la API Key (Gratis vs Pago)</h4>
                                   <div className="mb-6 border-b border-slate-700 pb-6 text-xs leading-relaxed space-y-3 text-slate-300">
                                       <p><span className="text-green-400 font-bold uppercase mr-2">Gratis:</span> Accede a <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-blue-400 underline font-bold">Google AI Studio</a>. Límite: 15 peticiones/minuto.</p>
-                                      <p><span className="text-blue-400 font-bold uppercase mr-2">Ilimitada:</span> Vincula una cuenta en <a href="https://console.cloud.google.com/billing" target="_blank" className="text-blue-400 underline font-bold">Google Cloud Billing</a> para eliminar esperas.</p>
+                                      <p><span className="text-blue-400 font-bold uppercase mr-2">Profesional:</span> Vincula facturación en <a href="https://console.cloud.google.com/billing" target="_blank" className="text-blue-400 underline font-bold">Google Cloud Billing</a> para eliminar esperas.</p>
+                                  </div>
+                                  <div className="flex gap-3">
+                                      <a href="https://aistudio.google.com/app/apikey" target="_blank" className="flex-1 text-center py-2 bg-slate-700 rounded-lg text-xs font-bold flex items-center justify-center gap-2"><Icons.ExternalLink size={14}/> Obtener Key</a>
+                                      <a href="https://console.cloud.google.com/billing" target="_blank" className="flex-1 text-center py-2 bg-blue-600 rounded-lg text-xs font-bold flex items-center justify-center gap-2"><Icons.ExternalLink size={14}/> Activar Billing</a>
                                   </div>
                               </div>
                           </div>
@@ -659,8 +662,8 @@
                               </div>
                           </div>
                           <div className="grid grid-cols-2 gap-4">
-                              <button onClick={handleRunExport} className="bg-slate-800 border border-slate-700 p-4 rounded-xl font-bold text-xs uppercase flex items-center justify-center gap-2"><Icons.Upload size={14}/> EXPORTAR DATOS</button>
-                              <label className="bg-blue-600 p-4 rounded-xl font-bold text-xs uppercase flex items-center justify-center gap-2 cursor-pointer">RESTAURAR DATOS<input type="file" accept=".json" className="hidden" onChange={handleRunImport}/></label>
+                              <button onClick={handleRunExport} className="bg-slate-800 border border-slate-700 p-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2"><Icons.Upload size={14}/> EXPORTAR DATOS</button>
+                              <label className="bg-blue-600 p-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 cursor-pointer">RESTAURAR DATOS<input type="file" accept=".json" className="hidden" onChange={handleRunImport}/></label>
                           </div>
                       </div>
                   </div>
@@ -685,10 +688,10 @@
                   <header className="shrink-0 bg-slate-900/80 backdrop-blur-md border-b border-slate-800 px-6 py-4 flex justify-between items-center z-50 shadow-2xl">
                       <div><h1 className="text-2xl font-display font-bold">Boarding<span className="text-blue-600">Gate</span></h1><p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Financial iA</p></div>
                       <nav className="flex bg-slate-800 rounded-lg p-1 gap-1 border border-slate-700">
-                          <button onClick={() => setActiveTab('portfolio')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'portfolio' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Briefcase size={14}/> Cartera</button>
-                          <button onClick={() => setActiveTab('dividends')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'dividends' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.DollarSign size={14}/> Dividendos</button>
-                          <button onClick={() => setActiveTab('analysis')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'analysis' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Search size={14}/> Estudio</button>
-                          <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'settings' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Settings size={14}/> Ajustes</button>
+                          <button onClick={() => setActiveTab('portfolio')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'portfolio' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}><Icons.Briefcase size={14}/> Cartera</button>
+                          <button onClick={() => setActiveTab('dividends')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'dividends' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}><Icons.DollarSign size={14}/> Dividendos</button>
+                          <button onClick={() => setActiveTab('analysis')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'analysis' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}><Icons.Search size={14}/> Estudio</button>
+                          <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'settings' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}><Icons.Settings size={14}/> Ajustes</button>
                       </nav>
                   </header>
                   <main className="flex-1 overflow-hidden relative">
@@ -698,7 +701,7 @@
                       {activeTab === 'settings' && <SettingsTab apiKey={apiKey} setApiKey={setApiKey} isAuth={isAuth} onActivate={handleActivate} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={setPortfolio} />}
                   </main>
                   <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase tracking-widest">
-                      <div>BoardingGate v2.5.3</div><div>Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleString() : '--'}</div>
+                      <div>BoardingGate v2.5.4</div><div>Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleString() : '--'}</div>
                   </footer>
               </div>
           );
