@@ -137,7 +137,8 @@
 
 
 
-      // --- PESTAÑA CARTERA (CON OPCIÓN ÍNDICE Y DIVIDENDOS DETALLADOS) ---
+
+// --- PESTAÑA CARTERA (CON CÁLCULO DE ÍNDICES/DIVISOR Y FX) ---
       const PortfolioTab = ({ portfolio, setPortfolio, apiKey, isAuth, baseCurrency, refreshInterval, lastUpdate, setLastUpdate }) => {
           const [updating, setUpdating] = useState(false);
           const [isModalOpen, setIsModalOpen] = useState(false);
@@ -147,8 +148,8 @@
           const [analyzingPortfolio, setAnalyzingPortfolio] = useState(false);
           const [now, setNow] = useState(new Date());
           
-          // AÑADIDO: isIndex por defecto false
-          const [form, setForm] = useState({ ticker: '', name: '', isIndex: false, shares: 0, buyPrice: 0, buyDate: '', stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, dividends: [] });
+          // AÑADIDO: indexDivisor (defecto 1)
+          const [form, setForm] = useState({ ticker: '', name: '', isIndex: false, indexDivisor: 1, shares: 0, buyPrice: 0, buyDate: '', stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, dividends: [] });
           const [divForm, setDivForm] = useState({ year: new Date().getFullYear(), net: 0, taxOrigin: 0, taxDest: 0 });
 
           const detailRef = useRef(null);
@@ -170,15 +171,24 @@
               }
           }, [selectedStock]);
 
+          // HELPER CLAVE: Calcula el precio real unitario (Puntos / Divisor)
+          const getEffectivePrice = (p, priceToUse) => {
+              const rawPrice = priceToUse !== undefined ? priceToUse : p.currentPrice;
+              if (p.isIndex && p.indexDivisor && p.indexDivisor > 0) {
+                  return rawPrice / p.indexDivisor;
+              }
+              return rawPrice;
+          };
+
           const updatePrices = async () => {
               if (!apiKey || updating || portfolio.length === 0) return;
               setUpdating(true);
               try {
                   const updates = [];
                   for (const item of portfolio) {
-                      // MODIFICADO: Instrucción específica si es índice
+                      // Instrucción específica para obtener PUNTOS si es índice
                       const typeInstruction = item.isIndex 
-                        ? "IMPORTANTE: El activo es un ÍNDICE o ETF. Devuelve el valor actual de los puntos o el precio de una participación de mercado (NAV/Price)." 
+                        ? "IMPORTANTE: El activo es un ÍNDICE (ej. SP500, Nasdaq). Devuélveme los PUNTOS de cotización actuales (ej. 5000, 18000)." 
                         : "El activo es una ACCIÓN de empresa.";
 
                       const prompt = `Datos actuales de: "${item.ticker}" (${item.stockCurrency}). 
@@ -200,7 +210,7 @@
                       const up = updates.find(u => u.id === p.id);
                       return up ? { 
                         ...p, 
-                        currentPrice: up.price, 
+                        currentPrice: up.price, // Aquí guardamos los puntos crudos si es índice
                         currentFx: up.fx, 
                         high52: up.high52, 
                         low52: up.low52, 
@@ -216,7 +226,7 @@
           const analyzePortfolio = async () => {
               if (!apiKey) return alert("Falta API Key");
               setAnalyzingPortfolio(true);
-              const summary = portfolio.filter(p => p.isActive !== false).map(p => `${p.name} (${p.ticker}) [${p.isIndex ? 'INDICE' : 'ACCION'}]: ${p.shares} acc. Compra: ${p.buyPrice} ${p.stockCurrency}. Actual: ${p.currentPrice}.`).join('; ');
+              const summary = portfolio.filter(p => p.isActive !== false).map(p => `${p.name} (${p.ticker}) [${p.isIndex ? 'INDICE' : 'ACCION'}]: ${p.shares} participaciones.`).join('; ');
               try {
                   const prompt = `Analiza esta cartera de inversión: [${summary}]. Moneda local: ${baseCurrency}. REGLAS: IDIOMA ESPAÑOL. NO SALUDES. VE DIRECTO AL ANÁLISIS TÉCNICO.`;
                   const text = await askGemini(apiKey, prompt);
@@ -226,23 +236,25 @@
 
           const handleNew = () => {
               if (!isAuth && portfolio.length >= 5) return alert("Límite de 5 acciones alcanzado. Registra la aplicación en Ajustes.");
-              // Reset form
-              setForm({ ticker: '', name: '', isIndex: false, shares: 0, buyPrice: 0, buyDate: new Date().toISOString().slice(0,10), stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, dividends: [] });
+              // Default divisor 1 to avoid division by zero
+              setForm({ ticker: '', name: '', isIndex: false, indexDivisor: 1, shares: 0, buyPrice: 0, buyDate: new Date().toISOString().slice(0,10), stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, dividends: [] });
               setEditingId(null);
               setIsModalOpen(true);
           };
 
           const handleEdit = (item) => {
-              // Cargar datos existentes incluyendo isIndex
-              setForm({ ...item, isIndex: item.isIndex || false, adjustments: item.adjustments || 0, dividends: item.dividends || [], buyPE: item.buyPE || 0 });
+              setForm({ ...item, isIndex: item.isIndex || false, indexDivisor: item.indexDivisor || 1, adjustments: item.adjustments || 0, dividends: item.dividends || [], buyPE: item.buyPE || 0 });
               setEditingId(item.id);
               setIsModalOpen(true);
           };
 
           const handleSave = () => {
               const enriched = { ...form, name: form.name || form.ticker };
+              // Ensure divisor is never 0
+              if (enriched.isIndex && (!enriched.indexDivisor || enriched.indexDivisor === 0)) enriched.indexDivisor = 1;
+
               if (editingId) setPortfolio(prev => prev.map(p => p.id === editingId ? { ...enriched, currentPrice: p.currentPrice, currentFx: p.currentFx, high52: p.high52, low52: p.low52, intrinsicValue: p.intrinsicValue, currentPE: p.currentPE, isActive: p.isActive } : p));
-              else setPortfolio(prev => [...prev, { ...enriched, id: Date.now(), currentPrice: form.buyPrice, currentFx: form.buyFx, high52: form.buyPrice*1.1, low52: form.buyPrice*0.9, intrinsicValue: form.buyPrice, currentPE: form.buyPE, isActive: true }]);
+              else setPortfolio(prev => [...prev, { ...enriched, id: Date.now(), currentPrice: form.buyPrice * (enriched.isIndex ? enriched.indexDivisor : 1), currentFx: form.buyFx, high52: form.buyPrice*1.1, low52: form.buyPrice*0.9, intrinsicValue: form.buyPrice, currentPE: form.buyPE, isActive: true }]);
               setIsModalOpen(false);
           };
 
@@ -257,10 +269,20 @@
               
               activePortfolio.forEach(p => {
                   const d = calculateDays(p.buyDate);
+                  // Coste: Acciones * PrecioCompra * FxCompra
                   const cost = (p.buyPrice * p.shares * p.buyFx) + (p.adjustments || 0);
-                  const val = (p.currentPrice * p.shares * p.currentFx) - (p.adjustments || 0) - p.fees;
+                  
+                  // Valor Actual: Acciones * (PrecioActual / Divisor) * FxActual
+                  const effectivePrice = getEffectivePrice(p);
+                  const val = (effectivePrice * p.shares * p.currentFx) - (p.adjustments || 0) - p.fees;
+                  
                   inv += cost; cur += val; weightedDays += (d * cost);
-                  fX += (p.buyPrice * p.shares * p.currentFx) - (p.buyPrice * p.shares * p.buyFx);
+                  
+                  // FX Impact calculation adjusted for indices
+                  const valueAtBuyFx = effectivePrice * p.shares * p.buyFx;
+                  const valueAtCurrentFx = effectivePrice * p.shares * p.currentFx;
+                  fX += (valueAtCurrentFx - valueAtBuyFx);
+                  
                   (p.dividends || []).forEach(div => { divN += div.net; taxO += div.taxOrigin; taxD += div.taxDest; });
               });
               const avgDays = inv > 0 ? weightedDays / inv : 0;
@@ -278,20 +300,23 @@
 
           const timeElapsed = lastUpdate ? Math.floor((now - new Date(lastUpdate)) / 60000) : 0;
 
-          // Helper para obtener precio actual en modal
-          const getModalCurrentPrice = () => {
+          // Helper para obtener precio actual en modal (considerando divisor)
+          const getModalCurrentValuation = () => {
+              let p, price, fx, shares, fees, adj;
               if (editingId) {
-                  const p = portfolio.find(x => x.id === editingId);
-                  return p ? p.currentPrice : form.buyPrice;
+                  p = portfolio.find(x => x.id === editingId);
+                  price = p ? p.currentPrice : form.buyPrice;
+                  fx = p ? p.currentFx : form.buyFx;
+              } else {
+                  // Nueva compra: simulamos que el precio actual es el precio de compra * divisor (para que cuadre la logica inversa)
+                  price = form.buyPrice * (form.isIndex ? form.indexDivisor : 1);
+                  fx = form.buyFx;
               }
-              return form.buyPrice; // Default para nueva compra
-          };
-          const getModalCurrentFx = () => {
-              if (editingId) {
-                  const p = portfolio.find(x => x.id === editingId);
-                  return p ? p.currentFx : form.buyFx;
-              }
-              return form.buyFx;
+              
+              const divisor = form.isIndex && form.indexDivisor > 0 ? form.indexDivisor : 1;
+              const effectivePrice = price / divisor;
+              
+              return (form.shares * effectivePrice * fx) - (form.fees||0) - (form.adjustments||0);
           };
 
           return (
@@ -386,8 +411,14 @@
                                   {portfolio.map(p => {
                                       const isActive = p.isActive !== false;
                                       const d = calculateDays(p.buyDate);
+                                      // CÁLCULOS PRINCIPALES
+                                      // Invertido: Directo del precio compra (que ya es unitario)
                                       const cB = (p.buyPrice * p.shares * p.buyFx) + (p.adjustments || 0);
-                                      const vB = (p.currentPrice * p.shares * p.currentFx) - (p.adjustments || 0) - p.fees;
+                                      
+                                      // Valor Actual: (Puntos / Divisor) * FX * Shares
+                                      const effectivePrice = getEffectivePrice(p);
+                                      const vB = (effectivePrice * p.shares * p.currentFx) - (p.adjustments || 0) - p.fees;
+                                      
                                       const cagr = cB > 0 ? (Math.pow((vB / cB), (365 / d)) - 1) * 100 : 0;
                                       const simple = cB > 0 ? ((vB - cB)/cB)*100 : 0;
                                       
@@ -399,14 +430,17 @@
                                               <td className="p-3 flex items-center gap-3">
                                                   <div className="w-9 h-9 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-[9px] flex-col">
                                                     <span className="text-blue-400">{p.ticker}</span>
-                                                    {p.isIndex && <span className="text-[6px] text-yellow-500 uppercase">INDX</span>}
+                                                    {p.isIndex && <span className="text-[6px] text-yellow-500 uppercase font-black">ETF</span>}
                                                   </div>
                                                   <div><div className="font-bold text-white leading-tight">{p.name || p.ticker}</div><div className="text-[10px] text-slate-500 font-mono">{p.buyDate}</div></div>
                                               </td>
                                               <td className="p-3 text-right font-mono">{p.shares}</td>
                                               <td className="p-3 text-right text-xs">
                                                   <div className="text-slate-400 font-mono">{p.buyPrice.toFixed(2)}</div>
-                                                  <div className="font-bold text-white font-mono">{p.currentPrice.toFixed(2)}</div>
+                                                  <div className="font-bold text-white font-mono">
+                                                      {effectivePrice.toFixed(2)}
+                                                      {p.isIndex && <span className="text-[8px] text-slate-500 ml-1 block">(Pt/{p.indexDivisor})</span>}
+                                                  </div>
                                               </td>
                                               <td className="p-3 text-right text-xs font-mono">
                                                   <div className="text-slate-500">{p.buyPE > 0 ? p.buyPE.toFixed(1) : '--'}</div>
@@ -444,9 +478,15 @@
                                   
                                   <div className="bg-slate-900/50 p-5 rounded-xl border border-slate-700 space-y-4">
                                       <div className="flex justify-between items-center pb-2 border-b border-slate-700">
-                                          <span className="text-xs text-slate-400 uppercase">Precio Actual</span>
-                                          <span className="text-xl font-bold font-display text-white">{selectedStock.currentPrice}</span>
+                                          <span className="text-xs text-slate-400 uppercase">Precio Unitario Real</span>
+                                          <span className="text-xl font-bold font-display text-white">{getEffectivePrice(selectedStock).toFixed(2)}</span>
                                       </div>
+                                      {selectedStock.isIndex && (
+                                         <div className="flex justify-between items-center pb-2 border-b border-slate-700">
+                                            <span className="text-xs text-slate-500 uppercase">Cotización Índice (Puntos)</span>
+                                            <span className="text-base font-bold font-mono text-slate-300">{selectedStock.currentPrice}</span>
+                                         </div>
+                                      )}
                                       <div className="flex justify-between items-center pb-2 border-b border-slate-700">
                                           {/* Break Even puro en moneda original */}
                                           <span className="text-xs text-slate-400 uppercase">Precio Medio (Break Even)</span>
@@ -454,13 +494,7 @@
                                               {(((selectedStock.buyPrice * selectedStock.shares * selectedStock.buyFx) + (selectedStock.adjustments||0) + (selectedStock.fees||0)) / selectedStock.shares / selectedStock.buyFx).toFixed(2)}
                                           </span>
                                       </div>
-                                      <div className="flex justify-between items-center pb-2 border-b border-slate-700">
-                                           <span className="text-xs text-slate-400 uppercase">PER (Compra vs Actual)</span>
-                                           <div className="text-right">
-                                              <span className="text-xs text-slate-500 block">C: {selectedStock.buyPE > 0 ? selectedStock.buyPE : '--'}</span>
-                                              <span className="text-sm font-bold text-blue-300 block">A: {selectedStock.currentPE ? selectedStock.currentPE.toFixed(1) : '--'}</span>
-                                           </div>
-                                      </div>
+                                      
                                       {selectedStock.intrinsicValue && (
                                         <div className="flex justify-between items-center">
                                             <span className="text-xs text-purple-400 uppercase font-bold flex items-center gap-1"><Icons.Target size={12}/> V. Intrínseco (Est.)</span>
@@ -470,11 +504,16 @@
                                   </div>
                               </div>
                               <div className="flex-[2] bg-slate-950 rounded-lg p-6 border border-slate-800 relative min-h-[250px] shadow-inner">
+                                  {/* Nota: En el gráfico, si es índice, normalizamos todo a precio unitario (dividido) */}
                                   <svg width="100%" height="100%" viewBox="0 0 500 250" preserveAspectRatio="none">
                                       {(() => {
+                                          const effectiveCurrent = getEffectivePrice(selectedStock);
                                           const breakEvenPrice = ((selectedStock.buyPrice * selectedStock.shares * selectedStock.buyFx) + (selectedStock.adjustments||0) + (selectedStock.fees||0)) / selectedStock.shares / selectedStock.buyFx;
-                                          const iv = selectedStock.intrinsicValue || selectedStock.currentPrice;
-                                          const vals = [breakEvenPrice, selectedStock.currentPrice, selectedStock.high52, selectedStock.low52, iv];
+                                          // Intrinsic Value también hay que dividirlo si es un índice y la IA devolvió el valor del índice completo
+                                          let iv = selectedStock.intrinsicValue || selectedStock.currentPrice;
+                                          if (selectedStock.isIndex && selectedStock.indexDivisor > 1) iv = iv / selectedStock.indexDivisor;
+
+                                          const vals = [breakEvenPrice, effectiveCurrent, iv];
                                           const minVal = Math.min(...vals) * 0.9;
                                           const maxVal = Math.max(...vals) * 1.1;
                                           const range = maxVal - minVal;
@@ -493,14 +532,6 @@
                                                       )
                                                   })}
 
-                                                  {/* Max 52 Weeks */}
-                                                  <line x1="50" y1={getY(selectedStock.high52)} x2="500" y2={getY(selectedStock.high52)} stroke="#3b82f6" strokeWidth="1" strokeDasharray="4,4" />
-                                                  <text x="500" y={getY(selectedStock.high52)-5} fill="#3b82f6" fontSize="9" textAnchor="end" fontWeight="bold">Máximo 52 Semanas</text>
-
-                                                  {/* Min 52 Weeks */}
-                                                  <line x1="50" y1={getY(selectedStock.low52)} x2="500" y2={getY(selectedStock.low52)} stroke="#3b82f6" strokeWidth="1" strokeDasharray="4,4" />
-                                                  <text x="500" y={getY(selectedStock.low52)+12} fill="#3b82f6" fontSize="9" textAnchor="end" fontWeight="bold">Mínimo 52 Semanas</text>
-
                                                   {/* Intrinsic Value */}
                                                   <line x1="50" y1={getY(iv)} x2="500" y2={getY(iv)} stroke="#a855f7" strokeWidth="2" strokeDasharray="8,4" />
                                                   <text x="55" y={getY(iv)-5} fill="#a855f7" fontSize="10" fontWeight="bold">Valor Intrínseco</text>
@@ -510,9 +541,9 @@
                                                   <text x="55" y={getY(breakEvenPrice)-5} fill="#fb923c" fontSize="9">Precio Medio (B.E.)</text>
 
                                                   {/* Current Price */}
-                                                  <line x1="50" y1={getY(selectedStock.currentPrice)} x2="500" y2={getY(selectedStock.currentPrice)} stroke={selectedStock.currentPrice >= breakEvenPrice ? "#4ade80" : "#f87171"} strokeWidth="1" />
-                                                  <circle cx="275" cy={getY(selectedStock.currentPrice)} r="6" fill="white" stroke={selectedStock.currentPrice >= breakEvenPrice ? "#4ade80" : "#f87171"} strokeWidth="2"/>
-                                                  <text x="285" y={getY(selectedStock.currentPrice)+3} fill="white" fontSize="12" fontWeight="bold">ACTUAL: {selectedStock.currentPrice}</text>
+                                                  <line x1="50" y1={getY(effectiveCurrent)} x2="500" y2={getY(effectiveCurrent)} stroke={effectiveCurrent >= breakEvenPrice ? "#4ade80" : "#f87171"} strokeWidth="1" />
+                                                  <circle cx="275" cy={getY(effectiveCurrent)} r="6" fill="white" stroke={effectiveCurrent >= breakEvenPrice ? "#4ade80" : "#f87171"} strokeWidth="2"/>
+                                                  <text x="285" y={getY(effectiveCurrent)+3} fill="white" fontSize="12" fontWeight="bold">ACTUAL: {effectiveCurrent.toFixed(2)}</text>
                                               </g>
                                           );
                                       })()}
@@ -526,20 +557,29 @@
                       <div className="space-y-4">
                           <div className="grid grid-cols-2 gap-4">
                               <div className="flex flex-col">
-                                  <label className="text-[10px] text-slate-500 uppercase font-bold mb-1">Ticker</label>
+                                  <label className="text-[10px] text-slate-500 uppercase font-bold mb-1">Ticker / Símbolo</label>
                                   <div className="flex items-center gap-2">
-                                      <input type="text" value={form.ticker} onChange={e => setForm({...form, ticker: e.target.value.toUpperCase()})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white font-bold" placeholder="AAPL" />
+                                      <input type="text" value={form.ticker} onChange={e => setForm({...form, ticker: e.target.value.toUpperCase()})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white font-bold" placeholder="SP500" />
                                   </div>
-                                  <div className="flex items-center mt-2">
-                                     <input type="checkbox" id="isIndexCheck" checked={form.isIndex} onChange={e => setForm({...form, isIndex: e.target.checked})} className="custom-checkbox w-4 h-4" />
-                                     <label htmlFor="isIndexCheck" className="ml-2 text-xs text-slate-400 font-bold select-none cursor-pointer">Es un ÍNDICE / ETF</label>
+                                  {/* CHECKBOX ES ÍNDICE Y DIVISOR */}
+                                  <div className="flex items-center mt-3 gap-3 bg-slate-800 p-2 rounded border border-slate-700">
+                                     <div className="flex items-center">
+                                         <input type="checkbox" id="isIndexCheck" checked={form.isIndex} onChange={e => setForm({...form, isIndex: e.target.checked})} className="custom-checkbox w-4 h-4" />
+                                         <label htmlFor="isIndexCheck" className="ml-2 text-[10px] font-bold text-slate-300 select-none cursor-pointer uppercase">Es Índice</label>
+                                     </div>
+                                     {form.isIndex && (
+                                        <div className="flex-1 border-l border-slate-600 pl-3">
+                                            <label className="text-[8px] text-blue-400 block font-bold mb-0.5 uppercase">Divisor Partic.</label>
+                                            <input type="number" value={form.indexDivisor} onChange={e => setForm({...form, indexDivisor: parseFloat(e.target.value)})} className="w-full bg-slate-900 border border-slate-600 rounded p-1 text-right text-xs text-white" />
+                                        </div>
+                                     )}
                                   </div>
                               </div>
                               <div className="flex flex-col"><label className="text-[10px] text-slate-500 uppercase font-bold mb-1">Fecha Compra</label><input type="date" value={form.buyDate} onChange={e => setForm({...form, buyDate: e.target.value})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white font-mono" /></div>
                           </div>
                           <div className="grid grid-cols-3 gap-4">
-                              <div className="flex flex-col"><label className="text-[10px] text-slate-500 uppercase font-bold mb-1">Acciones</label><input type="number" value={form.shares} onChange={e => setForm({...form, shares: parseFloat(e.target.value)})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-right font-mono" /></div>
-                              <div className="flex flex-col"><label className="text-[10px] text-slate-500 uppercase font-bold mb-1">Precio (M.Orig)</label><input type="number" step="0.01" value={form.buyPrice} onChange={e => setForm({...form, buyPrice: parseFloat(e.target.value)})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-right font-mono" /></div>
+                              <div className="flex flex-col"><label className="text-[10px] text-slate-500 uppercase font-bold mb-1">Participaciones</label><input type="number" value={form.shares} onChange={e => setForm({...form, shares: parseFloat(e.target.value)})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-right font-mono" /></div>
+                              <div className="flex flex-col"><label className="text-[10px] text-slate-500 uppercase font-bold mb-1">Precio Compra</label><input type="number" step="0.01" value={form.buyPrice} onChange={e => setForm({...form, buyPrice: parseFloat(e.target.value)})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-right font-mono" /></div>
                               <div className="flex flex-col"><label className="text-[10px] text-slate-500 uppercase font-bold mb-1">Divisa</label><select value={form.stockCurrency} onChange={e => setForm({...form, stockCurrency: e.target.value})} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white">{CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.code}</option>)}</select></div>
                           </div>
                           <div className="grid grid-cols-3 gap-4">
@@ -557,7 +597,7 @@
                               <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-3">
                                  <h4 className="text-[9px] font-bold text-slate-400 uppercase mb-2">A la Compra</h4>
                                  <div className="text-[9px] font-mono text-slate-500 mb-1">
-                                    ({form.shares}x{form.buyPrice}x{form.buyFx}) + {form.adjustments||0} =
+                                    ({form.shares} x {form.buyPrice} x {form.buyFx}) + {form.adjustments||0}
                                  </div>
                                  <div className="flex justify-between text-xs border-t border-slate-700 pt-1">
                                     <span className="text-slate-300 font-bold">Invertido:</span>
@@ -569,12 +609,16 @@
                               <div className="bg-blue-900/10 border border-blue-500/30 rounded-xl p-3">
                                  <h4 className="text-[9px] font-bold text-blue-400 uppercase mb-2">Valoración Actual</h4>
                                  <div className="text-[9px] font-mono text-blue-300/60 mb-1">
-                                    ({form.shares}x{getModalCurrentPrice()}x{getModalCurrentFx()}) - {form.fees||0} - {form.adjustments||0} =
+                                    {/* Mostrar logica segun si es indice o no */}
+                                    {form.isIndex 
+                                        ? `((${getModalCurrentPrice().toFixed(0)} / ${form.indexDivisor}) x ${form.shares} x FX) ...`
+                                        : `(${form.shares} x ${getModalCurrentPrice()} x FX) ...`
+                                    }
                                  </div>
                                  <div className="flex justify-between text-xs border-blue-500/30 pt-1 border-t">
                                     <span className="text-blue-300 font-bold">Liquidez:</span>
                                     <span className="font-mono text-white font-bold">
-                                        {((form.shares * getModalCurrentPrice() * getModalCurrentFx()) - (form.fees||0) - (form.adjustments||0)).toFixed(2)} {baseCurrency}
+                                        {getModalCurrentValuation().toFixed(2)} {baseCurrency}
                                     </span>
                                  </div>
                               </div>
