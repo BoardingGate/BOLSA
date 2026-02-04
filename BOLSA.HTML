@@ -41,11 +41,28 @@
 
       const _0x7a2=k=>{let x=Object.values(new Intl.DateTimeFormat('es').formatToParts(new Date())).filter(p=>['year','month','day'].includes(p.type)).reduce((a,c)=>a+~~c.value,0)*new Date().getDate();return k==x||k==x.toString(16).toUpperCase()};
 
-      // --- UTILIDADES GLOBALES (Punto millar ES estricto) ---
-      const formatN = (v, dec = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: dec, maximumFractionDigits: dec }).format(v || 0);
-      const formatMoney = (v, c = 'EUR') => new Intl.NumberFormat('es-ES', { style: 'currency', currency: c, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v || 0);
+      // --- UTILIDADES GLOBALES (Formato es-ES estricto) ---
+      const formatN = (v, dec = 2) => {
+          const n = parseFloat(v);
+          if (isNaN(n)) return "0,00";
+          return new Intl.NumberFormat('es-ES', { minimumFractionDigits: dec, maximumFractionDigits: dec }).format(n);
+      };
+      
+      const formatMoney = (v, c = 'EUR') => {
+          const n = parseFloat(v);
+          if (isNaN(n)) return new Intl.NumberFormat('es-ES', { style: 'currency', currency: c }).format(0);
+          return new Intl.NumberFormat('es-ES', { style: 'currency', currency: c }).format(n);
+      };
+
       const calculateDays = (d1, d2 = new Date()) => Math.max(1, Math.ceil(Math.abs(new Date(d2) - new Date(d1)) / (1000 * 60 * 60 * 24)));
-      const extractJSON = (t) => { try { const clean = t.replace(/```json/g, "").replace(/```/g, "").trim(); const m = clean.match(/(\{[\s\S]*\}|\[[\s\S]*\])/); return m ? JSON.parse(m[0]) : null; } catch { return null; } };
+      
+      const extractJSON = (t) => { 
+          try { 
+              const clean = t.replace(/```json/g, "").replace(/```/g, "").trim(); 
+              const m = clean.match(/(\{[\s\S]*\}|\[[\s\S]*\])/); 
+              return m ? JSON.parse(m[0]) : null; 
+          } catch { return null; } 
+      };
 
       const usePersistentState = (key, initialValue) => {
         const [state, setState] = useState(() => {
@@ -62,7 +79,7 @@
       ];
       const MONTHS = ["ENERO", "FEBRE", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOST", "SEPTIE", "OCTUB", "NOVIEM", "DICIE"];
 
-      // --- ICONOS COMPLETOS (Evita error 0,0) ---
+      // --- ICONOS COMPLETOS (Evitar crash) ---
       const Icons = {
         Briefcase: (p) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>,
         DollarSign: (p) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
@@ -487,12 +504,34 @@
                       const res = await askGemini(apiKey, `Sobre "${ticker}": ${question}. Español conciso.`);
                       setSpecificAnswer(res);
                   } else {
-                      const prompt = `Realiza un análisis fundamental de inversión experto para "${ticker}". JSON: {"company":"..","current_price":number,"intrinsic_value":number,"intrinsic_method":"..","valuation_status":"..","forecast_5y":{"pessimistic":number,"realistic":number,"optimistic":number,"rationale":".."},"industry_comparison":{"per":{"stock":number,"industry":number},"peg":{"stock":number,"industry":number},"yield":{"stock":number,"industry":number}},"fundamentals":{"per":"..","eps":"..","beta":"..","market_cap":".."},"technical_levels":"..","pros_cons":{"pros":[],"cons":[]},"investment_verdict":"..","peers":[]}`;
+                      const prompt = `Realiza un análisis fundamental de inversión experto para "${ticker}".
+                      Necesito un JSON con estructura exacta. IDIOMA: ESPAÑOL.
+                      
+                      JSON FORMAT:
+                      {
+                        "company": "Nombre",
+                        "current_price": number,
+                        "intrinsic_value": number,
+                        "intrinsic_method": "Breve explicación",
+                        "valuation_status": "Infravalorada/Sobrevalorada/Justa",
+                        "forecast_5y": { "pessimistic": number, "realistic": number, "optimistic": number, "rationale": "..." },
+                        "industry_comparison": {
+                            "per": {"stock": number, "industry": number},
+                            "peg": {"stock": number, "industry": number},
+                            "yield": {"stock": number, "industry": number}
+                        },
+                        "fundamentals": {"per": "...", "eps": "...", "beta": "...", "market_cap": "..."},
+                        "technical_levels": "Soportes y Resistencias",
+                        "pros_cons": { "pros": ["..."], "cons": ["..."] },
+                        "investment_verdict": "Veredicto final",
+                        "peers": ["..."]
+                      }`;
+                      
                       const res = await askGemini(apiKey, prompt);
                       const json = extractJSON(res);
-                      if (json) setData(json); else throw new Error("IA no devolvió JSON.");
+                      if (json) setData(json); else throw new Error("No se pudo generar el análisis financiero.");
                   }
-              } catch (e) { alert(e.message); } finally { setLoading(false); }
+              } catch (e) { alert("Error: " + e.message); } finally { setLoading(false); }
           };
 
           return (
@@ -519,14 +558,14 @@
                               <div className="glass-panel p-6 rounded-2xl border-l-4 border-purple-500 flex justify-between items-center">
                                   <div><h2 className="text-3xl font-display font-bold text-white mb-1">{data.company}</h2><div className="text-xs font-bold text-purple-400 uppercase tracking-widest">{data.valuation_status}</div></div>
                                   <div className="flex gap-8 text-center">
-                                      <div><div className="text-[10px] text-slate-400 uppercase font-bold">Precio</div><div className="text-2xl font-bold font-mono">{formatN(data.current_price)}</div></div>
+                                      <div><div className="text-[10px] text-slate-400 uppercase font-bold">Precio Actual</div><div className="text-2xl font-bold font-mono">{formatN(data.current_price)}</div></div>
                                       <div><div className="text-[10px] text-purple-400 uppercase font-bold">Valor iA</div><div className="text-2xl font-bold text-purple-400 font-mono">{formatN(data.intrinsic_value)}</div><div className="text-[8px] opacity-60 max-w-[120px]">{data.intrinsic_method}</div></div>
                                   </div>
                               </div>
                               <div className="grid grid-cols-3 gap-4 text-center">
-                                  <div className="bg-red-900/10 border border-red-500/20 p-4 rounded-xl"><div className="text-[10px] uppercase font-bold text-red-400">Pesimista 5Y</div><div className="text-xl font-bold">{formatN(data.forecast_5y.pessimistic)}</div></div>
-                                  <div className="bg-blue-900/10 border border-blue-500/20 p-4 rounded-xl"><div className="text-[10px] uppercase font-bold text-blue-400">Realista 5Y</div><div className="text-xl font-bold">{formatN(data.forecast_5y.realistic)}</div></div>
-                                  <div className="bg-green-900/10 border border-green-500/20 p-4 rounded-xl"><div className="text-[10px] uppercase font-bold text-green-400">Optimista 5Y</div><div className="text-xl font-bold">{formatN(data.forecast_5y.optimistic)}</div></div>
+                                  <div className="bg-red-900/10 border border-red-500/20 p-4 rounded-xl"><div className="text-[10px] uppercase font-bold text-red-400">Pesimista 5Y</div><div className="text-xl font-bold">{formatN(data.forecast_5y?.pessimistic)}</div></div>
+                                  <div className="bg-blue-900/10 border border-blue-500/20 p-4 rounded-xl"><div className="text-[10px] uppercase font-bold text-blue-400">Realista 5Y</div><div className="text-xl font-bold">{formatN(data.forecast_5y?.realistic)}</div></div>
+                                  <div className="bg-green-900/10 border border-green-500/20 p-4 rounded-xl"><div className="text-[10px] uppercase font-bold text-green-400">Optimista 5Y</div><div className="text-xl font-bold">{formatN(data.forecast_5y?.optimistic)}</div></div>
                               </div>
                               <div className="glass-panel p-6 rounded-2xl"><h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2"><Icons.Award size={18}/> Veredicto iA</h3><p className="text-slate-300 text-sm leading-relaxed italic">"{data.investment_verdict}"</p></div>
                           </div>
@@ -598,7 +637,7 @@
                           <div>
                                <label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">Refresco Automático</label>
                                <div className="bg-slate-800 p-3 rounded-xl border border-slate-600 flex items-center gap-4">
-                                   <input type="range" min="5" max="60" step="5" value={refreshInterval} onChange={(e) => setRefreshInterval(parseInt(e.target.value))} className="flex-1 accent-blue-500 h-2 bg-slate-600 rounded-lg" />
+                                   <input type="range" min="5" max="60" step="5" value={refreshInterval} onChange={(e) => setRefreshInterval(parseInt(e.target.value))} className="flex-1 accent-blue-500" />
                                    <div className="font-mono font-bold text-blue-400 w-16 text-right">{refreshInterval} min</div>
                                </div>
                                <p className="text-[10px] text-slate-500 mt-2">Frecuencia de actualización de precios.</p>
@@ -623,8 +662,8 @@
                               <div className="mt-6 p-6 bg-[#1e293b] border border-[#334155] rounded-xl relative overflow-hidden">
                                   <h4 className="text-lg font-bold text-blue-400 mb-4 flex items-center gap-2"><Icons.HelpCircle size={20} /> Gestión de la API Key (Gratis vs Pago)</h4>
                                   <div className="mb-6 border-b border-slate-700 pb-6 text-xs leading-relaxed space-y-3 text-slate-300">
-                                      <p><span className="text-green-400 font-bold uppercase mr-2 font-bold">Gratis:</span> Accede a <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-blue-400 underline font-bold">Google AI Studio</a>. Límite: 15 peticiones/minuto.</p>
-                                      <p><span className="text-blue-400 font-bold uppercase mr-2 font-bold">Ilimitada:</span> Vincula una cuenta en <a href="https://console.cloud.google.com/billing" target="_blank" className="text-blue-400 underline font-bold">Google Cloud Billing</a> para eliminar esperas.</p>
+                                      <p><span className="text-green-400 font-bold uppercase mr-2">Gratis:</span> Accede a <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-blue-400 underline font-bold">Google AI Studio</a>. Límite: 15 peticiones/minuto.</p>
+                                      <p><span className="text-blue-400 font-bold uppercase mr-2">Ilimitada:</span> Vincula una cuenta en <a href="https://console.cloud.google.com/billing" target="_blank" className="text-blue-400 underline font-bold">Google Cloud Billing</a> para eliminar esperas.</p>
                                   </div>
                                   <div className="flex gap-3">
                                       <a href="https://aistudio.google.com/app/apikey" target="_blank" className="flex-1 text-center py-2 bg-slate-700 rounded-lg text-xs font-bold flex items-center justify-center gap-2"><Icons.ExternalLink size={14}/> Obtener Key</a>
@@ -692,7 +731,7 @@
                       {activeTab === 'settings' && <SettingsTab apiKey={apiKey} setApiKey={setApiKey} isAuth={isAuth} onActivate={handleActivate} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={setPortfolio} />}
                   </main>
                   <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase tracking-widest">
-                      <div>BoardingGate v2.5.7</div><div>Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleString() : '--'}</div>
+                      <div>BoardingGate v2.5.8</div><div>Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleString() : '--'}</div>
                   </footer>
               </div>
           );
