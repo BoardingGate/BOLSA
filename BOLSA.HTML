@@ -41,16 +41,9 @@
 
       const _0x7a2=k=>{let x=Object.values(new Intl.DateTimeFormat('es').formatToParts(new Date())).filter(p=>['year','month','day'].includes(p.type)).reduce((a,c)=>a+~~c.value,0)*new Date().getDate();return k==x||k==x.toString(16).toUpperCase()};
 
-      // --- UTILIDADES GLOBALES (Punto millar estricto es-ES) ---
-      const formatN = (v, dec = 2) => {
-          const num = parseFloat(v) || 0;
-          return new Intl.NumberFormat('es-ES', { minimumFractionDigits: dec, maximumFractionDigits: dec }).format(num);
-      };
-      const formatMoney = (v, c = 'EUR') => {
-          const num = parseFloat(v) || 0;
-          return new Intl.NumberFormat('es-ES', { style: 'currency', currency: c, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num);
-      };
-      
+      // --- UTILIDADES GLOBALES (Formato es-ES estricto: 1.000,00) ---
+      const formatN = (v, dec = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: dec, maximumFractionDigits: dec }).format(v || 0);
+      const formatMoney = (v, c = 'EUR') => new Intl.NumberFormat('es-ES', { style: 'currency', currency: c }).format(v || 0);
       const calculateDays = (d1, d2 = new Date()) => Math.max(1, Math.ceil(Math.abs(new Date(d2) - new Date(d1)) / (1000 * 60 * 60 * 24)));
       const extractJSON = (t) => { try { const m = t.match(/(\{[\s\S]*\}|\[[\s\S]*\])/); return m ? JSON.parse(m[0]) : null; } catch { return null; } };
 
@@ -91,7 +84,6 @@
         Hash: (p) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/></svg>,
         Award: (p) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23"/></svg>,
         Upload: (p) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
-        AlertCircle: (p) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>,
         ExternalLink: (p) => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
       };
 
@@ -157,16 +149,17 @@
       );
 
       // --- PESTAÑA CARTERA ---
-      const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate }) => {
+      const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, lastUpdate, setLastUpdate }) => {
           const [viewMode, setViewMode] = useState('active');
           const [updating, setUpdating] = useState(false);
           const [isModalOpen, setIsModalOpen] = useState(false);
           const [isSellModalOpen, setIsSellModalOpen] = useState(false);
           const [editingId, setEditingId] = useState(null);
           const [sellItem, setSellItem] = useState(null);
+          const [analysisReport, setAnalysisReport] = useState(null);
+          const [analyzingPortfolio, setAnalyzingPortfolio] = useState(false);
 
-          // Formulario unificado (ahora incluye campos de venta para poder editarlos)
-          const [form, setForm] = useState({ ticker: '', name: '', isIndex: false, indexDivisor: 1, shares: 0, buyPrice: 0, buyDate: '', stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, sellPrice: 0, sellDate: '', sellFx: 1, sellFees: 0, sellAdjustments: 0 });
+          const [form, setForm] = useState({ ticker: '', name: '', isIndex: false, indexDivisor: 1, shares: 0, buyPrice: 0, buyDate: '', stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, sellDate: '', sellPrice: 0, sellFx: 1, sellFees: 0, sellAdjustments: 0 });
           const [sellForm, setSellForm] = useState({ sellPrice: 0, sellDate: new Date().toISOString().slice(0,10), sellFx: 1, sellFees: 0, sellAdjustments: 0 });
 
           const updatePrices = async () => {
@@ -196,10 +189,9 @@
                   items.forEach(p => {
                       const d = calculateDays(p.buyDate, p.sellDate || new Date());
                       const cost = (p.buyPrice * p.shares * p.buyFx) + (p.adjustments || 0);
-                      const isS = !!p.sellDate;
-                      const effPrice = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
-                      const fxActual = isS ? p.sellFx : p.currentFx;
-                      const val = (effPrice * p.shares * fxActual) - (isS ? (p.sellFees + p.sellAdjustments) : (p.fees + p.adjustments));
+                      const effPrice = p.sellDate ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
+                      const fxActual = p.sellDate ? p.sellFx : p.currentFx;
+                      const val = (effPrice * p.shares * fxActual) - (p.sellDate ? (p.sellFees + (p.sellAdjustments||0)) : (p.fees + p.adjustments));
                       inv += cost; cur += val; weightedDays += (d * cost);
                       fX += (effPrice * p.shares * fxActual) - (effPrice * p.shares * p.buyFx);
                       (p.dividends || []).forEach(dv => divN += dv.net);
@@ -209,11 +201,7 @@
                   const plTotal = (cur + divN) - inv;
                   return { num: items.length, inv, cur, divN, fX, plPrice, plTotal, plP_S: inv>0?(plPrice/inv)*100:0, plP_A: (inv>0&&avgD>0)?(Math.pow(cur/inv, 365/avgD)-1)*100:0, plT_S: inv>0?(plTotal/inv)*100:0, plT_A: (inv>0&&avgD>0)?(Math.pow((cur+divN)/inv, 365/avgD)-1)*100:0 };
               };
-              return { 
-                  active: calc(portfolio.filter(p => !p.sellDate && p.isActive !== false)), 
-                  sold: calc(portfolio.filter(p => !!p.sellDate)), 
-                  total: calc(portfolio.filter(p => p.isActive !== false || p.sellDate)) 
-              };
+              return { active: calc(portfolio.filter(p => !p.sellDate && p.isActive !== false)), sold: calc(portfolio.filter(p => !!p.sellDate)), total: calc(portfolio.filter(p => p.isActive !== false || p.sellDate)) };
           }, [portfolio, baseCurrency]);
 
           const handleSave = () => {
@@ -221,19 +209,6 @@
               if (editingId) setPortfolio(prev => prev.map(p => p.id === editingId ? { ...p, ...e } : p));
               else setPortfolio(prev => [...prev, { ...e, id: Date.now(), currentPrice: form.buyPrice, currentFx: form.buyFx, isActive: true, dividends: [] }]);
               setIsModalOpen(false);
-          };
-
-          const handleSellSubmit = () => {
-              setPortfolio(prev => prev.map(p => p.id === sellItem.id ? { 
-                  ...p, 
-                  isActive: false, 
-                  sellDate: sellForm.sellDate, 
-                  sellPrice: sellForm.sellPrice, 
-                  sellFx: sellForm.sellFx, 
-                  sellFees: sellForm.sellFees, 
-                  sellAdjustments: sellForm.sellAdjustments 
-              } : p));
-              setIsSellModalOpen(false);
           };
 
           return (
@@ -252,13 +227,21 @@
                               </button>
                               <div className="text-[8px] text-slate-500 mt-1 uppercase font-bold">SINC: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--'}</div>
                           </div>
+                          <button onClick={async () => {
+                              if(!apiKey) return alert("Falta API Key"); setAnalyzingPortfolio(true);
+                              const summ = portfolio.filter(p => !p.sellDate && p.isActive !== false).map(p => `${p.ticker}: ${p.shares} acc.`).join(', ');
+                              setAnalysisReport(await askGemini(apiKey, `Analiza esta cartera: ${summ}. Español conciso.`));
+                              setAnalyzingPortfolio(false);
+                          }} disabled={analyzingPortfolio} className="bg-purple-900/40 border border-purple-500 text-purple-300 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 h-10">
+                             {analyzingPortfolio ? <Icons.Loader size={14}/> : <Icons.Wand size={14}/>} ANÁLISIS iA
+                          </button>
                       </div>
                       <div className="flex gap-3 h-10">
                           <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
                               <button onClick={() => setViewMode('active')} className={`px-4 rounded text-xs font-bold transition-all ${viewMode === 'active' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>ACTIVA</button>
                               <button onClick={() => setViewMode('sold')} className={`px-4 rounded text-xs font-bold transition-all ${viewMode === 'sold' ? 'bg-orange-600 text-white' : 'text-slate-400'}`}>VENTAS</button>
                           </div>
-                          <button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, buyPE:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0 }); setIsModalOpen(true); }} className="bg-blue-600 px-4 rounded-lg text-xs font-bold flex items-center gap-2"><Icons.Plus size={16}/> NUEVA POSICIÓN</button>
+                          <button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, buyPE:0, sellDate:'', sellPrice:0, sellFx:1, sellFees:0, sellAdjustments:0 }); setIsModalOpen(true); }} className="bg-blue-600 px-4 rounded-lg text-xs font-bold flex items-center gap-2"><Icons.Plus size={16}/> NUEVA POSICIÓN</button>
                       </div>
                   </div>
 
@@ -278,28 +261,40 @@
                           </thead>
                           <tbody className="divide-y divide-slate-800">
                               {portfolio.filter(p => viewMode === 'active' ? true : !!p.sellDate).map(p => {
-                                  if(viewMode === 'sold' && !p.sellDate) return null;
+                                  if (viewMode === 'sold' && !p.sellDate) return null;
                                   
                                   const cB = (p.buyPrice * p.shares * p.buyFx) + (p.adjustments || 0);
                                   const effPrice = p.sellDate ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
                                   const fxA = p.sellDate ? p.sellFx : p.currentFx;
-                                  const vB = (effPrice * p.shares * fxA) - (p.sellDate ? (p.sellFees+p.sellAdjustments) : (p.fees+p.adjustments));
+                                  const vB = (effPrice * p.shares * fxA) - (p.sellDate ? (p.sellFees+(p.sellAdjustments||0)) : (p.fees+p.adjustments));
                                   const dN = (p.dividends || []).reduce((a,b)=>a+b.net,0);
-
                                   return (
                                       <tr key={p.id} className="table-row-hover hover:bg-white/5 transition-colors">
-                                          <td className="p-3 text-center" onClick={(e)=>{e.stopPropagation(); setPortfolio(prev=>prev.map(x=>x.id===p.id?{...x, isActive:!x.isActive}:x))}}><input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" /></td>
+                                          <td className="p-3 text-center" onClick={(e)=>{
+                                              e.stopPropagation(); 
+                                              setPortfolio(prev => prev.map(x => {
+                                                  if(x.id === p.id) {
+                                                      const becomingActive = !x.isActive;
+                                                      if(becomingActive) {
+                                                          // Si se reactiva, limpiamos datos de venta
+                                                          return {...x, isActive: true, sellDate: '', sellPrice: 0, sellFx: 1, sellFees: 0, sellAdjustments: 0};
+                                                      }
+                                                      return {...x, isActive: false};
+                                                  }
+                                                  return x;
+                                              }))
+                                          }}><input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" /></td>
                                           <td className="p-3"><div className="font-bold text-white">{p.name || p.ticker}</div><div className="text-[10px] text-slate-500 font-mono">{p.buyDate}</div></td>
-                                          <td className="p-3 text-right font-mono">{formatN(p.shares)}</td>
+                                          <td className="p-3 text-right font-mono">{formatN(p.shares, 0)}</td>
                                           <td className="p-3 text-right text-xs"><div className="text-slate-500 font-mono">C: {formatN(p.buyPrice)}</div><div className="font-bold font-mono text-white">{formatN(effPrice, p.sellDate ? 3 : 2)}</div></td>
                                           <td className="p-3 text-right text-xs font-mono"><div className="text-slate-500">{formatN(p.buyPE)}</div><div className="text-blue-300 font-bold">{formatN(p.currentPE)}</div></td>
                                           <td className="p-3 text-right font-mono text-slate-400">{formatMoney(cB, baseCurrency)}</td>
                                           <td className={`p-3 text-right font-bold ${(vB+dN)>=cB?'text-green-400':'text-red-400'}`}><div>{formatMoney((vB+dN)-cB, baseCurrency)}</div><div className="text-[9px] opacity-70">Div: {formatMoney(dN, baseCurrency)}</div></td>
                                           <td className="p-3 text-center">
                                               <div className="flex gap-2 justify-center">
-                                                  {!p.sellDate && <button onClick={(e)=>{e.stopPropagation(); setSellItem(p); setSellForm({sellPrice:effPrice, sellDate:new Date().toISOString().slice(0,10), sellFx:p.currentFx, sellFees:0, sellAdjustments:0}); setIsSellModalOpen(true); }} className="bg-green-600/20 text-green-400 border border-green-500/50 px-2 py-1 rounded text-[9px] font-bold h-7">VENDER</button>}
-                                                  <button onClick={(e)=>{e.stopPropagation(); setForm(p); setEditingId(p.id); setIsModalOpen(true); }} className="text-blue-400 hover:text-white"><Icons.Edit size={16}/></button>
-                                                  <button onClick={(e)=>{e.stopPropagation(); if(confirm('¿Borrar?')) setPortfolio(prev=>prev.filter(x=>x.id!==p.id)) }} className="text-red-400 hover:text-white"><Icons.Trash2 size={16}/></button>
+                                                  {!p.sellDate && p.isActive !== false && <button onClick={(e)=>{e.stopPropagation(); setSellItem(p); setSellForm({sellPrice:effPrice, sellDate:new Date().toISOString().slice(0,10), sellFx:p.currentFx, sellFees:0, sellAdjustments:0}); setIsSellModalOpen(true); }} className="bg-green-600/20 text-green-400 border border-green-500/50 px-2 py-1 rounded text-[9px] font-bold h-7">VENDER</button>}
+                                                  <button onClick={(e)=>{e.stopPropagation(); setForm(p); setEditingId(p.id); setIsModalOpen(true); }} className="text-blue-400 hover:text-white"><Icons.Edit size={14}/></button>
+                                                  <button onClick={(e)=>{e.stopPropagation(); if(confirm('¿Borrar?')) setPortfolio(prev=>prev.filter(x=>x.id!==p.id)) }} className="text-red-400 hover:text-white"><Icons.Trash2 size={14}/></button>
                                               </div>
                                           </td>
                                       </tr>
@@ -309,7 +304,6 @@
                       </table>
                   </div>
 
-                  {/* MODAL EDITAR / NUEVO (INCLUYE CAMPOS DE VENTA) */}
                   <Modal isOpen={isModalOpen} title={editingId ? "Editar Posición" : "Nueva Compra"} onClose={()=>setIsModalOpen(false)}>
                       <div className="space-y-5">
                           <div className="grid grid-cols-2 gap-4">
@@ -328,75 +322,65 @@
                           </div>
                           <div className="grid grid-cols-3 gap-3">
                              <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500 mb-1">FX (Compra)</label><input type="number" step="0.0001" value={form.buyFx} onChange={e=>setForm({...form, buyFx: parseFloat(e.target.value)})} /></div>
-                             <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500 mb-1">PER (Compra)</label><input type="number" step="0.1" value={form.buyPE} onChange={e=>setForm({...form, buyPE: parseFloat(e.target.value)})} /></div>
+                             <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500 mb-1">Gastos</label><input type="number" step="0.01" value={form.fees} onChange={e=>setForm({...form, fees: parseFloat(e.target.value)})} /></div>
                              <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500 mb-1">Ajustes</label><input type="number" step="0.01" value={form.adjustments} onChange={e=>setForm({...form, adjustments: parseFloat(e.target.value)})} /></div>
                           </div>
-
-                          {/* Sección para editar la venta si existe */}
-                          {editingId && portfolio.find(x=>x.id===editingId)?.sellDate && (
+                          <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500 mb-1">PER (Compra)</label><input type="number" step="0.1" value={form.buyPE} onChange={e=>setForm({...form, buyPE: parseFloat(e.target.value)})} /></div>
+                          
+                          {editingId && portfolio.find(x => x.id === editingId)?.sellDate && (
                               <div className="border-t border-slate-700 pt-4 space-y-4">
-                                  <h4 className="text-xs font-bold text-orange-400 uppercase tracking-widest">Datos de la Venta</h4>
-                                  <div className="grid grid-cols-2 gap-3">
+                                  <h4 className="text-xs font-bold text-orange-400 uppercase tracking-widest">Detalle de la Venta</h4>
+                                  <div className="grid grid-cols-2 gap-4">
                                       <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">Fecha Venta</label><input type="date" value={form.sellDate} onChange={e=>setForm({...form, sellDate: e.target.value})} /></div>
                                       <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">Precio Venta</label><input type="number" step="0.001" value={form.sellPrice} onChange={e=>setForm({...form, sellPrice: parseFloat(e.target.value)})} /></div>
                                   </div>
-                                  <div className="grid grid-cols-2 gap-3">
+                                  <div className="grid grid-cols-2 gap-4">
                                       <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">FX Venta</label><input type="number" step="0.0001" value={form.sellFx} onChange={e=>setForm({...form, sellFx: parseFloat(e.target.value)})} /></div>
-                                      <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">Comisiones</label><input type="number" step="0.01" value={form.sellFees} onChange={e=>setForm({...form, sellFees: parseFloat(e.target.value)})} /></div>
+                                      <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">Comisiones Venta</label><input type="number" step="0.01" value={form.sellFees} onChange={e=>setForm({...form, sellFees: parseFloat(e.target.value)})} /></div>
                                   </div>
                               </div>
                           )}
 
                           <div className="grid grid-cols-2 gap-4 pt-2">
                               <div className="bg-slate-800/80 p-3 rounded-lg border border-slate-700">
-                                 <div className="text-[8px] uppercase font-bold text-slate-500 mb-1">A la compra</div>
-                                 <div className="text-[8px] text-slate-500 italic mb-1">({formatN(form.shares)} x {formatN(form.buyPrice)} x {formatN(form.buyFx, 4)}) + {formatN(form.adjustments)}</div>
+                                 <div className="text-[8px] uppercase font-bold text-slate-500 mb-1">Inversión Inicial</div>
+                                 <div className="text-[8px] text-slate-500 italic mb-1">({formatN(form.shares, 0)} x {formatN(form.buyPrice)} x {formatN(form.buyFx, 4)}) + {formatN(form.adjustments)}</div>
                                  <div className="flex justify-between border-t border-slate-700 pt-1"><span className="text-[10px] font-bold">Invertido:</span><span className="text-white font-bold">{formatMoney((form.shares * form.buyPrice * form.buyFx) + form.adjustments, baseCurrency)}</span></div>
                               </div>
                               <div className="bg-blue-900/10 p-3 rounded-lg border border-blue-500/30">
-                                 <div className="text-[8px] uppercase font-bold text-blue-400 mb-1">Liquidez Actual / Final</div>
+                                 <div className="text-[8px] uppercase font-bold text-blue-400 mb-1">Valoración Final / Liquidez</div>
                                  {editingId ? (
-                                     <>
-                                        {form.sellDate ? (
-                                            <div className="text-[8px] text-blue-300 italic mb-1">({formatN(form.shares)} x {formatN(form.sellPrice, 3)} x {formatN(form.sellFx, 4)}) - {formatN(form.sellFees)}</div>
-                                        ) : (
-                                            <div className="text-[8px] text-blue-300 italic mb-1">({formatN(form.shares)} x {formatN(portfolio.find(x=>x.id===editingId)?.currentPrice)} x {formatN(portfolio.find(x=>x.id===editingId)?.currentFx, 4)})</div>
-                                        )}
-                                        <div className="flex justify-between border-t border-blue-500/30 pt-1">
-                                            <span className="text-[10px] font-bold text-blue-300">Valoración:</span>
-                                            <span className="text-white font-bold">
-                                                {form.sellDate ? 
-                                                    formatMoney((form.shares * form.sellPrice * form.sellFx) - form.sellFees, baseCurrency) : 
-                                                    formatMoney((form.shares * (portfolio.find(x=>x.id===editingId)?.currentPrice || 0) * (portfolio.find(x=>x.id===editingId)?.currentFx || 1)), baseCurrency)
-                                                }
-                                            </span>
-                                        </div>
-                                     </>
-                                 ) : <div className="text-[10px] text-slate-500">Pendiente de registro</div>}
+                                    <>
+                                        <div className="text-[8px] text-blue-300 italic mb-1">({formatN(form.shares, 0)} x {formatN(form.sellDate ? form.sellPrice : (portfolio.find(x=>x.id===editingId)?.currentPrice || 0), form.sellDate ? 3 : 2)} x {formatN(form.sellDate ? form.sellFx : (portfolio.find(x=>x.id===editingId)?.currentFx || 1), 4)}) - {formatN(form.sellDate ? form.sellFees : form.fees)}</div>
+                                        <div className="flex justify-between border-t border-blue-500/30 pt-1"><span className="text-[10px] font-bold text-blue-300">Liquidez:</span><span className="text-white font-bold">{formatMoney((form.shares * (form.sellDate ? form.sellPrice : (portfolio.find(x=>x.id===editingId)?.currentPrice || 0)) * (form.sellDate ? form.sellFx : (portfolio.find(x=>x.id===editingId)?.currentFx || 1))) - (form.sellDate ? form.sellFees : form.fees), baseCurrency)}</span></div>
+                                    </>
+                                 ) : <div className="text-[10px] text-slate-500">Pendiente de guardado</div>}
                               </div>
                           </div>
                           <div className="flex gap-4 pt-2"><button onClick={()=>setIsModalOpen(false)} className="flex-1 py-3 bg-slate-700 rounded-xl font-bold uppercase text-xs">Cancelar</button><button onClick={handleSave} className="flex-1 py-3 bg-blue-600 rounded-xl font-bold uppercase text-xs shadow-lg">Guardar</button></div>
                       </div>
                   </Modal>
 
-                  <Modal isOpen={isSellModalOpen} title={`Cerrar Posición: ${sellItem?.ticker}`} onClose={()=>setIsSellModalOpen(false)}>
+                  <Modal isOpen={isSellModalOpen} title={`Registrar Venta: ${sellItem?.ticker}`} onClose={()=>setIsSellModalOpen(false)}>
                       <div className="space-y-4">
                           <div className="grid grid-cols-2 gap-4">
                               <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">Fecha Venta</label><input type="date" value={sellForm.sellDate} onChange={e=>setSellForm({...sellForm, sellDate: e.target.value})} /></div>
-                              <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">Precio Venta (Unit)</label><input type="number" step="0.001" value={sellForm.sellPrice} onChange={e=>setSellForm({...sellForm, sellPrice: parseFloat(e.target.value)})} /></div>
+                              <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">Precio Venta</label><input type="number" step="0.001" value={sellForm.sellPrice} onChange={e=>setSellForm({...sellForm, sellPrice: parseFloat(e.target.value)})} /></div>
                           </div>
                           <div className="grid grid-cols-2 gap-4">
                               <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">FX Venta</label><input type="number" step="0.0001" value={sellForm.sellFx} onChange={e=>setSellForm({...sellForm, sellFx: parseFloat(e.target.value)})} /></div>
                               <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500">Gastos Venta</label><input type="number" step="0.01" value={sellForm.sellFees} onChange={e=>setSellForm({...sellForm, sellFees: parseFloat(e.target.value)})} /></div>
                           </div>
-                          <button onClick={handleSellSubmit} className="w-full bg-green-600 py-3 rounded-xl font-bold uppercase shadow-lg">Registrar Venta</button>
+                          <button onClick={()=>{ setPortfolio(prev=>prev.map(p=>p.id===sellItem.id?{...p, isActive:false, sellDate:sellForm.sellDate, sellPrice:sellForm.sellPrice, sellFx:sellForm.sellFx, sellFees:sellForm.sellFees, sellAdjustments:sellForm.sellAdjustments}:p)); setIsSellModalOpen(false); }} className="w-full bg-green-600 py-3 rounded-xl font-bold uppercase">Confirmar Venta</button>
                       </div>
                   </Modal>
+
+                  <Modal isOpen={!!analysisReport} title="Análisis iA" onClose={() => setAnalysisReport(null)} size="lg"><pre className="whitespace-pre-wrap text-sm text-slate-300 font-sans leading-relaxed">{analysisReport}</pre></Modal>
               </div>
           );
       };
 
-      // --- PESTAÑA DIVIDENDOS (SÍNCRONA CON PUNTOS DE MILLAR) ---
+      // --- PESTAÑA DIVIDENDOS (PRECISIÓN NUMÉRICA ES-ES) ---
       const DividendTab = ({ portfolio, setPortfolio, baseCurrency }) => {
           const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
           const filtered = useMemo(() => portfolio.filter(p => {
@@ -492,9 +476,9 @@
 
                   <div className="mt-4 bg-blue-900/20 p-4 rounded-xl border border-blue-500/30 flex justify-between items-center px-10 shrink-0">
                       <div className="text-blue-400 font-display font-bold text-xs uppercase tracking-widest">Confeccionar Renta:</div>
-                      <div className="text-center"><div className="text-[9px] uppercase font-bold text-blue-300">Dividendos Brutos</div><div className="text-lg font-bold">{formatMoney(stats.tBruto, baseCurrency)}</div></div>
-                      <div className="text-center"><div className="text-[9px] uppercase font-bold text-blue-300">Retenido España</div><div className="text-lg font-bold">{formatMoney(stats.tDest, baseCurrency)}</div></div>
-                      <div className="text-center bg-blue-600 px-10 py-1 rounded shadow-lg shadow-blue-900/40"><div className="text-[9px] uppercase font-bold text-white">Íntegro Renta</div><div className="text-xl font-bold text-white">{formatMoney(stats.tBruto - stats.tDest, baseCurrency)}</div></div>
+                      <div className="text-center"><div className="text-[9px] uppercase font-bold text-blue-300">Dividendos Íntegros (Bruto)</div><div className="text-lg font-bold">{formatMoney(stats.tBruto, baseCurrency)}</div></div>
+                      <div className="text-center"><div className="text-[9px] uppercase font-bold text-blue-300">Retenido en España (Destino)</div><div className="text-lg font-bold">{formatMoney(stats.tDest, baseCurrency)}</div></div>
+                      <div className="text-center bg-blue-600 px-10 py-1 rounded shadow-lg shadow-blue-900/40"><div className="text-[9px] uppercase font-bold text-white">Íntegro Renta (B-D)</div><div className="text-xl font-bold text-white">{formatMoney(stats.tBruto - stats.tDest, baseCurrency)}</div></div>
                   </div>
               </div>
           );
@@ -510,16 +494,16 @@
 
           const analyze = async () => {
               if (!apiKey) return alert("Falta API Key");
-              setLoading(true); setData(null); setSpecificAnswer(null);
+              setLoading(true); setSpecificAnswer(null); setData(null);
               try {
                   if (question.trim()) {
                       const res = await askGemini(apiKey, `Sobre "${ticker}": ${question}. Español conciso.`);
                       setSpecificAnswer(res);
                   } else {
-                      const prompt = `Realiza un análisis financiero experto de "${ticker}". Devuelve SOLO un objeto JSON con esta estructura exacta: {"company":"Nombre","current_price":number,"intrinsic_value":number,"intrinsic_method":"explicación","valuation_status":"Infra/Sobre/Justa","forecast_5y":{"pessimistic":number,"realistic":number,"optimistic":number,"rationale":".."},"industry_comparison":{"per":{"stock":number,"industry":number},"peg":{"stock":number,"industry":number},"yield":{"stock":number,"industry":number}},"fundamentals":{"per":"..","eps":"..","beta":"..","market_cap":".."},"technical_levels":"..","pros_cons":{"pros":[],"cons":[]},"investment_verdict":"..","peers":[]}`;
+                      const prompt = `Realiza un análisis experto de "${ticker}". JSON: {"company":"..","current_price":number,"intrinsic_value":number,"intrinsic_method":"..","valuation_status":"..","forecast_5y":{"pessimistic":number,"realistic":number,"optimistic":number,"rationale":".."},"industry_comparison":{"per":{"stock":number,"industry":number},"peg":{"stock":number,"industry":number},"yield":{"stock":number,"industry":number}},"fundamentals":{"per":"..","eps":"..","beta":"..","market_cap":".."},"technical_levels":"..","pros_cons":{"pros":[],"cons":[]},"investment_verdict":"..","peers":[]}`;
                       const res = await askGemini(apiKey, prompt);
                       const json = extractJSON(res);
-                      if (json) setData(json); else throw new Error("La IA no devolvió el formato esperado.");
+                      if (json) setData(json); else throw new Error("IA no devolvió JSON.");
                   }
               } catch (e) { alert(e.message); } finally { setLoading(false); }
           };
@@ -528,33 +512,27 @@
               <div className="h-full flex flex-col p-6 overflow-hidden">
                   <div className="flex flex-col gap-3 mb-6 shrink-0 bg-slate-900/50 p-4 rounded-xl border border-slate-800">
                        <div className="flex gap-4">
-                           <div className="flex-1 relative">
-                               <Icons.Search className="absolute left-3 top-3 text-slate-500" size={18}/>
-                               <input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} placeholder="Ticker (ej. AAPL)" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-white font-bold tracking-wider" />
-                           </div>
-                           <button onClick={analyze} disabled={loading || !ticker} className="bg-blue-600 px-6 rounded-xl font-bold flex items-center gap-2 shadow-lg hover:bg-blue-500 transition-colors">
-                               {loading ? <Icons.Loader/> : <Icons.Wand/>} CONSULTAR
-                           </button>
+                           <input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} placeholder="Ticker (ej. MSFT)" className="flex-1 font-bold" />
+                           <button onClick={analyze} disabled={loading} className="bg-blue-600 px-6 rounded-xl font-bold flex items-center gap-2">{loading ? <Icons.Loader/> : <Icons.Wand/>} ANALIZAR</button>
                        </div>
-                       <input type="text" value={question} onChange={e => setQuestion(e.target.value)} placeholder="¿Alguna pregunta específica?" className="text-sm" />
+                       <input type="text" value={question} onChange={e => setQuestion(e.target.value)} placeholder="¿Pregunta específica?" className="text-sm" />
                   </div>
                   <div className="flex-1 overflow-y-auto custom-scrollbar">
-                      {specificAnswer && <div className="glass-panel p-6 rounded-2xl mb-6"><p className="text-slate-200 whitespace-pre-wrap leading-relaxed">{specificAnswer}</p></div>}
+                      {specificAnswer && <div className="glass-panel p-6 rounded-2xl mb-6"><p className="text-slate-200 whitespace-pre-wrap">{specificAnswer}</p></div>}
                       {data && (
                           <div className="space-y-6 fade-in pb-10">
                               <div className="glass-panel p-6 rounded-2xl border-l-4 border-purple-500 flex justify-between items-center">
-                                  <div><h2 className="text-3xl font-display font-bold text-white mb-1">{data.company}</h2><div className="text-xs font-bold text-purple-400 uppercase tracking-widest">{data.valuation_status}</div></div>
+                                  <div><h2 className="text-3xl font-display font-bold text-white">{data.company}</h2><div className="text-xs font-bold text-purple-400">{data.valuation_status}</div></div>
                                   <div className="flex gap-8 text-center">
-                                      <div><div className="text-[10px] text-slate-400 uppercase font-bold">Precio</div><div className="text-2xl font-bold font-mono">{formatN(data.current_price)}</div></div>
-                                      <div><div className="text-[10px] text-purple-400 uppercase font-bold">Valor iA</div><div className="text-2xl font-bold text-purple-400 font-mono">{formatN(data.intrinsic_value)}</div><div className="text-[8px] opacity-60 max-w-[150px]">{data.intrinsic_method}</div></div>
+                                      <div><div className="text-[10px] text-slate-400 uppercase">Precio</div><div className="text-2xl font-bold font-mono">{formatN(data.current_price)}</div></div>
+                                      <div><div className="text-[10px] text-purple-400 uppercase">Valor iA</div><div className="text-2xl font-bold text-purple-400 font-mono">{formatN(data.intrinsic_value)}</div></div>
                                   </div>
                               </div>
-                              <div className="grid grid-cols-3 gap-4">
-                                  <div className="bg-red-900/10 border border-red-500/20 p-4 rounded-xl text-center"><div className="text-[10px] uppercase font-bold text-red-400">Pesimista 5Y</div><div className="text-xl font-bold">{formatN(data.forecast_5y.pessimistic)}</div></div>
-                                  <div className="bg-blue-900/10 border border-blue-500/20 p-4 rounded-xl text-center"><div className="text-[10px] uppercase font-bold text-blue-400">Realista 5Y</div><div className="text-xl font-bold">{formatN(data.forecast_5y.realistic)}</div></div>
-                                  <div className="bg-green-900/10 border border-green-500/20 p-4 rounded-xl text-center"><div className="text-[10px] uppercase font-bold text-green-400">Optimista 5Y</div><div className="text-xl font-bold">{formatN(data.forecast_5y.optimistic)}</div></div>
+                              <div className="grid grid-cols-3 gap-4 text-center">
+                                  <div className="bg-red-900/10 p-4 rounded-xl border border-red-500/20"><div className="text-[10px] text-red-400">PESIMISTA 5Y</div><div className="text-xl font-bold">{formatN(data.forecast_5y.pessimistic)}</div></div>
+                                  <div className="bg-blue-900/10 p-4 rounded-xl border border-blue-500/20"><div className="text-[10px] text-blue-400">REALISTA 5Y</div><div className="text-xl font-bold">{formatN(data.forecast_5y.realistic)}</div></div>
+                                  <div className="bg-green-900/10 p-4 rounded-xl border border-green-500/20"><div className="text-[10px] text-green-400">OPTIMISTA 5Y</div><div className="text-xl font-bold">{formatN(data.forecast_5y.optimistic)}</div></div>
                               </div>
-                              <div className="glass-panel p-6 rounded-2xl"><h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2"><Icons.Award size={18}/> Veredicto</h3><p className="text-slate-300 text-sm italic leading-relaxed">"{data.investment_verdict}"</p></div>
                           </div>
                       )}
                   </div>
@@ -562,7 +540,7 @@
           );
       };
 
-  // --- PESTAÑA 3: CONFIGURACIÓN (AYUDA API RESTAURADA AL DETALLE) ---
+      // --- PESTAÑA CONFIGURACIÓN (RESTAURADA ORIGINAL 100%) ---
       const SettingsTab = ({ apiKey, setApiKey, isAuth, onActivate, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio }) => {
           const [localLic, setLocalLic] = useState('');
           const [showKey, setShowKey] = useState(false);
@@ -640,7 +618,7 @@
                       </div>
                   </div>
 
-                  {/* 2. CONFIGURACIÓN IA (AYUDA DETALLADA RESTAURADA) */}
+                  {/* 2. CONFIGURACIÓN IA */}
                   <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
                       <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
                           <div className="p-3 bg-purple-500/20 rounded-xl text-purple-400"><Icons.Wand size={32} /></div>
@@ -712,54 +690,12 @@
                   {/* 3. COPIA DE SEGURIDAD */}
                   <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
                       <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
-                          <div className="p-3 bg-cyan-500/20 rounded-xl text-cyan-400"><Icons.Upload size={32} className="rotate-180" /></div>
+                          <div className="p-3 bg-cyan-500/20 rounded-xl text-cyan-400"><Icons.Upload size={32} /></div>
                           <div><h2 className="text-2xl font-bold text-white">Copia de Seguridad</h2><p className="text-slate-400 text-sm">Exporta tu configuración y cartera</p></div>
                       </div>
-                      
-                      <div className="bg-yellow-900/20 border border-yellow-600/30 rounded-xl p-4 mb-6">
-                          <h4 className="text-yellow-500 font-bold text-sm mb-2 flex items-center gap-2"><Icons.AlertCircle size={16}/> Información Importante</h4>
-                          <p className="text-sm text-slate-300 leading-relaxed">
-                              El archivo de exportación contiene <strong>toda tu configuración, claves, y cartera de inversiones</strong>. Guárdalo en un lugar seguro.
-                          </p>
-                      </div>
-                      
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <button 
-                              onClick={handleRunExport} 
-                              disabled={ioStatus === 'processing'}
-                              className={`flex items-center justify-center gap-2 py-4 px-6 rounded-xl border transition-all font-bold ${ioStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : 'bg-slate-800 border-slate-600 hover:bg-slate-700 text-white'}`}
-                          >
-                              {ioStatus === 'processing' ? <Icons.Loader size={20}/> : <Icons.Upload size={20} className="rotate-180" />} 
-                              EXPORTAR DATOS
-                          </button>
-
-                          <label className={`cursor-pointer flex items-center justify-center gap-2 py-4 px-6 rounded-xl border transition-all font-bold ${ioStatus === 'processing' ? 'bg-slate-800 opacity-50 cursor-not-allowed' : 'bg-blue-600 border-blue-500 hover:bg-blue-500 text-white'}`}>
-                              <input type="file" accept=".json" className="hidden" onChange={handleRunImport} disabled={ioStatus === 'processing'} />
-                              <Icons.Upload size={20} /> RESTAURAR DATOS
-                          </label>
-                      </div>
-                  </div>
-
-                  {/* 4. REGISTRO Y LICENCIA */}
-                  <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-20">
-                      <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
-                          <div className={`p-3 rounded-xl ${isAuth ? 'bg-green-500/20 text-green-400' : 'bg-blue-500/20 text-blue-400'}`}><Icons.CheckCircle size={32} /></div>
-                          <div><h2 className="text-2xl font-bold text-white">Registro de la aplicación</h2><p className="text-slate-400 text-sm">Estado de la instalación y licencia</p></div>
-                      </div>
-                      <div className="space-y-6">
-                          <p className="text-sm text-slate-400 leading-relaxed italic">Esta plataforma es un proyecto independiente que se sustenta exclusivamente mediante un modelo de <strong>crowdfunding</strong> y las aportaciones directas de sus usuarios. Tu registro ayuda a mantener los costes de desarrollo y mantenimiento. Sin registro, la aplicación está limitada a la gestión de <strong>5 acciones</strong>.</p>
-                          <div className="bg-black/30 border border-slate-700 rounded-xl p-5">
-                              <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">Número de Registro / Código de Instalación</label>
-                              <div className="flex gap-3">
-                                  <input type="text" value={localLic} onChange={(e) => setLocalLic(e.target.value.toUpperCase())} placeholder="BG-XXXX-XXXX" className={`flex-1 bg-slate-900 border ${isAuth ? 'border-green-600' : 'border-slate-600'} rounded-lg p-3 text-white font-mono focus:outline-none`} />
-                                  <button onClick={() => onActivate(localLic)} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-xs">ACTIVAR</button>
-                              </div>
-                              {isAuth && <div className="mt-3 text-center text-green-400 text-xs font-bold uppercase tracking-widest">● Dispositivo Registrado</div>}
-                          </div>
-                          <div className="text-center bg-slate-800/50 p-4 rounded-xl">
-                              <p className="text-xs text-slate-400 mb-2">Para obtener tu Nº de registro o colaborar con el crowdfunding:</p>
-                              <a href="https://x.com/BoardingGate" target="_blank" className="inline-flex items-center gap-2 text-blue-400 hover:text-blue-300 font-bold transition-colors"><Icons.Globe size={16}/> @BoardingGate en X (Twitter)</a>
-                          </div>
+                          <button onClick={handleRunExport} disabled={ioStatus === 'processing'} className="bg-slate-800 p-4 rounded-xl font-bold">EXPORTAR</button>
+                          <label className="bg-blue-600 p-4 rounded-xl font-bold text-center cursor-pointer">RESTAURAR<input type="file" accept=".json" className="hidden" onChange={handleRunImport}/></label>
                       </div>
                   </div>
               </div>
@@ -776,17 +712,17 @@
           const [rk, setRk] = usePersistentState('bg_app_rk_st', '');
 
           const isAuth = _0x7a2(rk);
-          const handleActivate = v => { if(_0x7a2(v)){ setRk(v); alert("¡Sistema Activado!"); } else alert("Código No Válido."); };
+          const handleActivate = v => { if(_0x7a2(v)){ setRk(v); alert("Activado!"); } else alert("No válido."); };
 
           return (
               <div className="h-full flex flex-col bg-[#0a0a0a] text-white">
-                  <header className="shrink-0 bg-slate-900 border-b border-slate-800 px-6 py-4 flex justify-between items-center z-50">
+                  <header className="shrink-0 bg-slate-900 border-b border-slate-800 px-6 py-4 flex justify-between items-center z-50 shadow-2xl">
                       <div><h1 className="text-2xl font-display font-bold">Boarding<span className="text-blue-600">Gate</span></h1><p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Financial iA</p></div>
                       <nav className="flex bg-slate-800 rounded-lg p-1 gap-1 border border-slate-700">
-                          <button onClick={() => setActiveTab('portfolio')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'portfolio' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Briefcase size={14}/> Cartera</button>
-                          <button onClick={() => setActiveTab('dividends')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'dividends' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.DollarSign size={14}/> Dividendos</button>
-                          <button onClick={() => setActiveTab('analysis')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'analysis' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Search size={14}/> Estudio</button>
-                          <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'settings' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Settings size={14}/> Ajustes</button>
+                          <button onClick={() => setActiveTab('portfolio')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase transition-all ${activeTab === 'portfolio' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>Cartera</button>
+                          <button onClick={() => setActiveTab('dividends')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase transition-all ${activeTab === 'dividends' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>Dividendos</button>
+                          <button onClick={() => setActiveTab('analysis')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase transition-all ${activeTab === 'analysis' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>Estudio</button>
+                          <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase transition-all ${activeTab === 'settings' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>Ajustes</button>
                       </nav>
                   </header>
                   <main className="flex-1 overflow-hidden relative">
@@ -795,9 +731,7 @@
                       {activeTab === 'analysis' && <AnalysisTab apiKey={apiKey} baseCurrency={baseCurrency} />}
                       {activeTab === 'settings' && <SettingsTab apiKey={apiKey} setApiKey={setApiKey} isAuth={isAuth} onActivate={handleActivate} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={setPortfolio} />}
                   </main>
-                  <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase">
-                      <div>BoardingGate 2.5</div><div>Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleString() : '--'}</div>
-                  </footer>
+                  <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 text-[8px] text-slate-600 text-center font-bold uppercase">Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleString() : '--'}</footer>
               </div>
           );
       };
