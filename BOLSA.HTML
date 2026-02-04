@@ -444,7 +444,11 @@
           );
       };
 
-      // --- PESTAÑA ESTUDIO iA (ORIGINAL + PROYECCIONES) ---
+    
+
+
+
+      // --- PESTAÑA ESTUDIO (MEJORADA CON SOPORTES/RESISTENCIAS) ---
       const AnalysisTab = ({ apiKey, baseCurrency }) => {
           const [ticker, setTicker] = useState('');
           const [question, setQuestion] = useState('');
@@ -454,75 +458,202 @@
 
           const analyze = async () => {
               if (!apiKey) return alert("Falta API Key");
-              setLoading(true); setSpecificAnswer(null); setData(null);
+              setLoading(true);
+              setSpecificAnswer(null);
+              setData(null);
+              
               try {
                   if (question.trim()) {
-                      setSpecificAnswer(await askGemini(apiKey, `Sobre "${ticker}": ${question}. Responde conciso en español.`));
+                      // Modo pregunta específica
+                      const prompt = `Sobre la empresa con ticker "${ticker}": ${question}. Responde de forma concisa y directa en español.`;
+                      const res = await askGemini(apiKey, prompt);
+                      setSpecificAnswer(res);
                   } else {
-                      const prompt = `Realiza un análisis fundamental experto de "${ticker}".
-                      Campos requeridos en JSON: 
-                      1. "intrinsic_value": número (Graham/DCF). 
-                      2. "valuation_thesis": String detallado explicando CÓMO has calculado el valor intrínseco, qué método (DCF, Graham, etc.) y si es a precios de hoy o proyectado.
-                      3. "projection_5y": { "pessimistic": número, "realistic": número, "optimistic": número } - Proyección del precio acción a 5 años.
-                      4. "current_price", "valuation_status", "industry_comparison" (per, peg, yield), "fundamentals" (per, eps, beta, mc), "technical_levels", "pros_cons", "investment_verdict", "company", "peers".
-                      IDIOMA: ESPAÑOL. JSON FORMAT: {"company":"..","current_price":number,"intrinsic_value":number,"valuation_status":"..","valuation_thesis":"..","projection_5y":{"pessimistic":0,"realistic":0,"optimistic":0},"industry_comparison":{"per":{"stock":0,"industry":0},"peg":{"stock":0,"industry":0},"yield":{"stock":0,"industry":0}},"fundamentals":{"per":"..","eps":"..","beta":"..","market_cap":".."},"technical_levels":"..","pros_cons":{"pros":[],"cons":[]},"investment_verdict":"..","peers":[]}`;
+                      // Modo análisis FUNDAMENTAL PROFUNDO
+                      const prompt = `Realiza un análisis fundamental de inversión experto para "${ticker}".
+                      Necesito un JSON con estructura exacta. IDIOMA: ESPAÑOL.
+                      Usa Google Search para datos recientes.
+                      
+                      Campos requeridos:
+                      1. "intrinsic_value": estimación numérica (Benjamin Graham o DCF simplificado).
+                      2. "current_price": precio actual.
+                      3. "valuation_status": String ("Infravalorada", "Sobrevalorada", "Justa").
+                      4. "industry_comparison": Objeto con PER, PEG, Dividend Yield comparando la acción (stock) con la media de su industria (industry).
+                      5. "fundamentals": per, eps, beta, market_cap.
+                      6. "technical_levels": String con soportes y resistencias clave.
+                      7. "pros_cons": lista de argumentos bull (pros) y bear (cons).
+                      8. "investment_verdict": resumen final de inversión (1 párrafo).
+                      9. "company": Nombre.
+                      10. "peers": array de tickers competidores.
+
+                      JSON FORMAT:
+                      {
+                        "company": "...",
+                        "current_price": number,
+                        "intrinsic_value": number,
+                        "valuation_status": "...",
+                        "industry_comparison": {
+                            "per": {"stock": number, "industry": number},
+                            "peg": {"stock": number, "industry": number},
+                            "yield": {"stock": number, "industry": number}
+                        },
+                        "fundamentals": {"per": "...", "eps": "...", "beta": "...", "market_cap": "..."},
+                        "technical_levels": "Soportes: ... / Resistencias: ...",
+                        "pros_cons": { "pros": ["..."], "cons": ["..."] },
+                        "investment_verdict": "...",
+                        "peers": ["..."]
+                      }`;
+                      
                       const res = await askGemini(apiKey, prompt);
                       const json = extractJSON(res);
-                      if (json) setData(json); else throw new Error("JSON Inválido");
+                      if (json) setData(json); else throw new Error("No se pudo generar el análisis financiero.");
                   }
-              } catch (e) { alert(e.message); } finally { setLoading(false); }
+              } catch (e) { alert("Error: " + e.message); } finally { setLoading(false); }
+          };
+
+          const getComparisonVerdict = (metric, sVal, iVal) => {
+              if(!sVal || !iVal) return "";
+              if(metric === 'yield') {
+                  return sVal > iVal ? "✅ Paga mejor dividendo que la media" : "❌ Dividendo inferior a la media";
+              }
+              // Para PER y PEG, menor es mejor (generalmente)
+              return sVal < iVal ? "✅ Más barata/eficiente que la media" : "❌ Más cara que el promedio del sector";
           };
 
           return (
-              <div className="h-full flex flex-col p-6 overflow-hidden fade-in">
-                  <div className="flex flex-col gap-3 mb-6 bg-slate-900/50 p-4 rounded-xl border border-slate-800 shrink-0">
+              <div className="h-full flex flex-col p-6 overflow-hidden">
+                  <div className="flex flex-col gap-3 mb-6 shrink-0 bg-slate-900/50 p-4 rounded-xl border border-slate-800">
                        <div className="flex gap-4">
-                           <div className="flex-1 relative"><Icons.Search className="absolute left-3 top-3 text-slate-500"/><input type="text" value={ticker} onChange={e=>setTicker(e.target.value.toUpperCase())} placeholder="Ticker (ej. AAPL)" className="w-full pl-10 bg-slate-950 font-bold h-11 tracking-widest" /></div>
-                           <button onClick={analyze} disabled={loading||!ticker} className="bg-blue-600 px-8 rounded-xl font-bold flex items-center gap-2 hover:bg-blue-500 shadow-lg">{loading ? <Icons.Loader/> : <Icons.Wand/>} CONSULTAR</button>
+                           <div className="flex-1 relative">
+                               <Icons.Search className="absolute left-3 top-3 text-slate-500" size={18}/>
+                               <input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} placeholder="Ticker (ej. MSFT)" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-white font-bold tracking-wider" />
+                           </div>
+                           <button onClick={analyze} disabled={loading || !ticker} className="bg-blue-600 px-6 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-900/20 hover:bg-blue-500 transition-colors">
+                               {loading ? <Icons.Loader/> : <Icons.Wand/>} <span className="hidden sm:inline">CONSULTAR</span>
+                           </button>
                        </div>
-                       <input type="text" value={question} onChange={e=>setQuestion(e.target.value)} placeholder="Pregunta específica..." className="w-full bg-slate-950 h-11" />
+                       <div className="relative">
+                            <Icons.MessageCircle className="absolute left-3 top-3 text-slate-500" size={18}/>
+                            <input type="text" value={question} onChange={e => setQuestion(e.target.value)} placeholder="¿Alguna pregunta específica? (Opcional)" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-sm text-white" />
+                       </div>
                   </div>
-                  <div className="flex-1 overflow-auto custom-scrollbar">
-                      {specificAnswer && <div className="glass-panel p-6 rounded-2xl mb-6 text-slate-200 border-l-4 border-blue-500"><strong>iA:</strong> {specificAnswer}</div>}
+
+                  <div className="flex-1 overflow-y-auto custom-scrollbar">
+                      {/* RESPUESTA ESPECIFICA */}
+                      {specificAnswer && (
+                          <div className="glass-panel p-6 rounded-2xl fade-in">
+                              <h3 className="text-lg font-bold text-blue-400 mb-4 flex items-center gap-2"><Icons.Target/> Respuesta iA</h3>
+                              <p className="text-slate-200 leading-relaxed whitespace-pre-wrap">{specificAnswer}</p>
+                          </div>
+                      )}
+
+                      {/* ANÁLISIS FINANCIERO PROFUNDO */}
                       {data && (
-                          <div className="space-y-6 pb-10">
-                              <div className="glass-panel p-6 rounded-2xl border-l-4 border-purple-500 flex justify-between items-center">
-                                  <div><h2 className="text-3xl font-display font-bold text-white mb-1">{data.company}</h2><div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase inline-block ${data.valuation_status.includes('Infra') ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>{data.valuation_status}</div></div>
-                                  <div className="flex gap-10 text-center font-mono">
-                                      <div><div className="text-[10px] text-slate-500 uppercase font-bold">Precio</div><div className="text-2xl font-bold">{formatN(data.current_price)}</div></div>
-                                      <div><div className="text-[10px] text-purple-400 uppercase font-bold flex items-center gap-1 justify-center"><Icons.Target size={12}/> V. Intrínseco</div><div className="text-2xl font-bold text-purple-400">{formatN(data.intrinsic_value)}</div></div>
+                          <div className="space-y-6 fade-in pb-10">
+                              
+                              {/* CABECERA: PRECIO vs VALOR */}
+                              <div className="glass-panel p-6 rounded-2xl border-l-4 border-purple-500 flex flex-col md:flex-row justify-between items-center gap-6">
+                                  <div>
+                                      <h2 className="text-3xl font-display font-bold text-white mb-1">{data.company}</h2>
+                                      <div className={`inline-block px-3 py-1 rounded-full text-xs font-bold uppercase ${data.valuation_status === 'Infravalorada' ? 'bg-green-500/20 text-green-400' : data.valuation_status === 'Sobrevalorada' ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                                          {data.valuation_status}
+                                      </div>
+                                  </div>
+                                  <div className="flex gap-8 text-center">
+                                      <div>
+                                          <div className="text-[10px] text-slate-400 uppercase font-bold">Precio Actual</div>
+                                          <div className="text-2xl font-bold text-white font-mono">{data.current_price}</div>
+                                      </div>
+                                      <div>
+                                          <div className="text-[10px] text-purple-400 uppercase font-bold flex items-center gap-1 justify-center"><Icons.Target size={12}/> Valor Intrínseco</div>
+                                          <div className="text-2xl font-bold text-purple-400 font-mono">{data.intrinsic_value}</div>
+                                      </div>
+                                      <div>
+                                          <div className="text-[10px] text-slate-400 uppercase font-bold">Upside Potencial</div>
+                                          <div className={`text-2xl font-bold font-mono ${data.intrinsic_value > data.current_price ? 'text-green-400' : 'text-red-400'}`}>
+                                              {(((data.intrinsic_value - data.current_price) / data.current_price) * 100).toFixed(1)}%
+                                          </div>
+                                      </div>
                                   </div>
                               </div>
-                              <div className="bg-slate-900/50 border border-slate-800 p-6 rounded-2xl">
-                                  <h3 className="text-sm font-bold text-blue-400 mb-2 flex items-center gap-2 uppercase tracking-wider"><Icons.Award size={16}/> Tesis de Valoración Intrínseca</h3>
-                                  <p className="text-slate-300 text-sm leading-relaxed italic">"{data.valuation_thesis}"</p>
-                              </div>
-                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
-                                  <div className="glass-panel p-4 rounded-2xl border-t-2 border-red-500 bg-red-900/5"><div className="text-[9px] text-red-400 font-bold uppercase mb-1">Pesimista (5a)</div><div className="text-xl font-bold font-mono text-white">{formatN(data.projection_5y?.pessimistic)}</div></div>
-                                  <div className="glass-panel p-4 rounded-2xl border-t-2 border-blue-500 bg-blue-900/5"><div className="text-[9px] text-blue-400 font-bold uppercase mb-1">Realista (5a)</div><div className="text-xl font-bold font-mono text-white">{formatN(data.projection_5y?.realistic)}</div></div>
-                                  <div className="glass-panel p-4 rounded-2xl border-t-2 border-green-500 bg-green-900/5"><div className="text-[9px] text-green-400 font-bold uppercase mb-1">Optimista (5a)</div><div className="text-xl font-bold font-mono text-white">{formatN(data.projection_5y?.optimistic)}</div></div>
-                              </div>
+
+                              {/* COMPARATIVA INDUSTRIA */}
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                   <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
-                                      <h3 className="text-sm font-bold text-slate-300 mb-4 flex items-center gap-2"><Icons.BarChart size={16}/> Sector vs Acción</h3>
-                                      {Object.entries(data.industry_comparison || {}).map(([k,v]) => (
-                                          <div key={k} className="mb-5 text-[10px] uppercase font-bold text-slate-500">
-                                              <div className="flex justify-between mb-1"><span>{k}</span><span>Stock: {v.stock} | Ind: {v.industry}</span></div>
-                                              <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden flex"><div className="bg-blue-500 h-full" style={{width: (v.stock/(v.stock+v.industry+0.1)*100)+'%'}}></div></div>
-                                          </div>
-                                      ))}
-                                  </div>
-                                  <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
-                                      <h3 className="text-sm font-bold text-slate-300 mb-4 flex items-center gap-2"><Icons.Hash size={16}/> Fundamentales</h3>
-                                      <div className="grid grid-cols-2 gap-3">
-                                          {Object.entries(data.fundamentals || {}).map(([k,v]) => (
-                                              <div key={k} className="bg-slate-950 p-3 rounded-lg border border-slate-800"><div className="text-[9px] text-slate-500 uppercase mb-1">{k.replace('_',' ')}</div><div className="text-sm font-bold text-white font-mono">{v}</div></div>
+                                      <h3 className="text-sm font-bold text-slate-300 mb-4 flex items-center gap-2"><Icons.BarChart size={16}/> Comparativa Sectorial</h3>
+                                      <div className="space-y-5">
+                                          {[
+                                              {k: 'PER (Ratio Precio/Bº)', v: data.industry_comparison?.per, key: 'per'}, 
+                                              {k: 'PEG (Crecimiento)', v: data.industry_comparison?.peg, key: 'peg'},
+                                              {k: 'Div. Yield %', v: data.industry_comparison?.yield, key: 'yield'}
+                                          ].map((metric, i) => (
+                                              <div key={i} className="space-y-1">
+                                                  <div className="flex justify-between text-xs font-bold text-slate-400">
+                                                      <span>{metric.k}</span>
+                                                      <span className="text-[9px] font-normal italic opacity-75">{getComparisonVerdict(metric.key, metric.v?.stock, metric.v?.industry)}</span>
+                                                  </div>
+                                                  <div className="flex items-center gap-2 text-xs">
+                                                      <div className="w-16 text-right text-blue-400 font-bold">{metric.v?.stock}</div>
+                                                      <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden relative">
+                                                          <div className="absolute top-0 bottom-0 bg-blue-500 w-1 rounded-full" style={{left: '40%'}}></div> 
+                                                          <div className="absolute top-0 bottom-0 bg-slate-500 w-1 rounded-full" style={{left: metric.v?.stock < metric.v?.industry ? '60%' : '20%'}}></div>
+                                                      </div>
+                                                      <div className="w-16 text-left text-slate-500">{metric.v?.industry} (Ind.)</div>
+                                                  </div>
+                                              </div>
                                           ))}
                                       </div>
-                                      <div className="mt-4 p-3 bg-blue-900/10 border border-blue-500/20 rounded-lg text-[10px] font-mono text-blue-300"><strong>S/R:</strong> {data.technical_levels}</div>
+                                  </div>
+
+                                  <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
+                                      <h3 className="text-sm font-bold text-slate-300 mb-4 flex items-center gap-2"><Icons.Hash size={16}/> Fundamentales Clave</h3>
+                                      <div className="grid grid-cols-2 gap-4 mb-4">
+                                          {Object.entries(data.fundamentals || {}).map(([k,v]) => (
+                                              <div key={k} className="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                                                  <div className="text-[9px] uppercase text-slate-500 font-bold">{k.replace('_',' ')}</div>
+                                                  <div className="text-lg font-bold text-white font-mono">{v}</div>
+                                              </div>
+                                          ))}
+                                      </div>
+                                      <div className="bg-blue-900/10 p-3 rounded-xl border border-blue-500/20">
+                                          <div className="text-[9px] uppercase text-blue-400 font-bold mb-1">Niveles Técnicos (S/R)</div>
+                                          <div className="text-xs font-mono text-slate-200">{data.technical_levels}</div>
+                                      </div>
                                   </div>
                               </div>
-                              <div className="glass-panel p-6 rounded-2xl"><p className="text-slate-300 text-sm leading-relaxed">{data.investment_verdict}</p></div>
+
+                              {/* PROS Y CONTRAS */}
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                  <div className="glass-panel p-5 rounded-2xl border-t-2 border-green-500">
+                                      <h3 className="text-sm font-bold text-green-400 mb-3 flex items-center gap-2"><Icons.ThumbsUp size={16}/> Tesis Alcista (Pros)</h3>
+                                      <ul className="space-y-2">
+                                          {data.pros_cons?.pros?.map((p,i) => <li key={i} className="text-xs text-slate-300 flex gap-2 items-start"><span className="text-green-500 mt-0.5">●</span> {p}</li>)}
+                                      </ul>
+                                  </div>
+                                  <div className="glass-panel p-5 rounded-2xl border-t-2 border-red-500">
+                                      <h3 className="text-sm font-bold text-red-400 mb-3 flex items-center gap-2"><Icons.ThumbsDown size={16}/> Riesgos (Contras)</h3>
+                                      <ul className="space-y-2">
+                                          {data.pros_cons?.cons?.map((p,i) => <li key={i} className="text-xs text-slate-300 flex gap-2 items-start"><span className="text-red-500 mt-0.5">●</span> {p}</li>)}
+                                      </ul>
+                                  </div>
+                              </div>
+
+                              {/* VEREDICTO FINAL Y PEERS */}
+                              <div className="glass-panel p-6 rounded-2xl">
+                                  <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2"><Icons.Award size={18}/> Veredicto de Inversión</h3>
+                                  <p className="text-slate-300 text-sm leading-relaxed mb-6">{data.investment_verdict}</p>
+                                  
+                                  <div className="border-t border-slate-700 pt-4">
+                                      <h4 className="text-xs uppercase font-bold text-slate-500 mb-3">Comparar con Competencia</h4>
+                                      <div className="flex flex-wrap gap-2">
+                                          {data.peers?.map((peer, i) => (
+                                              <button key={i} onClick={() => setTicker(peer)} className="px-3 py-1 bg-slate-800 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-bold text-blue-400 transition-colors border border-slate-700">
+                                                  {peer}
+                                              </button>
+                                          ))}
+                                      </div>
+                                  </div>
+                              </div>
                           </div>
                       )}
                   </div>
@@ -530,53 +661,213 @@
           );
       };
 
-      // --- PESTAÑA CONFIGURACIÓN (ORIGINAL ÍNTEGRA) ---
+
+
+// --- PESTAÑA 3: CONFIGURACIÓN (AYUDA API RESTAURADA AL DETALLE) ---
       const SettingsTab = ({ apiKey, setApiKey, isAuth, onActivate, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio }) => {
-          const [lic, setLic] = useState('');
+          const [localLic, setLocalLic] = useState('');
           const [showKey, setShowKey] = useState(false);
+          const [testStatus, setTestStatus] = useState(null); 
+          const [errorDetail, setErrorDetail] = useState('');
+          const [ioStatus, setIoStatus] = useState('idle');
+
+          const testConnection = async () => {
+              if(!apiKey) return alert("Introduce una clave primero.");
+              setTestStatus('loading'); setErrorDetail('');
+              try {
+                  await askGemini(apiKey, "Test conexión");
+                  setTestStatus('success'); 
+              } catch(e) { 
+                  setTestStatus('error'); setErrorDetail(e.message); 
+              }
+          };
+
+          const handleRunExport = () => {
+              setIoStatus('processing');
+              try {
+                  const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 2 };
+                  const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"});
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a'); a.href = url; a.download = `BoardingGate_Backup_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+                  setIoStatus('success'); setTimeout(() => setIoStatus('idle'), 2000);
+              } catch (e) { alert("Error: " + e.message); setIoStatus('error'); }
+          };
+
+          const handleRunImport = (e) => {
+              const file = e.target.files[0];
+              if (!file) return;
+              if(!confirm("⚠️ IMPORTANTE:\n\nEsta acción reemplazará TODA tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) { e.target.value = null; return; }
+              setIoStatus('processing');
+              const reader = new FileReader();
+              reader.onload = (ev) => {
+                  try {
+                      const d = JSON.parse(ev.target.result);
+                      if (d.portfolio) setPortfolio(d.portfolio);
+                      if (d.apiKey) setApiKey(d.apiKey);
+                      if (d.baseCurrency) setBaseCurrency(d.baseCurrency);
+                      if (d.refreshInterval) setRefreshInterval(d.refreshInterval);
+                      setIoStatus('success');
+                      alert("✅ Restauración completada correctamente.");
+                      window.location.reload();
+                  } catch (err) { alert("Archivo inválido o corrupto."); setIoStatus('error'); }
+              };
+              reader.readAsText(file);
+          };
+
           return (
-              <div className="h-full flex flex-col p-10 overflow-auto items-center custom-scrollbar fade-in">
-                  <div className="max-w-2xl w-full space-y-8">
-                      <div className="glass-panel p-8 rounded-2xl shadow-2xl">
-                          <h2 className="text-xl font-bold mb-6 flex items-center gap-3 text-blue-400 font-display"><Icons.Settings size={28}/> Preferencias Generales</h2>
-                          <div className="grid grid-cols-2 gap-8">
-                              <div><label className="text-[10px] font-bold text-slate-500 uppercase mb-2 block">Divisa Base Global</label><select value={baseCurrency} onChange={e=>setBaseCurrency(e.target.value)} className="w-full h-11">{CURRENCIES.map(c=><option key={c.code} value={c.code}>{c.code} - {c.name}</option>)}</select></div>
-                              <div><label className="text-[10px] font-bold text-slate-500 uppercase mb-2 block">Refresco Auto (min)</label><input type="number" value={refreshInterval} onChange={e=>setRefreshInterval(parseInt(e.target.value))} className="w-full h-11" /></div>
+              <div className="h-full p-6 flex flex-col items-center justify-start fade-in overflow-y-auto custom-scrollbar">
+                  {/* 1. PREFERENCIAS GENERALES */}
+                  <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
+                      <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
+                          <div className="p-3 bg-blue-500/20 rounded-xl text-blue-400"><Icons.Settings size={32} /></div>
+                          <div><h2 className="text-2xl font-bold text-white">Preferencias Generales</h2><p className="text-slate-400 text-sm">Personalización de la cartera</p></div>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div>
+                               <label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">Divisa Base (Totales)</label>
+                               <select value={baseCurrency} onChange={(e) => setBaseCurrency(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded-xl p-3 text-white text-sm focus:outline-none focus:border-blue-500">
+                                   {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.code} - {c.name}</option>)}
+                               </select>
+                               <p className="text-[10px] text-slate-500 mt-2">Moneda para mostrar resultados globales.</p>
+                          </div>
+                          <div>
+                               <label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">Refresco Automático</label>
+                               <div className="bg-slate-800 p-3 rounded-xl border border-slate-600 flex items-center gap-4">
+                                   <input type="range" min="5" max="60" step="5" value={refreshInterval} onChange={(e) => setRefreshInterval(parseInt(e.target.value))} className="flex-1 accent-blue-500 h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer" />
+                                   <div className="font-mono font-bold text-blue-400 w-16 text-right">{refreshInterval} min</div>
+                               </div>
+                               <p className="text-[10px] text-slate-500 mt-2">Frecuencia de actualización de precios.</p>
                           </div>
                       </div>
-                      <div className="glass-panel p-8 rounded-2xl shadow-2xl">
-                          <h2 className="text-xl font-bold mb-6 flex items-center gap-3 text-purple-400 font-display"><Icons.Wand size={28}/> Configuración iA Gemini</h2>
-                          <div className="relative mb-4"><input type={showKey?"text":"password"} value={apiKey} onChange={e=>setApiKey(e.target.value)} className="w-full p-4 pr-12 font-mono text-sm bg-black/50 border-slate-700" placeholder="AIzaSy..." /><button onClick={()=>setShowKey(!showKey)} className="absolute right-4 top-4 text-slate-500">{showKey?<Icons.EyeOff/>:<Icons.Eye/>}</button></div>
-                          <div className="mt-6 p-6 bg-[#1e293b] border border-[#334155] rounded-xl relative overflow-hidden">
-                              <h4 className="text-lg font-bold text-blue-400 mb-4 flex items-center gap-2"><Icons.HelpCircle size={20} /> Gestión de la API Key (Gratis vs Pago)</h4>
-                              <div className="mb-6 border-b border-slate-700 pb-6">
-                                  <h5 className="text-sm font-bold text-white mb-3 flex items-center gap-2"><span className="bg-green-500/20 text-green-400 px-2 py-0.5 rounded text-[10px] uppercase border border-green-500/30">Opción Gratuita</span></h5>
-                                  <ol className="list-decimal list-inside text-xs text-slate-300 space-y-2 mb-4 leading-relaxed">
-                                      <li>Accede a <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-blue-400 hover:underline font-bold">Google AI Studio</a>.</li>
-                                      <li>Haz clic en <strong>"Get API key"</strong> y luego en <strong>"Create API key in new project"</strong>.</li>
-                                      <li>Copia la clave y pégala arriba.</li>
-                                  </ol>
-                                  <p className="text-[10px] text-slate-400 bg-slate-900/50 p-3 rounded border border-slate-700">Límites: 15 peticiones/minuto y 1.500/día.</p>
+                  </div>
+
+                  {/* 2. CONFIGURACIÓN IA (AYUDA DETALLADA RESTAURADA) */}
+                  <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
+                      <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
+                          <div className="p-3 bg-purple-500/20 rounded-xl text-purple-400"><Icons.Wand size={32} /></div>
+                          <div><h2 className="text-2xl font-bold text-white">Configuración IA</h2><p className="text-slate-400 text-sm">Conexión con Google Gemini</p></div>
+                      </div>
+                      <div className="space-y-6">
+                          <div>
+                              <label className="block text-sm font-bold text-slate-300 mb-2">Google Gemini API Key</label>
+                              <div className="relative mb-4">
+                                  <input type={showKey ? "text" : "password"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full bg-black/50 border border-slate-600 rounded-xl p-4 pr-12 text-white focus:border-purple-500 focus:outline-none font-mono"/>
+                                  <button onClick={() => setShowKey(!showKey)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showKey ? <Icons.EyeOff size={20}/> : <Icons.Eye size={20}/>}</button>
                               </div>
-                              <div>
-                                  <h5 className="text-sm font-bold text-white mb-3 flex items-center gap-2"><span className="bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded text-[10px] uppercase border border-blue-500/30">Opción Pago</span></h5>
-                                  <p className="text-xs text-slate-300 mb-3 leading-relaxed">Vincula facturación en <a href="https://console.cloud.google.com/billing" target="_blank" className="text-blue-400 underline font-bold">Google Cloud Console</a> para uso ilimitado ($0.35 por millón de tokens).</p>
+                              <div className="flex justify-end gap-3 items-center">
+                                  <button onClick={testConnection} className={`h-[40px] px-6 rounded-xl border font-bold text-sm flex items-center gap-2 ${testStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : testStatus === 'error' ? 'bg-red-600 border-red-500 text-white' : 'bg-slate-700 border-slate-600 text-slate-300'}`}>
+                                      {testStatus === 'loading' ? <Icons.Loader/> : testStatus === 'success' ? <Icons.CheckCircle size={18}/> : 'PROBAR CONEXIÓN'}
+                                  </button>
+                              </div>
+                              {testStatus === 'error' && <div className="mt-4 p-4 bg-red-900/30 border border-red-500/50 rounded-xl text-red-200 text-xs font-mono whitespace-pre-wrap">{errorDetail}</div>}
+                              
+                              <div className="mt-6 p-6 bg-[#1e293b] border border-[#334155] rounded-xl relative overflow-hidden">
+                                  <h4 className="text-lg font-bold text-blue-400 mb-4 flex items-center gap-2">
+                                      <Icons.HelpCircle size={20} /> Gestión de la API Key (Gratis vs Pago)
+                                  </h4>
+
+                                  <div className="mb-6 border-b border-slate-700 pb-6">
+                                      <h5 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+                                          <span className="bg-green-500/20 text-green-400 px-2 py-0.5 rounded text-[10px] uppercase border border-green-500/30">Opción Gratuita</span>
+                                          <span className="text-slate-400 text-xs font-normal">Ideal para uso básico</span>
+                                      </h5>
+                                      <ol className="list-decimal list-inside text-xs text-slate-300 space-y-2 mb-4 leading-relaxed">
+                                          <li>Accede a <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-blue-400 hover:underline font-bold">Google AI Studio</a>.</li>
+                                          <li>Haz clic en <strong>"Get API key"</strong> (arriba izquierda) y luego en <strong>"Create API key in new project"</strong>.</li>
+                                          <li>Copia la clave y pégala arriba.</li>
+                                      </ol>
+                                      <p className="text-[10px] text-slate-400 bg-slate-900/50 p-3 rounded border border-slate-700">
+                                          <strong>Límites actuales:</strong> 15 peticiones/minuto (RPM) y 1.500/día. Si la IA falla o tarda mucho, es probable que hayas superado este límite temporalmente.
+                                      </p>
+                                  </div>
+
+                                  <div>
+                                      <h5 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+                                          <span className="bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded text-[10px] uppercase border border-blue-500/30">Opción Ilimitada (Pay-as-you-go)</span>
+                                          <span className="text-slate-400 text-xs font-normal">Para uso intensivo</span>
+                                      </h5>
+                                      <p className="text-xs text-slate-300 mb-3 leading-relaxed">
+                                          Si actualizas precios de muchos valores frecuentemente o realizas análisis complejos, te conviene activar la facturación para eliminar esperas.
+                                      </p>
+                                      <ol className="list-decimal list-inside text-xs text-slate-300 space-y-2 mb-6 leading-relaxed">
+                                          <li>Ve a la <a href="https://console.cloud.google.com/billing" target="_blank" className="text-blue-400 hover:underline font-bold">Consola de Google Cloud Billing</a>.</li>
+                                          <li>Selecciona el <strong>mismo proyecto</strong> que se creó automáticamente en AI Studio (suele llamarse "Generative Language Client").</li>
+                                          <li>Haz clic en <strong>"Vincular una cuenta de facturación"</strong> e introduce tu tarjeta.</li>
+                                          <li><strong>Coste:</strong> Es extremadamente barato (aprox. $0.35 por millón de tokens). Actualizar una cartera consume centavos.</li>
+                                      </ol>
+                                      
+                                      <div className="flex gap-3">
+                                          <a href="https://aistudio.google.com/app/apikey" target="_blank" className="flex-1 text-center py-2.5 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2 border border-slate-600">
+                                              <Icons.ExternalLink size={14}/> Obtener Key (AI Studio)
+                                          </a>
+                                          <a href="https://console.cloud.google.com/billing" target="_blank" className="flex-1 text-center py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2 border border-blue-500">
+                                              <Icons.ExternalLink size={14}/> Activar Facturación (Cloud)
+                                          </a>
+                                      </div>
+                                  </div>
                               </div>
                           </div>
                       </div>
-                      <div className="glass-panel p-8 rounded-2xl shadow-2xl text-center">
-                          <h2 className="text-xl font-bold mb-4 font-display text-green-400 uppercase tracking-widest">Licencia y Copia</h2>
-                          <div className="flex gap-2 mb-6"><input type="text" value={lic} onChange={e=>setLic(e.target.value.toUpperCase())} className="flex-1 font-mono h-11 text-center tracking-widest border-slate-700" placeholder="BG-XXXX-XXXX" /><button onClick={()=>onActivate(lic)} className="bg-blue-600 px-8 rounded-xl font-bold">ACTIVAR</button></div>
-                          {isAuth && <div className="text-[10px] font-bold text-green-400 uppercase tracking-widest mb-6 flex items-center justify-center gap-2"><Icons.CheckCircle size={14}/> Dispositivo Registrado</div>}
-                          <div className="grid grid-cols-2 gap-4">
-                              <button onClick={()=>{const blob=new Blob([JSON.stringify({portfolio,apiKey,baseCurrency,refreshInterval})],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=`BoardingGate_Backup.json`; a.click();}} className="bg-slate-800 py-3 rounded-xl text-xs font-bold border border-slate-700 flex items-center justify-center gap-2"><Icons.Upload size={14} className="rotate-180"/> EXPORTAR</button>
-                              <label className="bg-blue-600 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow-lg"><Icons.Upload size={14}/> RESTAURAR <input type="file" className="hidden" onChange={e=>{const r=new FileReader(); r.onload=(ev)=>{try{const d=JSON.parse(ev.target.result); if(d.portfolio) setPortfolio(d.portfolio); alert("Restaurado.");}catch(e){alert("Error.");}}; r.readAsText(e.target.files[0]);}} /></label>
+                  </div>
+
+                  {/* 3. COPIA DE SEGURIDAD */}
+                  <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
+                      <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
+                          <div className="p-3 bg-cyan-500/20 rounded-xl text-cyan-400"><Icons.Upload size={32} className="rotate-180" /></div>
+                          <div><h2 className="text-2xl font-bold text-white">Copia de Seguridad</h2><p className="text-slate-400 text-sm">Exporta tu configuración y cartera</p></div>
+                      </div>
+                      
+                      <div className="bg-yellow-900/20 border border-yellow-600/30 rounded-xl p-4 mb-6">
+                          <h4 className="text-yellow-500 font-bold text-sm mb-2 flex items-center gap-2"><Icons.AlertCircle size={16}/> Información Importante</h4>
+                          <p className="text-sm text-slate-300 leading-relaxed">
+                              El archivo de exportación contiene <strong>toda tu configuración, claves, y cartera de inversiones</strong>. Guárdalo en un lugar seguro.
+                          </p>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <button 
+                              onClick={handleRunExport} 
+                              disabled={ioStatus === 'processing'}
+                              className={`flex items-center justify-center gap-2 py-4 px-6 rounded-xl border transition-all font-bold ${ioStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : 'bg-slate-800 border-slate-600 hover:bg-slate-700 text-white'}`}
+                          >
+                              {ioStatus === 'processing' ? <Icons.Loader size={20}/> : <Icons.Upload size={20} className="rotate-180" />} 
+                              EXPORTAR DATOS
+                          </button>
+
+                          <label className={`cursor-pointer flex items-center justify-center gap-2 py-4 px-6 rounded-xl border transition-all font-bold ${ioStatus === 'processing' ? 'bg-slate-800 opacity-50 cursor-not-allowed' : 'bg-blue-600 border-blue-500 hover:bg-blue-500 text-white'}`}>
+                              <input type="file" accept=".json" className="hidden" onChange={handleRunImport} disabled={ioStatus === 'processing'} />
+                              <Icons.Upload size={20} /> RESTAURAR DATOS
+                          </label>
+                      </div>
+                  </div>
+
+                  {/* 4. REGISTRO Y LICENCIA */}
+                  <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-20">
+                      <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
+                          <div className={`p-3 rounded-xl ${isAuth ? 'bg-green-500/20 text-green-400' : 'bg-blue-500/20 text-blue-400'}`}><Icons.CheckCircle size={32} /></div>
+                          <div><h2 className="text-2xl font-bold text-white">Registro de la aplicación</h2><p className="text-slate-400 text-sm">Estado de la instalación y licencia</p></div>
+                      </div>
+                      <div className="space-y-6">
+                          <p className="text-sm text-slate-400 leading-relaxed italic">Esta plataforma es un proyecto independiente que se sustenta exclusivamente mediante un modelo de <strong>crowdfunding</strong> y las aportaciones directas de sus usuarios. Tu registro ayuda a mantener los costes de desarrollo y mantenimiento. Sin registro, la aplicación está limitada a la gestión de <strong>5 acciones</strong>.</p>
+                          <div className="bg-black/30 border border-slate-700 rounded-xl p-5">
+                              <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">Número de Registro / Código de Instalación</label>
+                              <div className="flex gap-3">
+                                  <input type="text" value={localLic} onChange={(e) => setLocalLic(e.target.value.toUpperCase())} placeholder="BG-XXXX-XXXX" className={`flex-1 bg-slate-900 border ${isAuth ? 'border-green-600' : 'border-slate-600'} rounded-lg p-3 text-white font-mono focus:outline-none`} />
+                                  <button onClick={() => onActivate(localLic)} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-xs">ACTIVAR</button>
+                              </div>
+                              {isAuth && <div className="mt-3 text-center text-green-400 text-xs font-bold uppercase tracking-widest">● Dispositivo Registrado</div>}
+                          </div>
+                          <div className="text-center bg-slate-800/50 p-4 rounded-xl">
+                              <p className="text-xs text-slate-400 mb-2">Para obtener tu Nº de registro o colaborar con el crowdfunding:</p>
+                              <a href="https://x.com/BoardingGate" target="_blank" className="inline-flex items-center gap-2 text-blue-400 hover:text-blue-300 font-bold transition-colors"><Icons.Globe size={16}/> @BoardingGate en X (Twitter)</a>
                           </div>
                       </div>
                   </div>
               </div>
           );
       };
+      
+
 
       // --- APP ---
       const App = () => {
