@@ -164,7 +164,7 @@
 
 
      
-      // --- PESTAÑA CARTERA (VERSIÓN CORREGIDA: REJILLA REESTRUCTURADA Y NOTIFICACIONES) ---
+      // --- PESTAÑA CARTERA (ESTRUCTURA TÉCNICA FINAL SIN ALTERACIONES) ---
       const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate }) => {
           const [viewMode, setViewMode] = useState('active');
           const [updating, setUpdating] = useState(false);
@@ -349,7 +349,7 @@
                                   <th className="p-3 text-right">Precios (Inv/Act)</th>
                                   <th className="p-3 text-center">FX (I/A)</th>
                                   <th className="p-3 text-center">Gastos / Adj</th>
-                                  <th className="p-3 text-right">Compra Total</th>
+                                  <th className="p-3 text-right">Coste Total</th>
                                   <th className="p-3 text-right">Valor Final</th>
                                   <th className="p-3 text-right">RENDIMIENTO</th>
                                   <th className="p-3 text-right">% Ben/Pérd</th>
@@ -359,60 +359,45 @@
                           </thead>
                           <tbody className="divide-y divide-slate-800">
                               {portfolio.filter(p => viewMode === 'active' ? !p.sellDate : !!p.sellDate).map(p => {
-                                // --- CÁLCULOS DE FILA ---
-                                const cT = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0);
-                                const isS = !!p.sellDate;
-                                const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
-                                const curF = isS ? p.sellFx : p.currentFx;
-                                
-                                // Valor Final Patrimonial puro (Sin sumar dividendos)
-                                const vF = (curP * p.shares * curF) - (isS ? (p.sellFees + p.sellAdjustments) : 0);
-                                const ds = (p.dividends || []).reduce((a,b)=>a+b.net,0);
-                                
-                                // Rendimiento de la compra (Ganancia/Pérdida de Capital)
-                                const pCap = vF - cT; 
-                                const days = calculateDays(p.buyDate, p.sellDate || new Date());
-                                // Rendimiento Total (Capital + Dividendos) para el cálculo del %
-                                const rs = calcReturns(cT, vF + ds, days);
-                                
-                                return (
-                                    <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''}`}>
-                                        <td className="p-3 text-center" onClick={() => setPortfolio(prev => prev.map(x => x.id === p.id ? {...x, isActive: !x.isActive} : x))}><input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" /></td>
-                                        <td className="p-3"><b>{p.ticker}</b><br/><span className="text-[10px] text-slate-400 uppercase">{p.name}</span></td>
-                                        <td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td>
-                                        <td className="p-3 text-right text-xs font-mono">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td>
-                                        <td className="p-3 text-center text-[10px] font-mono text-slate-400">I: {formatN(p.buyFx, 4)}<br/>A: {formatN(curF, 4)}</td>
-                                        <td className="p-3 text-center text-[10px] font-mono text-slate-400">G: {formatN(isS?p.sellFees:p.fees)}<br/>A: {formatN(isS?p.sellAdjustments:p.adjustments)}</td>
-                                        
-                                        {/* COSTE TOTAL */}
-                                        <td className="p-3 text-right text-slate-400 font-mono">{formatMoney(cT, baseCurrency)}</td>
-                                        
-                                        {/* VALOR FINAL (Puro patrimonio) */}
-                                        <td className="p-3 text-right font-mono font-bold text-white">{formatMoney(vF, baseCurrency)}</td>
-                                        
-                                        {/* RENDIMIENTO (Separado: Capital y Dividendos) */}
-                                        <td className="p-3 text-right font-mono">
-                                            <div className={pCap >= 0 ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>{formatMoney(pCap, baseCurrency)}</div>
-                                            <div className="text-[10px] text-blue-400 font-bold">Div: {formatMoney(ds, baseCurrency)}</div>
-                                        </td>
-                                        
-                                        {/* % BEN/PÉRD (Incluye días) */}
-                                        <td className="p-3 text-right text-xs">
-                                            <div className={rs.simple>=0?'text-green-400 font-bold':'text-red-400 font-bold'}>{formatN(rs.simple)}% ({days}d)</div>
-                                            <div className="text-[9px] text-slate-500 font-bold">Anual: {formatN(rs.annual)}%</div>
-                                        </td>
-                                        
-                                        <td className="p-3 text-center text-xs font-mono">I: {formatN(p.buyPE, 1)}<br/>A: <span className="text-yellow-500 font-bold">{formatN(p.currentPE, 1)}</span></td>
-                                        
-                                        <td className="p-3 text-center">
-                                            <div className="flex gap-2 justify-center">
-                                                {!p.sellDate && <button onClick={() => { setSellItem(p); setSellForm({sharesToSell: p.shares, sellPrice: parseFloat(curP.toFixed(3)), sellDate: new Date().toISOString().slice(0,10), sellFx: p.currentFx, sellFees: 0, sellAdjustments: 0}); setIsSellModalOpen(true); }} className="bg-green-600/20 text-green-400 border border-green-500/30 px-2 py-1 rounded text-[10px] font-bold hover:bg-green-600/40">VENDER</button>}
-                                                <button onClick={() => { setForm(p); setEditingId(p.id); setIsModalOpen(true); }} className="text-blue-400 p-1.5 bg-slate-800 rounded transition-colors"><Icons.Edit size={14}/></button>
-                                                <button onClick={() => { setConfirmModal({isOpen:true, title:'Borrado', msg:`¿Eliminar permanentemente?`, onConfirm:()=>{setPortfolio(prev=>prev.filter(x=>x.id!==p.id)); setConfirmModal({isOpen:false})} })} className="text-red-400 p-1.5 bg-slate-800 rounded transition-colors"><Icons.Trash2 size={14}/></button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ); 
+                                  const cT = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0);
+                                  const isS = !!p.sellDate;
+                                  const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
+                                  const curF = isS ? p.sellFx : p.currentFx;
+                                  // Valor Final Patrimonial (sin dividendos)
+                                  const vF = (curP * p.shares * curF) - (isS ? (p.sellFees + p.sellAdjustments) : 0);
+                                  const ds = (p.dividends || []).reduce((a,b)=>a+b.net,0);
+                                  // Rendimiento de la compra (Ganancia/Pérdida de Capital)
+                                  const capGain = vF - cT;
+                                  const days = calculateDays(p.buyDate, p.sellDate || new Date());
+                                  // Rendimiento Total (Capital + Dividendos) para el porcentaje
+                                  const rs = calcReturns(cT, vF + ds, days);
+
+                                  return (
+                                      <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''}`}>
+                                          <td className="p-3 text-center" onClick={() => setPortfolio(prev => prev.map(x => x.id === p.id ? {...x, isActive: !x.isActive} : x))}><input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" /></td>
+                                          <td className="p-3"><b>{p.ticker}</b><br/><span className="text-[10px] text-slate-400 uppercase">{p.name}</span></td>
+                                          <td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td>
+                                          <td className="p-3 text-right text-xs font-mono">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td>
+                                          <td className="p-3 text-center text-[10px] font-mono text-slate-400">I: {formatN(p.buyFx, 4)}<br/>A: {formatN(curF, 4)}</td>
+                                          <td className="p-3 text-center text-[10px] font-mono text-slate-400">G: {formatN(isS?p.sellFees:p.fees)}<br/>A: {formatN(isS?p.sellAdjustments:p.adjustments)}</td>
+                                          <td className="p-3 text-right text-slate-400 font-mono">{formatMoney(cT, baseCurrency)}</td>
+                                          <td className="p-3 text-right font-mono text-white font-bold">{formatMoney(vF, baseCurrency)}</td>
+                                          <td className="p-3 text-right font-mono">
+                                              <div className={capGain >= 0 ? 'text-green-400' : 'text-red-400'}>{formatMoney(capGain, baseCurrency)}</div>
+                                              <div className="text-[10px] text-blue-400 font-bold">Div: {formatMoney(ds, baseCurrency)}</div>
+                                          </td>
+                                          <td className="p-3 text-right text-xs">
+                                              <div className={rs.simple>=0?'text-green-400 font-bold':'text-red-400 font-bold'}>{formatN(rs.simple)}% ({days}d)</div>
+                                              <div className="text-[9px] text-slate-500 font-bold">Anual: {formatN(rs.annual)}%</div>
+                                          </td>
+                                          <td className="p-3 text-center text-xs font-mono">I: {formatN(p.buyPE, 1)}<br/>A: <span className="text-yellow-500 font-bold">{formatN(p.currentPE, 1)}</span></td>
+                                          <td className="p-3 text-center flex gap-2 justify-center">
+                                              {!p.sellDate && <button onClick={() => { setSellItem(p); setSellForm({sharesToSell: p.shares, sellPrice: parseFloat(curP.toFixed(3)), sellDate: new Date().toISOString().slice(0,10), sellFx: p.currentFx, sellFees: 0, sellAdjustments: 0}); setIsSellModalOpen(true); }} className="bg-green-600/20 text-green-400 border border-green-500/30 px-2 py-1 rounded text-[10px] font-bold hover:bg-green-600/40 transition-colors">VENDER</button>}
+                                              <button onClick={() => { setForm(p); setEditingId(p.id); setIsModalOpen(true); }} className="text-blue-400 p-1.5 bg-slate-800 rounded transition-colors"><Icons.Edit size={14}/></button>
+                                              <button onClick={() => { setConfirmModal({isOpen:true, title:'Borrado', msg:`¿Eliminar permanentemente?`, onConfirm:()=>{setPortfolio(prev=>prev.filter(x=>x.id!==p.id)); setConfirmModal({isOpen:false})} })} className="text-red-400 p-1.5 bg-slate-800 rounded transition-colors"><Icons.Trash2 size={14}/></button>
+                                          </td>
+                                      </tr>
+                                  );
                               })}
                           </tbody>
                       </table>
@@ -532,9 +517,6 @@
               </div>
           );
       };
-
-
-      
 
     
 
