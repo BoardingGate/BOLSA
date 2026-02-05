@@ -164,97 +164,183 @@
 
 
 
-      // --- PESTAÑA CARTERA (LOGICA VENTA CORREGIDA Y FORMATOS) ---
+
+      // --- PESTAÑA CARTERA (VERSIÓN DEFINITIVA) ---
       const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate }) => {
           const [viewMode, setViewMode] = useState('active');
           const [updating, setUpdating] = useState(false);
           const [analyzing, setAnalyzing] = useState(false);
           const [analysisResult, setAnalysisResult] = useState(null);
           
+          // Modales
           const [isModalOpen, setIsModalOpen] = useState(false);
           const [isSellModalOpen, setIsSellModalOpen] = useState(false);
           const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
+          
+          // Modal Confirmación Personalizado
+          const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', msg: '', onConfirm: null });
 
           const [editingId, setEditingId] = useState(null);
           const [sellItem, setSellItem] = useState(null);
 
-          // Formulario Nuevo/Editar
+          // Formularios
           const [form, setForm] = useState({ ticker: '', name: '', isIndex: false, indexDivisor: 1, shares: 0, buyPrice: 0, buyDate: '', stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, sellPrice: 0, sellDate: '', sellFx: 1, sellFees: 0, sellAdjustments: 0 });
-          
-          // Formulario de Venta (Ahora incluye acciones a vender)
           const [sellForm, setSellForm] = useState({ sharesToSell: 0, sellPrice: 0, sellDate: new Date().toISOString().slice(0,10), sellFx: 1, sellFees: 0, sellAdjustments: 0 });
 
-          // --- ACTUALIZAR PRECIOS ---
-          const updatePrices = async () => {
-              // Solo actualizamos las que están marcadas como ACTIVAS (Check activado) y no vendidas
+          // --- AUTO ACTUALIZACIÓN ---
+          useEffect(() => {
+              // Ejecutar al montar si hay API Key
+              if (apiKey && portfolio.length > 0) {
+                  updatePrices(true); // true = silencioso (sin loader si se quiere, o normal)
+              }
+              // Intervalo
+              if (!refreshInterval || refreshInterval < 1) return;
+              const interval = setInterval(() => updatePrices(true), refreshInterval * 60 * 1000);
+              return () => clearInterval(interval);
+          }, [apiKey, refreshInterval]); // Dependencias mínimas para evitar bucles infinitos
+
+          // --- FUNCIONES AUXILIARES DE CÁLCULO DE RENTABILIDAD ---
+          const calcReturns = (startVal, endVal, days) => {
+              if (startVal === 0) return { simple: 0, annual: 0 };
+              const simple = ((endVal - startVal) / startVal) * 100;
+              const years = Math.max(days, 1) / 365;
+              const annual = years > 0 && endVal > 0 ? (Math.pow(endVal / startVal, 1 / years) - 1) * 100 : 0;
+              return { simple, annual };
+          };
+
+          // --- ACTUALIZAR PRECIOS (GEMINI) ---
+          const updatePrices = async (isAuto = false) => {
+              // Solo actualizamos las activas y que tengan el Check marcado
               const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
-              if (!apiKey || updating || active.length === 0) return;
+              if (!apiKey || active.length === 0) return;
+              if (updating && !isAuto) return; // Evitar solapamientos
               
               setUpdating(true);
               try {
+                  // Agrupamos peticiones para no saturar si son muchas, o una por una si es la versión free
                   const updates = [];
                   for (const item of active) {
-                      const prompt = `Precio actual "${item.ticker}" (${item.stockCurrency}). FX a ${baseCurrency}. JSON: {"p": number, "fx": number, "h": number, "l": number, "iv": number, "pe": number, "n": "string"}`;
-                      const res = await askGemini(apiKey, prompt);
-                      const json = extractJSON(res);
-                      if (json) updates.push({ id: item.id, ...json });
+                      const prompt = `Devuelve JSON estricto con datos financieros actuales de "${item.ticker}" (Mercado: ${item.stockCurrency}). FX actual a ${baseCurrency}. 
+                      Formato JSON: {"p": number (precio actual), "fx": number (cambio divisa actual), "h": number (high 52w), "l": number (low 52w), "iv": number (valor intrínseco est.), "pe": number (PER actual), "n": "string (nombre empresa)"}`;
+                      
+                      try {
+                          const res = await askGemini(apiKey, prompt);
+                          const json = extractJSON(res);
+                          if (json) updates.push({ id: item.id, ...json });
+                      } catch (err) {
+                          console.warn(`Error actualizando ${item.ticker}`, err);
+                      }
                   }
-                  setPortfolio(prev => prev.map(p => {
-                      const u = updates.find(x => x.id === p.id);
-                      return u ? { ...p, name: u.n, currentPrice: u.p, currentFx: u.fx, high52: u.h, low52: u.l, intrinsicValue: u.iv, currentPE: u.pe } : p;
-                  }));
-                  setLastUpdate(new Date().toISOString());
-              } catch (e) { console.error(e); } finally { setUpdating(false); }
+                  
+                  if (updates.length > 0) {
+                      setPortfolio(prev => prev.map(p => {
+                          const u = updates.find(x => x.id === p.id);
+                          return u ? { 
+                              ...p, 
+                              name: u.n || p.name, 
+                              currentPrice: parseFloat(u.p) || p.currentPrice, 
+                              currentFx: parseFloat(u.fx) || p.currentFx, 
+                              high52: u.h, low52: u.l, intrinsicValue: u.iv, currentPE: u.pe 
+                          } : p;
+                      }));
+                      setLastUpdate(new Date().toISOString());
+                  }
+              } catch (e) { 
+                  console.error(e); 
+              } finally { 
+                  setUpdating(false); 
+              }
           };
 
           // --- ANÁLISIS IA ---
           const analyzePortfolio = async () => {
               if (!apiKey) return alert("Configura tu API Key en Ajustes primero.");
               const activePositions = portfolio.filter(p => !p.sellDate && p.isActive !== false);
-              if (activePositions.length === 0) return alert("No hay posiciones activas (marcadas con check) para analizar.");
+              if (activePositions.length === 0) return alert("No hay posiciones activas seleccionadas para analizar.");
 
               setAnalyzing(true);
               setAnalysisResult(null);
+              
               try {
                   const summary = activePositions.map(p => ({
-                      t: p.ticker,
-                      n: p.name,
-                      inv: (p.buyPrice * p.shares * p.buyFx).toFixed(0),
-                      val: (p.currentPrice * p.shares * p.currentFx).toFixed(0),
-                      prof: (((p.currentPrice - p.buyPrice)/p.buyPrice)*100).toFixed(1) + "%"
+                      tkr: p.ticker,
+                      cost: (p.buyPrice * p.shares).toFixed(0),
+                      curr: (p.currentPrice * p.shares).toFixed(0),
+                      fx: p.stockCurrency
                   }));
-                  const prompt = `Actúa como gestor patrimonial. Analiza esta cartera (JSON): ${JSON.stringify(summary)}. Divisa base: ${baseCurrency}. Reporte CONCISO español: 1. Diversificación/Riesgo. 2. Mejor/Peor valor. 3. Recomendación táctica.`;
+
+                  const prompt = `Eres un asesor financiero experto. Analiza esta cartera (JSON): ${JSON.stringify(summary)}. Divisa Base Usuario: ${baseCurrency}.
+                  Genera un informe detallado en HTML simple (sin markdown, usa <b>, <br>, <ul>) con:
+                  1. <b>Diagnóstico General:</b> Salud de la cartera y diversificación.
+                  2. <b>Exposición Divisas:</b> Riesgos por tipo de cambio.
+                  3. <b>Oportunidades/Riesgos:</b> Basado en los tickers (busca info reciente de mercado).
+                  4. <b>Recomendación Táctica:</b> (Mantener, Comprar más, Vender/Rotar).
+                  Sé conciso pero perspicaz.`;
+
                   const res = await askGemini(apiKey, prompt);
-                  setAnalysisResult(res);
+                  // Limpieza básica por si la IA mete markdown
+                  const cleanRes = res.replace(/```html/g, '').replace(/```/g, '');
+                  setAnalysisResult(cleanRes);
                   setIsAnalysisModalOpen(true);
-              } catch (e) { alert("Error: " + e.message); } finally { setAnalyzing(false); }
+              } catch (e) {
+                  alert("Error al conectar con iA: " + e.message);
+              } finally {
+                  setAnalyzing(false);
+              }
           };
 
-          // --- ESTADÍSTICAS ---
+          // --- ESTADÍSTICAS (Actualizadas con formato correcto) ---
           const stats = useMemo(() => {
               const calc = (items) => {
                   let inv = 0, cur = 0, divN = 0, fX = 0, weightedDays = 0;
                   items.forEach(p => {
                       const d = calculateDays(p.buyDate, p.sellDate || new Date());
-                      const cost = (p.buyPrice * p.shares * p.buyFx) + (p.adjustments || 0);
+                      // Coste Total = (Precio * Acciones * FX) + Gastos + Ajustes
+                      const cost = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0);
+                      
                       const isS = !!p.sellDate;
                       const effPrice = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
                       const fxActual = isS ? p.sellFx : p.currentFx;
-                      const val = (effPrice * p.shares * fxActual) - (isS ? (p.sellFees + p.sellAdjustments) : (p.fees + p.adjustments));
-                      inv += cost; cur += val; weightedDays += (d * cost);
+                      
+                      // Valor Final = (Precio * Acciones * FX) - (Gastos Venta + Ajustes Venta)
+                      // Nota: Si no está vendida, los gastos de venta son 0.
+                      const val = (effPrice * p.shares * fxActual) - (isS ? (p.sellFees + p.sellAdjustments) : 0);
+                      
+                      inv += cost; 
+                      cur += val; 
+                      weightedDays += (d * cost);
+                      
+                      // Efecto Divisa
                       fX += (effPrice * p.shares * fxActual) - (effPrice * p.shares * p.buyFx);
+                      
                       (p.dividends || []).forEach(dv => divN += dv.net);
                   });
+
                   const avgD = inv > 0 ? weightedDays / inv : 0;
-                  const plPrice = cur - inv;
-                  const plTotal = (cur + divN) - inv;
-                  return { num: items.length, inv, cur, divN, fX, plPrice, plTotal, plP_S: inv>0?(plPrice/inv)*100:0, plP_A: (inv>0&&avgD>0)?(Math.pow(cur/inv, 365/avgD)-1)*100:0, plT_S: inv>0?(plTotal/inv)*100:0, plT_A: (inv>0&&avgD>0)?(Math.pow((cur+divN)/inv, 365/avgD)-1)*100:0 };
+                  const plPrice = cur - inv; // Plusvalía solo precio
+                  const plTotal = (cur + divN) - inv; // Plusvalía total (con div)
+                  
+                  // Rentabilidades
+                  const retPrice = calcReturns(inv, cur, avgD);
+                  const retTotal = calcReturns(inv, cur + divN, avgD);
+
+                  return { 
+                      num: items.length, 
+                      inv, cur, divN, fX, 
+                      plPrice, plTotal, 
+                      plP_S: retPrice.simple, plP_A: retPrice.annual, 
+                      plT_S: retTotal.simple, plT_A: retTotal.annual 
+                  };
               };
-              // Stats Activa: Solo las que no tienen fecha venta Y están marcadas con check (isActive !== false)
+              
+              // Filtros para las estadísticas
               return { 
+                  // Activa: No fecha venta Y check marcado
                   active: calc(portfolio.filter(p => !p.sellDate && p.isActive !== false)), 
+                  // Ventas: Tienen fecha venta
                   sold: calc(portfolio.filter(p => !!p.sellDate)), 
-                  total: calc(portfolio.filter(p => p.isActive !== false || p.sellDate)) 
+                  // Total: Activas (marcadas) + Ventas
+                  total: calc(portfolio.filter(p => (!!p.sellDate) || (p.isActive !== false))) 
               };
           }, [portfolio, baseCurrency]);
 
@@ -265,16 +351,29 @@
               setIsModalOpen(false);
           };
 
-          // --- LOGICA DE VENTA CORREGIDA ---
+          // --- CONFIRMAR BORRADO ---
+          const requestDelete = (id) => {
+              setConfirmModal({
+                  isOpen: true,
+                  title: 'Eliminar Posición',
+                  msg: '¿Estás seguro de que quieres eliminar este registro permanentemente? Esta acción no se puede deshacer.',
+                  onConfirm: () => {
+                      setPortfolio(prev => prev.filter(x => x.id !== id));
+                      setConfirmModal({ ...confirmModal, isOpen: false });
+                  }
+              });
+          };
+
+          // --- LOGICA DE VENTA ---
           const handleSellSubmit = () => {
               if(!sellItem) return;
 
-              // 1. Crear NUEVO registro de venta (Clon con datos de venta)
+              // 1. Crear registro VENTA (Copia con datos de venta)
               const soldRecord = {
                   ...sellItem,
-                  id: Date.now(), // Nuevo ID para no pisar el original
-                  shares: sellForm.sharesToSell, // Cantidad vendida
-                  isActive: false, // Las vendidas no están "activas" para actualizar precio
+                  id: Date.now(), // Nuevo ID
+                  shares: sellForm.sharesToSell,
+                  isActive: false, // En histórico no está "activa" para updates
                   sellDate: sellForm.sellDate,
                   sellPrice: sellForm.sellPrice,
                   sellFx: sellForm.sellFx,
@@ -282,36 +381,38 @@
                   sellAdjustments: sellForm.sellAdjustments
               };
 
-              // 2. Modificar el registro ORIGINAL (Solo desmarcar check)
+              // 2. Modificar ORIGINAL (Desmarcar check, mantener en lista activa)
               const updatedPortfolio = portfolio.map(p => {
                   if (p.id === sellItem.id) {
-                      return { ...p, isActive: false }; // Desmarcamos
+                      // Si vendemos todo, desmarcamos. Si es parcial, podríamos restar acciones,
+                      // pero según instrucciones: "SE DESMARCA EL CHECK... NO SE ELIMINA".
+                      // Asumimos venta total para el desmarcado por simplicidad visual.
+                      return { ...p, isActive: false };
                   }
                   return p;
               });
 
-              // 3. Guardamos ambos (Original actualizado + Nuevo registro venta)
               setPortfolio([...updatedPortfolio, soldRecord]);
               setIsSellModalOpen(false);
           };
 
           return (
               <div className="h-full flex flex-col p-4 md:p-6 overflow-hidden">
-                  {/* ESTADÍSTICAS SUPERIORES */}
+                  {/* Stats Blocks */}
                   <div className="flex gap-4 mb-4 overflow-x-auto pb-2 custom-scrollbar shrink-0">
                       <StatsBlock title="Cartera Activa" data={stats.active} color="#3b82f6" baseCurrency={baseCurrency} />
                       <StatsBlock title="Histórico Ventas" data={stats.sold} color="#f97316" baseCurrency={baseCurrency} />
                       <StatsBlock title="Consolidado Total" data={stats.total} color="#a855f7" baseCurrency={baseCurrency} />
                   </div>
 
-                  {/* BARRA DE HERRAMIENTAS */}
+                  {/* Toolbar */}
                   <div className="flex justify-between items-center mb-4 shrink-0">
                       <div className="flex gap-3">
                           <div className="text-left flex gap-2">
-                              <button onClick={updatePrices} disabled={updating} className="bg-slate-800 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-slate-700 h-10 transition-colors border border-slate-700">
+                              <button onClick={() => updatePrices(false)} disabled={updating} className="bg-slate-800 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-slate-700 h-10 transition-colors border border-slate-700 shadow">
                                   {updating ? <Icons.Loader size={14}/> : <Icons.Refresh size={14}/>} ACTUALIZAR
                               </button>
-                              <button onClick={analyzePortfolio} disabled={analyzing} className="bg-purple-900/50 text-purple-200 border border-purple-500/50 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-purple-800/50 h-10 transition-colors shadow-lg shadow-purple-900/20">
+                              <button onClick={analyzePortfolio} disabled={analyzing} className="bg-gradient-to-r from-purple-900/80 to-blue-900/80 text-white border border-purple-500/50 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 hover:opacity-80 h-10 transition-all shadow-lg shadow-purple-900/30">
                                   {analyzing ? <Icons.Loader size={14}/> : <Icons.Wand size={14}/>} ANÁLISIS iA
                               </button>
                           </div>
@@ -319,79 +420,101 @@
 
                       <div className="flex gap-3 h-10">
                           <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
-                              <button onClick={() => setViewMode('active')} className={`px-4 rounded text-xs font-bold transition-all ${viewMode === 'active' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>ACTIVA</button>
-                              <button onClick={() => setViewMode('sold')} className={`px-4 rounded text-xs font-bold transition-all ${viewMode === 'sold' ? 'bg-orange-600 text-white' : 'text-slate-400'}`}>VENTAS</button>
+                              <button onClick={() => setViewMode('active')} className={`px-4 rounded text-xs font-bold transition-all ${viewMode === 'active' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>ACTIVA</button>
+                              <button onClick={() => setViewMode('sold')} className={`px-4 rounded text-xs font-bold transition-all ${viewMode === 'sold' ? 'bg-orange-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>VENTAS</button>
                           </div>
                           <button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, buyPE:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0 }); setIsModalOpen(true); }} className="bg-blue-600 px-4 rounded-lg text-xs font-bold flex items-center gap-2 text-white hover:bg-blue-500 transition-colors shadow-lg shadow-blue-900/30"><Icons.Plus size={16}/> NUEVA POSICIÓN</button>
                       </div>
                   </div>
                   
-                  <div className="text-[10px] text-slate-500 mb-2 uppercase font-bold text-right px-1">Última Sincronización: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--'}</div>
+                  <div className="text-[10px] text-slate-500 mb-2 uppercase font-bold text-right px-1 tracking-wider">Última Sincronización: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--'}</div>
 
-                  {/* TABLA PRINCIPAL */}
+                  {/* Data Grid */}
                   <div className="flex-1 overflow-auto custom-scrollbar bg-slate-900/50 border border-slate-800 rounded-xl">
-                      <table className="w-full text-left min-w-[1100px] text-sm">
+                      <table className="w-full text-left min-w-[1400px] text-sm">
                           <thead className="bg-slate-800 text-slate-400 text-[10px] uppercase font-bold sticky top-0 z-10 shadow-lg">
                               <tr>
                                   <th className="p-3 w-10 text-center">#</th>
-                                  <th className="p-3">Valor / Fecha</th>
+                                  <th className="p-3">Valor</th>
+                                  <th className="p-3">Datos Compra (Fx/Fee/Adj)</th>
                                   <th className="p-3 text-right">Títulos</th>
-                                  <th className="p-3 text-right">Precio ({viewMode==='active'?'Act':'Venta'})</th>
-                                  <th className="p-3 text-right">PER (Ini/Act)</th>
-                                  <th className="p-3 text-right">Invertido</th>
-                                  <th className="p-3 text-right">G/P Total</th>
-                                  <th className="p-3 text-center">Acción</th>
+                                  <th className="p-3 text-right">Precios (Inv/Act)</th>
+                                  <th className="p-3 text-right">Rentabilidad (S/A)</th>
+                                  <th className="p-3 text-right">Coste Total</th>
+                                  <th className="p-3 text-right">Valor Final (inc. Div)</th>
+                                  <th className="p-3 text-center">Acciones</th>
                               </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-800">
-                              {/* Filtro modificado: En ACTIVA muestra todo lo que NO tenga fecha venta (aunque esté desmarcado) */}
+                              {/* FILTRO: Activa = No fecha venta (aunque esté desmarcada). Ventas = Tiene fecha venta */}
                               {portfolio.filter(p => viewMode === 'active' ? !p.sellDate : !!p.sellDate).map(p => {
+                                  // Cálculos fila
+                                  const costBase = (p.buyPrice * p.shares * p.buyFx);
+                                  const costTotal = costBase + (p.fees || 0) + (p.adjustments || 0);
                                   
-                                  const cB = (p.buyPrice * p.shares * p.buyFx) + (p.adjustments || 0);
-                                  const effPrice = p.sellDate ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
-                                  const fxA = p.sellDate ? p.sellFx : p.currentFx;
-                                  const vB = (effPrice * p.shares * fxA) - (p.sellDate ? (p.sellFees+p.sellAdjustments) : (p.fees+p.adjustments));
-                                  const dN = (p.dividends || []).reduce((a,b)=>a+b.net,0);
+                                  const isS = !!p.sellDate;
+                                  const curPrice = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
+                                  const curFx = isS ? p.sellFx : p.currentFx;
+                                  
+                                  // Valor bruto actual - Gastos Venta (si aplica)
+                                  const valGross = (curPrice * p.shares * curFx);
+                                  const valNet = valGross - (isS ? (p.sellFees + p.sellAdjustments) : 0);
+                                  
+                                  const divs = (p.dividends || []).reduce((a,b)=>a+b.net,0);
+                                  const profit = (valNet + divs) - costTotal;
+                                  
+                                  const days = calculateDays(p.buyDate, p.sellDate || new Date());
+                                  const rets = calcReturns(costTotal, valNet + divs, days);
 
                                   return (
-                                      <tr key={p.id} className={`table-row-hover hover:bg-white/5 transition-colors ${p.isActive===false && !p.sellDate ? 'opacity-50 grayscale' : ''}`}>
-                                          {/* Checkbox controla isActive. Si es false, no se actualiza ni suma en "Cartera Activa" */}
+                                      <tr key={p.id} className={`table-row-hover hover:bg-white/5 transition-colors ${p.isActive===false && !p.sellDate ? 'opacity-40 grayscale' : ''}`}>
                                           <td className="p-3 text-center" onClick={(e)=>{e.stopPropagation(); setPortfolio(prev=>prev.map(x=>x.id===p.id?{...x, isActive:!x.isActive}:x))}}><input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" /></td>
                                           
-                                          <td className="p-3"><div className="font-bold text-white">{p.name || p.ticker}</div><div className="text-[10px] text-slate-500 font-mono">{p.buyDate}</div></td>
+                                          <td className="p-3">
+                                              <div className="font-bold text-white text-sm">{p.ticker}</div>
+                                              <div className="text-[10px] text-slate-400">{p.name}</div>
+                                              <div className="text-[9px] text-slate-500 font-mono mt-1">{p.buyDate}</div>
+                                          </td>
+
+                                          <td className="p-3 text-xs">
+                                              <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] font-mono text-slate-400">
+                                                  <span>FX: {formatN(p.buyFx, 4)}</span>
+                                                  <span>Fee: {formatN(p.fees)}</span>
+                                                  <span>Adj: {formatN(p.adjustments)}</span>
+                                                  <span>Div: {p.stockCurrency}</span>
+                                              </div>
+                                          </td>
                                           
-                                          {/* Títulos con punto de millar */}
-                                          <td className="p-3 text-right font-mono">{formatN(p.shares)}</td>
+                                          <td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td>
                                           
                                           <td className="p-3 text-right text-xs">
-                                              <div className="text-slate-500 font-mono">C: {formatN(p.buyPrice)}</div>
-                                              <div className="font-bold font-mono text-white">{formatN(effPrice, p.sellDate ? 3 : 2)}</div>
+                                              <div className="text-slate-500 font-mono">I: {formatN(p.buyPrice)}</div>
+                                              <div className={`font-bold font-mono ${isS ? 'text-orange-300' : 'text-blue-300'}`}>{isS ? 'V: ' : 'A: '}{formatN(curPrice, 3)}</div>
+                                              <div className="text-[9px] text-slate-600 font-mono">FX: {formatN(curFx, 4)}</div>
+                                          </td>
+
+                                          <td className="p-3 text-right text-xs">
+                                              <div className={`${rets.simple >= 0 ? 'text-green-400' : 'text-red-400'} font-bold`}>{formatN(rets.simple)}%</div>
+                                              <div className="text-[9px] text-slate-500">Anual: {formatN(rets.annual)}%</div>
                                           </td>
                                           
-                                          <td className="p-3 text-right text-xs font-mono">
-                                              <div className="text-slate-500">{formatN(p.buyPE)}</div>
-                                              <div className="text-blue-300 font-bold">{formatN(p.currentPE)}</div>
-                                          </td>
+                                          <td className="p-3 text-right font-mono text-slate-400 text-xs">{formatMoney(costTotal, baseCurrency)}</td>
                                           
-                                          {/* formatMoney fuerza el formato de moneda ES */}
-                                          <td className="p-3 text-right font-mono text-slate-400">{formatMoney(cB, baseCurrency)}</td>
-                                          
-                                          <td className={`p-3 text-right font-bold ${(vB+dN)>=cB?'text-green-400':'text-red-400'}`}>
-                                              <div>{formatMoney((vB+dN)-cB, baseCurrency)}</div>
-                                              <div className="text-[9px] opacity-70">Div: {formatMoney(dN, baseCurrency)}</div>
+                                          <td className="p-3 text-right">
+                                              <div className={`font-bold text-xs ${profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(valNet + divs, baseCurrency)}</div>
+                                              <div className="text-[9px] text-slate-500 mt-0.5">Bfo: {formatMoney(profit, baseCurrency)}</div>
+                                              {divs > 0 && <div className="text-[8px] text-blue-400">Inc. Div: {formatMoney(divs, baseCurrency)}</div>}
                                           </td>
                                           
                                           <td className="p-3 text-center">
                                               <div className="flex gap-2 justify-center">
-                                                  {/* Botón VENDER: Sigue visible aunque esté desmarcado, si no se ha vendido ya */}
                                                   {!p.sellDate && (
                                                       <button onClick={(e)=>{
                                                           e.stopPropagation(); 
                                                           setSellItem(p); 
-                                                          // Preparamos formulario venta. Precio a 3 decimales
-                                                          const suggestedPrice = parseFloat(effPrice.toFixed(3));
+                                                          const suggestedPrice = parseFloat(curPrice.toFixed(3));
                                                           setSellForm({
-                                                              sharesToSell: p.shares, // Por defecto todas
+                                                              sharesToSell: p.shares, 
                                                               sellPrice: suggestedPrice, 
                                                               sellDate: new Date().toISOString().slice(0,10), 
                                                               sellFx: p.currentFx, 
@@ -403,8 +526,8 @@
                                                           VENDER
                                                       </button>
                                                   )}
-                                                  <button onClick={(e)=>{e.stopPropagation(); setForm(p); setEditingId(p.id); setIsModalOpen(true); }} className="text-blue-400 hover:text-white"><Icons.Edit size={16}/></button>
-                                                  <button onClick={(e)=>{e.stopPropagation(); if(confirm('¿Borrar definitivamente?')) setPortfolio(prev=>prev.filter(x=>x.id!==p.id)) }} className="text-red-400 hover:text-white"><Icons.Trash2 size={16}/></button>
+                                                  <button onClick={(e)=>{e.stopPropagation(); setForm(p); setEditingId(p.id); setIsModalOpen(true); }} className="text-blue-400 hover:text-white bg-slate-800 p-1.5 rounded"><Icons.Edit size={14}/></button>
+                                                  <button onClick={(e)=>{e.stopPropagation(); requestDelete(p.id); }} className="text-red-400 hover:text-white bg-slate-800 p-1.5 rounded"><Icons.Trash2 size={14}/></button>
                                               </div>
                                           </td>
                                       </tr>
@@ -415,16 +538,27 @@
                   </div>
 
                   {/* MODAL ANÁLISIS IA */}
-                  <Modal isOpen={isAnalysisModalOpen} title="Análisis de Cartera iA" onClose={()=>setIsAnalysisModalOpen(false)} size="lg">
+                  <Modal isOpen={isAnalysisModalOpen} title="Informe de Cartera iA" onClose={()=>setIsAnalysisModalOpen(false)} size="lg">
                       <div className="space-y-4">
-                          <div className="p-4 bg-purple-900/10 border border-purple-500/20 rounded-xl">
-                              <h4 className="text-purple-400 font-bold mb-2 flex items-center gap-2"><Icons.Wand size={16}/> Resumen Ejecutivo</h4>
-                              <div className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap font-sans">
-                                  {analysisResult || "Generando análisis..."}
-                              </div>
+                          <div className="p-6 bg-slate-950 border border-slate-800 rounded-xl shadow-inner">
+                             <div className="prose prose-invert prose-sm max-w-none text-slate-300 font-sans leading-relaxed" dangerouslySetInnerHTML={{__html: analysisResult || "<div class='animate-pulse'>Analizando mercados...</div>"}}></div>
                           </div>
-                          <div className="flex justify-end">
-                              <button onClick={()=>setIsAnalysisModalOpen(false)} className="bg-slate-700 px-6 py-2 rounded-lg font-bold text-xs uppercase">Cerrar</button>
+                          <div className="flex justify-end pt-4 border-t border-slate-800">
+                              <button onClick={()=>setIsAnalysisModalOpen(false)} className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold text-xs uppercase shadow hover:bg-blue-500 transition-colors">Cerrar Informe</button>
+                          </div>
+                      </div>
+                  </Modal>
+                  
+                  {/* MODAL CONFIRMACIÓN (ESTILO WEB) */}
+                  <Modal isOpen={confirmModal.isOpen} title={confirmModal.title} onClose={()=>setConfirmModal({...confirmModal, isOpen:false})} size="sm">
+                      <div className="text-center p-4">
+                          <div className="bg-red-500/10 text-red-500 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4 border border-red-500/30">
+                              <Icons.Trash2 size={32} />
+                          </div>
+                          <p className="text-slate-300 text-sm mb-6">{confirmModal.msg}</p>
+                          <div className="flex gap-3 justify-center">
+                              <button onClick={()=>setConfirmModal({...confirmModal, isOpen:false})} className="px-4 py-2 bg-slate-700 rounded-lg text-white font-bold text-xs">Cancelar</button>
+                              <button onClick={confirmModal.onConfirm} className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-white font-bold text-xs shadow-lg shadow-red-900/40">Eliminar</button>
                           </div>
                       </div>
                   </Modal>
@@ -432,8 +566,9 @@
                   {/* MODAL EDITAR / NUEVO */}
                   <Modal isOpen={isModalOpen} title={editingId ? "Editar Posición" : "Nueva Compra"} onClose={()=>setIsModalOpen(false)}>
                       <div className="space-y-5">
+                          {/* (Campos formulario sin cambios, pero asegurando type number y formateos visuales si se quiere) */}
                           <div className="grid grid-cols-2 gap-4">
-                              <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500 mb-1">Ticker / Símbolo</label><input type="text" value={form.ticker} onChange={e=>setForm({...form, ticker: e.target.value.toUpperCase()})} /></div>
+                              <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500 mb-1">Ticker / Símbolo</label><input type="text" value={form.ticker} onChange={e=>setForm({...form, ticker: e.target.value.toUpperCase()})} placeholder="Ej: AAPL" /></div>
                               <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500 mb-1">Fecha Compra</label><input type="date" value={form.buyDate} onChange={e=>setForm({...form, buyDate: e.target.value})} /></div>
                           </div>
                           <div className="flex items-center gap-4 bg-slate-800/50 p-3 rounded-lg border border-slate-700">
@@ -448,19 +583,17 @@
                           </div>
                           <div className="grid grid-cols-3 gap-3">
                              <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500 mb-1">FX (Compra)</label><input type="number" step="0.0001" value={form.buyFx} onChange={e=>setForm({...form, buyFx: parseFloat(e.target.value)})} /></div>
-                             <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500 mb-1">PER (Compra)</label><input type="number" step="0.1" value={form.buyPE} onChange={e=>setForm({...form, buyPE: parseFloat(e.target.value)})} /></div>
+                             <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500 mb-1">Gastos (Fees)</label><input type="number" step="0.01" value={form.fees} onChange={e=>setForm({...form, fees: parseFloat(e.target.value)})} /></div>
                              <div className="flex flex-col"><label className="text-[10px] uppercase font-bold text-slate-500 mb-1">Ajustes</label><input type="number" step="0.01" value={form.adjustments} onChange={e=>setForm({...form, adjustments: parseFloat(e.target.value)})} /></div>
                           </div>
-                          {/* (Sección venta eliminada de aquí, ya que tiene su propio modal) */}
+
                           <div className="grid grid-cols-2 gap-4 pt-2">
                               <div className="bg-slate-800/80 p-3 rounded-lg border border-slate-700">
                                  <div className="text-[8px] uppercase font-bold text-slate-500 mb-1">A la compra</div>
-                                 <div className="text-[8px] text-slate-500 italic mb-1">({formatN(form.shares)} x {formatN(form.buyPrice)} x {formatN(form.buyFx, 4)}) + {formatN(form.adjustments)}</div>
-                                 <div className="flex justify-between border-t border-slate-700 pt-1"><span className="text-[10px] font-bold">Invertido:</span><span className="text-white font-bold">{formatMoney((form.shares * form.buyPrice * form.buyFx) + form.adjustments, baseCurrency)}</span></div>
+                                 <div className="flex justify-between border-t border-slate-700 pt-1"><span className="text-[10px] font-bold">Invertido:</span><span className="text-white font-bold">{formatMoney((form.shares * form.buyPrice * form.buyFx) + form.fees + form.adjustments, baseCurrency)}</span></div>
                               </div>
                               <div className="bg-blue-900/10 p-3 rounded-lg border border-blue-500/30">
                                  <div className="text-[8px] uppercase font-bold text-blue-400 mb-1">Liquidez Actual</div>
-                                 <div className="text-[8px] text-blue-300 italic mb-1">({formatN(form.shares)} x {formatN(portfolio.find(x=>x.id===editingId)?.currentPrice || form.buyPrice)} x {formatN(portfolio.find(x=>x.id===editingId)?.currentFx || form.buyFx, 4)})</div>
                                  <div className="flex justify-between border-t border-blue-500/30 pt-1">
                                      <span className="text-[10px] font-bold text-blue-300">Valoración:</span>
                                      <span className="text-white font-bold">
@@ -473,7 +606,7 @@
                       </div>
                   </Modal>
 
-                  {/* MODAL VENDER (CORREGIDO Y AMPLIADO) */}
+                  {/* MODAL VENDER */}
                   <Modal isOpen={isSellModalOpen} title={`Registrar Venta: ${sellItem?.ticker}`} onClose={()=>setIsSellModalOpen(false)}>
                       <div className="space-y-4">
                           <div className="bg-blue-900/20 border border-blue-500/30 p-3 rounded-lg text-[11px] text-blue-200 mb-2">
@@ -503,7 +636,7 @@
               </div>
           );
       };
-      
+    
 
 
 
