@@ -233,37 +233,31 @@
               
               setUpdating(true);
               let log = { success: [], fail: [] };
-              let updatesList = [];
+              let newUpdates = [];
 
               try {
                   for (const item of active) {
-                      const prompt = `Responde SOLO JSON con PUNTO decimal. Sin símbolos de moneda ni comas. Datos de "${item.ticker}" (${item.stockCurrency}) a ${baseCurrency}. JSON: {"p":precio,"fx":cambio,"pe":per,"n":"nombre"}`;
+                      const prompt = `Responde SOLO JSON con PUNTO decimal. Datos de "${item.ticker}" (${item.stockCurrency}) a ${baseCurrency}. JSON: {"p":precio,"fx":cambio,"pe":per,"n":"nombre"}`;
                       try {
                           const res = await askGemini(apiKey, prompt);
                           const json = extractJSON(res);
                           if (json && (json.p || json.p === 0)) {
-                              updatesList.push({ id: item.id, n: json.n, p: cleanVal(json.p), fx: cleanVal(json.fx), pe: cleanVal(json.pe) });
+                              newUpdates.push({ id: item.id, n: json.n, p: cleanVal(json.p), fx: cleanVal(json.fx), pe: cleanVal(json.pe) });
                               log.success.push(item.ticker);
                           } else { log.fail.push(item.ticker); }
                       } catch (e) { log.fail.push(item.ticker); }
                   }
                   
-                  if (updatesList.length > 0) {
+                  if (newUpdates.length > 0) {
                       setPortfolio(prev => prev.map(p => {
-                          const u = updatesList.find(x => x.id === p.id);
+                          const u = newUpdates.find(x => x.id === p.id);
                           return u ? { ...p, name: u.n || p.name, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe } : p;
                       }));
                       setLastUpdate(new Date().toISOString());
                   }
                   
-                  // NOTIFICACIÓN SÓLO SI HAY FALLOS
                   if (!isAuto && log.fail.length > 0) {
-                      setInfoModal({ 
-                          isOpen: true, 
-                          title: 'Sincronización con Errores', 
-                          msg: `Se han actualizado ${log.success.length} valores. Fallos en: ${log.fail.join(', ')}.`,
-                          type: 'warning' 
-                      });
+                      setInfoModal({ isOpen: true, title: 'Sincronización con Errores', msg: `Fallos en: ${log.fail.join(', ')}.`, type: 'warning' });
                   }
               } catch (e) { if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); } 
               finally { setUpdating(false); }
@@ -338,8 +332,8 @@
                       </div>
                       <div className="flex gap-3 h-10">
                           <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
-                              <button onClick={() => setViewMode('active')} className={`px-4 rounded text-xs font-bold transition-all ${viewMode === 'active' ? 'bg-blue-600' : 'text-slate-400'}`}>ACTIVA</button>
-                              <button onClick={() => setViewMode('sold')} className={`px-4 rounded text-xs font-bold transition-all ${viewMode === 'sold' ? 'bg-orange-600' : 'text-slate-400'}`}>VENTAS</button>
+                              <button onClick={() => setViewMode('active')} className={`px-4 rounded text-xs font-bold transition-all ${viewMode === 'active' ? 'bg-blue-600 shadow' : 'text-slate-400'}`}>ACTIVA</button>
+                              <button onClick={() => setViewMode('sold')} className={`px-4 rounded text-xs font-bold transition-all ${viewMode === 'sold' ? 'bg-orange-600 shadow' : 'text-slate-400'}`}>VENTAS</button>
                           </div>
                           <button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, buyPE:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, currentPE:0, dividends: [] }); setIsModalOpen(true); }} className="bg-blue-600 px-4 rounded-lg text-xs font-bold flex items-center gap-2 shadow-lg"><Icons.Plus size={16}/> NUEVA POSICIÓN</button>
                       </div>
@@ -355,7 +349,7 @@
                                   <th className="p-3 text-right">Precios (Inv/Act)</th>
                                   <th className="p-3 text-center">FX (I/A)</th>
                                   <th className="p-3 text-center">Gastos / Adj</th>
-                                  <th className="p-3 text-right">Coste Total</th>
+                                  <th className="p-3 text-right">Compra Total</th>
                                   <th className="p-3 text-right">Valor Final</th>
                                   <th className="p-3 text-right">RENDIMIENTO</th>
                                   <th className="p-3 text-right">% Ben/Pérd</th>
@@ -365,71 +359,89 @@
                           </thead>
                           <tbody className="divide-y divide-slate-800">
                               {portfolio.filter(p => viewMode === 'active' ? !p.sellDate : !!p.sellDate).map(p => {
-                                  const cT = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0);
-                                  const isS = !!p.sellDate;
-                                  const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
-                                  const curF = isS ? p.sellFx : p.currentFx;
-                                  // VALOR FINAL PATRIMONIAL PURO
-                                  const vF = (curP * p.shares * curF) - (isS ? (p.sellFees + p.sellAdjustments) : 0);
-                                  const ds = (p.dividends || []).reduce((a,b)=>a+b.net,0);
-                                  const pCap = vF - cT;
-                                  const dy = calculateDays(p.buyDate, p.sellDate || new Date());
-                                  const rs = calcReturns(cT, vF + ds, dy);
-
-                                  return (
-                                      <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''}`}>
-                                          <td className="p-3 text-center" onClick={() => setPortfolio(prev => prev.map(x => x.id === p.id ? {...x, isActive: !x.isActive} : x))}><input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" /></td>
-                                          <td className="p-3"><b>{p.ticker}</b><br/><span className="text-[10px] text-slate-400 uppercase">{p.name}</span></td>
-                                          <td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td>
-                                          <td className="p-3 text-right text-xs font-mono">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td>
-                                          <td className="p-3 text-center text-[10px] font-mono text-slate-400">I: {formatN(p.buyFx, 4)}<br/>A: {formatN(curF, 4)}</td>
-                                          <td className="p-3 text-center text-[10px] font-mono text-slate-400">G: {formatN(isS?p.sellFees:p.fees)}<br/>A: {formatN(isS?p.sellAdjustments:p.adjustments)}</td>
-                                          <td className="p-3 text-right text-slate-400 font-mono">{formatMoney(cT, baseCurrency)}</td>
-                                          <td className="p-3 text-right font-mono font-bold text-white">{formatMoney(vF, baseCurrency)}</td>
-                                          <td className="p-3 text-right font-mono">
-                                              <div className={pCap >= 0 ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>{formatMoney(pCap, baseCurrency)}</div>
-                                              <div className="text-[10px] text-blue-400 font-bold">Div: {formatMoney(ds, baseCurrency)}</div>
-                                          </td>
-                                          <td className="p-3 text-right text-xs">
-                                              <div className={rs.simple>=0?'text-green-400 font-bold':'text-red-400 font-bold'}>{formatN(rs.simple)}% ({dy}d)</div>
-                                              <div className="text-[9px] text-slate-500 font-bold">Anual: {formatN(rs.annual)}%</div>
-                                          </td>
-                                          <td className="p-3 text-center text-xs font-mono">I: {formatN(p.buyPE, 1)}<br/>A: <span className="text-yellow-500 font-bold">{formatN(p.currentPE, 1)}</span></td>
-                                          <td className="p-3 text-center flex gap-2 justify-center">
-                                              {!p.sellDate && <button onClick={() => { setSellItem(p); setSellForm({sharesToSell: p.shares, sellPrice: parseFloat(curP.toFixed(3)), sellDate: new Date().toISOString().slice(0,10), sellFx: p.currentFx, sellFees: 0, sellAdjustments: 0}); setIsSellModalOpen(true); }} className="bg-green-600/20 text-green-400 border border-green-500/30 px-2 py-1 rounded text-[10px] font-bold hover:bg-green-600/40">VENDER</button>}
-                                              <button onClick={() => { setForm(p); setEditingId(p.id); setIsModalOpen(true); }} className="text-blue-400 p-1.5 bg-slate-800 rounded hover:text-white"><Icons.Edit size={14}/></button>
-                                              <button onClick={() => { setConfirmModal({isOpen:true, title:'Borrado', msg:`¿Eliminar permanentemente?`, onConfirm:()=>{setPortfolio(prev=>prev.filter(x=>x.id!==p.id)); setConfirmModal({isOpen:false})} })} className="text-red-400 p-1.5 bg-slate-800 rounded hover:text-white"><Icons.Trash2 size={14}/></button>
-                                          </td>
-                                      </tr>
-                                  );
+                                // --- CÁLCULOS DE FILA ---
+                                const cT = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0);
+                                const isS = !!p.sellDate;
+                                const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
+                                const curF = isS ? p.sellFx : p.currentFx;
+                                
+                                // Valor Final Patrimonial puro (Sin sumar dividendos)
+                                const vF = (curP * p.shares * curF) - (isS ? (p.sellFees + p.sellAdjustments) : 0);
+                                const ds = (p.dividends || []).reduce((a,b)=>a+b.net,0);
+                                
+                                // Rendimiento de la compra (Ganancia/Pérdida de Capital)
+                                const pCap = vF - cT; 
+                                const days = calculateDays(p.buyDate, p.sellDate || new Date());
+                                // Rendimiento Total (Capital + Dividendos) para el cálculo del %
+                                const rs = calcReturns(cT, vF + ds, days);
+                                
+                                return (
+                                    <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''}`}>
+                                        <td className="p-3 text-center" onClick={() => setPortfolio(prev => prev.map(x => x.id === p.id ? {...x, isActive: !x.isActive} : x))}><input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" /></td>
+                                        <td className="p-3"><b>{p.ticker}</b><br/><span className="text-[10px] text-slate-400 uppercase">{p.name}</span></td>
+                                        <td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td>
+                                        <td className="p-3 text-right text-xs font-mono">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td>
+                                        <td className="p-3 text-center text-[10px] font-mono text-slate-400">I: {formatN(p.buyFx, 4)}<br/>A: {formatN(curF, 4)}</td>
+                                        <td className="p-3 text-center text-[10px] font-mono text-slate-400">G: {formatN(isS?p.sellFees:p.fees)}<br/>A: {formatN(isS?p.sellAdjustments:p.adjustments)}</td>
+                                        
+                                        {/* COSTE TOTAL */}
+                                        <td className="p-3 text-right text-slate-400 font-mono">{formatMoney(cT, baseCurrency)}</td>
+                                        
+                                        {/* VALOR FINAL (Puro patrimonio) */}
+                                        <td className="p-3 text-right font-mono font-bold text-white">{formatMoney(vF, baseCurrency)}</td>
+                                        
+                                        {/* RENDIMIENTO (Separado: Capital y Dividendos) */}
+                                        <td className="p-3 text-right font-mono">
+                                            <div className={pCap >= 0 ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>{formatMoney(pCap, baseCurrency)}</div>
+                                            <div className="text-[10px] text-blue-400 font-bold">Div: {formatMoney(ds, baseCurrency)}</div>
+                                        </td>
+                                        
+                                        {/* % BEN/PÉRD (Incluye días) */}
+                                        <td className="p-3 text-right text-xs">
+                                            <div className={rs.simple>=0?'text-green-400 font-bold':'text-red-400 font-bold'}>{formatN(rs.simple)}% ({days}d)</div>
+                                            <div className="text-[9px] text-slate-500 font-bold">Anual: {formatN(rs.annual)}%</div>
+                                        </td>
+                                        
+                                        <td className="p-3 text-center text-xs font-mono">I: {formatN(p.buyPE, 1)}<br/>A: <span className="text-yellow-500 font-bold">{formatN(p.currentPE, 1)}</span></td>
+                                        
+                                        <td className="p-3 text-center">
+                                            <div className="flex gap-2 justify-center">
+                                                {!p.sellDate && <button onClick={() => { setSellItem(p); setSellForm({sharesToSell: p.shares, sellPrice: parseFloat(curP.toFixed(3)), sellDate: new Date().toISOString().slice(0,10), sellFx: p.currentFx, sellFees: 0, sellAdjustments: 0}); setIsSellModalOpen(true); }} className="bg-green-600/20 text-green-400 border border-green-500/30 px-2 py-1 rounded text-[10px] font-bold hover:bg-green-600/40">VENDER</button>}
+                                                <button onClick={() => { setForm(p); setEditingId(p.id); setIsModalOpen(true); }} className="text-blue-400 p-1.5 bg-slate-800 rounded transition-colors"><Icons.Edit size={14}/></button>
+                                                <button onClick={() => { setConfirmModal({isOpen:true, title:'Borrado', msg:`¿Eliminar permanentemente?`, onConfirm:()=>{setPortfolio(prev=>prev.filter(x=>x.id!==p.id)); setConfirmModal({isOpen:false})} })} className="text-red-400 p-1.5 bg-slate-800 rounded transition-colors"><Icons.Trash2 size={14}/></button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ); 
                               })}
                           </tbody>
                       </table>
                   </div>
 
-                  {/* MODAL FICHA TÉCNICA (JERARQUÍA FINANCIERA) */}
+                  {/* MODAL FICHA TÉCNICA */}
                   <Modal isOpen={isModalOpen} title={editingId ? `Ficha de Inversión: ${form.ticker}` : "Apertura de Posición"} onClose={()=>setIsModalOpen(false)}>
                       <div className="space-y-6">
                           <div className="bg-slate-800/40 border border-slate-700 p-5 rounded-2xl space-y-4">
-                              <h4 className="text-[10px] uppercase font-black text-blue-400 tracking-widest border-b border-slate-700 pb-2 flex justify-between">
-                                  <span>1. Detalles de Entrada (Compra)</span>
-                              </h4>
+                              <h4 className="text-[10px] uppercase font-black text-blue-400 tracking-widest border-b border-slate-700 pb-2">1. Detalles de Entrada (Compra)</h4>
                               <div className="grid grid-cols-2 gap-4">
                                   <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Ticker</label><div className="flex gap-2"><input type="text" value={form.ticker} onChange={e=>setForm({...form, ticker: e.target.value.toUpperCase()})} className="w-24 font-bold" /><button onClick={fetchTickerData} disabled={fetchingSingle} className="bg-blue-600 text-[10px] px-3 rounded font-black hover:bg-blue-500 transition-colors">Rescatar iA</button></div></div>
-                                  <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Nombre Empresa</label><input type="text" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="w-full text-slate-300 font-bold" /></div>
+                                  <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Nombre / Empresa</label><input type="text" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="w-full text-slate-300 font-bold" /></div>
+                              </div>
+                              <div className="grid grid-cols-2 gap-4">
+                                  <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Fecha</label><input type="date" value={form.buyDate} onChange={e=>setForm({...form, buyDate: e.target.value})} className="w-full" /></div>
+                                  <div className="flex items-center gap-2 bg-slate-900/50 p-2 rounded border border-slate-700 mt-5 h-[38px]"><input type="checkbox" id="mIdx" checked={form.isIndex} onChange={e=>setForm({...form, isIndex:e.target.checked})} className="custom-checkbox" /><label htmlFor="mIdx" className="text-[10px] uppercase font-bold text-slate-400">Es Índice</label>{form.isIndex && <input type="number" step="0.01" value={form.indexDivisor} onChange={e=>setForm({...form, indexDivisor:parseFloat(e.target.value)})} className="w-16 h-6 py-0 px-1 ml-auto text-xs font-mono" />}</div>
                               </div>
                               <div className="grid grid-cols-3 gap-3">
-                                  <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Fecha</label><input type="date" value={form.buyDate} onChange={e=>setForm({...form, buyDate: e.target.value})} className="w-full" /></div>
                                   <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Títulos</label><input type="number" value={form.shares} onChange={e=>setForm({...form, shares: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-white text-lg" /></div>
                                   <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Precio Uni.</label><input type="number" step="0.01" value={form.buyPrice} onChange={e=>setForm({...form, buyPrice: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-white text-lg" /></div>
+                                  <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">PER Entrada</label><input type="number" step="0.1" value={form.buyPE} onChange={e=>setForm({...form, buyPE: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-yellow-500 text-lg" /></div>
                               </div>
-                              <div className="grid grid-cols-4 gap-2 text-[10px]">
-                                 <div><label className="font-bold text-slate-500">FX</label><input type="number" step="0.0001" value={form.buyFx} onChange={e=>setForm({...form, buyFx: parseFloat(e.target.value)})} className="w-full font-mono" /></div>
-                                 <div><label className="font-bold text-slate-500">Gastos</label><input type="number" step="0.01" value={form.fees} onChange={e=>setForm({...form, fees: parseFloat(e.target.value)})} className="w-full font-mono" /></div>
-                                 <div><label className="font-bold text-slate-500">Ajustes</label><input type="number" step="0.01" value={form.adjustments} onChange={e=>setForm({...form, adjustments: parseFloat(e.target.value)})} className="w-full font-mono" /></div>
-                                 <div><label className="font-bold text-slate-500">PER</label><input type="number" step="0.1" value={form.buyPE} onChange={e=>setForm({...form, buyPE: parseFloat(e.target.value)})} className="w-full font-mono text-yellow-500" /></div>
+                              <div className="grid grid-cols-3 gap-3 text-[10px]">
+                                 <div><label className="uppercase font-bold text-slate-500">FX Compra</label><input type="number" step="0.0001" value={form.buyFx} onChange={e=>setForm({...form, buyFx: parseFloat(e.target.value)})} className="w-full font-mono" /></div>
+                                 <div><label className="uppercase font-bold text-slate-500">Gastos/Fee</label><input type="number" step="0.01" value={form.fees} onChange={e=>setForm({...form, fees: parseFloat(e.target.value)})} className="w-full font-mono" /></div>
+                                 <div><label className="uppercase font-bold text-slate-500">Ajustes</label><input type="number" step="0.01" value={form.adjustments} onChange={e=>setForm({...form, adjustments: parseFloat(e.target.value)})} className="w-full font-mono" /></div>
                               </div>
-                              <div className="bg-blue-600/20 border-2 border-blue-500 p-4 rounded-xl flex justify-between items-center shadow-lg"><div className="text-[10px] uppercase font-bold text-blue-400 italic font-mono">({formatN(form.shares)} x {formatN(form.buyPrice)} x {formatN(form.buyFx, 4)}) + {formatN((form.fees||0)+(form.adjustments||0))}</div><div className="text-right"><div className="text-[8px] text-blue-400 font-black uppercase mb-1">Costo Adquisición</div><div className="text-3xl font-black text-white leading-none font-mono">{formatMoney((form.shares * form.buyPrice * form.buyFx) + (form.fees||0) + (form.adjustments||0), baseCurrency)}</div></div></div>
+                              <div className="bg-blue-600/20 border-2 border-blue-500 p-4 rounded-xl flex justify-between items-center shadow-lg"><div className="text-[10px] uppercase font-bold text-blue-400 italic font-mono">({formatN(form.shares)} x {formatN(form.buyPrice)} x {formatN(form.buyFx, 4)}) + {formatN((form.fees||0)+(form.adjustments||0))}</div><div className="text-right"><div className="text-[8px] text-blue-400 font-black uppercase mb-1">Costo Adquisición</div><div className="text-2xl font-black text-white leading-none font-mono">{formatMoney((form.shares * form.buyPrice * form.buyFx) + (form.fees||0) + (form.adjustments||0), baseCurrency)}</div></div></div>
                           </div>
 
                           {editingId && portfolio.find(x=>x.id===editingId)?.sellDate && (
@@ -441,10 +453,10 @@
                                   </div>
                                   <div className="grid grid-cols-3 gap-3">
                                       <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">FX Venta</label><input type="number" step="0.0001" value={form.sellFx} onChange={e=>setForm({...form, sellFx: parseFloat(e.target.value)})} className="w-full font-mono" /></div>
-                                      <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Gtos+Adj Venta</label><input type="number" step="0.01" value={(form.sellFees||0)+(form.sellAdjustments||0)} readOnly className="w-full font-mono opacity-50" /></div>
+                                      <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Gtos+Adj Venta</label><input type="number" step="0.01" value={(form.sellFees||0)+(form.sellAdjustments||0)} onChange={e=>setForm({...form, sellFees: parseFloat(e.target.value)})} className="w-full font-mono" /></div>
                                       <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">PER Salida</label><input type="number" step="0.1" value={form.currentPE} onChange={e=>setForm({...form, currentPE: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-yellow-500 text-lg" /></div>
                                   </div>
-                                  <div className="bg-orange-600/20 border-2 border-orange-500 p-4 rounded-xl flex justify-between items-center shadow-lg"><div className="text-[10px] uppercase font-bold text-orange-400 italic font-mono">({formatN(form.shares)} x {formatN(form.sellPrice, 3)} x {formatN(form.sellFx, 4)}) - {formatN((form.sellFees||0)+(form.sellAdjustments||0))}</div><div className="text-right"><div className="text-[8px] text-orange-400 font-black uppercase mb-1">Monto Liquidación</div><div className="text-3xl font-black text-white leading-none font-mono">{formatMoney((form.shares * form.sellPrice * form.sellFx) - (form.sellFees || 0) - (form.sellAdjustments || 0), baseCurrency)}</div></div></div>
+                                  <div className="bg-orange-600/20 border-2 border-orange-500 p-4 rounded-xl flex justify-between items-center shadow-lg"><div className="text-[10px] uppercase font-bold text-orange-400 italic font-mono">({formatN(form.shares)} x {formatN(form.sellPrice, 3)} x {formatN(form.sellFx, 4)}) - {formatN((form.sellFees||0)+(form.sellAdjustments||0))}</div><div className="text-right"><div className="text-[8px] text-orange-400 font-black uppercase mb-1">Monto Liquidación</div><div className="text-2xl font-black text-white leading-none font-mono">{formatMoney((form.shares * form.sellPrice * form.sellFx) - (form.sellFees || 0) - (form.sellAdjustments || 0), baseCurrency)}</div></div></div>
                               </div>
                           )}
 
@@ -452,15 +464,17 @@
                               const c = (form.buyPrice * form.shares * form.buyFx) + (form.fees || 0) + (form.adjustments || 0);
                               const l = (form.shares * form.sellPrice * form.sellFx) - (form.sellFees || 0) - (form.sellAdjustments || 0);
                               const d = (form.dividends || []).reduce((a,b)=>a+b.net,0);
+                              const p = (l + d) - c;
                               const dy = calculateDays(form.buyDate, form.sellDate);
                               const rs = calcReturns(c, l + d, dy);
                               return (
-                                  <div className="bg-slate-900 border-2 border-slate-700 p-5 rounded-3xl text-center">
-                                      <h4 className="text-[10px] uppercase font-black text-purple-400 tracking-widest mb-4">3. Evaluación Final de la Operación</h4>
+                                  <div className="bg-slate-900 border-2 border-slate-700 p-5 rounded-3xl relative overflow-hidden shadow-inner">
+                                      <div className="absolute top-0 right-0 px-3 py-1 bg-slate-800 text-[8px] font-black text-slate-400 uppercase tracking-tighter rounded-bl-lg">Ciclo: {dy} días</div>
+                                      <h4 className="text-[10px] uppercase font-black text-purple-400 tracking-widest mb-4">3. Evaluación Final Operación</h4>
                                       <div className="grid grid-cols-3 gap-4 text-center">
-                                          <div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">G/P Total</div><div className={`text-2xl font-black font-mono ${l+d-c >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(l+d-c, baseCurrency)}</div></div>
-                                          <div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">Rdto Simple</div><div className={`text-2xl font-black font-mono ${rs.simple >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatN(rs.simple)}%</div></div>
-                                          <div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">Rdto Anual</div><div className={`text-2xl font-black font-mono ${rs.annual >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatN(rs.annual)}%</div></div>
+                                          <div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">G/P Total</div><div className={`text-2xl font-black font-mono ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(p, baseCurrency)}</div></div>
+                                          <div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">Rdto Simple</div><div className={`text-2xl font-black font-mono ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatN(rs.simple)}%</div></div>
+                                          <div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">Rdto Anual</div><div className={`text-2xl font-black font-mono ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatN(rs.annual)}%</div></div>
                                       </div>
                                   </div>
                               );
@@ -474,14 +488,14 @@
                                   <div><div className="text-[8px] text-slate-500 uppercase font-black mb-1">Ret. Destino</div><div className="text-lg font-black text-slate-300">{formatMoney((form.dividends||[]).reduce((a,b)=>a+b.taxDest,0), baseCurrency)}</div></div>
                               </div>
                           </div>
-                          <button onClick={handleSave} className="w-full bg-blue-600 py-4 rounded-2xl font-black uppercase shadow-2xl hover:bg-blue-500 transition-all text-sm tracking-widest">Consolidar y Guardar Registro</button>
+                          <button onClick={handleSave} className="w-full bg-blue-600 py-4 rounded-2xl font-black uppercase shadow-2xl hover:bg-blue-500 transition-all text-sm tracking-widest border-t-2 border-white/20">Consolidar y Guardar Registro</button>
                       </div>
                   </Modal>
 
-                  {/* MODALES SOPORTE */}
+                  {/* MODALES APOYO */}
                   <Modal isOpen={isSellModalOpen} title={`Ejecutar Salida: ${sellItem?.ticker}`} onClose={()=>setIsSellModalOpen(false)}>
                       <div className="space-y-4">
-                          <div className="bg-blue-900/10 p-4 rounded-xl text-[11px] text-blue-300 border border-blue-500/20 font-bold">Se generará un histórico de venta con dividendos traspasados.</div>
+                          <div className="bg-blue-900/10 p-4 rounded-xl text-[11px] text-blue-300 border border-blue-500/20 font-bold">Se generará un registro histórico de venta con dividendos traspasados.</div>
                           <div className="grid grid-cols-2 gap-4">
                               <div><label className="text-[10px] uppercase font-bold text-slate-500">Fecha Venta</label><input type="date" value={sellForm.sellDate} onChange={e=>setSellForm({...sellForm, sellDate: e.target.value})} className="w-full font-bold" /></div>
                               <div><label className="text-[10px] uppercase font-bold text-slate-500">Acciones</label><input type="number" value={sellForm.sharesToSell} onChange={e=>setSellForm({...sellForm, sharesToSell: parseFloat(e.target.value)})} className="w-full font-bold" /></div>
@@ -490,27 +504,29 @@
                               <div><label className="text-[10px] uppercase font-bold text-slate-500">Precio Venta</label><input type="number" step="0.001" value={sellForm.sellPrice} onChange={e=>setSellForm({...sellForm, sellPrice: parseFloat(e.target.value)})} className="w-full font-mono text-white text-lg font-bold" /></div>
                               <div><label className="text-[10px] uppercase font-bold text-slate-500">FX Venta</label><input type="number" step="0.0001" value={sellForm.sellFx} onChange={e=>setSellForm({...sellForm, sellFx: parseFloat(e.target.value)})} className="w-full font-mono text-white" /></div>
                           </div>
-                          <button onClick={handleSellSubmit} className="w-full bg-green-600 py-4 rounded-xl font-black uppercase shadow-lg text-xs tracking-widest">Ejecutar Cierre Posición</button>
+                          <button onClick={handleSellSubmit} className="w-full bg-green-600 py-4 rounded-xl font-black uppercase shadow-lg text-xs tracking-widest border-t-2 border-white/10">Ejecutar Cierre Cíclico</button>
                       </div>
                   </Modal>
 
                   <Modal isOpen={confirmModal.isOpen} title={confirmModal.title} onClose={()=>setConfirmModal({isOpen:false})} size="sm">
-                      <div className="text-center space-y-4 p-4">
+                      <div className="text-center space-y-4">
                           <div className="bg-red-500/10 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto text-red-500 border border-red-500/20"><Icons.Trash2 size={30}/></div>
                           <p className="text-slate-300 text-sm font-bold">{confirmModal.msg}</p>
-                          <div className="flex gap-2"><button onClick={()=>setConfirmModal({isOpen:false})} className="flex-1 bg-slate-700 py-2 rounded font-bold uppercase text-[10px]">Cancelar</button><button onClick={confirmModal.onConfirm} className="flex-1 bg-red-600 py-2 rounded font-bold text-white uppercase text-[10px]">Eliminar</button></div>
+                          <div className="flex gap-2"><button onClick={()=>setConfirmModal({isOpen:false})} className="flex-1 bg-slate-700 py-3 rounded-xl font-bold uppercase text-[10px]">Cancelar</button><button onClick={confirmModal.onConfirm} className="flex-1 bg-red-600 py-3 rounded-xl font-bold text-white uppercase text-[10px]">Eliminar</button></div>
                       </div>
                   </Modal>
 
                   <Modal isOpen={infoModal.isOpen} title={infoModal.title} onClose={()=>setInfoModal({...infoModal, isOpen:false})} size="sm">
-                      <div className="text-center space-y-4 p-4">
-                          <div className={`p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto border ${infoModal.type==='error'?'bg-red-500/10 text-red-500 border-red-500/20':infoModal.type==='warning'?'bg-yellow-500/10 text-yellow-500 border-yellow-500/20':'bg-blue-500/10 text-blue-500 border-blue-500/20'}`}><Icons.AlertCircle size={30}/></div>
-                          <p className="text-slate-300 text-sm font-medium whitespace-pre-wrap">{infoModal.msg}</p>
-                          <button onClick={()=>setInfoModal({...infoModal, isOpen:false})} className="w-full bg-slate-700 py-2 rounded font-bold uppercase text-[10px]">Cerrar</button>
+                      <div className="text-center space-y-4">
+                          <div className={`p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto border ${infoModal.type==='error'?'bg-red-500/10 text-red-500 border-red-500/20':infoModal.type==='warning'?'bg-yellow-500/10 text-yellow-500 border-yellow-500/20':'bg-blue-500/10 text-blue-500 border-blue-500/20'}`}>
+                              {infoModal.type==='error'?<Icons.AlertCircle size={30}/>:infoModal.type==='warning'?<Icons.AlertCircle size={30}/>:<Icons.CheckCircle size={30}/>}
+                          </div>
+                          <p className="text-slate-300 text-sm font-medium whitespace-pre-wrap leading-relaxed">{infoModal.msg}</p>
+                          <button onClick={()=>setInfoModal({...infoModal, isOpen:false})} className="w-full bg-slate-700 py-3 rounded-xl font-bold uppercase text-[10px]">Cerrar</button>
                       </div>
                   </Modal>
 
-                  <Modal isOpen={isAnalysisModalOpen} title="Informe iA" onClose={()=>setIsAnalysisModalOpen(false)} size="lg">
+                  <Modal isOpen={isAnalysisModalOpen} title="Inteligencia Analítica: Mercados" onClose={()=>setIsAnalysisModalOpen(false)} size="lg">
                       <div dangerouslySetInnerHTML={{__html: analysisResult}} className="prose prose-invert text-sm max-w-none font-sans leading-relaxed p-2" />
                   </Modal>
               </div>
