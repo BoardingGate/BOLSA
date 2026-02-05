@@ -162,7 +162,9 @@
       );
 
 
-      // --- PESTAÑA CARTERA (REVISADA: DIVIDENDOS EN MODAL + EDICIÓN COMPLETA) ---
+
+
+      // --- PESTAÑA CARTERA (RECONSTRUIDA: MODAL COMPLETO + LOGICA EXHAUSTIVA) ---
       const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate }) => {
           const [viewMode, setViewMode] = useState('active');
           const [updating, setUpdating] = useState(false);
@@ -180,7 +182,6 @@
           const [form, setForm] = useState({ ticker: '', name: '', isIndex: false, indexDivisor: 1, shares: 0, buyPrice: 0, buyDate: '', stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, sellPrice: 0, sellDate: '', sellFx: 1, sellFees: 0, sellAdjustments: 0, dividends: [] });
           const [sellForm, setSellForm] = useState({ sharesToSell: 0, sellPrice: 0, sellDate: new Date().toISOString().slice(0,10), sellFx: 1, sellFees: 0, sellAdjustments: 0 });
 
-          // Auto-actualización
           useEffect(() => {
               if (apiKey && portfolio.length > 0) updatePrices(true);
               if (!refreshInterval || refreshInterval < 1) return;
@@ -199,7 +200,7 @@
           const updatePrices = async (isAuto = false) => {
               const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
               if (!isAuto && !apiKey) return alert("Falta API Key");
-              if (!isAuto && active.length === 0) return alert("No hay acciones marcadas para actualizar");
+              if (!isAuto && active.length === 0) return alert("No hay acciones marcadas");
               setUpdating(true);
               try {
                   const updates = [];
@@ -215,7 +216,6 @@
                           return u ? { ...p, name: u.n||p.name, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe } : p;
                       }));
                       setLastUpdate(new Date().toISOString());
-                      if(!isAuto) alert("Precios actualizados.");
                   }
               } catch (e) { console.error(e); } finally { setUpdating(false); }
           };
@@ -239,7 +239,7 @@
               const calc = (items) => {
                   let inv = 0, cur = 0, divN = 0, weightedDays = 0;
                   items.forEach(p => {
-                      if (p.isActive === false) return; // Las desmarcadas no suman a la estadística
+                      if (p.isActive === false) return; 
                       const d = calculateDays(p.buyDate, p.sellDate || new Date());
                       const cost = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0);
                       const val = ((p.sellDate ? p.sellPrice : p.currentPrice) * p.shares * (p.sellDate ? p.sellFx : p.currentFx)) - (p.sellDate ? (p.sellFees + p.sellAdjustments) : 0);
@@ -296,7 +296,7 @@
 
                   <div className="flex-1 overflow-auto custom-scrollbar bg-slate-900/50 border border-slate-800 rounded-xl">
                       <table className="w-full text-left min-w-[1400px] text-sm">
-                          <thead className="bg-slate-800 text-slate-400 text-[10px] uppercase font-bold sticky top-0 z-10">
+                          <thead className="bg-slate-800 text-slate-400 text-[10px] uppercase font-bold sticky top-0 z-10 shadow-md">
                               <tr>
                                   <th className="p-3 w-10 text-center">#</th>
                                   <th className="p-3">Valor</th>
@@ -342,62 +342,84 @@
                       </table>
                   </div>
 
-                  {/* MODAL EDICIÓN PRINCIPAL (CON DATOS DE VENTA Y DIVIDENDOS) */}
-                  <Modal isOpen={isModalOpen} title={editingId ? "Editar Posición" : "Nueva Compra"} onClose={()=>setIsModalOpen(false)}>
+                  {/* MODAL EDICIÓN PRINCIPAL (RECONSTRUIDO COMPLETAMENTE) */}
+                  <Modal isOpen={isModalOpen} title={editingId ? `Editar: ${form.ticker}` : "Nueva Compra"} onClose={()=>setIsModalOpen(false)}>
                       <div className="space-y-4">
                           <div className="grid grid-cols-2 gap-4">
                               <div><label className="text-[10px] uppercase font-bold text-slate-500">Ticker</label><input type="text" value={form.ticker} onChange={e=>setForm({...form, ticker: e.target.value.toUpperCase()})} className="w-full" /></div>
                               <div><label className="text-[10px] uppercase font-bold text-slate-500">Nombre del Valor</label><input type="text" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="w-full" /></div>
                           </div>
+
+                          <div className="grid grid-cols-2 gap-4">
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500">Fecha Compra</label><input type="date" value={form.buyDate} onChange={e=>setForm({...form, buyDate: e.target.value})} className="w-full" /></div>
+                              <div className="flex flex-col justify-end">
+                                  <div className="flex items-center gap-2 bg-slate-800/50 p-2 rounded border border-slate-700 h-[38px]">
+                                      <input type="checkbox" id="isIdx" checked={form.isIndex} onChange={e=>setForm({...form, isIndex:e.target.checked})} className="custom-checkbox" />
+                                      <label htmlFor="isIdx" className="text-xs text-slate-300">Es Índice</label>
+                                      {form.isIndex && <input type="number" step="0.01" value={form.indexDivisor} onChange={e=>setForm({...form, indexDivisor:parseFloat(e.target.value)})} className="w-16 text-right py-0.5 ml-auto text-xs" />}
+                                  </div>
+                              </div>
+                          </div>
+
                           <div className="grid grid-cols-3 gap-3">
                               <div><label className="text-[10px] uppercase font-bold text-slate-500">Títulos</label><input type="number" value={form.shares} onChange={e=>setForm({...form, shares: parseFloat(e.target.value)})} className="w-full" /></div>
                               <div><label className="text-[10px] uppercase font-bold text-slate-500">Precio Compra</label><input type="number" step="0.01" value={form.buyPrice} onChange={e=>setForm({...form, buyPrice: parseFloat(e.target.value)})} className="w-full" /></div>
                               <div><label className="text-[10px] uppercase font-bold text-slate-500">Divisa</label><select value={form.stockCurrency} onChange={e=>setForm({...form, stockCurrency: e.target.value})} className="w-full">{CURRENCIES.map(c=><option key={c.code} value={c.code}>{c.code}</option>)}</select></div>
                           </div>
+
                           <div className="grid grid-cols-3 gap-3">
                              <div><label className="text-[10px] uppercase font-bold text-slate-500">FX Compra</label><input type="number" step="0.0001" value={form.buyFx} onChange={e=>setForm({...form, buyFx: parseFloat(e.target.value)})} className="w-full" /></div>
                              <div><label className="text-[10px] uppercase font-bold text-slate-500">Comisiones</label><input type="number" step="0.01" value={form.fees} onChange={e=>setForm({...form, fees: parseFloat(e.target.value)})} className="w-full" /></div>
                              <div><label className="text-[10px] uppercase font-bold text-slate-500">Ajustes</label><input type="number" step="0.01" value={form.adjustments} onChange={e=>setForm({...form, adjustments: parseFloat(e.target.value)})} className="w-full" /></div>
                           </div>
 
+                          {/* SECCIÓN DE VENTA (SOLO SI ESTÁ VENDIDO) */}
                           {editingId && portfolio.find(x=>x.id===editingId)?.sellDate && (
                               <div className="bg-orange-900/10 border border-orange-500/30 p-4 rounded-xl space-y-3">
-                                  <h4 className="text-[10px] uppercase font-bold text-orange-400 tracking-widest">Datos de Venta</h4>
+                                  <h4 className="text-[10px] uppercase font-bold text-orange-400 tracking-widest">Datos de la Venta Registrada</h4>
                                   <div className="grid grid-cols-2 gap-3">
                                       <div><label className="text-[10px] uppercase font-bold text-slate-400">Fecha Venta</label><input type="date" value={form.sellDate} onChange={e=>setForm({...form, sellDate: e.target.value})} className="w-full" /></div>
                                       <div><label className="text-[10px] uppercase font-bold text-slate-400">Precio Venta</label><input type="number" step="0.001" value={form.sellPrice} onChange={e=>setForm({...form, sellPrice: parseFloat(e.target.value)})} className="w-full" /></div>
                                   </div>
-                                  <div className="grid grid-cols-2 gap-3">
+                                  <div className="grid grid-cols-3 gap-3">
                                       <div><label className="text-[10px] uppercase font-bold text-slate-400">FX Venta</label><input type="number" step="0.0001" value={form.sellFx} onChange={e=>setForm({...form, sellFx: parseFloat(e.target.value)})} className="w-full" /></div>
-                                      <div><label className="text-[10px] uppercase font-bold text-slate-400">Gastos Venta</label><input type="number" step="0.01" value={form.sellFees} onChange={e=>setForm({...form, sellFees: parseFloat(e.target.value)})} className="w-full" /></div>
+                                      <div><label className="text-[10px] uppercase font-bold text-slate-400">Comis. Venta</label><input type="number" step="0.01" value={form.sellFees} onChange={e=>setForm({...form, sellFees: parseFloat(e.target.value)})} className="w-full" /></div>
+                                      <div><label className="text-[10px] uppercase font-bold text-slate-400">Ajuste Venta</label><input type="number" step="0.01" value={form.sellAdjustments} onChange={e=>setForm({...form, sellAdjustments: parseFloat(e.target.value)})} className="w-full" /></div>
                                   </div>
                                   <div className="text-[9px] text-orange-300 italic">Cálculo Venta: ({formatN(form.shares)} x {formatN(form.sellPrice, 3)} x {formatN(form.sellFx, 4)}) - {formatN((form.sellFees||0)+(form.sellAdjustments||0))}</div>
+                                  <div className="flex justify-between border-t border-orange-500/20 pt-1 font-bold text-white text-xs">
+                                      <span>Liquidación Neta:</span>
+                                      <span>{formatMoney((form.shares * form.sellPrice * form.sellFx) - (form.sellFees || 0) - (form.sellAdjustments || 0), baseCurrency)}</span>
+                                  </div>
                               </div>
                           )}
 
+                          {/* RESUMEN DE DIVIDENDOS ASOCIADOS */}
                           <div className="bg-blue-900/20 p-4 rounded-xl border border-blue-500/30">
                               <div className="text-[10px] text-blue-400 font-bold mb-2 uppercase tracking-widest">Dividendos del Lote</div>
                               <div className="grid grid-cols-3 gap-2 text-center">
-                                  <div><div className="text-[8px] text-slate-400 uppercase">Neto</div><div className="text-sm font-bold text-green-400">{formatMoney((form.dividends||[]).reduce((a,b)=>a+b.net,0), baseCurrency)}</div></div>
+                                  <div><div className="text-[8px] text-slate-400 uppercase">Neto Recibido</div><div className="text-sm font-bold text-green-400">{formatMoney((form.dividends||[]).reduce((a,b)=>a+b.net,0), baseCurrency)}</div></div>
                                   <div><div className="text-[8px] text-slate-400 uppercase">Ret. Origen</div><div className="text-sm font-bold text-slate-300">{formatMoney((form.dividends||[]).reduce((a,b)=>a+b.taxOrigin,0), baseCurrency)}</div></div>
                                   <div><div className="text-[8px] text-slate-400 uppercase">Ret. Destino</div><div className="text-sm font-bold text-slate-300">{formatMoney((form.dividends||[]).reduce((a,b)=>a+b.taxDest,0), baseCurrency)}</div></div>
                               </div>
                           </div>
 
+                          {/* CÁLCULO DE LA INVERSIÓN */}
                           <div className="bg-slate-800 p-3 rounded-lg">
-                              <div className="text-[8px] uppercase font-bold text-slate-500 mb-1">Cálculo Inversión</div>
+                              <div className="text-[8px] uppercase font-bold text-slate-500 mb-1">Desglose de la Compra</div>
                               <div className="text-[9px] text-slate-400 italic mb-1">({formatN(form.shares)} x {formatN(form.buyPrice)} x {formatN(form.buyFx, 4)}) + {formatN((form.fees||0)+(form.adjustments||0))}</div>
                               <div className="flex justify-between border-t border-slate-700 pt-1"><span className="text-xs font-bold uppercase">Total Invertido:</span><span className="text-white font-bold">{formatMoney((form.shares * form.buyPrice * form.buyFx) + (form.fees||0) + (form.adjustments||0), baseCurrency)}</span></div>
                           </div>
+
                           <button onClick={handleSave} className="w-full bg-blue-600 py-3 rounded-xl font-bold uppercase shadow-lg hover:bg-blue-500 transition-all">Guardar Cambios</button>
                       </div>
                   </Modal>
 
-                  {/* MODAL VENDER (Split de Dividendos) */}
+                  {/* MODAL VENDER */}
                   <Modal isOpen={isSellModalOpen} title={`Registrar Venta: ${sellItem?.ticker}`} onClose={()=>setIsSellModalOpen(false)}>
                       <div className="space-y-4">
                           <div className="bg-blue-900/10 p-3 rounded-lg text-[11px] text-blue-300 border border-blue-500/20">
-                              Al vender, todos los dividendos asociados a este lote se moverán al nuevo registro de "Ventas".
+                              Al confirmar, se generará el apunte en "Ventas" y se desmarcará la acción activa.
                           </div>
                           <div className="grid grid-cols-2 gap-4">
                               <div><label className="text-[10px] uppercase font-bold text-slate-500">Fecha Venta</label><input type="date" value={sellForm.sellDate} onChange={e=>setSellForm({...sellForm, sellDate: e.target.value})} className="w-full" /></div>
@@ -411,7 +433,7 @@
                       </div>
                   </Modal>
 
-                  <Modal isOpen={confirmModal.isOpen} title={confirmModal.title} onClose={()=>setConfirmModal({...confirmModal, isOpen:false})} size="sm">
+                  <Modal isOpen={confirmModal.isOpen} title={confirmModal.title} onClose={()=>setConfirmModal({isOpen:false})} size="sm">
                       <div className="text-center space-y-4">
                           <p className="text-slate-300">{confirmModal.msg}</p>
                           <div className="flex gap-2"><button onClick={()=>setConfirmModal({isOpen:false})} className="flex-1 bg-slate-700 py-2 rounded font-bold">CANCELAR</button><button onClick={confirmModal.onConfirm} className="flex-1 bg-red-600 py-2 rounded font-bold text-white">ELIMINAR</button></div>
