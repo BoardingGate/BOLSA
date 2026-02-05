@@ -164,7 +164,7 @@
 
 
 
-      // --- PESTAÑA CARTERA (VERSIÓN TÉCNICA DEFINITIVA - SIN SIMPLIFICACIONES) ---
+      // --- PESTAÑA CARTERA (VERSIÓN TÉCNICA DEFINITIVA: SIN OMISIONES) ---
       const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate }) => {
           const [viewMode, setViewMode] = useState('active');
           const [updating, setUpdating] = useState(false);
@@ -180,10 +180,10 @@
           const [editingId, setEditingId] = useState(null);
           const [sellItem, setSellItem] = useState(null);
 
-          const [form, setForm] = useState({ ticker: '', name: '', isIndex: false, indexDivisor: 1, shares: 0, buyPrice: 0, buyDate: '', stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, sellPrice: 0, sellDate: '', sellFx: 1, sellFees: 0, sellAdjustments: 0, dividends: [] });
+          // Formulario con campos de PER (Entrada y Salida)
+          const [form, setForm] = useState({ ticker: '', name: '', isIndex: false, indexDivisor: 1, shares: 0, buyPrice: 0, buyDate: '', stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, sellPrice: 0, sellDate: '', sellFx: 1, sellFees: 0, sellAdjustments: 0, currentPE: 0, dividends: [] });
           const [sellForm, setSellForm] = useState({ sharesToSell: 0, sellPrice: 0, sellDate: new Date().toISOString().slice(0,10), sellFx: 1, sellFees: 0, sellAdjustments: 0 });
 
-          // Auto-actualización según intervalo de configuración
           useEffect(() => {
               if (apiKey && portfolio.length > 0) updatePrices(true);
               if (!refreshInterval || refreshInterval < 1) return;
@@ -195,18 +195,18 @@
               if (startVal === 0) return { simple: 0, annual: 0 };
               const simple = ((endVal - startVal) / startVal) * 100;
               const years = Math.max(days, 1) / 365;
-              const annual = years > 0 && endVal > 0 && simple > -99 ? (Math.pow(endVal / startVal, 1 / years) - 1) * 100 : 0;
+              const annual = years > 0 && endVal > 0 && simple > -99.9 ? (Math.pow(endVal / startVal, 1 / years) - 1) * 100 : 0;
               return { simple, annual };
           };
 
-          // --- RESCATAR DATOS DE UN SOLO TICKER (PARA EL MODAL DE COMPRA) ---
+          // --- BUSCADOR DE DATOS PARA EL MODAL (NUEVA COMPRA) ---
           const fetchTickerData = async () => {
-              if (!form.ticker) return alert("Introduce un Ticker primero.");
-              if (!apiKey) return alert("Configura la API Key en Ajustes.");
+              if (!form.ticker) return alert("Introduce un Ticker.");
+              if (!apiKey) return alert("Falta API Key.");
               setFetchingSingle(true);
               try {
-                  const prompt = `Responde SOLO JSON. Datos financieros de "${form.ticker}" (${form.stockCurrency}). 
-                  Estructura: {"n":"nombre corto","p":precio_actual,"fx":cambio_a_${baseCurrency}}`;
+                  const prompt = `Responde SOLO JSON estricto. Busca datos financieros de "${form.ticker}" (${form.stockCurrency}). 
+                  Estructura: {"n":"nombre_empresa","p":precio_actual,"fx":cambio_a_${baseCurrency},"pe":per_actual}`;
                   const res = await askGemini(apiKey, prompt);
                   const json = extractJSON(res);
                   if (json) {
@@ -214,71 +214,54 @@
                           ...prev,
                           name: json.n || prev.name,
                           buyPrice: json.p || prev.buyPrice,
-                          buyFx: json.fx || prev.buyFx
+                          buyFx: json.fx || prev.buyFx,
+                          buyPE: json.pe || prev.buyPE
                       }));
-                  } else {
-                      alert("No se encontraron datos para ese Ticker.");
-                  }
+                  } else throw new Error("Formato no válido");
               } catch (e) {
-                  alert("Error al rescatar datos: " + e.message);
-              } finally {
-                  setFetchingSingle(false);
-              }
+                  alert("No se pudieron rescatar los datos: " + e.message);
+              } finally { setFetchingSingle(false); }
           };
 
-          // --- ACTUALIZAR TODA LA CARTERA ACTIVA ---
+          // --- ACTUALIZACIÓN DE PRECIOS CON INFORME DE ERRORES ---
           const updatePrices = async (isAuto = false) => {
               const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
               if (!isAuto && !apiKey) return alert("Falta API Key");
-              if (!isAuto && active.length === 0) return alert("No hay acciones marcadas para actualizar");
+              if (!isAuto && active.length === 0) return alert("No hay acciones marcadas");
               
               setUpdating(true);
-              let successCount = 0;
-              let failCount = 0;
+              let log = { success: [], fail: [] };
 
               try {
-                  const updates = [];
                   for (const item of active) {
                       const prompt = `JSON precio actual "${item.ticker}" (${item.stockCurrency}) a ${baseCurrency}. Estructura: {"p":number,"fx":number,"h":number,"l":number,"iv":number,"pe":number,"n":"string"}`;
                       try {
                           const res = await askGemini(apiKey, prompt);
                           const json = extractJSON(res);
                           if (json && json.p) {
-                              updates.push({ id: item.id, ...json });
-                              successCount++;
-                          } else {
-                              failCount++;
-                          }
-                      } catch (e) { failCount++; }
+                              setPortfolio(prev => prev.map(p => p.id === item.id ? { 
+                                  ...p, name: json.n||p.name, currentPrice: json.p, currentFx: json.fx, currentPE: json.pe 
+                              } : p));
+                              log.success.push(item.ticker);
+                          } else { log.fail.push(item.ticker); }
+                      } catch (e) { log.fail.push(item.ticker); }
                   }
-                  
-                  if (updates.length > 0) {
-                      setPortfolio(prev => prev.map(p => {
-                          const u = updates.find(x => x.id === p.id);
-                          return u ? { ...p, name: u.n||p.name, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe } : p;
-                      }));
-                      setLastUpdate(new Date().toISOString());
-                  }
-
+                  setLastUpdate(new Date().toISOString());
                   if (!isAuto) {
-                      alert(`Proceso finalizado:\n✅ ${successCount} actualizados\n❌ ${failCount} fallidos`);
+                      const msg = `ACTUALIZACIÓN FINALIZADA:\n\n✅ Éxitos: ${log.success.join(', ') || 'Ninguno'}\n\n❌ Fallos: ${log.fail.join(', ') || 'Ninguno'}`;
+                      alert(msg);
                   }
-              } catch (e) { 
-                  if (!isAuto) alert("Error crítico en actualización: " + e.message); 
-              } finally { 
-                  setUpdating(false); 
-              }
+              } catch (e) { if (!isAuto) alert("Error: " + e.message); } 
+              finally { setUpdating(false); }
           };
 
           const analyzePortfolio = async () => {
               const dataToAnalyze = portfolio.filter(p => viewMode === 'active' ? (!p.sellDate && p.isActive !== false) : (!!p.sellDate && p.isActive !== false));
-              if (dataToAnalyze.length === 0) return alert("No hay datos marcados");
+              if (dataToAnalyze.length === 0) return alert("No hay datos");
               setAnalyzing(true);
               try {
-                  const summary = dataToAnalyze.map(p => ({ t: p.ticker, bfo: formatMoney(((p.sellDate ? p.sellPrice : p.currentPrice) * p.shares * (p.sellDate ? p.sellFx : p.currentFx)) - (p.buyPrice * p.shares * p.buyFx)) }));
-                  const prompt = viewMode === 'active' 
-                      ? `Analiza salud de esta cartera activa: ${JSON.stringify(summary)}. Devuelve solo HTML directo, sin preámbulos.`
-                      : `Analiza éxito de estas ventas cerradas: ${JSON.stringify(summary)}. Devuelve solo HTML directo, sin preámbulos.`;
+                  const summary = dataToAnalyze.map(p => ({ t: p.ticker, n: p.name, res: formatMoney(((p.sellDate ? p.sellPrice : p.currentPrice) * p.shares * (p.sellDate ? p.sellFx : p.currentFx)) - (p.buyPrice * p.shares * p.buyFx)) }));
+                  const prompt = viewMode === 'active' ? `Analiza esta cartera activa: ${JSON.stringify(summary)}. HTML directo.` : `Analiza estas ventas: ${JSON.stringify(summary)}. HTML directo.`;
                   const res = await askGemini(apiKey, prompt);
                   setAnalysisResult(res.replace(/```html/g, '').replace(/```/g, '').replace(/^Por supuesto[\s\S]*?:/i, ''));
                   setIsAnalysisModalOpen(true);
@@ -299,11 +282,7 @@
                   const rets = calcReturns(inv, cur + divN, weightedDays / (inv || 1));
                   return { num: items.length, inv, cur, divN, plTotal: (cur+divN)-inv, plT_S: rets.simple, plT_A: rets.annual };
               };
-              return { 
-                  active: calc(portfolio.filter(p => !p.sellDate)), 
-                  sold: calc(portfolio.filter(p => !!p.sellDate)),
-                  total: calc(portfolio) 
-              };
+              return { active: calc(portfolio.filter(p => !p.sellDate)), sold: calc(portfolio.filter(p => !!p.sellDate)), total: calc(portfolio) };
           }, [portfolio, baseCurrency]);
 
           const handleSave = () => {
@@ -322,7 +301,6 @@
 
           return (
               <div className="h-full flex flex-col p-4 md:p-6 overflow-hidden">
-                  {/* BLOQUE ESTADÍSTICO SUPERIOR */}
                   <div className="flex gap-4 mb-4 overflow-x-auto pb-2 custom-scrollbar shrink-0">
                       <StatsBlock title="Cartera Activa" data={stats.active} color="#3b82f6" baseCurrency={baseCurrency} />
                       <StatsBlock title="Histórico Ventas" data={stats.sold} color="#f97316" baseCurrency={baseCurrency} />
@@ -331,8 +309,8 @@
 
                   <div className="flex justify-between items-center mb-4 shrink-0">
                       <div className="flex gap-3">
-                          <div className="text-left flex flex-col">
-                              <button onClick={() => updatePrices(false)} className="bg-slate-800 px-4 h-10 rounded-lg text-xs font-bold border border-slate-700 hover:bg-slate-700 transition-colors flex items-center gap-2">
+                          <div className="flex flex-col">
+                              <button onClick={() => updatePrices(false)} disabled={updating} className="bg-slate-800 px-4 h-10 rounded-lg text-xs font-bold border border-slate-700 hover:bg-slate-700 transition-colors flex items-center gap-2">
                                   {updating ? <Icons.Loader/> : <Icons.Refresh/>} ACTUALIZAR
                               </button>
                               <span className="text-[8px] text-slate-500 mt-1 uppercase font-bold text-center">Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}</span>
@@ -346,13 +324,13 @@
                               <button onClick={() => setViewMode('active')} className={`px-4 rounded text-xs font-bold transition-all ${viewMode === 'active' ? 'bg-blue-600' : 'text-slate-400'}`}>ACTIVA</button>
                               <button onClick={() => setViewMode('sold')} className={`px-4 rounded text-xs font-bold transition-all ${viewMode === 'sold' ? 'bg-orange-600' : 'text-slate-400'}`}>VENTAS</button>
                           </div>
-                          <button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, buyPE:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, dividends: [] }); setIsModalOpen(true); }} className="bg-blue-600 px-4 rounded-lg text-xs font-bold flex items-center gap-2 shadow-lg"><Icons.Plus size={16}/> NUEVA POSICIÓN</button>
+                          <button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, buyPE:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, currentPE:0, dividends: [] }); setIsModalOpen(true); }} className="bg-blue-600 px-4 rounded-lg text-xs font-bold flex items-center gap-2 shadow-lg"><Icons.Plus size={16}/> NUEVA POSICIÓN</button>
                       </div>
                   </div>
 
                   <div className="flex-1 overflow-auto custom-scrollbar bg-slate-900/50 border border-slate-800 rounded-xl">
                       <table className="w-full text-left min-w-[1400px] text-sm">
-                          <thead className="bg-slate-800 text-slate-400 text-[10px] uppercase font-bold sticky top-0 z-10 shadow-sm">
+                          <thead className="bg-slate-800 text-slate-400 text-[10px] uppercase font-bold sticky top-0 z-10 shadow-md">
                               <tr>
                                   <th className="p-3 w-10 text-center">#</th>
                                   <th className="p-3">Valor</th>
@@ -377,18 +355,18 @@
                                   return (
                                       <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''}`}>
                                           <td className="p-3 text-center" onClick={() => setPortfolio(prev => prev.map(x => x.id === p.id ? {...x, isActive: !x.isActive} : x))}><input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" /></td>
-                                          <td className="p-3"><b>{p.ticker}</b><br/><span className="text-[10px] text-slate-400 uppercase font-semibold">{p.name}</span></td>
+                                          <td className="p-3"><b>{p.ticker}</b><br/><span className="text-[10px] text-slate-400 uppercase">{p.name}</span></td>
                                           <td className="p-3 text-[10px] font-mono text-slate-400">FX: {formatN(p.buyFx, 4)}<br/>G: {formatN((p.fees||0)+(p.adjustments||0))}</td>
                                           <td className="p-3 text-right font-mono font-bold">{formatN(p.shares)}</td>
-                                          <td className="p-3 text-right text-xs">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{p.sellDate?'V:':'A:'} {formatN(curPrice, 3)}</span></td>
+                                          <td className="p-3 text-right text-xs">I: {formatN(p.buyPrice)} (PE:{p.buyPE})<br/><span className="text-blue-400 font-bold">{p.sellDate?'V:':'A:'} {formatN(curPrice, 3)} (PE:{p.currentPE})</span></td>
                                           <td className="p-3 text-right text-xs"><span className={rets.simple>=0?'text-green-400':'text-red-400'}>{formatN(rets.simple)}%</span><br/>A: {formatN(rets.annual)}%</td>
-                                          <td className="p-3 text-right text-slate-400">{formatMoney(costTotal, baseCurrency)}</td>
-                                          <td className="p-3 text-right"><span className="font-bold text-white">{formatMoney(valNet + divs, baseCurrency)}</span><br/><span className="text-[10px] text-blue-400">Div: {formatMoney(divs, baseCurrency)}</span></td>
+                                          <td className="p-3 text-right text-slate-400 font-mono">{formatMoney(costTotal, baseCurrency)}</td>
+                                          <td className="p-3 text-right font-mono"><span className="font-bold text-white">{formatMoney(valNet + divs, baseCurrency)}</span><br/><span className="text-[10px] text-blue-400">Div: {formatMoney(divs, baseCurrency)}</span></td>
                                           <td className="p-3 text-center">
                                               <div className="flex gap-2 justify-center">
-                                                  {!p.sellDate && <button onClick={() => { setSellItem(p); setSellForm({sharesToSell: p.shares, sellPrice: parseFloat(curPrice.toFixed(3)), sellDate: new Date().toISOString().slice(0,10), sellFx: p.currentFx, sellFees: 0, sellAdjustments: 0}); setIsSellModalOpen(true); }} className="bg-green-600/20 text-green-400 px-2 py-1 rounded text-[10px] font-bold border border-green-500/30 hover:bg-green-600/40">VENDER</button>}
+                                                  {!p.sellDate && <button onClick={() => { setSellItem(p); setSellForm({sharesToSell: p.shares, sellPrice: parseFloat(curPrice.toFixed(3)), sellDate: new Date().toISOString().slice(0,10), sellFx: p.currentFx, sellFees: 0, sellAdjustments: 0}); setIsSellModalOpen(true); }} className="bg-green-600/20 text-green-400 border border-green-500/30 px-2 py-1 rounded text-[10px] font-bold hover:bg-green-600/40">VENDER</button>}
                                                   <button onClick={() => { setForm(p); setEditingId(p.id); setIsModalOpen(true); }} className="text-blue-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors"><Icons.Edit size={14}/></button>
-                                                  <button onClick={() => { setConfirmModal({isOpen:true, title:'Borrado', msg:'¿Borrar registro permanentemente?', onConfirm:()=>{setPortfolio(prev=>prev.filter(x=>x.id!==p.id)); setConfirmModal({isOpen:false})} }) }} className="text-red-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors"><Icons.Trash2 size={14}/></button>
+                                                  <button onClick={() => { setConfirmModal({isOpen:true, title:'Confirmar Borrado', msg:'¿Eliminar permanentemente?', onConfirm:()=>{setPortfolio(prev=>prev.filter(x=>x.id!==p.id)); setConfirmModal({isOpen:false})} }) }} className="text-red-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors"><Icons.Trash2 size={14}/></button>
                                               </div>
                                           </td>
                                       </tr>
@@ -398,74 +376,70 @@
                       </table>
                   </div>
 
-                  {/* MODAL DE EDICIÓN EXHAUSTIVO */}
-                  <Modal isOpen={isModalOpen} title={editingId ? `Ficha Técnica: ${form.ticker}` : "Nueva Compra"} onClose={()=>setIsModalOpen(false)}>
+                  {/* MODAL FICHA TÉCNICA (BLOQUES ESTRUCTURADOS) */}
+                  <Modal isOpen={isModalOpen} title={editingId ? `Ficha de Inversión: ${form.ticker}` : "Apertura de Posición"} onClose={()=>setIsModalOpen(false)}>
                       <div className="space-y-6">
                           
-                          {/* BLOQUE 1: DATOS DE COMPRA (APERTURA) */}
+                          {/* BLOQUE 1: COMPRA */}
                           <div className="bg-slate-800/40 border border-slate-700 p-4 rounded-xl space-y-4">
-                              <h4 className="text-[10px] uppercase font-black text-blue-400 tracking-widest border-b border-slate-700 pb-2 flex justify-between">
-                                  <span>1. Datos de Apertura (Compra)</span>
-                              </h4>
+                              <h4 className="text-[10px] uppercase font-black text-blue-400 tracking-widest border-b border-slate-700 pb-2">1. Detalles de Entrada (Compra)</h4>
                               <div className="grid grid-cols-2 gap-4">
                                   <div>
                                       <label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Ticker</label>
                                       <div className="flex gap-2">
                                           <input type="text" value={form.ticker} onChange={e=>setForm({...form, ticker: e.target.value.toUpperCase()})} className="w-24 font-bold" />
-                                          <button onClick={fetchTickerData} disabled={fetchingSingle} className="bg-blue-600 text-[10px] px-2 rounded font-bold uppercase hover:bg-blue-500 transition-colors">
+                                          <button onClick={fetchTickerData} disabled={fetchingSingle} className="bg-blue-600 text-[9px] px-2 rounded font-bold uppercase hover:bg-blue-500 transition-colors">
                                               {fetchingSingle ? <Icons.Loader/> : "Rescatar Datos"}
                                           </button>
                                       </div>
                                   </div>
-                                  <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Nombre</label><input type="text" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="flex-1 w-full text-slate-300" /></div>
+                                  <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Nombre / Empresa</label><input type="text" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="w-full text-slate-300" /></div>
                               </div>
                               <div className="grid grid-cols-2 gap-4">
-                                  <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Fecha Compra</label><input type="date" value={form.buyDate} onChange={e=>setForm({...form, buyDate: e.target.value})} className="w-full" /></div>
-                                  <div className="flex flex-col justify-end">
-                                      <div className="flex items-center gap-2 bg-slate-800/50 p-2 rounded border border-slate-700 h-[38px]">
-                                          <input type="checkbox" id="mIdx" checked={form.isIndex} onChange={e=>setForm({...form, isIndex:e.target.checked})} className="custom-checkbox" />
-                                          <label htmlFor="mIdx" className="text-[10px] uppercase font-bold text-slate-400">Es Índice</label>
-                                          {form.isIndex && <input type="number" step="0.01" value={form.indexDivisor} onChange={e=>setForm({...form, indexDivisor:parseFloat(e.target.value)})} className="w-16 h-6 py-0 px-1 ml-auto text-xs font-mono" />}
-                                      </div>
+                                  <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Fecha Apertura</label><input type="date" value={form.buyDate} onChange={e=>setForm({...form, buyDate: e.target.value})} className="w-full" /></div>
+                                  <div className="flex items-center gap-2 bg-slate-900/50 p-2 rounded border border-slate-700 mt-5 h-[38px]">
+                                      <input type="checkbox" id="mIdx" checked={form.isIndex} onChange={e=>setForm({...form, isIndex:e.target.checked})} className="custom-checkbox" />
+                                      <label htmlFor="mIdx" className="text-[10px] uppercase font-bold text-slate-400">Es Índice</label>
+                                      {form.isIndex && <input type="number" step="0.01" value={form.indexDivisor} onChange={e=>setForm({...form, indexDivisor:parseFloat(e.target.value)})} className="w-16 h-6 py-0 px-1 ml-auto text-xs font-mono" />}
                                   </div>
                               </div>
                               <div className="grid grid-cols-3 gap-3">
                                   <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Títulos</label><input type="number" value={form.shares} onChange={e=>setForm({...form, shares: parseFloat(e.target.value)})} className="w-full font-mono" /></div>
                                   <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Precio Uni.</label><input type="number" step="0.01" value={form.buyPrice} onChange={e=>setForm({...form, buyPrice: parseFloat(e.target.value)})} className="w-full font-mono" /></div>
-                                  <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Divisa</label><select value={form.stockCurrency} onChange={e=>setForm({...form, stockCurrency: e.target.value})} className="w-full">{CURRENCIES.map(c=><option key={c.code} value={c.code}>{c.code}</option>)}</select></div>
+                                  <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">PER Entrada</label><input type="number" step="0.1" value={form.buyPE} onChange={e=>setForm({...form, buyPE: parseFloat(e.target.value)})} className="w-full font-mono text-yellow-400" /></div>
                               </div>
                               <div className="grid grid-cols-3 gap-3">
                                  <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">FX Compra</label><input type="number" step="0.0001" value={form.buyFx} onChange={e=>setForm({...form, buyFx: parseFloat(e.target.value)})} className="w-full font-mono" /></div>
-                                 <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Gastos</label><input type="number" step="0.01" value={form.fees} onChange={e=>setForm({...form, fees: parseFloat(e.target.value)})} className="w-full font-mono" /></div>
+                                 <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Gastos/Fee</label><input type="number" step="0.01" value={form.fees} onChange={e=>setForm({...form, fees: parseFloat(e.target.value)})} className="w-full font-mono" /></div>
                                  <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Ajustes</label><input type="number" step="0.01" value={form.adjustments} onChange={e=>setForm({...form, adjustments: parseFloat(e.target.value)})} className="w-full font-mono" /></div>
                               </div>
                               <div className="bg-blue-600/10 border border-blue-500/20 p-2 rounded flex justify-between items-center">
                                   <span className="text-[9px] uppercase font-bold text-blue-400 italic">({formatN(form.shares)} x {formatN(form.buyPrice)} x {formatN(form.buyFx, 4)}) + {formatN((form.fees||0)+(form.adjustments||0))}</span>
-                                  <span className="text-xs font-black text-white">INVERTIDO: {formatMoney((form.shares * form.buyPrice * form.buyFx) + (form.fees||0) + (form.adjustments||0), baseCurrency)}</span>
+                                  <span className="text-xs font-black text-white font-mono">COSTO: {formatMoney((form.shares * form.buyPrice * form.buyFx) + (form.fees||0) + (form.adjustments||0), baseCurrency)}</span>
                               </div>
                           </div>
 
-                          {/* BLOQUE 2: DATOS DE VENTA (ESTRUCTURA TÉCNICA) */}
+                          {/* BLOQUE 2: VENTA */}
                           {editingId && portfolio.find(x=>x.id===editingId)?.sellDate && (
                               <div className="bg-orange-900/10 border border-orange-500/20 p-4 rounded-xl space-y-4">
-                                  <h4 className="text-[10px] uppercase font-black text-orange-400 tracking-widest border-b border-orange-500/20 pb-2">2. Datos de Liquidación (Venta)</h4>
+                                  <h4 className="text-[10px] uppercase font-black text-orange-400 tracking-widest border-b border-orange-500/20 pb-2">2. Liquidación (Venta)</h4>
                                   <div className="grid grid-cols-2 gap-4">
                                       <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Fecha Venta</label><input type="date" value={form.sellDate} onChange={e=>setForm({...form, sellDate: e.target.value})} className="w-full" /></div>
                                       <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Precio Venta</label><input type="number" step="0.001" value={form.sellPrice} onChange={e=>setForm({...form, sellPrice: parseFloat(e.target.value)})} className="w-full font-mono" /></div>
                                   </div>
                                   <div className="grid grid-cols-3 gap-3">
                                       <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">FX Venta</label><input type="number" step="0.0001" value={form.sellFx} onChange={e=>setForm({...form, sellFx: parseFloat(e.target.value)})} className="w-full font-mono" /></div>
-                                      <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Gastos Venta</label><input type="number" step="0.01" value={form.sellFees} onChange={e=>setForm({...form, sellFees: parseFloat(e.target.value)})} className="w-full font-mono" /></div>
-                                      <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Ajustes Venta</label><input type="number" step="0.01" value={form.sellAdjustments} onChange={e=>setForm({...form, sellAdjustments: parseFloat(e.target.value)})} className="w-full font-mono" /></div>
+                                      <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Comis./Ajuste</label><input type="number" step="0.01" value={form.sellFees + form.sellAdjustments} readOnly className="w-full font-mono opacity-50" /></div>
+                                      <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">PER Salida</label><input type="number" step="0.1" value={form.currentPE} onChange={e=>setForm({...form, currentPE: parseFloat(e.target.value)})} className="w-full font-mono text-yellow-400" /></div>
                                   </div>
                                   <div className="bg-orange-600/10 border border-orange-500/20 p-2 rounded flex justify-between items-center">
                                       <span className="text-[9px] uppercase font-bold text-orange-400 italic">({formatN(form.shares)} x {formatN(form.sellPrice, 3)} x {formatN(form.sellFx, 4)}) - {formatN((form.sellFees||0)+(form.sellAdjustments||0))}</span>
-                                      <span className="text-xs font-black text-white">LIQUIDADO: {formatMoney((form.shares * form.sellPrice * form.sellFx) - (form.sellFees || 0) - (form.sellAdjustments || 0), baseCurrency)}</span>
+                                      <span className="text-xs font-black text-white font-mono">NETO: {formatMoney((form.shares * form.sellPrice * form.sellFx) - (form.sellFees || 0) - (form.sellAdjustments || 0), baseCurrency)}</span>
                                   </div>
                               </div>
                           )}
 
-                          {/* BLOQUE 3: ANÁLISIS DE RENDIMIENTO */}
+                          {/* BLOQUE 3: RENDIMIENTO (S/A) */}
                           {editingId && portfolio.find(x=>x.id===editingId)?.sellDate && (() => {
                               const cost = (form.buyPrice * form.shares * form.buyFx) + (form.fees || 0) + (form.adjustments || 0);
                               const liq = (form.shares * form.sellPrice * form.sellFx) - (form.sellFees || 0) - (form.sellAdjustments || 0);
@@ -475,10 +449,10 @@
                               const rets = calcReturns(cost, liq + dv, days);
                               return (
                                   <div className="bg-slate-900 border border-slate-700 p-4 rounded-xl">
-                                      <h4 className="text-[10px] uppercase font-black text-purple-400 tracking-widest border-b border-slate-700 pb-2 mb-3">3. Análisis de Performance</h4>
+                                      <h4 className="text-[10px] uppercase font-black text-purple-400 tracking-widest border-b border-slate-700 pb-2 mb-3">3. Análisis de Performance Total</h4>
                                       <div className="grid grid-cols-3 gap-4 text-center">
                                           <div className="bg-black/40 p-2 rounded border border-slate-800">
-                                              <div className="text-[8px] text-slate-500 uppercase font-bold mb-1">Resultado Neto</div>
+                                              <div className="text-[8px] text-slate-500 uppercase font-bold mb-1">G/P Absoluta</div>
                                               <div className={`text-sm font-black ${profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(profit, baseCurrency)}</div>
                                           </div>
                                           <div className="bg-black/40 p-2 rounded border border-slate-800">
@@ -486,7 +460,7 @@
                                               <div className={`text-sm font-black ${profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatN(rets.simple)}%</div>
                                           </div>
                                           <div className="bg-black/40 p-2 rounded border border-slate-800">
-                                              <div className="text-[8px] text-slate-500 uppercase font-bold mb-1">Rent. Anualizada</div>
+                                              <div className="text-[8px] text-slate-500 uppercase font-bold mb-1">Rent. Anual</div>
                                               <div className={`text-sm font-black ${profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatN(rets.annual)}%</div>
                                           </div>
                                       </div>
@@ -496,30 +470,30 @@
 
                           {/* BLOQUE 4: DIVIDENDOS */}
                           <div className="bg-blue-900/10 border border-blue-500/20 p-4 rounded-xl">
-                              <h4 className="text-[10px] uppercase font-black text-blue-300 tracking-widest border-b border-blue-500/20 pb-2 mb-3">4. Dividendos Acumulados</h4>
+                              <h4 className="text-[10px] uppercase font-black text-blue-300 tracking-widest border-b border-blue-500/20 pb-2 mb-3">4. Flujo de Caja (Dividendos Acumulados)</h4>
                               <div className="grid grid-cols-3 gap-4 text-center">
-                                  <div><div className="text-[8px] text-slate-400 uppercase">Neto</div><div className="text-sm font-bold text-green-400">{formatMoney((form.dividends||[]).reduce((a,b)=>a+b.net,0), baseCurrency)}</div></div>
-                                  <div><div className="text-[8px] text-slate-400 uppercase">Ret. Origen</div><div className="text-sm font-bold text-slate-300">{formatMoney((form.dividends||[]).reduce((a,b)=>a+b.taxOrigin,0), baseCurrency)}</div></div>
-                                  <div><div className="text-[8px] text-slate-400 uppercase">Ret. Destino</div><div className="text-sm font-bold text-slate-300">{formatMoney((form.dividends||[]).reduce((a,b)=>a+b.taxDest,0), baseCurrency)}</div></div>
+                                  <div><div className="text-[8px] text-slate-400 uppercase">Total Neto</div><div className="text-sm font-bold text-green-400 font-mono">{formatMoney((form.dividends||[]).reduce((a,b)=>a+b.net,0), baseCurrency)}</div></div>
+                                  <div><div className="text-[8px] text-slate-400 uppercase">Ret. Origen</div><div className="text-sm font-bold text-slate-300 font-mono">{formatMoney((form.dividends||[]).reduce((a,b)=>a+b.taxOrigin,0), baseCurrency)}</div></div>
+                                  <div><div className="text-[8px] text-slate-400 uppercase">Ret. Destino</div><div className="text-sm font-bold text-slate-300 font-mono">{formatMoney((form.dividends||[]).reduce((a,b)=>a+b.taxDest,0), baseCurrency)}</div></div>
                               </div>
                           </div>
 
-                          <button onClick={handleSave} className="w-full bg-blue-600 py-4 rounded-xl font-black uppercase shadow-lg hover:bg-blue-500 transition-all text-xs tracking-widest">Guardar y Consolidar Registro</button>
+                          <button onClick={handleSave} className="w-full bg-blue-600 py-4 rounded-xl font-black uppercase shadow-lg hover:bg-blue-500 transition-all text-xs tracking-widest">Consolidar y Guardar Cambios</button>
                       </div>
                   </Modal>
 
-                  {/* MODALES DE SOPORTE */}
-                  <Modal isOpen={isSellModalOpen} title={`Liquidación de Mercado: ${sellItem?.ticker}`} onClose={()=>setIsSellModalOpen(false)}>
+                  {/* OTROS MODALES (VENDER / CONFIRMACIONES) */}
+                  <Modal isOpen={isSellModalOpen} title={`Ejecutar Salida: ${sellItem?.ticker}`} onClose={()=>setIsSellModalOpen(false)}>
                       <div className="space-y-4">
                           <div className="grid grid-cols-2 gap-4">
                               <div><label className="text-[10px] uppercase font-bold text-slate-500">Fecha Venta</label><input type="date" value={sellForm.sellDate} onChange={e=>setSellForm({...sellForm, sellDate: e.target.value})} className="w-full" /></div>
-                              <div><label className="text-[10px] uppercase font-bold text-slate-500">Acciones</label><input type="number" value={sellForm.sharesToSell} onChange={e=>setSellForm({...sellForm, sharesToSell: parseFloat(e.target.value)})} className="w-full font-bold text-white border-blue-500" /></div>
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500">Títulos</label><input type="number" value={sellForm.sharesToSell} onChange={e=>setSellForm({...sellForm, sharesToSell: parseFloat(e.target.value)})} className="w-full font-bold" /></div>
                           </div>
                           <div className="grid grid-cols-2 gap-4">
-                              <div><label className="text-[10px] uppercase font-bold text-slate-500">Precio Venta</label><input type="number" step="0.001" value={sellForm.sellPrice} onChange={e=>setSellForm({...sellForm, sellPrice: parseFloat(e.target.value)})} className="w-full" /></div>
-                              <div><label className="text-[10px] uppercase font-bold text-slate-500">FX Venta</label><input type="number" step="0.0001" value={sellForm.sellFx} onChange={e=>setSellForm({...sellForm, sellFx: parseFloat(e.target.value)})} className="w-full" /></div>
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500">Precio Venta</label><input type="number" step="0.001" value={sellForm.sellPrice} onChange={e=>setSellForm({...sellForm, sellPrice: parseFloat(e.target.value)})} className="w-full font-mono text-white" /></div>
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500">FX Venta</label><input type="number" step="0.0001" value={sellForm.sellFx} onChange={e=>setSellForm({...sellForm, sellFx: parseFloat(e.target.value)})} className="w-full font-mono text-white" /></div>
                           </div>
-                          <button onClick={handleSellSubmit} className="w-full bg-green-600 py-3 rounded-xl font-black uppercase text-xs">Ejecutar Cierre de Posición</button>
+                          <button onClick={handleSellSubmit} className="w-full bg-green-600 py-3 rounded-xl font-black uppercase shadow-lg text-xs">Confirmar Liquidación Total</button>
                       </div>
                   </Modal>
 
@@ -530,12 +504,13 @@
                       </div>
                   </Modal>
 
-                  <Modal isOpen={isAnalysisModalOpen} title="Inteligencia Analítica: Reporte de Cartera" onClose={()=>setIsAnalysisModalOpen(false)} size="lg">
+                  <Modal isOpen={isAnalysisModalOpen} title="Inteligencia Analítica: Cartera" onClose={()=>setIsAnalysisModalOpen(false)} size="lg">
                       <div dangerouslySetInnerHTML={{__html: analysisResult}} className="prose prose-invert text-sm max-w-none font-sans leading-relaxed p-2" />
                   </Modal>
               </div>
           );
       };
+
 
 
       
