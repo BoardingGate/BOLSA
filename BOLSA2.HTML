@@ -1141,39 +1141,53 @@
           // Utilidad interna para redondeo estricto a 2 decimales
           const r2 = (num) => Math.round((parseFloat(num) || 0) * 100) / 100;
 
-          // Inicializar/Actualizar años dinámicamente según datos reales
-          useEffect(() => {
-              if (portfolio.length === 0 && Object.keys(resultsData).length === 0) return;
-
-              // 1. Detectar rango de años en base a los datos
+          // Función para calcular el rango de años a mostrar
+          const getDisplayYears = () => {
               const yearsSet = new Set();
-              const currentYear = new Date().getFullYear();
-              yearsSet.add(currentYear);
+              
+              if (portfolio.length === 0) {
+                  // Si no hay datos, mostramos: Año anterior, Actual, Siguiente
+                  const cur = new Date().getFullYear();
+                  return [cur - 1, cur, cur + 1];
+              }
 
+              // Escanear años con actividad
               portfolio.forEach(p => {
                   if (p.buyDate) yearsSet.add(new Date(p.buyDate).getFullYear());
                   if (p.sellDate) yearsSet.add(new Date(p.sellDate).getFullYear());
                   if (p.dividends) p.dividends.forEach(d => yearsSet.add(d.year));
               });
 
-              // Convertir a array y ordenar
-              const sortedYears = Array.from(yearsSet).sort((a, b) => a - b);
-              
-              // Añadir el año siguiente al último detectado
-              if (sortedYears.length > 0) {
-                  sortedYears.push(sortedYears[sortedYears.length - 1] + 1);
+              if (yearsSet.size === 0) {
+                  const cur = new Date().getFullYear();
+                  return [cur - 1, cur, cur + 1];
               }
 
-              // 2. Sincronizar estructura de datos
+              // Calcular Min y Max
+              const sorted = Array.from(yearsSet).sort((a, b) => a - b);
+              const minYear = sorted[0];
+              const maxYear = sorted[sorted.length - 1];
+
+              // Generar rango: [Min - 1 ... Max + 1]
+              const range = [];
+              for (let y = minYear - 1; y <= maxYear + 1; y++) {
+                  range.push(y);
+              }
+              return range;
+          };
+
+          // Inicializar datos cuando cambia la cartera o al cargar
+          useEffect(() => {
+              const yearsNeeded = getDisplayYears();
               const newData = { ...resultsData };
               let changed = false;
 
-              sortedYears.forEach(y => {
+              yearsNeeded.forEach(y => {
                   if (!newData[y]) {
                       newData[y] = { 
                           locked: false,
-                          soldCount: 0,   // Lotes Totales
-                          uniqueCount: 0, // Lotes Únicos
+                          soldCount: 0,   
+                          uniqueCount: 0, 
                           profitPrice: 0, 
                           dividends: 0,   
                           lossPrice: 0,   
@@ -1192,15 +1206,19 @@
               });
               
               if (changed) setResultsData(newData);
-          }, [portfolio.length]); // Se ejecuta si cambia el nº de elementos o al entrar
+          }, [portfolio.length, portfolio]); // Dependencias para actualizar si cambian fechas
 
           const handleRecalculate = () => {
               const newData = { ...resultsData };
+              const yearsToCalc = getDisplayYears(); // Solo calculamos el rango relevante
               let runningAccum = 0;
-              // Ordenamos los años numéricamente
-              const years = Object.keys(newData).map(Number).sort((a, b) => a - b);
 
-              years.forEach(y => {
+              yearsToCalc.forEach(y => {
+                  // Si no existe el dato en memoria (por cambio de fechas reciente), se inicializa
+                  if (!newData[y]) {
+                      newData[y] = { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, fees:0, resNoDiv:0, resWithDiv:0, tax:0, accumulated:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0 };
+                  }
+
                   // Si está bloqueado, usamos el valor existente para el acumulado y saltamos cálculo
                   if (newData[y].locked) {
                       runningAccum = r2(runningAccum + newData[y].resWithDiv);
@@ -1215,7 +1233,7 @@
                   let lotesTotal = 0;
                   const uniqueTickers = new Set();
 
-                  // Filtro: Año coincidente, Tiene fecha de venta, y ESTÁ ACTIVO en cartera
+                  // Filtro: Año coincidente, Tiene fecha de venta, y ESTÁ ACTIVO
                   const sales = portfolio.filter(p => 
                       p.sellDate && 
                       new Date(p.sellDate).getFullYear() === y && 
@@ -1227,7 +1245,6 @@
                   sales.forEach(p => {
                       uniqueTickers.add(p.ticker);
 
-                      // Cálculos a 2 decimales
                       const cost = r2((p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0));
                       const revenueNet = r2((p.sellPrice * p.shares * p.sellFx) - (p.sellFees || 0) - (p.sellAdjustments || 0));
                       
@@ -1239,7 +1256,7 @@
                       yearFees += r2((p.fees || 0) + (p.adjustments || 0) + (p.sellFees || 0) + (p.sellAdjustments || 0));
                   });
 
-                  // --- 2. Calcular Dividendos (Independiente de si se vendió, pero debe estar activo el registro padre) ---
+                  // --- 2. Calcular Dividendos (Registro activo) ---
                   let yearDivs = 0;
                   portfolio.forEach(p => {
                       if (p.isActive !== false && p.dividends) {
@@ -1258,7 +1275,7 @@
                   const resNoDiv = r2(yearProfitPrice - yearLossPrice);
                   const resWithDiv = r2(resNoDiv + yearDivs);
                   
-                  // Impuesto: 19% si el resultado SIN dividendos es positivo (Ganancia Patrimonial neta)
+                  // Impuesto: 19% si el resultado SIN dividendos es positivo
                   const tax = resNoDiv > 0 ? r2(resNoDiv * 0.19) : 0;
 
                   runningAccum = r2(runningAccum + resWithDiv);
@@ -1275,10 +1292,8 @@
                       resWithDiv: resWithDiv,
                       tax: tax,
                       accumulated: runningAccum,
-                      // Pre-cálculo Renta
                       rentaResNoDiv: resNoDiv, 
                       rentaFees: yearFees,
-                      // rentaAdj se mantiene si ya existía, o 0
                       rentaAdj: newData[y].rentaAdj || 0, 
                       rentaBase: resNoDiv 
                   };
@@ -1303,21 +1318,23 @@
               }));
           };
 
-          // Totales Pie de Tabla
-          const totals = Object.values(resultsData).reduce((acc, curr) => ({
-              soldCount: acc.soldCount + (curr.soldCount || 0),
-              profitPrice: acc.profitPrice + (curr.profitPrice || 0),
-              dividends: acc.dividends + (curr.dividends || 0),
-              lossPrice: acc.lossPrice + (curr.lossPrice || 0),
-              fees: acc.fees + (curr.fees || 0),
-              resNoDiv: acc.resNoDiv + (curr.resNoDiv || 0),
-              resWithDiv: acc.resWithDiv + (curr.resWithDiv || 0),
-              tax: acc.tax + (curr.tax || 0),
-              rentaBase: acc.rentaBase + (curr.rentaBase || 0)
-          }), { soldCount: 0, profitPrice: 0, dividends: 0, lossPrice: 0, fees: 0, resNoDiv: 0, resWithDiv: 0, tax: 0, rentaBase: 0 });
+          const yearsToShow = getDisplayYears();
 
-          // Filtrar para mostrar solo años relevantes en la tabla (ordenados)
-          const yearsToShow = Object.keys(resultsData).map(Number).sort((a,b) => a - b);
+          // Totales Pie de Tabla (Solo de los años visibles)
+          const totals = yearsToShow.reduce((acc, year) => {
+              const curr = resultsData[year] || {};
+              return {
+                  soldCount: acc.soldCount + (curr.soldCount || 0),
+                  profitPrice: acc.profitPrice + (curr.profitPrice || 0),
+                  dividends: acc.dividends + (curr.dividends || 0),
+                  lossPrice: acc.lossPrice + (curr.lossPrice || 0),
+                  fees: acc.fees + (curr.fees || 0),
+                  resNoDiv: acc.resNoDiv + (curr.resNoDiv || 0),
+                  resWithDiv: acc.resWithDiv + (curr.resWithDiv || 0),
+                  tax: acc.tax + (curr.tax || 0),
+                  rentaBase: acc.rentaBase + (curr.rentaBase || 0)
+              };
+          }, { soldCount: 0, profitPrice: 0, dividends: 0, lossPrice: 0, fees: 0, resNoDiv: 0, resWithDiv: 0, tax: 0, rentaBase: 0 });
 
           return (
               <div className="h-full flex flex-col p-6 overflow-hidden fade-in">
@@ -1358,7 +1375,7 @@
                            </thead>
                            <tbody className="divide-y divide-slate-800 font-mono text-xs">
                                {yearsToShow.map(year => {
-                                   const d = resultsData[year];
+                                   const d = resultsData[year] || { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, resNoDiv:0, resWithDiv:0, tax:0, accumulated:0, fees:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0 };
                                    return (
                                        <tr key={year} className={`hover:bg-slate-900/40 transition-colors ${d.locked ? 'opacity-70' : ''}`}>
                                            {/* BLOQUEO */}
@@ -1432,6 +1449,7 @@
               </div>
           );
       };
+ 
 
 
 
