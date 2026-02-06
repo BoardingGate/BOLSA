@@ -546,16 +546,10 @@
 
 
 
-      
-  
-
-
-
-// --- PESTAÑA DIVIDENDOS (VERSIÓN COMPLETA RECONSTRUIDA) ---
+      // --- PESTAÑA DIVIDENDOS (FINAL: CON TOTALES MENSUALES) ---
       const DividendTab = ({ portfolio, setPortfolio, baseCurrency }) => {
           const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
           
-          // Filtramos valores que poseíamos en algún momento del año seleccionado
           const filtered = useMemo(() => portfolio.filter(p => {
               const bY = new Date(p.buyDate).getFullYear();
               const sY = p.sellDate ? new Date(p.sellDate).getFullYear() : 9999;
@@ -586,30 +580,42 @@
 
           const stats = useMemo(() => {
               let tNet = 0, tOrg = 0, tDest = 0, tBruto = 0, tDIB = 0, tDI15 = 0;
+              // Inicializamos array para totales mensuales [0..11] -> {n, o, d}
+              const monthlyT = Array.from({ length: 12 }, () => ({ n: 0, o: 0, d: 0 }));
               
               const rows = filtered.map(p => {
                   const ds = (p.dividends || []).filter(d => d.year === selectedYear);
+                  
+                  // Acumulados por Valor
                   const n = ds.reduce((a, b) => a + b.net, 0);
                   const o = ds.reduce((a, b) => a + b.taxOrigin, 0);
                   const d = ds.reduce((a, b) => a + b.taxDest, 0);
                   const b = n + o + d;
                   
-                  // Cálculo para Doble Imposición: solo si hubo retención en origen
                   const diBruto = o > 0 ? b : 0;
                   const di15 = o > 0 ? b * 0.15 : 0;
                   
+                  // Sumar a totales globales
                   tNet += n; tOrg += o; tDest += d; tBruto += b;
                   tDIB += diBruto; tDI15 += di15;
+
+                  // Sumar a totales mensuales específicos
+                  ds.forEach(div => {
+                      if (div.month >= 0 && div.month < 12) {
+                          monthlyT[div.month].n += div.net || 0;
+                          monthlyT[div.month].o += div.taxOrigin || 0;
+                          monthlyT[div.month].d += div.taxDest || 0;
+                      }
+                  });
                   
                   return { id: p.id, name: p.name || p.ticker, n, o, d, b, diBruto, di15 };
               });
               
-              return { rows, tNet, tOrg, tDest, tBruto, tDIB, tDI15 };
+              return { rows, tNet, tOrg, tDest, tBruto, tDIB, tDI15, monthlyT };
           }, [filtered, selectedYear]);
 
           return (
               <div className="h-full flex flex-col p-4 overflow-hidden fade-in">
-                  {/* BLOQUE ESTADÍSTICO SUPERIOR CON DESGLOSE DE IMPUESTOS */}
                   <div className="flex justify-between items-center mb-4 bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
                       <div className="flex items-center gap-4">
                           <button onClick={() => setSelectedYear(y => y - 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">←</button>
@@ -635,12 +641,11 @@
                       </div>
                   </div>
 
-                  {/* TABLA TÉCNICA DE DIVIDENDOS */}
                   <div className="flex-1 overflow-auto custom-scrollbar border border-slate-800 rounded-xl bg-slate-950">
                       <table className="w-full text-[10px] border-collapse min-w-[2200px]">
                           <thead className="sticky top-0 z-20 bg-slate-900 border-b border-slate-700 uppercase">
                               <tr>
-                                  <th className="p-2 w-[180px] text-left sticky left-0 bg-slate-900 z-30 border-r border-slate-800">VALOR</th>
+                                  <th className="p-2 w-[180px] text-left sticky left-0 bg-slate-900 z-30 border-r border-slate-800">VALOR (LOTE)</th>
                                   <th className="p-2 w-[150px] bg-yellow-900/20 text-yellow-500 text-center">ACUM. (B / O / D)</th>
                                   {MONTHS.map(m => (
                                       <th key={m} className="p-1 border-l border-slate-800 w-[140px]">
@@ -655,43 +660,63 @@
                               </tr>
                           </thead>
                           <tbody>
-                              {stats.rows.map(r => (
-                                  <tr key={r.id} className="hover:bg-white/5 border-b border-slate-800">
-                                      <td className="p-2 sticky left-0 bg-slate-950 font-bold border-r border-slate-800 text-white">{r.name}</td>
-                                      <td className="p-2 bg-yellow-900/5 text-right font-mono space-x-2 text-[9px]">
-                                          <span className="text-white">{formatN(r.b)}</span> | 
-                                          <span className="text-slate-400">{formatN(r.o)}</span> | 
-                                          <span className="text-slate-400">{formatN(r.d)}</span>
+                              {stats.rows.map(r => {
+                                  const p = portfolio.find(x => x.id === r.id);
+                                  const isSold = !!p.sellDate;
+                                  return (
+                                      <tr key={r.id} className="hover:bg-white/5 border-b border-slate-800">
+                                          <td className="p-2 sticky left-0 bg-slate-950 border-r border-slate-800">
+                                              <div className={`font-bold ${isSold ? 'text-red-400' : 'text-green-400'}`}>{r.name}</div>
+                                              <div className="text-[8px] text-slate-500 font-mono mt-0.5">
+                                                  {isSold ? `V: ${p.sellDate}` : `C: ${p.buyDate}`}
+                                              </div>
+                                          </td>
+                                          <td className="p-2 bg-yellow-900/5 text-right font-mono space-x-2 text-[9px]">
+                                              <span className="text-white">{formatN(r.b)}</span> | 
+                                              <span className="text-slate-400">{formatN(r.o)}</span> | 
+                                              <span className="text-slate-400">{formatN(r.d)}</span>
+                                          </td>
+                                          {MONTHS.map((_, i) => {
+                                              const d = (p.dividends || []).find(dv => dv.year === selectedYear && dv.month === i) || {net:0, taxOrigin:0, taxDest:0};
+                                              return (
+                                                  <td key={i} className="p-1 border-l border-slate-800">
+                                                      <div className="grid grid-cols-3 gap-1">
+                                                          <input type="number" step="0.01" value={d.net || ''} onChange={e => handleDivChange(r.id, i, 'net', e.target.value)} className="w-full text-center text-green-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-green-500" />
+                                                          <input type="number" step="0.01" value={d.taxOrigin || ''} onChange={e => handleDivChange(r.id, i, 'taxOrigin', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" />
+                                                          <input type="number" step="0.01" value={d.taxDest || ''} onChange={e => handleDivChange(r.id, i, 'taxDest', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" />
+                                                      </div>
+                                                  </td>
+                                              );
+                                          })}
+                                          <td className="p-2 text-center bg-purple-900/10 font-bold text-purple-300">{formatN(r.diBruto)}</td>
+                                          <td className="p-2 text-center bg-purple-900/10 border-l border-slate-800 font-bold text-purple-300">{formatN(r.di15)}</td>
+                                      </tr>
+                                  );
+                              })}
+                              
+                              {/* FILA DE TOTALES MENSUALES Y GLOBALES */}
+                              <tr className="bg-slate-900 font-black text-white text-xs border-t-2 border-slate-700 sticky bottom-0 z-30 shadow-2xl">
+                                  <td colSpan="2" className="p-3 text-right sticky left-0 bg-slate-900 uppercase tracking-widest border-r border-slate-700">TOTALES MENSUALES →</td>
+                                  
+                                  {/* Renderizar sumas de cada mes */}
+                                  {MONTHS.map((_, i) => (
+                                      <td key={i} className="p-1 border-l border-slate-700 bg-[#0f121a]">
+                                          <div className="grid grid-cols-3 gap-0.5 text-[7px] font-mono text-center">
+                                              <span className="text-green-400">{formatN(stats.monthlyT[i].n)}</span>
+                                              <span className="text-slate-500">{formatN(stats.monthlyT[i].o)}</span>
+                                              <span className="text-slate-500">{formatN(stats.monthlyT[i].d)}</span>
+                                          </div>
                                       </td>
-                                      {MONTHS.map((_, i) => {
-                                          const p = portfolio.find(x => x.id === r.id);
-                                          const d = (p.dividends || []).find(dv => dv.year === selectedYear && dv.month === i) || {net:0, taxOrigin:0, taxDest:0};
-                                          return (
-                                              <td key={i} className="p-1 border-l border-slate-800">
-                                                  <div className="grid grid-cols-3 gap-1">
-                                                      <input type="number" step="0.01" value={d.net || ''} onChange={e => handleDivChange(r.id, i, 'net', e.target.value)} className="w-full text-center text-green-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-green-500" />
-                                                      <input type="number" step="0.01" value={d.taxOrigin || ''} onChange={e => handleDivChange(r.id, i, 'taxOrigin', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" />
-                                                      <input type="number" step="0.01" value={d.taxDest || ''} onChange={e => handleDivChange(r.id, i, 'taxDest', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" />
-                                                  </div>
-                                              </td>
-                                          );
-                                      })}
-                                      <td className="p-2 text-center bg-purple-900/10 font-bold text-purple-300">{formatN(r.diBruto)}</td>
-                                      <td className="p-2 text-center bg-purple-900/10 border-l border-slate-800 font-bold text-purple-300">{formatN(r.di15)}</td>
-                                  </tr>
-                              ))}
-                              {/* FILA DE SUMAS TOTALES */}
-                              <tr className="bg-slate-900 font-black text-white text-xs border-t-2 border-slate-700">
-                                  <td colSpan="2" className="p-3 text-right sticky left-0 bg-slate-900 uppercase tracking-widest">Suma Total Columnas Doble Imp. →</td>
-                                  <td colSpan="12"></td>
-                                  <td className="p-3 text-center bg-purple-600/50">{formatN(stats.tDIB)}</td>
-                                  <td className="p-3 text-center bg-purple-800/50">{formatN(stats.tDI15)}</td>
+                                  ))}
+
+                                  {/* Totales Doble Imposición */}
+                                  <td className="p-3 text-center bg-purple-600/20 text-purple-300 border-l border-purple-500/30">{formatN(stats.tDIB)}</td>
+                                  <td className="p-3 text-center bg-purple-800/20 text-purple-300 border-l border-slate-700">{formatN(stats.tDI15)}</td>
                               </tr>
                           </tbody>
                       </table>
                   </div>
 
-                  {/* BLOQUE INFERIOR: CONFECCIÓN RENTA (RECUPERADO) */}
                   <div className="mt-4 bg-blue-900/20 p-4 rounded-xl border border-blue-500/30 flex justify-between items-center px-10 shrink-0">
                       <div className="text-blue-400 font-display font-bold text-xs uppercase tracking-widest">Confeccionar Renta (AEAT):</div>
                       <div className="text-center">
@@ -710,82 +735,98 @@
               </div>
           );
       };
+ 
 
 
 
 
-
-
-      // --- PESTAÑA ESTUDIO (MEJORADA CON SOPORTES/RESISTENCIAS) ---
-      const AnalysisTab = ({ apiKey, baseCurrency }) => {
+      // --- PESTAÑA ESTUDIO (CORREGIDA Y CON PROYECCIONES TEMPORALES) ---
+   const AnalysisTab = ({ apiKey, baseCurrency }) => {
           const [ticker, setTicker] = useState('');
           const [question, setQuestion] = useState('');
           const [loading, setLoading] = useState(false);
           const [data, setData] = useState(null);
           const [specificAnswer, setSpecificAnswer] = useState(null);
 
+          const sanitizeAndParseJSON = (text) => {
+              try {
+                  const match = text.match(/\{[\s\S]*\}/);
+                  if (match) return JSON.parse(match[0]);
+                  return JSON.parse(text);
+              } catch (e) {
+                  throw new Error("La IA no devolvió un formato de datos válido. Inténtalo de nuevo.");
+              }
+          };
+
           const analyze = async () => {
-              if (!apiKey) return alert("Falta API Key");
+              if (!apiKey) return alert("Falta API Key en Configuración");
+              if (!ticker) return alert("Introduce un Ticker");
+              
               setLoading(true);
               setSpecificAnswer(null);
               setData(null);
               
               try {
                   if (question.trim()) {
-                      // Modo pregunta específica
-                      const prompt = `Sobre la empresa con ticker "${ticker}": ${question}. Responde de forma concisa y directa en español.`;
+                      // MODO PREGUNTA ESPECÍFICA (MODIFICADO PARA SER DIRECTO)
+                      const prompt = `Actúa como experto financiero radicalmente conciso.
+                      Pregunta sobre "${ticker}": "${question}".
+                      
+                      INSTRUCCIONES DE RESPUESTA:
+                      1. NO saludes. NO uses introducciones como "Claro", "Aquí tienes", "Basado en...".
+                      2. Responde DIRECTAMENTE a la pregunta con el dato o la explicación.
+                      3. Sé breve y preciso.
+                      4. Idioma: ESPAÑOL.`;
+                      
                       const res = await askGemini(apiKey, prompt);
                       setSpecificAnswer(res);
                   } else {
-                      // Modo análisis FUNDAMENTAL PROFUNDO
-                      const prompt = `Realiza un análisis fundamental de inversión experto para "${ticker}".
-                      Necesito un JSON con estructura exacta. IDIOMA: ESPAÑOL.
-                      Usa Google Search para datos recientes.
-                      
-                      Campos requeridos:
-                      1. "intrinsic_value": estimación numérica (Benjamin Graham o DCF simplificado).
-                      2. "current_price": precio actual.
-                      3. "valuation_status": String ("Infravalorada", "Sobrevalorada", "Justa").
-                      4. "industry_comparison": Objeto con PER, PEG, Dividend Yield comparando la acción (stock) con la media de su industria (industry).
-                      5. "fundamentals": per, eps, beta, market_cap.
-                      6. "technical_levels": String con soportes y resistencias clave.
-                      7. "pros_cons": lista de argumentos bull (pros) y bear (cons).
-                      8. "investment_verdict": resumen final de inversión (1 párrafo).
-                      9. "company": Nombre.
-                      10. "peers": array de tickers competidores.
+                      // MODO ANÁLISIS FUNDAMENTAL (JSON)
+                      const prompt = `Realiza un análisis fundamental experto de "${ticker}".
+                      IMPORTANTE: Responde ÚNICAMENTE con un JSON válido. No uses Markdown (\`\`\`json). No incluyas texto introductorio.
 
-                      JSON FORMAT:
+                      Debes estimar el "Valor Intrínseco" actual, y proyectar el precio a 1 año y a 5 años basándote en crecimiento esperado (CAGR) y fundamentales.
+                      
+                      ESTRUCTURA JSON OBLIGATORIA:
                       {
-                        "company": "...",
-                        "current_price": number,
-                        "intrinsic_value": number,
-                        "valuation_status": "...",
+                        "company": "Nombre Empresa",
+                        "current_price": número,
+                        "intrinsic_value": número,
+                        "forecast_1y": número,
+                        "forecast_5y": número,
+                        "valuation_status": "Infravalorada" | "Sobrevalorada" | "Precio Justo",
                         "industry_comparison": {
-                            "per": {"stock": number, "industry": number},
-                            "peg": {"stock": number, "industry": number},
-                            "yield": {"stock": number, "industry": number}
+                            "per": {"stock": número, "industry": número},
+                            "peg": {"stock": número, "industry": número},
+                            "yield": {"stock": número, "industry": número}
                         },
-                        "fundamentals": {"per": "...", "eps": "...", "beta": "...", "market_cap": "..."},
-                        "technical_levels": "Soportes: ... / Resistencias: ...",
-                        "pros_cons": { "pros": ["..."], "cons": ["..."] },
-                        "investment_verdict": "...",
-                        "peers": ["..."]
+                        "fundamentals": {"per": número, "eps": número, "beta": número, "market_cap": "String (ej: 2T$)"},
+                        "technical_levels": "Texto con soportes y resistencias clave",
+                        "pros_cons": { "pros": ["texto", "texto"], "cons": ["texto", "texto"] },
+                        "investment_verdict": "Resumen de un párrafo en español",
+                        "peers": ["TICKER1", "TICKER2", "TICKER3"]
                       }`;
                       
                       const res = await askGemini(apiKey, prompt);
-                      const json = extractJSON(res);
-                      if (json) setData(json); else throw new Error("No se pudo generar el análisis financiero.");
+                      const json = sanitizeAndParseJSON(res);
+                      setData(json);
                   }
-              } catch (e) { alert("Error: " + e.message); } finally { setLoading(false); }
+              } catch (e) { 
+                  alert("Error en el análisis: " + e.message); 
+              } finally { 
+                  setLoading(false); 
+              }
+          };
+
+          const calcUpside = (target, current) => {
+              if (!target || !current) return 0;
+              return ((target - current) / current) * 100;
           };
 
           const getComparisonVerdict = (metric, sVal, iVal) => {
               if(!sVal || !iVal) return "";
-              if(metric === 'yield') {
-                  return sVal > iVal ? "✅ Paga mejor dividendo que la media" : "❌ Dividendo inferior a la media";
-              }
-              // Para PER y PEG, menor es mejor (generalmente)
-              return sVal < iVal ? "✅ Más barata/eficiente que la media" : "❌ Más cara que el promedio del sector";
+              if(metric === 'yield') return sVal > iVal ? "✅ Mejor que media" : "❌ Peor que media";
+              return sVal < iVal ? "✅ Mejor que media" : "❌ Peor que media";
           };
 
           return (
@@ -796,56 +837,77 @@
                                <Icons.Search className="absolute left-3 top-3 text-slate-500" size={18}/>
                                <input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} placeholder="Ticker (ej. MSFT)" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-white font-bold tracking-wider" />
                            </div>
-                           <button onClick={analyze} disabled={loading || !ticker} className="bg-blue-600 px-6 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-900/20 hover:bg-blue-500 transition-colors">
-                               {loading ? <Icons.Loader/> : <Icons.Wand/>} <span className="hidden sm:inline">CONSULTAR</span>
+                           <button onClick={analyze} disabled={loading || !ticker} className="bg-blue-600 px-6 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-900/20 hover:bg-blue-500 transition-colors text-xs sm:text-sm">
+                               {loading ? <Icons.Loader/> : <Icons.Wand/>} <span className="hidden sm:inline">ANALIZAR</span>
                            </button>
                        </div>
                        <div className="relative">
                             <Icons.MessageCircle className="absolute left-3 top-3 text-slate-500" size={18}/>
-                            <input type="text" value={question} onChange={e => setQuestion(e.target.value)} placeholder="¿Alguna pregunta específica? (Opcional)" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-sm text-white" />
+                            <input type="text" value={question} onChange={e => setQuestion(e.target.value)} placeholder="¿Pregunta específica? (Dejar vacío para Análisis Completo)" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-xs text-white" />
                        </div>
                   </div>
 
                   <div className="flex-1 overflow-y-auto custom-scrollbar">
-                      {/* RESPUESTA ESPECIFICA */}
                       {specificAnswer && (
                           <div className="glass-panel p-6 rounded-2xl fade-in">
                               <h3 className="text-lg font-bold text-blue-400 mb-4 flex items-center gap-2"><Icons.Target/> Respuesta iA</h3>
-                              <p className="text-slate-200 leading-relaxed whitespace-pre-wrap">{specificAnswer}</p>
+                              <p className="text-slate-200 leading-relaxed whitespace-pre-wrap font-medium">{specificAnswer}</p>
                           </div>
                       )}
 
-                      {/* ANÁLISIS FINANCIERO PROFUNDO */}
                       {data && (
                           <div className="space-y-6 fade-in pb-10">
-                              
-                              {/* CABECERA: PRECIO vs VALOR */}
-                              <div className="glass-panel p-6 rounded-2xl border-l-4 border-purple-500 flex flex-col md:flex-row justify-between items-center gap-6">
-                                  <div>
-                                      <h2 className="text-3xl font-display font-bold text-white mb-1">{data.company}</h2>
-                                      <div className={`inline-block px-3 py-1 rounded-full text-xs font-bold uppercase ${data.valuation_status === 'Infravalorada' ? 'bg-green-500/20 text-green-400' : data.valuation_status === 'Sobrevalorada' ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
-                                          {data.valuation_status}
+                              <div className="glass-panel p-6 rounded-2xl border-l-4 border-purple-500">
+                                  <div className="flex justify-between items-start mb-6">
+                                      <div>
+                                          <h2 className="text-3xl font-display font-bold text-white mb-1">{data.company}</h2>
+                                          <div className={`inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${data.valuation_status.includes('Infra') ? 'bg-green-500/20 text-green-400' : data.valuation_status.includes('Sobre') ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                                              {data.valuation_status}
+                                          </div>
+                                      </div>
+                                      <div className="text-right">
+                                          <div className="text-[9px] text-slate-500 uppercase font-bold">Cotización Actual</div>
+                                          <div className="text-3xl font-black text-white font-mono">{formatN(data.current_price)}</div>
                                       </div>
                                   </div>
-                                  <div className="flex gap-8 text-center">
-                                      <div>
-                                          <div className="text-[10px] text-slate-400 uppercase font-bold">Precio Actual</div>
-                                          <div className="text-2xl font-bold text-white font-mono">{data.current_price}</div>
-                                      </div>
-                                      <div>
-                                          <div className="text-[10px] text-purple-400 uppercase font-bold flex items-center gap-1 justify-center"><Icons.Target size={12}/> Valor Intrínseco</div>
-                                          <div className="text-2xl font-bold text-purple-400 font-mono">{data.intrinsic_value}</div>
-                                      </div>
-                                      <div>
-                                          <div className="text-[10px] text-slate-400 uppercase font-bold">Upside Potencial</div>
-                                          <div className={`text-2xl font-bold font-mono ${data.intrinsic_value > data.current_price ? 'text-green-400' : 'text-red-400'}`}>
-                                              {(((data.intrinsic_value - data.current_price) / data.current_price) * 100).toFixed(1)}%
+
+                                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                      <div className="bg-slate-900/60 p-4 rounded-xl border border-purple-500/30 relative overflow-hidden">
+                                          <div className="absolute top-0 right-0 p-2 opacity-10"><Icons.Target size={40}/></div>
+                                          <div className="text-[9px] text-purple-300 uppercase font-bold mb-1">Valor Intrínseco (Hoy)</div>
+                                          <div className="flex items-baseline gap-2">
+                                              <span className="text-2xl font-black text-purple-400 font-mono">{formatN(data.intrinsic_value)}</span>
+                                              <span className={`text-xs font-bold ${data.intrinsic_value > data.current_price ? 'text-green-400' : 'text-red-400'}`}>
+                                                  {calcUpside(data.intrinsic_value, data.current_price) > 0 ? '+' : ''}{formatN(calcUpside(data.intrinsic_value, data.current_price))}%
+                                              </span>
                                           </div>
+                                          <div className="text-[8px] text-slate-500 mt-1">Estimación basada en fundamentales actuales</div>
+                                      </div>
+
+                                      <div className="bg-slate-900/40 p-4 rounded-xl border border-slate-700">
+                                          <div className="text-[9px] text-slate-400 uppercase font-bold mb-1">Estimación 1 Año</div>
+                                          <div className="flex items-baseline gap-2">
+                                              <span className="text-xl font-bold text-slate-200 font-mono">{formatN(data.forecast_1y)}</span>
+                                              <span className={`text-[10px] font-bold ${data.forecast_1y > data.current_price ? 'text-green-500' : 'text-red-500'}`}>
+                                                  {calcUpside(data.forecast_1y, data.current_price) > 0 ? '+' : ''}{formatN(calcUpside(data.forecast_1y, data.current_price))}%
+                                              </span>
+                                          </div>
+                                          <div className="text-[8px] text-slate-600 mt-1">Proyección corto plazo</div>
+                                      </div>
+
+                                      <div className="bg-slate-900/40 p-4 rounded-xl border border-slate-700">
+                                          <div className="text-[9px] text-slate-400 uppercase font-bold mb-1">Estimación 5 Años</div>
+                                          <div className="flex items-baseline gap-2">
+                                              <span className="text-xl font-bold text-slate-200 font-mono">{formatN(data.forecast_5y)}</span>
+                                              <span className={`text-[10px] font-bold ${data.forecast_5y > data.current_price ? 'text-green-500' : 'text-red-500'}`}>
+                                                  {calcUpside(data.forecast_5y, data.current_price) > 0 ? '+' : ''}{formatN(calcUpside(data.forecast_5y, data.current_price))}%
+                                              </span>
+                                          </div>
+                                          <div className="text-[8px] text-slate-600 mt-1">Proyección largo plazo (CAGR)</div>
                                       </div>
                                   </div>
                               </div>
 
-                              {/* COMPARATIVA INDUSTRIA */}
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                   <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
                                       <h3 className="text-sm font-bold text-slate-300 mb-4 flex items-center gap-2"><Icons.BarChart size={16}/> Comparativa Sectorial</h3>
@@ -885,12 +947,11 @@
                                       </div>
                                       <div className="bg-blue-900/10 p-3 rounded-xl border border-blue-500/20">
                                           <div className="text-[9px] uppercase text-blue-400 font-bold mb-1">Niveles Técnicos (S/R)</div>
-                                          <div className="text-xs font-mono text-slate-200">{data.technical_levels}</div>
+                                          <div className="text-xs font-mono text-slate-200 leading-snug">{data.technical_levels}</div>
                                       </div>
                                   </div>
                               </div>
 
-                              {/* PROS Y CONTRAS */}
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                   <div className="glass-panel p-5 rounded-2xl border-t-2 border-green-500">
                                       <h3 className="text-sm font-bold text-green-400 mb-3 flex items-center gap-2"><Icons.ThumbsUp size={16}/> Tesis Alcista (Pros)</h3>
@@ -906,7 +967,6 @@
                                   </div>
                               </div>
 
-                              {/* VEREDICTO FINAL Y PEERS */}
                               <div className="glass-panel p-6 rounded-2xl">
                                   <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2"><Icons.Award size={18}/> Veredicto de Inversión</h3>
                                   <p className="text-slate-300 text-sm leading-relaxed mb-6">{data.investment_verdict}</p>
@@ -928,6 +988,12 @@
               </div>
           );
       };
+
+    
+
+
+
+
 
       // --- PESTAÑA CONFIGURACIÓN (AYUDA API RESTAURADA AL DETALLE) ---
       const SettingsTab = ({ apiKey, setApiKey, isAuth, onActivate, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio }) => {
