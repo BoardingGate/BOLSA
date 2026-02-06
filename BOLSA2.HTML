@@ -204,14 +204,12 @@
               return isNaN(n) ? 0 : n;
           };
 
-          // --- 1. LÓGICA DE FILTRADO (TABLA) ---
+          // --- 1. LÓGICA DE FILTRADO ---
           const filteredPortfolio = useMemo(() => {
               return portfolio.filter(p => {
-                  // Filtro Tipo
                   if (filterType === 'active' && p.sellDate) return false;
                   if (filterType === 'sold' && !p.sellDate) return false;
 
-                  // Filtro Texto
                   if (filterText) {
                       const txt = filterText.toUpperCase();
                       const matchTicker = p.ticker.toUpperCase().includes(txt);
@@ -219,11 +217,10 @@
                       if (!matchTicker && !matchName) return false;
                   }
 
-                  // Filtro Fechas (Inteligente según pestaña)
                   if (filterDateStart || filterDateEnd) {
-                      let dateToCheck = p.buyDate; // Por defecto Activas -> Compra
-                      if (filterType === 'sold') dateToCheck = p.sellDate; // Si estamos en Ventas -> Venta
-                      else if (filterType === 'all') dateToCheck = p.sellDate || p.buyDate; // Si Todo -> Lo que tenga (prioridad venta)
+                      let dateToCheck = p.buyDate; 
+                      if (filterType === 'sold') dateToCheck = p.sellDate; 
+                      else if (filterType === 'all') dateToCheck = p.sellDate || p.buyDate; 
 
                       if (filterDateStart && dateToCheck < filterDateStart) return false;
                       if (filterDateEnd && dateToCheck > filterDateEnd) return false;
@@ -233,15 +230,11 @@
               });
           }, [portfolio, filterText, filterDateStart, filterDateEnd, filterType]);
 
-          // --- 2. CÁLCULO DE ESTADÍSTICAS (INTELIGENTE) ---
+          // --- 2. CÁLCULO DE ESTADÍSTICAS ---
           const stats = useMemo(() => {
-              // Si hay filtros profundos (Texto o Fecha), las stats se calculan sobre el subconjunto filtrado (ignorando el tipo de pestaña para mostrar totales globales del filtro)
-              // Si NO hay filtros profundos, las stats muestran la cartera global completa.
               const hasDeepFilters = filterText || filterDateStart || filterDateEnd;
-              
               const sourceData = hasDeepFilters 
                   ? portfolio.filter(p => {
-                      // Replicamos solo filtros de Texto y Fecha
                       if (filterText) {
                           const txt = filterText.toUpperCase();
                           if (!p.ticker.includes(txt) && !(p.name||'').toUpperCase().includes(txt)) return false;
@@ -282,7 +275,7 @@
                   sold: calc(sourceData.filter(p => !!p.sellDate)), 
                   total: calc(sourceData) 
               };
-          }, [portfolio, filterText, filterDateStart, filterDateEnd, baseCurrency]); // filterType no está en dependencias a propósito para stats globales
+          }, [portfolio, filterText, filterDateStart, filterDateEnd, baseCurrency]);
 
           // --- UPDATE AUTO ---
           useEffect(() => {
@@ -392,33 +385,63 @@
               setFilterText('');
               setFilterDateStart('');
               setFilterDateEnd('');
-              setFilterType('active'); // Volver a defecto
+              setFilterType('active');
           };
 
-          // --- FUNCIÓN DE IMPRESIÓN ---
+          // --- FUNCIÓN DE IMPRESIÓN (HORIZONTAL, COMPLETA, FILTROS) ---
           const handlePrint = () => {
               const printWindow = window.open('', '', 'height=800,width=1200');
-              const filterLabel = filterType === 'active' ? 'CARTERA ACTIVA' : filterType === 'sold' ? 'HISTÓRICO VENTAS' : 'INFORME GLOBAL';
-              const dateLabel = (filterDateStart || filterDateEnd) ? ` | Fechas: ${filterDateStart || 'Inicio'} a ${filterDateEnd || 'Fin'}` : '';
-              const textLabel = filterText ? ` | Buscando: "${filterText}"` : '';
+              
+              // CONSTRUCCIÓN STRING FILTROS
+              const filtersArr = [];
+              if (filterType === 'all') filtersArr.push('TODO');
+              if (filterType === 'active') filtersArr.push('ACTIVAS');
+              if (filterType === 'sold') filtersArr.push('VENTAS');
+              if (filterText) filtersArr.push(`TXT: "${filterText}"`);
+              if (filterDateStart || filterDateEnd) filtersArr.push(`FECHAS: ${filterDateStart||'..'} a ${filterDateEnd||'..'}`);
+              const filterString = `(FILTRO:  ${filtersArr.join('  |  ')})`;
+              
+              const emissionTime = new Date().toLocaleString();
 
               let html = `<html><head><title>Informe de Cartera</title>`;
               html += `<style>
-                  body { font-family: sans-serif; padding: 20px; font-size: 10px; }
-                  h1 { font-size: 18px; margin-bottom: 5px; color: #1e293b; }
-                  .meta { font-size: 10px; color: #64748b; margin-bottom: 20px; text-transform: uppercase; font-weight: bold; }
+                  @page { size: landscape; margin: 10mm; }
+                  body { font-family: sans-serif; padding: 0; font-size: 9px; }
+                  h1 { font-size: 16px; margin-bottom: 2px; color: #1e293b; }
+                  .header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 10px; border-bottom: 2px solid #cbd5e1; padding-bottom: 5px; }
+                  .meta { font-size: 9px; color: #64748b; font-weight: bold; text-transform: uppercase; }
                   table { width: 100%; border-collapse: collapse; }
-                  th { background: #f1f5f9; text-align: left; padding: 5px; border-bottom: 2px solid #e2e8f0; font-size: 8px; text-transform: uppercase; }
-                  td { padding: 5px; border-bottom: 1px solid #e2e8f0; }
-                  .num { text-align: right; font-family: monospace; }
+                  th { background: #f1f5f9; text-align: left; padding: 4px; border-bottom: 1px solid #94a3b8; font-size: 8px; text-transform: uppercase; }
+                  td { padding: 4px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+                  .num { text-align: right; font-family: monospace; white-space: nowrap; }
+                  .center { text-align: center; }
                   .profit { color: #16a34a; font-weight: bold; }
                   .loss { color: #dc2626; font-weight: bold; }
+                  .blue { color: #3b82f6; }
+                  .orange { color: #f97316; }
               </style></head><body>`;
               
-              html += `<h1>INFORME DE CARTERA - BoardingGate</h1>`;
-              html += `<div class="meta">${filterLabel}${dateLabel}${textLabel}</div>`;
+              html += `<div class="header">
+                  <div>
+                      <h1>INFORME DE CARTERA - BoardingGate</h1>
+                      <div class="meta">${filterString}</div>
+                  </div>
+                  <div class="meta">EMISIÓN: ${emissionTime}</div>
+              </div>`;
               
-              html += `<table><thead><tr><th>Valor</th><th class="num">Títulos</th><th class="num">Precio Compra</th><th class="num">Precio Actual/Venta</th><th class="num">Invertido</th><th class="num">Valor Final</th><th class="num">Rendimiento</th></tr></thead><tbody>`;
+              html += `<table><thead><tr>
+                  <th>Valor</th>
+                  <th class="center">Fechas</th>
+                  <th class="num">Títulos</th>
+                  <th class="num">Precios (I/A)</th>
+                  <th class="center">FX</th>
+                  <th class="center">Gtos/Adj</th>
+                  <th class="num">Coste Total</th>
+                  <th class="num">Valor Final</th>
+                  <th class="num">Rendimiento</th>
+                  <th class="num">% B/P</th>
+                  <th class="center">PER</th>
+              </tr></thead><tbody>`;
               
               filteredPortfolio.forEach(p => {
                   const cT = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0);
@@ -427,15 +450,24 @@
                   const curF = isS ? p.sellFx : p.currentFx;
                   const vF = (curP * p.shares * curF) - (isS ? (p.sellFees + p.sellAdjustments) : 0);
                   const pl = vF - cT;
-                  
+                  const days = calculateDays(p.buyDate, p.sellDate || new Date());
+                  const rs = calcReturns(cT, vF, days); // Rendimiento simple sin div para la tabla impresa básica
+
                   html += `<tr>
-                      <td><b>${p.ticker}</b><br/>${p.name}</td>
+                      <td><b>${p.ticker}</b><br/>${p.name.substring(0,25)}</td>
+                      <td class="center" style="font-size:8px;">
+                          <div class="blue">${p.buyDate}</div>
+                          ${p.sellDate ? `<div class="orange">${p.sellDate}</div>` : ''}
+                      </td>
                       <td class="num">${formatN(p.shares)}</td>
-                      <td class="num">${formatN(p.buyPrice)}</td>
-                      <td class="num">${formatN(curP)}</td>
+                      <td class="num">I:${formatN(p.buyPrice)}<br/>${isS?'V':'A'}:${formatN(curP)}</td>
+                      <td class="center">${formatN(p.buyFx,4)}<br/>${formatN(curF,4)}</td>
+                      <td class="center">${formatN(isS?p.sellFees:p.fees)}<br/>${formatN(isS?p.sellAdjustments:p.adjustments)}</td>
                       <td class="num">${formatMoney(cT, baseCurrency)}</td>
                       <td class="num">${formatMoney(vF, baseCurrency)}</td>
                       <td class="num ${pl >= 0 ? 'profit' : 'loss'}">${formatMoney(pl, baseCurrency)}</td>
+                      <td class="num ${pl >= 0 ? 'profit' : 'loss'}">${formatN(rs.simple)}%</td>
+                      <td class="center">${formatN(p.currentPE, 1)}</td>
                   </tr>`;
               });
 
@@ -510,6 +542,7 @@
                               <tr>
                                   <th className="p-3 w-10 text-center">#</th>
                                   <th className="p-3">Valor</th>
+                                  <th className="p-3 text-center">Fechas</th> {/* NUEVA COLUMNA */}
                                   <th className="p-3 text-right">Títulos</th>
                                   <th className="p-3 text-right">Precios (Inv/Act)</th>
                                   <th className="p-3 text-center">FX (I/A)</th>
@@ -524,7 +557,7 @@
                           </thead>
                           <tbody className="divide-y divide-slate-800">
                               {filteredPortfolio.length === 0 ? (
-                                  <tr><td colSpan="12" className="p-10 text-center text-slate-500 italic">No hay registros que coincidan con los filtros aplicados.</td></tr>
+                                  <tr><td colSpan="13" className="p-10 text-center text-slate-500 italic">No hay registros que coincidan con los filtros aplicados.</td></tr>
                               ) : (
                                   filteredPortfolio.map(p => {
                                       const cT = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0);
@@ -545,6 +578,11 @@
                                                   <b>{p.ticker}</b>
                                                   {isS && <span className="ml-2 px-1.5 py-0.5 bg-red-900/40 text-red-400 text-[8px] rounded uppercase font-bold border border-red-500/20">VENDIDA</span>}
                                                   <br/><span className="text-[10px] text-slate-400 uppercase">{p.name}</span>
+                                              </td>
+                                              {/* COLUMNA FECHAS VISUAL */}
+                                              <td className="p-3 text-center text-[10px] font-bold">
+                                                  <div className="text-blue-400">{p.buyDate}</div>
+                                                  {p.sellDate && <div className="text-orange-400">{p.sellDate}</div>}
                                               </td>
                                               <td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td>
                                               <td className="p-3 text-right text-xs font-mono">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td>
@@ -629,12 +667,12 @@
                               const rs = calcReturns(c, l + d, dy);
                               return (
                                   <div className="bg-slate-900 border-2 border-slate-700 p-5 rounded-3xl relative overflow-hidden shadow-inner">
-                                      <div className="absolute top-0 right-0 px-3 py-1 bg-slate-800 text-[8px] font-black text-slate-400 uppercase tracking-tighter rounded-bl-lg">Ciclo: {dy} días</div>
+                                      <div className="absolute top-0 right-0 p-3 bg-slate-800 rounded-bl-xl shadow-lg border-b border-l border-slate-700 text-lg font-black text-white">Ciclo: {dy} días</div>
                                       <h4 className="text-[10px] uppercase font-bold text-purple-400 tracking-widest mb-4">3. Evaluación Final Operación</h4>
                                       <div className="grid grid-cols-3 gap-4 text-center">
-                                          <div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">G/P Total</div><div className={`text-xl font-black font-mono ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(p, baseCurrency)}</div></div>
-                                          <div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">Rdto Simple</div><div className={`text-xl font-black font-mono ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatN(rs.simple)}%</div></div>
-                                          <div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">Rdto Anual</div><div className={`text-xl font-black font-mono ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatN(rs.annual)}%</div></div>
+                                          <div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">G/P Total</div><div className={`text-lg font-black font-mono ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(p, baseCurrency)}</div></div>
+                                          <div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">Rdto Simple</div><div className={`text-lg font-black font-mono ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatN(rs.simple)}%</div></div>
+                                          <div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">Rdto Anual</div><div className={`text-lg font-black font-mono ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatN(rs.annual)}%</div></div>
                                       </div>
                                   </div>
                               );
@@ -690,7 +728,8 @@
                   </Modal>
               </div>
           );
-      };   
+      };
+     
    
   
      
