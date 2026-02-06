@@ -164,11 +164,11 @@
 
       // --- PESTAÑA CARTERA (FINAL: FILTROS BOTONES, SINC RESTAURADO, MODALES HOMOGENEIZADOS) ---
       const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate }) => {
-          // ESTADOS DE FILTRO
+          // ESTADOS DE FILTRO (Por defecto 'active')
           const [filterText, setFilterText] = useState('');
           const [filterDateStart, setFilterDateStart] = useState('');
           const [filterDateEnd, setFilterDateEnd] = useState('');
-          const [filterType, setFilterType] = useState('all'); // 'all', 'active', 'sold'
+          const [filterType, setFilterType] = useState('active'); 
 
           // ESTADOS DE OPERACIÓN
           const [updating, setUpdating] = useState(false);
@@ -204,12 +204,14 @@
               return isNaN(n) ? 0 : n;
           };
 
-          // --- 1. LÓGICA DE FILTRADO ---
+          // --- 1. LÓGICA DE FILTRADO (TABLA) ---
           const filteredPortfolio = useMemo(() => {
               return portfolio.filter(p => {
+                  // Filtro Tipo
                   if (filterType === 'active' && p.sellDate) return false;
                   if (filterType === 'sold' && !p.sellDate) return false;
 
+                  // Filtro Texto
                   if (filterText) {
                       const txt = filterText.toUpperCase();
                       const matchTicker = p.ticker.toUpperCase().includes(txt);
@@ -217,16 +219,42 @@
                       if (!matchTicker && !matchName) return false;
                   }
 
-                  const relevantDate = p.sellDate || p.buyDate;
-                  if (filterDateStart && relevantDate < filterDateStart) return false;
-                  if (filterDateEnd && relevantDate > filterDateEnd) return false;
+                  // Filtro Fechas (Inteligente según pestaña)
+                  if (filterDateStart || filterDateEnd) {
+                      let dateToCheck = p.buyDate; // Por defecto Activas -> Compra
+                      if (filterType === 'sold') dateToCheck = p.sellDate; // Si estamos en Ventas -> Venta
+                      else if (filterType === 'all') dateToCheck = p.sellDate || p.buyDate; // Si Todo -> Lo que tenga (prioridad venta)
+
+                      if (filterDateStart && dateToCheck < filterDateStart) return false;
+                      if (filterDateEnd && dateToCheck > filterDateEnd) return false;
+                  }
 
                   return true;
               });
           }, [portfolio, filterText, filterDateStart, filterDateEnd, filterType]);
 
-          // --- 2. CÁLCULO DE ESTADÍSTICAS ---
+          // --- 2. CÁLCULO DE ESTADÍSTICAS (INTELIGENTE) ---
           const stats = useMemo(() => {
+              // Si hay filtros profundos (Texto o Fecha), las stats se calculan sobre el subconjunto filtrado (ignorando el tipo de pestaña para mostrar totales globales del filtro)
+              // Si NO hay filtros profundos, las stats muestran la cartera global completa.
+              const hasDeepFilters = filterText || filterDateStart || filterDateEnd;
+              
+              const sourceData = hasDeepFilters 
+                  ? portfolio.filter(p => {
+                      // Replicamos solo filtros de Texto y Fecha
+                      if (filterText) {
+                          const txt = filterText.toUpperCase();
+                          if (!p.ticker.includes(txt) && !(p.name||'').toUpperCase().includes(txt)) return false;
+                      }
+                      if (filterDateStart || filterDateEnd) {
+                          const d = p.sellDate || p.buyDate;
+                          if (filterDateStart && d < filterDateStart) return false;
+                          if (filterDateEnd && d > filterDateEnd) return false;
+                      }
+                      return true;
+                  })
+                  : portfolio;
+
               const calc = (items) => {
                   let inv = 0, cur = 0, divN = 0, fX = 0, weightedDays = 0;
                   items.forEach(p => {
@@ -250,11 +278,11 @@
               };
               
               return { 
-                  active: calc(filteredPortfolio.filter(p => !p.sellDate)), 
-                  sold: calc(filteredPortfolio.filter(p => !!p.sellDate)), 
-                  total: calc(filteredPortfolio) 
+                  active: calc(sourceData.filter(p => !p.sellDate)), 
+                  sold: calc(sourceData.filter(p => !!p.sellDate)), 
+                  total: calc(sourceData) 
               };
-          }, [filteredPortfolio, baseCurrency]);
+          }, [portfolio, filterText, filterDateStart, filterDateEnd, baseCurrency]); // filterType no está en dependencias a propósito para stats globales
 
           // --- UPDATE AUTO ---
           useEffect(() => {
@@ -364,7 +392,59 @@
               setFilterText('');
               setFilterDateStart('');
               setFilterDateEnd('');
-              setFilterType('all');
+              setFilterType('active'); // Volver a defecto
+          };
+
+          // --- FUNCIÓN DE IMPRESIÓN ---
+          const handlePrint = () => {
+              const printWindow = window.open('', '', 'height=800,width=1200');
+              const filterLabel = filterType === 'active' ? 'CARTERA ACTIVA' : filterType === 'sold' ? 'HISTÓRICO VENTAS' : 'INFORME GLOBAL';
+              const dateLabel = (filterDateStart || filterDateEnd) ? ` | Fechas: ${filterDateStart || 'Inicio'} a ${filterDateEnd || 'Fin'}` : '';
+              const textLabel = filterText ? ` | Buscando: "${filterText}"` : '';
+
+              let html = `<html><head><title>Informe de Cartera</title>`;
+              html += `<style>
+                  body { font-family: sans-serif; padding: 20px; font-size: 10px; }
+                  h1 { font-size: 18px; margin-bottom: 5px; color: #1e293b; }
+                  .meta { font-size: 10px; color: #64748b; margin-bottom: 20px; text-transform: uppercase; font-weight: bold; }
+                  table { width: 100%; border-collapse: collapse; }
+                  th { background: #f1f5f9; text-align: left; padding: 5px; border-bottom: 2px solid #e2e8f0; font-size: 8px; text-transform: uppercase; }
+                  td { padding: 5px; border-bottom: 1px solid #e2e8f0; }
+                  .num { text-align: right; font-family: monospace; }
+                  .profit { color: #16a34a; font-weight: bold; }
+                  .loss { color: #dc2626; font-weight: bold; }
+              </style></head><body>`;
+              
+              html += `<h1>INFORME DE CARTERA - BoardingGate</h1>`;
+              html += `<div class="meta">${filterLabel}${dateLabel}${textLabel}</div>`;
+              
+              html += `<table><thead><tr><th>Valor</th><th class="num">Títulos</th><th class="num">Precio Compra</th><th class="num">Precio Actual/Venta</th><th class="num">Invertido</th><th class="num">Valor Final</th><th class="num">Rendimiento</th></tr></thead><tbody>`;
+              
+              filteredPortfolio.forEach(p => {
+                  const cT = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0);
+                  const isS = !!p.sellDate;
+                  const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
+                  const curF = isS ? p.sellFx : p.currentFx;
+                  const vF = (curP * p.shares * curF) - (isS ? (p.sellFees + p.sellAdjustments) : 0);
+                  const pl = vF - cT;
+                  
+                  html += `<tr>
+                      <td><b>${p.ticker}</b><br/>${p.name}</td>
+                      <td class="num">${formatN(p.shares)}</td>
+                      <td class="num">${formatN(p.buyPrice)}</td>
+                      <td class="num">${formatN(curP)}</td>
+                      <td class="num">${formatMoney(cT, baseCurrency)}</td>
+                      <td class="num">${formatMoney(vF, baseCurrency)}</td>
+                      <td class="num ${pl >= 0 ? 'profit' : 'loss'}">${formatMoney(pl, baseCurrency)}</td>
+                  </tr>`;
+              });
+
+              html += `</tbody></table></body></html>`;
+              
+              printWindow.document.write(html);
+              printWindow.document.close();
+              printWindow.focus();
+              setTimeout(() => printWindow.print(), 500);
           };
 
           return (
@@ -388,6 +468,7 @@
                                   <span className="text-[9px] text-slate-500 mt-1 uppercase font-bold text-center tracking-wider">Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}</span>
                                </div>
                                <button onClick={analyzePortfolio} className="bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 transition-colors flex items-center gap-2"><Icons.Wand/> INFORME iA</button>
+                               <button onClick={handlePrint} className="bg-slate-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.Upload size={14} className="rotate-0"/> IMPRIMIR</button>
                            </div>
                            <button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, buyPE:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, currentPE:0, dividends: [] }); setIsModalOpen(true); }} className="bg-blue-600 px-4 h-9 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg hover:bg-blue-500"><Icons.Plus size={14}/> NUEVA POSICIÓN</button>
                       </div>
@@ -419,7 +500,7 @@
                           </div>
 
                           {/* BORRAR FILTROS */}
-                          <button onClick={resetFilters} className="h-8 px-3 bg-red-900/30 text-red-400 border border-red-500/30 rounded text-[10px] font-bold hover:bg-red-900/50 flex items-center gap-2"><Icons.X size={14}/> LIMPIAR FILTROS</button>
+                          <button onClick={resetFilters} title="Limpiar Filtros" className="h-8 px-3 bg-red-900/30 text-red-400 border border-red-500/30 rounded text-[10px] font-bold hover:bg-red-900/50 flex items-center justify-center"><Icons.Trash2 size={16}/></button>
                       </div>
                   </div>
 
@@ -497,7 +578,7 @@
                       </table>
                   </div>
 
-                  {/* MODALES CON TIPOGRAFÍA HOMOGENEIZADA */}
+                  {/* MODALES CON TIPOGRAFÍA HOMOGENEIZADA Y TAMAÑOS AJUSTADOS */}
                   <Modal isOpen={isModalOpen} title={editingId ? `Ficha de Inversión: ${form.ticker}` : "Apertura de Posición"} onClose={()=>setIsModalOpen(false)}>
                       <div className="space-y-6">
                           <div className="bg-slate-800/40 border border-slate-700 p-5 rounded-2xl space-y-4">
@@ -520,7 +601,7 @@
                                  <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Gastos/Fee</label><input type="number" step="0.01" value={form.fees} onChange={e=>setForm({...form, fees: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700" /></div>
                                  <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Ajustes</label><input type="number" step="0.01" value={form.adjustments} onChange={e=>setForm({...form, adjustments: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700" /></div>
                               </div>
-                              <div className="bg-blue-600/20 border-2 border-blue-500 p-4 rounded-xl flex justify-between items-center shadow-lg"><div className="text-[10px] uppercase font-bold text-blue-400 italic font-mono">({formatN(form.shares)} x {formatN(form.buyPrice)} x {formatN(form.buyFx, 4)}) + {formatN((form.fees||0)+(form.adjustments||0))}</div><div className="text-right"><div className="text-[8px] text-blue-400 font-black uppercase mb-1">Costo Adquisición</div><div className="text-2xl font-black text-white leading-none font-mono">{formatMoney((form.shares * form.buyPrice * form.buyFx) + (form.fees||0) + (form.adjustments||0), baseCurrency)}</div></div></div>
+                              <div className="bg-blue-600/20 border-2 border-blue-500 p-4 rounded-xl flex justify-between items-center shadow-lg"><div className="text-[10px] uppercase font-bold text-blue-400 italic font-mono">({formatN(form.shares)} x {formatN(form.buyPrice)} x {formatN(form.buyFx, 4)}) + {formatN((form.fees||0)+(form.adjustments||0))}</div><div className="text-right"><div className="text-[8px] text-blue-400 font-black uppercase mb-1">Costo Adquisición</div><div className="text-xl font-black text-white leading-none font-mono">{formatMoney((form.shares * form.buyPrice * form.buyFx) + (form.fees||0) + (form.adjustments||0), baseCurrency)}</div></div></div>
                           </div>
 
                           {editingId && portfolio.find(x=>x.id===editingId)?.sellDate && (
@@ -535,7 +616,7 @@
                                       <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Gtos+Adj Venta</label><input type="number" step="0.01" value={(form.sellFees||0)+(form.sellAdjustments||0)} onChange={e=>setForm({...form, sellFees: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700" /></div>
                                       <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">PER Salida</label><input type="number" step="0.1" value={form.currentPE} onChange={e=>setForm({...form, currentPE: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-yellow-500 text-sm bg-slate-900 border-slate-700" /></div>
                                   </div>
-                                  <div className="bg-orange-600/20 border-2 border-orange-500 p-4 rounded-xl flex justify-between items-center shadow-lg"><div className="text-[10px] uppercase font-bold text-orange-400 italic font-mono">({formatN(form.shares)} x {formatN(form.sellPrice, 3)} x {formatN(form.sellFx, 4)}) - {formatN((form.sellFees||0)+(form.sellAdjustments||0))}</div><div className="text-right"><div className="text-[8px] text-orange-400 font-black uppercase mb-1">Monto Liquidación</div><div className="text-2xl font-black text-white leading-none font-mono">{formatMoney((form.shares * form.sellPrice * form.sellFx) - (form.sellFees || 0) - (form.sellAdjustments || 0), baseCurrency)}</div></div></div>
+                                  <div className="bg-orange-600/20 border-2 border-orange-500 p-4 rounded-xl flex justify-between items-center shadow-lg"><div className="text-[10px] uppercase font-bold text-orange-400 italic font-mono">({formatN(form.shares)} x {formatN(form.sellPrice, 3)} x {formatN(form.sellFx, 4)}) - {formatN((form.sellFees||0)+(form.sellAdjustments||0))}</div><div className="text-right"><div className="text-[8px] text-orange-400 font-black uppercase mb-1">Monto Liquidación</div><div className="text-xl font-black text-white leading-none font-mono">{formatMoney((form.shares * form.sellPrice * form.sellFx) - (form.sellFees || 0) - (form.sellAdjustments || 0), baseCurrency)}</div></div></div>
                               </div>
                           )}
 
@@ -551,9 +632,9 @@
                                       <div className="absolute top-0 right-0 px-3 py-1 bg-slate-800 text-[8px] font-black text-slate-400 uppercase tracking-tighter rounded-bl-lg">Ciclo: {dy} días</div>
                                       <h4 className="text-[10px] uppercase font-bold text-purple-400 tracking-widest mb-4">3. Evaluación Final Operación</h4>
                                       <div className="grid grid-cols-3 gap-4 text-center">
-                                          <div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">G/P Total</div><div className={`text-2xl font-black font-mono ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(p, baseCurrency)}</div></div>
-                                          <div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">Rdto Simple</div><div className={`text-2xl font-black font-mono ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatN(rs.simple)}%</div></div>
-                                          <div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">Rdto Anual</div><div className={`text-2xl font-black font-mono ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatN(rs.annual)}%</div></div>
+                                          <div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">G/P Total</div><div className={`text-xl font-black font-mono ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(p, baseCurrency)}</div></div>
+                                          <div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">Rdto Simple</div><div className={`text-xl font-black font-mono ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatN(rs.simple)}%</div></div>
+                                          <div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">Rdto Anual</div><div className={`text-xl font-black font-mono ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatN(rs.annual)}%</div></div>
                                       </div>
                                   </div>
                               );
@@ -575,12 +656,12 @@
                       <div className="space-y-4">
                           <div className="bg-blue-900/10 p-4 rounded-xl text-[11px] text-blue-300 border border-blue-500/20 font-bold">Se generará un registro histórico de venta con dividendos traspasados.</div>
                           <div className="grid grid-cols-2 gap-4">
-                              <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Fecha Venta</label><input type="date" value={sellForm.sellDate} onChange={e=>setSellForm({...sellForm, sellDate: e.target.value})} className="w-full font-bold text-sm bg-slate-900 border-slate-700" /></div>
-                              <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Acciones</label><input type="number" value={sellForm.sharesToSell} onChange={e=>setSellForm({...sellForm, sharesToSell: parseFloat(e.target.value)})} className="w-full font-bold text-sm bg-slate-900 border-slate-700" /></div>
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500">Fecha Venta</label><input type="date" value={sellForm.sellDate} onChange={e=>setSellForm({...sellForm, sellDate: e.target.value})} className="w-full font-bold text-sm bg-slate-900 border-slate-700" /></div>
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500">Acciones</label><input type="number" value={sellForm.sharesToSell} onChange={e=>setSellForm({...sellForm, sharesToSell: parseFloat(e.target.value)})} className="w-full font-bold text-sm bg-slate-900 border-slate-700" /></div>
                           </div>
                           <div className="grid grid-cols-2 gap-4">
-                              <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Precio Venta</label><input type="number" step="0.001" value={sellForm.sellPrice} onChange={e=>setSellForm({...sellForm, sellPrice: parseFloat(e.target.value)})} className="w-full font-mono text-white text-sm font-bold bg-slate-900 border-slate-700" /></div>
-                              <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">FX Venta</label><input type="number" step="0.0001" value={sellForm.sellFx} onChange={e=>setSellForm({...sellForm, sellFx: parseFloat(e.target.value)})} className="w-full font-mono text-white text-sm font-bold bg-slate-900 border-slate-700" /></div>
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500">Precio Venta</label><input type="number" step="0.001" value={sellForm.sellPrice} onChange={e=>setSellForm({...sellForm, sellPrice: parseFloat(e.target.value)})} className="w-full font-mono text-white text-sm font-bold bg-slate-900 border-slate-700" /></div>
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500">FX Venta</label><input type="number" step="0.0001" value={sellForm.sellFx} onChange={e=>setSellForm({...sellForm, sellFx: parseFloat(e.target.value)})} className="w-full font-mono text-white text-sm font-bold bg-slate-900 border-slate-700" /></div>
                           </div>
                           <button onClick={handleSellSubmit} className="w-full bg-green-600 py-4 rounded-xl font-black uppercase shadow-lg text-xs tracking-widest border-t-2 border-white/10">Ejecutar Cierre Posición</button>
                       </div>
@@ -594,12 +675,22 @@
                       </div>
                   </Modal>
 
+                  <Modal isOpen={infoModal.isOpen} title={infoModal.title} onClose={()=>setInfoModal({...infoModal, isOpen:false})} size="sm">
+                      <div className="text-center space-y-4">
+                          <div className={`p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto border ${infoModal.type==='error'?'bg-red-500/10 text-red-500 border-red-500/20':infoModal.type==='warning'?'bg-yellow-500/10 text-yellow-500 border-yellow-500/20':'bg-blue-500/10 text-blue-500 border-blue-500/20'}`}>
+                              {infoModal.type==='error'?<Icons.AlertCircle size={30}/>:infoModal.type==='warning'?<Icons.AlertCircle size={30}/>:<Icons.CheckCircle size={30}/>}
+                          </div>
+                          <p className="text-slate-300 text-sm font-medium whitespace-pre-wrap leading-relaxed">{infoModal.msg}</p>
+                          <button onClick={()=>setInfoModal({...infoModal, isOpen:false})} className="w-full bg-slate-700 py-3 rounded-xl font-bold uppercase text-[10px]">Cerrar</button>
+                      </div>
+                  </Modal>
+
                   <Modal isOpen={isAnalysisModalOpen} title="Informe de Inteligencia iA" onClose={()=>setIsAnalysisModalOpen(false)} size="lg">
                       <div dangerouslySetInnerHTML={{__html: analysisResult}} className="prose prose-invert text-sm max-w-none font-sans leading-relaxed p-2" />
                   </Modal>
               </div>
           );
-      };
+      };   
    
   
      
