@@ -163,7 +163,7 @@
 
 
 
-      // --- PESTAÑA CARTERA (ESTRUCTURA TÉCNICA FINAL SIN ALTERACIONES) ---
+ // --- PESTAÑA CARTERA (CON MEJORA EN INFORME IA) ---
       const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate }) => {
           const [viewMode, setViewMode] = useState('active');
           const [updating, setUpdating] = useState(false);
@@ -262,14 +262,36 @@
               finally { setUpdating(false); }
           };
 
+          // --- MODIFICACIÓN CLAVE: PROMPT ESTRUCTURADO Y EN ESPAÑOL ---
           const analyzePortfolio = async () => {
               const dataToAnalyze = portfolio.filter(p => p.isActive !== false && (viewMode === 'active' ? !p.sellDate : !!p.sellDate));
               if (dataToAnalyze.length === 0) return;
               setAnalyzing(true);
               try {
-                  const summary = dataToAnalyze.map(p => ({ t: p.ticker, r: formatMoney(((p.sellDate ? p.sellPrice : p.currentPrice) * p.shares * (p.sellDate ? p.sellFx : p.currentFx)) - (p.buyPrice * p.shares * p.buyFx)) }));
-                  const res = await askGemini(apiKey, `Analiza: ${JSON.stringify(summary)}. HTML directo.`);
-                  setAnalysisResult(res.replace(/```html/g, '').replace(/```/g, '').replace(/^Por supuesto[\s\S]*?:/i, ''));
+                  const summary = dataToAnalyze.map(p => ({ 
+                      t: p.ticker, 
+                      perf: ((p.sellDate ? p.sellPrice : p.currentPrice) * p.shares * (p.sellDate ? p.sellFx : p.currentFx)) - (p.buyPrice * p.shares * p.buyFx)
+                  }));
+                  
+                  // Nuevo Prompt Estructurado
+                  const context = viewMode === 'active' ? 'Cartera de Inversión ACTIVA' : 'Histórico de VENTAS REALIZADAS';
+                  const prompt = `Actúa como un asesor financiero experto. Analiza los siguientes datos de una ${context}.
+                  Datos (Ticker y Resultado): ${JSON.stringify(summary)}.
+                  
+                  Instrucciones estrictas:
+                  1. Responde ÚNICAMENTE en ESPAÑOL.
+                  2. Usa formato HTML limpio (sin Markdown, sin \`\`\`html).
+                  3. Estructura la respuesta con las siguientes secciones usando etiquetas <h3> con clase "text-lg font-bold text-blue-400 mb-2 mt-4":
+                     - "Resumen Ejecutivo": Visión global del rendimiento.
+                     - "Análisis de Rentabilidad": Destaca los ganadores (Top performers) y los lastres (Bottom performers).
+                     - "Evaluación de Riesgo": Comentarios sobre concentración o volatilidad implícita.
+                     - "Conclusión y Recomendaciones": Pasos a seguir sugeridos.
+                  4. Usa listas <ul> y <li> para enumerar puntos.
+                  5. Sé profesional, directo y conciso.`;
+
+                  const res = await askGemini(apiKey, prompt);
+                  // Limpieza extra por si la IA insiste en poner markdown
+                  setAnalysisResult(res.replace(/```html/g, '').replace(/```/g, ''));
                   setIsAnalysisModalOpen(true);
               } catch (e) { alert(e.message); } finally { setAnalyzing(false); }
           };
@@ -365,10 +387,9 @@
                                   const vF = (curP * p.shares * curF) - (isS ? (p.sellFees + p.sellAdjustments) : 0);
                                   const ds = (p.dividends || []).reduce((a,b)=>a+b.net,0);
                                   
-                                  // Modificación: Separación de cálculos
-                                  const capitalGain = vF - cT; // Rendimiento solo de precio
+                                  const capitalGain = vF - cT; 
                                   const days = calculateDays(p.buyDate, p.sellDate || new Date());
-                                  const rs = calcReturns(cT, vF + ds, days); // El % sigue calculándose sobre el total (incluye divs)
+                                  const rs = calcReturns(cT, vF + ds, days); 
 
                                   return (
                                       <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''}`}>
@@ -380,12 +401,10 @@
                                           <td className="p-3 text-center text-[10px] font-mono text-slate-400">G: {formatN(isS?p.sellFees:p.fees)}<br/>A: {formatN(isS?p.sellAdjustments:p.adjustments)}</td>
                                           <td className="p-3 text-right text-slate-400 font-mono">{formatMoney(cT, baseCurrency)}</td>
                                           
-                                          {/* Columna Valor Final: Sin dividendos */}
                                           <td className="p-3 text-right font-mono text-white">
                                               <div className="font-bold">{formatMoney(vF, baseCurrency)}</div>
                                           </td>
 
-                                          {/* Columna Rendimiento: Separada */}
                                           <td className="p-3 text-right font-mono">
                                               <div className={`font-bold ${capitalGain >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                                                   {formatMoney(capitalGain, baseCurrency)}
@@ -521,7 +540,8 @@
               </div>
           );
       };
-   
+
+      
   
 
 
@@ -1114,12 +1134,332 @@
       };
 
 
-   const App = () => {
+  
+      // --- PESTAÑA RESULTADOS (VERSIÓN FINAL AJUSTADA) ---
+      const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency }) => {
+          
+          // Utilidad interna para redondeo estricto a 2 decimales
+          const r2 = (num) => Math.round((parseFloat(num) || 0) * 100) / 100;
+
+          // Función para calcular el rango de años a mostrar
+          const getDisplayYears = () => {
+              const yearsSet = new Set();
+              
+              if (portfolio.length === 0) {
+                  // Si no hay datos, mostramos: Año anterior, Actual, Siguiente
+                  const cur = new Date().getFullYear();
+                  return [cur - 1, cur, cur + 1];
+              }
+
+              // Escanear años con actividad
+              portfolio.forEach(p => {
+                  if (p.buyDate) yearsSet.add(new Date(p.buyDate).getFullYear());
+                  if (p.sellDate) yearsSet.add(new Date(p.sellDate).getFullYear());
+                  if (p.dividends) p.dividends.forEach(d => yearsSet.add(d.year));
+              });
+
+              if (yearsSet.size === 0) {
+                  const cur = new Date().getFullYear();
+                  return [cur - 1, cur, cur + 1];
+              }
+
+              // Calcular Min y Max
+              const sorted = Array.from(yearsSet).sort((a, b) => a - b);
+              const minYear = sorted[0];
+              const maxYear = sorted[sorted.length - 1];
+
+              // Generar rango: [Min - 1 ... Max + 1]
+              const range = [];
+              for (let y = minYear - 1; y <= maxYear + 1; y++) {
+                  range.push(y);
+              }
+              return range;
+          };
+
+          // Inicializar datos cuando cambia la cartera o al cargar
+          useEffect(() => {
+              const yearsNeeded = getDisplayYears();
+              const newData = { ...resultsData };
+              let changed = false;
+
+              yearsNeeded.forEach(y => {
+                  if (!newData[y]) {
+                      newData[y] = { 
+                          locked: false,
+                          soldCount: 0,   
+                          uniqueCount: 0, 
+                          profitPrice: 0, 
+                          dividends: 0,   
+                          lossPrice: 0,   
+                          fees: 0,        
+                          resNoDiv: 0,    
+                          resWithDiv: 0,  
+                          tax: 0,         
+                          accumulated: 0,
+                          rentaResNoDiv: 0,
+                          rentaFees: 0,
+                          rentaAdj: 0,
+                          rentaBase: 0
+                      };
+                      changed = true;
+                  }
+              });
+              
+              if (changed) setResultsData(newData);
+          }, [portfolio.length, portfolio]); // Dependencias para actualizar si cambian fechas
+
+          const handleRecalculate = () => {
+              const newData = { ...resultsData };
+              const yearsToCalc = getDisplayYears(); // Solo calculamos el rango relevante
+              let runningAccum = 0;
+
+              yearsToCalc.forEach(y => {
+                  // Si no existe el dato en memoria (por cambio de fechas reciente), se inicializa
+                  if (!newData[y]) {
+                      newData[y] = { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, fees:0, resNoDiv:0, resWithDiv:0, tax:0, accumulated:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0 };
+                  }
+
+                  // Si está bloqueado, usamos el valor existente para el acumulado y saltamos cálculo
+                  if (newData[y].locked) {
+                      runningAccum = r2(runningAccum + newData[y].resWithDiv);
+                      newData[y].accumulated = runningAccum;
+                      return;
+                  }
+
+                  // --- 1. Calcular Ventas (Solo si isActive es true) ---
+                  let yearProfitPrice = 0;
+                  let yearLossPrice = 0;
+                  let yearFees = 0;
+                  let lotesTotal = 0;
+                  const uniqueTickers = new Set();
+
+                  // Filtro: Año coincidente, Tiene fecha de venta, y ESTÁ ACTIVO
+                  const sales = portfolio.filter(p => 
+                      p.sellDate && 
+                      new Date(p.sellDate).getFullYear() === y && 
+                      p.isActive !== false
+                  );
+                  
+                  lotesTotal = sales.length;
+                  
+                  sales.forEach(p => {
+                      uniqueTickers.add(p.ticker);
+
+                      const cost = r2((p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0));
+                      const revenueNet = r2((p.sellPrice * p.shares * p.sellFx) - (p.sellFees || 0) - (p.sellAdjustments || 0));
+                      
+                      const pl = r2(revenueNet - cost);
+                      
+                      if (pl >= 0) yearProfitPrice += pl;
+                      else yearLossPrice += Math.abs(pl);
+                      
+                      yearFees += r2((p.fees || 0) + (p.adjustments || 0) + (p.sellFees || 0) + (p.sellAdjustments || 0));
+                  });
+
+                  // --- 2. Calcular Dividendos (Registro activo) ---
+                  let yearDivs = 0;
+                  portfolio.forEach(p => {
+                      if (p.isActive !== false && p.dividends) {
+                          p.dividends.forEach(d => {
+                              if (d.year === y) yearDivs += d.net;
+                          });
+                      }
+                  });
+
+                  // --- 3. Consolidación ---
+                  yearProfitPrice = r2(yearProfitPrice);
+                  yearLossPrice = r2(yearLossPrice);
+                  yearDivs = r2(yearDivs);
+                  yearFees = r2(yearFees);
+
+                  const resNoDiv = r2(yearProfitPrice - yearLossPrice);
+                  const resWithDiv = r2(resNoDiv + yearDivs);
+                  
+                  // Impuesto: 19% si el resultado SIN dividendos es positivo
+                  const tax = resNoDiv > 0 ? r2(resNoDiv * 0.19) : 0;
+
+                  runningAccum = r2(runningAccum + resWithDiv);
+
+                  newData[y] = {
+                      ...newData[y],
+                      soldCount: lotesTotal,
+                      uniqueCount: uniqueTickers.size,
+                      profitPrice: yearProfitPrice,
+                      dividends: yearDivs,
+                      lossPrice: yearLossPrice,
+                      fees: yearFees,
+                      resNoDiv: resNoDiv,
+                      resWithDiv: resWithDiv,
+                      tax: tax,
+                      accumulated: runningAccum,
+                      rentaResNoDiv: resNoDiv, 
+                      rentaFees: yearFees,
+                      rentaAdj: newData[y].rentaAdj || 0, 
+                      rentaBase: resNoDiv 
+                  };
+              });
+
+              setResultsData(newData);
+          };
+
+          const handleEdit = (year, field, val) => {
+              if (resultsData[year]?.locked && !field.startsWith('renta')) return;
+              const v = parseFloat(val);
+              setResultsData(prev => ({
+                  ...prev,
+                  [year]: { ...prev[year], [field]: isNaN(v) ? 0 : r2(v) }
+              }));
+          };
+
+          const toggleLock = (year) => {
+              setResultsData(prev => ({
+                  ...prev,
+                  [year]: { ...prev[year], locked: !prev[year].locked }
+              }));
+          };
+
+          const yearsToShow = getDisplayYears();
+
+          // Totales Pie de Tabla (Solo de los años visibles)
+          const totals = yearsToShow.reduce((acc, year) => {
+              const curr = resultsData[year] || {};
+              return {
+                  soldCount: acc.soldCount + (curr.soldCount || 0),
+                  profitPrice: acc.profitPrice + (curr.profitPrice || 0),
+                  dividends: acc.dividends + (curr.dividends || 0),
+                  lossPrice: acc.lossPrice + (curr.lossPrice || 0),
+                  fees: acc.fees + (curr.fees || 0),
+                  resNoDiv: acc.resNoDiv + (curr.resNoDiv || 0),
+                  resWithDiv: acc.resWithDiv + (curr.resWithDiv || 0),
+                  tax: acc.tax + (curr.tax || 0),
+                  rentaBase: acc.rentaBase + (curr.rentaBase || 0)
+              };
+          }, { soldCount: 0, profitPrice: 0, dividends: 0, lossPrice: 0, fees: 0, resNoDiv: 0, resWithDiv: 0, tax: 0, rentaBase: 0 });
+
+          return (
+              <div className="h-full flex flex-col p-6 overflow-hidden fade-in">
+                   <div className="flex justify-between items-center mb-4 bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
+                      <div>
+                          <h2 className="text-xl font-display font-bold text-white">Resultados y Fiscalidad</h2>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Consolidación Anual de Rendimiento</p>
+                      </div>
+                      <button onClick={handleRecalculate} className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg text-xs font-bold uppercase transition-colors shadow-lg border border-blue-400 flex items-center gap-2">
+                          <Icons.Refresh size={14}/> Recalcular Datos
+                      </button>
+                   </div>
+
+                   <div className="flex-1 overflow-auto custom-scrollbar border border-slate-800 rounded-xl bg-slate-950">
+                       <table className="w-full text-sm border-collapse min-w-[1500px]">
+                           <thead className="sticky top-0 z-20 bg-slate-800 text-[10px] uppercase font-bold text-slate-400">
+                               <tr>
+                                   <th className="p-2 text-center border-b border-slate-700 w-10 bg-slate-900 sticky left-0 z-30"><Icons.CheckCircle size={12}/></th>
+                                   <th className="p-2 text-center border-b border-slate-700 w-16 bg-slate-900/50">Año</th>
+                                   <th className="p-2 text-center border-b border-slate-700 w-24">Lotes<br/><span className="text-[7px] opacity-60 font-normal">(Tot / Únicos)</span></th>
+                                   
+                                   <th className="p-2 text-right border-b border-slate-700 border-l border-slate-700/50 text-green-400">Beneficio<br/><span className="text-[7px] opacity-60 font-normal">(Precio)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 text-blue-400">Dividendos<br/><span className="text-[7px] opacity-60 font-normal">(Cobrados)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 text-red-400">Pérdida<br/><span className="text-[7px] opacity-60 font-normal">(Precio)</span></th>
+                                   
+                                   <th className="p-2 text-right border-b border-slate-700 border-l border-slate-700/50 bg-slate-800/30 font-bold text-slate-200">Res. SIN Div<br/><span className="text-[7px] opacity-60 font-normal">(Ben - Pérd)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 bg-slate-800/30 font-bold text-white">Res. CON Div<br/><span className="text-[7px] opacity-60 font-normal">(+ Divs)</span></th>
+                                   
+                                   <th className="p-2 text-right border-b border-slate-700 text-purple-400">Impuestos<br/><span className="text-[7px] opacity-60 font-normal">(19% s/ Sin Div)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 font-bold text-yellow-500">Acumulado<br/><span className="text-[7px] opacity-60 font-normal">(Total)</span></th>
+                                   
+                                   {/* SECCION RENTA */}
+                                   <th className="p-2 text-right border-b border-slate-700 border-l-4 border-slate-900 bg-[#1e2330] text-slate-300">Res. SIN Div<br/><span className="text-[7px] opacity-60 font-normal">(Renta)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-slate-400">Gtos Broker<br/><span className="text-[7px] opacity-60 font-normal">(Total)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-slate-300">Ajustes<br/><span className="text-[7px] opacity-60 font-normal">(Manual)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-blue-200 font-bold">Base Imp. 19%<br/><span className="text-[7px] opacity-60 font-normal">(Imponible)</span></th>
+                               </tr>
+                           </thead>
+                           <tbody className="divide-y divide-slate-800 font-mono text-xs">
+                               {yearsToShow.map(year => {
+                                   const d = resultsData[year] || { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, resNoDiv:0, resWithDiv:0, tax:0, accumulated:0, fees:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0 };
+                                   return (
+                                       <tr key={year} className={`hover:bg-slate-900/40 transition-colors ${d.locked ? 'opacity-70' : ''}`}>
+                                           {/* BLOQUEO */}
+                                           <td className="p-2 text-center bg-slate-900/50 sticky left-0 z-20 border-r border-slate-800">
+                                                <input type="checkbox" checked={d.locked} onChange={()=>toggleLock(year)} className="w-3 h-3 accent-red-500 cursor-pointer" />
+                                           </td>
+                                           <td className="p-2 text-center font-bold text-white bg-slate-900/20">{year}</td>
+                                           <td className="p-2 text-center text-slate-400 text-[10px]">{d.soldCount} <span className="text-slate-600">/</span> <span className="text-slate-300 font-bold">{d.uniqueCount}</span></td>
+                                           
+                                           {/* DATOS DESGLOSADOS */}
+                                           <td className="p-2 border-l border-slate-800/50">
+                                               <input type="number" step="0.01" value={d.profitPrice} onChange={e=>handleEdit(year, 'profitPrice', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-green-500 outline-none" />
+                                           </td>
+                                           <td className="p-2">
+                                               <input type="number" step="0.01" value={d.dividends} onChange={e=>handleEdit(year, 'dividends', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-blue-400 outline-none" />
+                                           </td>
+                                           <td className="p-2">
+                                               <input type="number" step="0.01" value={d.lossPrice} onChange={e=>handleEdit(year, 'lossPrice', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-red-500 outline-none" />
+                                           </td>
+                                           
+                                           {/* RESULTADOS CALCULADOS */}
+                                           <td className="p-2 border-l border-slate-800/50 bg-slate-900/20">
+                                               <input type="number" step="0.01" value={d.resNoDiv} onChange={e=>handleEdit(year, 'resNoDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resNoDiv >=0 ? 'text-slate-200':'text-red-400'}`} />
+                                           </td>
+                                           <td className="p-2 bg-slate-900/20">
+                                               <input type="number" step="0.01" value={d.resWithDiv} onChange={e=>handleEdit(year, 'resWithDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resWithDiv >=0 ? 'text-white':'text-red-400'}`} />
+                                           </td>
+                                           
+                                           {/* IMPUESTOS Y ACUMULADO */}
+                                           <td className="p-2">
+                                               <input type="number" step="0.01" value={d.tax} onChange={e=>handleEdit(year, 'tax', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-purple-400 font-bold outline-none" />
+                                           </td>
+                                           <td className="p-2 border-r border-slate-800 bg-slate-900/10">
+                                               <div className={`text-right font-bold ${d.accumulated >= 0 ? 'text-yellow-500' : 'text-red-500'}`}>{formatMoney(d.accumulated, baseCurrency)}</div>
+                                           </td>
+
+                                           {/* SECCIÓN RENTA (FONDO OSCURO) */}
+                                           <td className="p-2 border-l-4 border-slate-900 bg-[#161b25]">
+                                               <input type="number" step="0.01" value={d.rentaResNoDiv} onChange={e=>handleEdit(year, 'rentaResNoDiv', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-300 outline-none font-bold" />
+                                           </td>
+                                           <td className="p-2 bg-[#161b25]">
+                                               <input type="number" step="0.01" value={d.rentaFees} onChange={e=>handleEdit(year, 'rentaFees', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-500 outline-none" />
+                                           </td>
+                                           <td className="p-2 bg-[#161b25]">
+                                               <input type="number" step="0.01" value={d.rentaAdj} onChange={e=>handleEdit(year, 'rentaAdj', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-300 outline-none border-b border-slate-700/50 focus:border-blue-500" />
+                                           </td>
+                                           <td className="p-2 bg-[#161b25]">
+                                               <input type="number" step="0.01" value={d.rentaBase} onChange={e=>handleEdit(year, 'rentaBase', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-blue-200 font-bold outline-none" />
+                                           </td>
+                                       </tr>
+                                   );
+                               })}
+                               {/* FILA DE TOTALES */}
+                               <tr className="bg-slate-900 border-t-2 border-slate-700 text-white font-bold text-xs sticky bottom-0 z-20 shadow-xl">
+                                   <td colSpan="3" className="p-3 text-right text-[10px] uppercase text-slate-500 tracking-widest sticky left-0 z-30 bg-slate-900">Total Global: <span className="text-white ml-2">{totals.soldCount} Op.</span></td>
+                                   <td className="p-3 text-right text-green-500">{formatMoney(totals.profitPrice, baseCurrency)}</td>
+                                   <td className="p-3 text-right text-blue-400">{formatMoney(totals.dividends, baseCurrency)}</td>
+                                   <td className="p-3 text-right text-red-500">{formatMoney(totals.lossPrice, baseCurrency)}</td>
+                                   <td className="p-3 text-right text-slate-300">{formatMoney(totals.resNoDiv, baseCurrency)}</td>
+                                   <td className="p-3 text-right text-white text-sm">{formatMoney(totals.resWithDiv, baseCurrency)}</td>
+                                   <td className="p-3 text-right text-purple-400">{formatMoney(totals.tax, baseCurrency)}</td>
+                                   <td className="p-3 bg-slate-950"></td>
+                                   <td className="p-3 bg-[#11151d]"></td>
+                                   <td className="p-3 text-right text-slate-500 bg-[#11151d]">{formatMoney(totals.fees, baseCurrency)}</td>
+                                   <td className="p-3 bg-[#11151d]"></td>
+                                   <td className="p-3 text-right text-blue-200 bg-[#11151d]">{formatMoney(totals.rentaBase, baseCurrency)}</td>
+                               </tr>
+                           </tbody>
+                       </table>
+                   </div>
+              </div>
+          );
+      };
+ 
+
+
+
+const App = () => {
           const [activeTab, setActiveTab] = useState('portfolio');
           const [apiKey, setApiKey] = usePersistentState('bg_api_key', '');
           const [baseCurrency, setBaseCurrency] = usePersistentState('bg_base_currency', 'EUR');
           const [refreshInterval, setRefreshInterval] = usePersistentState('bg_refresh_interval', 10);
           const [portfolio, setPortfolio] = usePersistentState('bg_portfolio', []);
+          const [resultsData, setResultsData] = usePersistentState('bg_results_data', {}); // Nuevo estado persistente
           const [lastUpdate, setLastUpdate] = usePersistentState('bg_last_update', null);
           const [rk, setRk] = usePersistentState('bg_app_rk_st', '');
 
@@ -1133,6 +1473,10 @@
                       <nav className="flex bg-slate-800 rounded-lg p-1 gap-1 border border-slate-700">
                           <button onClick={() => setActiveTab('portfolio')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'portfolio' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Briefcase size={14}/> Cartera</button>
                           <button onClick={() => setActiveTab('dividends')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'dividends' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.DollarSign size={14}/> Dividendos</button>
+                          
+                          {/* NUEVO BOTÓN PARA RESULTADOS */}
+                          <button onClick={() => setActiveTab('results')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'results' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.BarChart size={14}/> Resultados</button>
+                          
                           <button onClick={() => setActiveTab('analysis')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'analysis' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Search size={14}/> Estudio</button>
                           <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'settings' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Settings size={14}/> Ajustes</button>
                       </nav>
@@ -1140,16 +1484,19 @@
                   <main className="flex-1 overflow-hidden relative">
                       {activeTab === 'portfolio' && <PortfolioTab portfolio={portfolio} setPortfolio={setPortfolio} apiKey={apiKey} baseCurrency={baseCurrency} refreshInterval={refreshInterval} lastUpdate={lastUpdate} setLastUpdate={setLastUpdate} />}
                       {activeTab === 'dividends' && <DividendTab portfolio={portfolio} setPortfolio={setPortfolio} baseCurrency={baseCurrency} />}
+                      
+                      {/* RENDERIZADO DE LA NUEVA PESTAÑA */}
+                      {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={setResultsData} baseCurrency={baseCurrency} />}
+                      
                       {activeTab === 'analysis' && <AnalysisTab apiKey={apiKey} baseCurrency={baseCurrency} />}
                       {activeTab === 'settings' && <SettingsTab apiKey={apiKey} setApiKey={setApiKey} isAuth={isAuth} onActivate={handleActivate} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={setPortfolio} />}
                   </main>
                   <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase">
-                      <div>BoardingGate 2.5</div><div>Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleString() : '--'}</div>
+                      <div>BoardingGate 2.6</div><div>Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleString() : '--'}</div>
                   </footer>
               </div>
           );
       };
-
 
    
       createRoot(document.getElementById('root')).render(<App />);
