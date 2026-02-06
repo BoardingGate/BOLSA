@@ -163,14 +163,12 @@
 
 
  // --- PESTAÑA CARTERA (CON MEJORA EN INFORME IA) ---
-    
-      // --- PESTAÑA CARTERA (CON FILTROS AVANZADOS Y STATS DINÁMICOS) ---
       const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate }) => {
           // ESTADOS DE FILTRO
           const [filterText, setFilterText] = useState('');
           const [filterDateStart, setFilterDateStart] = useState('');
           const [filterDateEnd, setFilterDateEnd] = useState('');
-          const [filterType, setFilterType] = useState('all'); // 'all', 'active', 'sold'
+          const [filterType, setFilterType] = useState('all');
 
           // ESTADOS DE OPERACIÓN
           const [updating, setUpdating] = useState(false);
@@ -191,14 +189,27 @@
           const [form, setForm] = useState({ ticker: '', name: '', isIndex: false, indexDivisor: 1, shares: 0, buyPrice: 0, buyDate: '', stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, sellPrice: 0, sellDate: '', sellFx: 1, sellFees: 0, sellAdjustments: 0, currentPE: 0, dividends: [] });
           const [sellForm, setSellForm] = useState({ sharesToSell: 0, sellPrice: 0, sellDate: new Date().toISOString().slice(0,10), sellFx: 1, sellFees: 0, sellAdjustments: 0 });
 
+          // --- FUNCIONES AUXILIARES (DEFINIDAS AL INICIO PARA EVITAR ERRORES) ---
+          const calcReturns = (startVal, endVal, days) => {
+              if (startVal === 0) return { simple: 0, annual: 0 };
+              const simple = ((endVal - startVal) / startVal) * 100;
+              const years = Math.max(days, 1) / 365;
+              const annual = years > 0 && endVal > 0 && simple > -99.9 ? (Math.pow(endVal / startVal, 1 / years) - 1) * 100 : 0;
+              return { simple, annual };
+          };
+
+          const cleanVal = (v) => {
+              if (typeof v === 'number') return v;
+              const n = parseFloat(String(v).replace(/[^0-9.-]/g, ''));
+              return isNaN(n) ? 0 : n;
+          };
+
           // --- 1. LÓGICA DE FILTRADO ---
           const filteredPortfolio = useMemo(() => {
               return portfolio.filter(p => {
-                  // 1. Filtro Tipo (Combo)
                   if (filterType === 'active' && p.sellDate) return false;
                   if (filterType === 'sold' && !p.sellDate) return false;
 
-                  // 2. Filtro Texto (Nombre/Ticker)
                   if (filterText) {
                       const txt = filterText.toUpperCase();
                       const matchTicker = p.ticker.toUpperCase().includes(txt);
@@ -206,11 +217,7 @@
                       if (!matchTicker && !matchName) return false;
                   }
 
-                  // 3. Filtro Fechas (Desde/Hasta)
-                  // Lógica: Si está vendido, usamos fecha venta. Si es activo, fecha compra.
-                  // Esto responde a "¿Qué pasó en este rango?"
                   const relevantDate = p.sellDate || p.buyDate;
-                  
                   if (filterDateStart && relevantDate < filterDateStart) return false;
                   if (filterDateEnd && relevantDate > filterDateEnd) return false;
 
@@ -218,7 +225,7 @@
               });
           }, [portfolio, filterText, filterDateStart, filterDateEnd, filterType]);
 
-          // --- 2. CÁLCULO DE ESTADÍSTICAS (Basado en filteredPortfolio) ---
+          // --- 2. CÁLCULO DE ESTADÍSTICAS (Ahora calcReturns ya existe) ---
           const stats = useMemo(() => {
               const calc = (items) => {
                   let inv = 0, cur = 0, divN = 0, fX = 0, weightedDays = 0;
@@ -242,7 +249,6 @@
                   return { num: items.length, inv, cur, divN, fX, plPrice: plP, plTotal: plT, plP_S: rP.simple, plP_A: rP.annual, plT_S: rT.simple, plT_A: rT.annual };
               };
               
-              // Los bloques de stats ahora reflejan el subset filtrado
               return { 
                   active: calc(filteredPortfolio.filter(p => !p.sellDate)), 
                   sold: calc(filteredPortfolio.filter(p => !!p.sellDate)), 
@@ -257,20 +263,6 @@
               const interval = setInterval(() => updatePrices(true), refreshInterval * 60 * 1000);
               return () => clearInterval(interval);
           }, [apiKey, refreshInterval]);
-
-          const calcReturns = (startVal, endVal, days) => {
-              if (startVal === 0) return { simple: 0, annual: 0 };
-              const simple = ((endVal - startVal) / startVal) * 100;
-              const years = Math.max(days, 1) / 365;
-              const annual = years > 0 && endVal > 0 && simple > -99.9 ? (Math.pow(endVal / startVal, 1 / years) - 1) * 100 : 0;
-              return { simple, annual };
-          };
-
-          const cleanVal = (v) => {
-              if (typeof v === 'number') return v;
-              const n = parseFloat(String(v).replace(/[^0-9.-]/g, ''));
-              return isNaN(n) ? 0 : n;
-          };
 
           const fetchTickerData = async () => {
               if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' });
@@ -595,23 +587,14 @@
                       </div>
                   </Modal>
 
-                  <Modal isOpen={infoModal.isOpen} title={infoModal.title} onClose={()=>setInfoModal({...infoModal, isOpen:false})} size="sm">
-                      <div className="text-center space-y-4">
-                          <div className={`p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto border ${infoModal.type==='error'?'bg-red-500/10 text-red-500 border-red-500/20':infoModal.type==='warning'?'bg-yellow-500/10 text-yellow-500 border-yellow-500/20':'bg-blue-500/10 text-blue-500 border-blue-500/20'}`}>
-                              {infoModal.type==='error'?<Icons.AlertCircle size={30}/>:infoModal.type==='warning'?<Icons.AlertCircle size={30}/>:<Icons.CheckCircle size={30}/>}
-                          </div>
-                          <p className="text-slate-300 text-sm font-medium whitespace-pre-wrap leading-relaxed">{infoModal.msg}</p>
-                          <button onClick={()=>setInfoModal({...infoModal, isOpen:false})} className="w-full bg-slate-700 py-3 rounded-xl font-bold uppercase text-[10px]">Cerrar</button>
-                      </div>
-                  </Modal>
-
                   <Modal isOpen={isAnalysisModalOpen} title="Informe de Inteligencia iA" onClose={()=>setIsAnalysisModalOpen(false)} size="lg">
                       <div dangerouslySetInnerHTML={{__html: analysisResult}} className="prose prose-invert text-sm max-w-none font-sans leading-relaxed p-2" />
                   </Modal>
               </div>
           );
       };
-      
+  
+     
   
 
 
