@@ -163,7 +163,7 @@
 
 
 
-      // --- PESTAÑA CARTERA (ESTRUCTURA TÉCNICA FINAL SIN ALTERACIONES) ---
+ // --- PESTAÑA CARTERA (CON MEJORA EN INFORME IA) ---
       const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate }) => {
           const [viewMode, setViewMode] = useState('active');
           const [updating, setUpdating] = useState(false);
@@ -262,14 +262,36 @@
               finally { setUpdating(false); }
           };
 
+          // --- MODIFICACIÓN CLAVE: PROMPT ESTRUCTURADO Y EN ESPAÑOL ---
           const analyzePortfolio = async () => {
               const dataToAnalyze = portfolio.filter(p => p.isActive !== false && (viewMode === 'active' ? !p.sellDate : !!p.sellDate));
               if (dataToAnalyze.length === 0) return;
               setAnalyzing(true);
               try {
-                  const summary = dataToAnalyze.map(p => ({ t: p.ticker, r: formatMoney(((p.sellDate ? p.sellPrice : p.currentPrice) * p.shares * (p.sellDate ? p.sellFx : p.currentFx)) - (p.buyPrice * p.shares * p.buyFx)) }));
-                  const res = await askGemini(apiKey, `Analiza: ${JSON.stringify(summary)}. HTML directo.`);
-                  setAnalysisResult(res.replace(/```html/g, '').replace(/```/g, '').replace(/^Por supuesto[\s\S]*?:/i, ''));
+                  const summary = dataToAnalyze.map(p => ({ 
+                      t: p.ticker, 
+                      perf: ((p.sellDate ? p.sellPrice : p.currentPrice) * p.shares * (p.sellDate ? p.sellFx : p.currentFx)) - (p.buyPrice * p.shares * p.buyFx)
+                  }));
+                  
+                  // Nuevo Prompt Estructurado
+                  const context = viewMode === 'active' ? 'Cartera de Inversión ACTIVA' : 'Histórico de VENTAS REALIZADAS';
+                  const prompt = `Actúa como un asesor financiero experto. Analiza los siguientes datos de una ${context}.
+                  Datos (Ticker y Resultado): ${JSON.stringify(summary)}.
+                  
+                  Instrucciones estrictas:
+                  1. Responde ÚNICAMENTE en ESPAÑOL.
+                  2. Usa formato HTML limpio (sin Markdown, sin \`\`\`html).
+                  3. Estructura la respuesta con las siguientes secciones usando etiquetas <h3> con clase "text-lg font-bold text-blue-400 mb-2 mt-4":
+                     - "Resumen Ejecutivo": Visión global del rendimiento.
+                     - "Análisis de Rentabilidad": Destaca los ganadores (Top performers) y los lastres (Bottom performers).
+                     - "Evaluación de Riesgo": Comentarios sobre concentración o volatilidad implícita.
+                     - "Conclusión y Recomendaciones": Pasos a seguir sugeridos.
+                  4. Usa listas <ul> y <li> para enumerar puntos.
+                  5. Sé profesional, directo y conciso.`;
+
+                  const res = await askGemini(apiKey, prompt);
+                  // Limpieza extra por si la IA insiste en poner markdown
+                  setAnalysisResult(res.replace(/```html/g, '').replace(/```/g, ''));
                   setIsAnalysisModalOpen(true);
               } catch (e) { alert(e.message); } finally { setAnalyzing(false); }
           };
@@ -365,10 +387,9 @@
                                   const vF = (curP * p.shares * curF) - (isS ? (p.sellFees + p.sellAdjustments) : 0);
                                   const ds = (p.dividends || []).reduce((a,b)=>a+b.net,0);
                                   
-                                  // Modificación: Separación de cálculos
-                                  const capitalGain = vF - cT; // Rendimiento solo de precio
+                                  const capitalGain = vF - cT; 
                                   const days = calculateDays(p.buyDate, p.sellDate || new Date());
-                                  const rs = calcReturns(cT, vF + ds, days); // El % sigue calculándose sobre el total (incluye divs)
+                                  const rs = calcReturns(cT, vF + ds, days); 
 
                                   return (
                                       <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''}`}>
@@ -380,12 +401,10 @@
                                           <td className="p-3 text-center text-[10px] font-mono text-slate-400">G: {formatN(isS?p.sellFees:p.fees)}<br/>A: {formatN(isS?p.sellAdjustments:p.adjustments)}</td>
                                           <td className="p-3 text-right text-slate-400 font-mono">{formatMoney(cT, baseCurrency)}</td>
                                           
-                                          {/* Columna Valor Final: Sin dividendos */}
                                           <td className="p-3 text-right font-mono text-white">
                                               <div className="font-bold">{formatMoney(vF, baseCurrency)}</div>
                                           </td>
 
-                                          {/* Columna Rendimiento: Separada */}
                                           <td className="p-3 text-right font-mono">
                                               <div className={`font-bold ${capitalGain >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                                                   {formatMoney(capitalGain, baseCurrency)}
@@ -521,7 +540,8 @@
               </div>
           );
       };
-   
+
+      
   
 
 
@@ -1114,12 +1134,224 @@
       };
 
 
-   const App = () => {
+   // --- NUEVA PESTAÑA DE RESULTADOS (INSERCIÓN SOLICITADA) ---
+      const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency }) => {
+          
+          // Inicializar años si no existen
+          useEffect(() => {
+              const years = Array.from({length: 13}, (_, i) => 2019 + i);
+              const newData = { ...resultsData };
+              let changed = false;
+              years.forEach(y => {
+                  if (!newData[y]) {
+                      newData[y] = { 
+                          profit: 0, 
+                          loss: 0, 
+                          fees: 0, 
+                          result: 0, 
+                          tax: 0, 
+                          accumulated: 0, 
+                          locked: false,
+                          // Extra fields for calculation display
+                          capitalGain: 0,
+                          dividends: 0
+                      };
+                      changed = true;
+                  }
+              });
+              if (changed) setResultsData(newData);
+          }, []);
+
+          const handleRecalculate = () => {
+              const newData = { ...resultsData };
+              let runningAccum = 0;
+              const years = Object.keys(newData).sort();
+
+              years.forEach(year => {
+                  const y = parseInt(year);
+                  
+                  // Si está bloqueado, usamos los valores manuales para el acumulado y saltamos cálculo
+                  if (newData[y].locked) {
+                      runningAccum += parseFloat(newData[y].result);
+                      newData[y].accumulated = runningAccum;
+                      return;
+                  }
+
+                  // 1. Calcular Ventas Cerradas en este año (Capital Gains)
+                  let yearCapGains = 0;
+                  let yearLosses = 0;
+                  let yearFees = 0;
+
+                  // Filtrar ventas de este año
+                  const sales = portfolio.filter(p => p.sellDate && new Date(p.sellDate).getFullYear() === y);
+                  
+                  sales.forEach(p => {
+                      const cost = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0);
+                      const revenue = (p.sellPrice * p.shares * p.sellFx) - (p.sellFees || 0) - (p.sellAdjustments || 0);
+                      const pl = revenue - cost;
+                      
+                      // Separar para la vista: Beneficio vs Pérdida
+                      // OJO: La lógica contable estricta vs visualización. 
+                      // Aquí sumamos netamente:
+                      if (pl >= 0) yearCapGains += pl;
+                      else yearLosses += Math.abs(pl);
+                      
+                      // Gastos informativos (ya están descontados en PL arriba, pero para mostrar en columna)
+                      yearFees += (p.fees || 0) + (p.adjustments || 0) + (p.sellFees || 0) + (p.sellAdjustments || 0);
+                  });
+
+                  // 2. Calcular Dividendos cobrados en este año (independiente de venta)
+                  let yearDivs = 0;
+                  portfolio.forEach(p => {
+                      if (p.dividends) {
+                          p.dividends.forEach(d => {
+                              if (d.year === y) yearDivs += d.net; // Usamos Neto
+                          });
+                      }
+                  });
+
+                  // 3. Ensamblar Datos
+                  // Columna BENEFICIO: Ganancias capital + Dividendos
+                  const totalProfit = yearCapGains + yearDivs;
+                  
+                  // Columna RESULTADO: (Ganancias + Divs) - Pérdidas
+                  // Nota: Los gastos ya se dedujeron en el cálculo de PL individual de venta
+                  const netResult = totalProfit - yearLosses;
+                  
+                  // Columna IMPUESTOS (Estimación simple sobre ganancias > 0, sin compensar pérdidas antiguas aquí para simplificar vista anual)
+                  // Si el resultado es positivo, aplicamos 19%
+                  const tax = netResult > 0 ? netResult * 0.19 : 0;
+
+                  runningAccum += netResult;
+
+                  newData[y] = {
+                      ...newData[y],
+                      profit: totalProfit,
+                      loss: yearLosses,
+                      fees: yearFees,
+                      result: netResult,
+                      tax: tax,
+                      accumulated: runningAccum,
+                      locked: false 
+                  };
+              });
+
+              setResultsData(newData);
+          };
+
+          const handleEdit = (year, field, val) => {
+              if (resultsData[year]?.locked) return;
+              const v = parseFloat(val);
+              setResultsData(prev => ({
+                  ...prev,
+                  [year]: { ...prev[year], [field]: isNaN(v) ? 0 : v }
+              }));
+          };
+
+          const toggleLock = (year) => {
+              setResultsData(prev => ({
+                  ...prev,
+                  [year]: { ...prev[year], locked: !prev[year].locked }
+              }));
+          };
+
+          // Calcular totales para pie de tabla
+          const totals = Object.values(resultsData).reduce((acc, curr) => ({
+              profit: acc.profit + (curr.profit || 0),
+              loss: acc.loss + (curr.loss || 0),
+              fees: acc.fees + (curr.fees || 0),
+              result: acc.result + (curr.result || 0),
+              tax: acc.tax + (curr.tax || 0)
+          }), { profit: 0, loss: 0, fees: 0, result: 0, tax: 0 });
+
+          return (
+              <div className="h-full flex flex-col p-6 overflow-hidden fade-in">
+                   <div className="flex justify-between items-center mb-4 bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
+                      <div>
+                          <h2 className="text-xl font-display font-bold text-white">Resultados Anuales</h2>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Consolidación de Ventas y Dividendos</p>
+                      </div>
+                      <button onClick={handleRecalculate} className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg text-xs font-bold uppercase transition-colors shadow-lg border border-blue-400">
+                          Recalcular Datos (Cartera)
+                      </button>
+                   </div>
+
+                   <div className="flex-1 overflow-auto custom-scrollbar border border-slate-800 rounded-xl bg-slate-950">
+                       <table className="w-full text-sm border-collapse">
+                           <thead className="sticky top-0 z-20 bg-slate-800 text-[10px] uppercase font-bold text-slate-400">
+                               <tr>
+                                   <th className="p-3 text-center border-b border-slate-700 w-20">Año</th>
+                                   <th className="p-3 text-right border-b border-slate-700 border-l border-slate-700/50 bg-slate-800/50">Beneficio<br/><span className="text-[8px] opacity-60">(Divs + Ganancias)</span></th>
+                                   <th className="p-3 text-right border-b border-slate-700 text-red-400">Pérdida<br/><span className="text-[8px] opacity-60">(Cerrada)</span></th>
+                                   <th className="p-3 text-right border-b border-slate-700 text-slate-500">Gastos<br/><span className="text-[8px] opacity-60">(Informativo)</span></th>
+                                   <th className="p-3 text-right border-b border-slate-700 border-l border-slate-700/50 bg-blue-900/10 text-white">Resultado Neto<br/><span className="text-[8px] opacity-60">(Ben - Pérd)</span></th>
+                                   <th className="p-3 text-right border-b border-slate-700 text-purple-400">Impuestos<br/><span className="text-[8px] opacity-60">(Est. 19%)</span></th>
+                                   <th className="p-3 text-right border-b border-slate-700 border-l border-slate-700/50 font-black text-white">Acumulado</th>
+                                   <th className="p-3 text-center border-b border-slate-700 w-16">Bloq.</th>
+                               </tr>
+                           </thead>
+                           <tbody className="divide-y divide-slate-800 font-mono">
+                               {Object.keys(resultsData).sort().map(year => {
+                                   const d = resultsData[year];
+                                   const isPos = d.result >= 0;
+                                   return (
+                                       <tr key={year} className={`hover:bg-slate-900/40 transition-colors ${d.locked ? 'bg-slate-900/20' : ''}`}>
+                                           <td className="p-3 text-center font-bold text-white bg-slate-900/50 border-r border-slate-800">{year}</td>
+                                           
+                                           <td className="p-2 border-r border-slate-800/50">
+                                               <input type="number" value={d.profit} onChange={e=>handleEdit(year, 'profit', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.locked ? 'text-slate-500' : 'text-green-400'}`} />
+                                           </td>
+                                           
+                                           <td className="p-2 border-r border-slate-800/50">
+                                               <input type="number" value={d.loss} onChange={e=>handleEdit(year, 'loss', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.locked ? 'text-slate-500' : 'text-orange-400'}`} />
+                                           </td>
+                                           
+                                           <td className="p-2 border-r border-slate-800/50">
+                                               <input type="number" value={d.fees} onChange={e=>handleEdit(year, 'fees', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-500 outline-none" />
+                                           </td>
+
+                                           <td className="p-2 border-r border-slate-800/50 bg-blue-900/5">
+                                               <input type="number" value={d.result} onChange={e=>handleEdit(year, 'result', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-black text-lg outline-none ${isPos ? 'text-blue-300' : 'text-red-400'}`} />
+                                           </td>
+
+                                           <td className="p-2 border-r border-slate-800/50">
+                                               <input type="number" value={d.tax} onChange={e=>handleEdit(year, 'tax', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-purple-400 font-bold outline-none" />
+                                           </td>
+
+                                           <td className="p-2 border-r border-slate-800/50">
+                                               <div className={`text-right font-black ${d.accumulated >= 0 ? 'text-white' : 'text-red-500'}`}>{formatMoney(d.accumulated, baseCurrency)}</div>
+                                           </td>
+
+                                           <td className="p-2 text-center">
+                                                <input type="checkbox" checked={d.locked} onChange={()=>toggleLock(year)} className="w-4 h-4 accent-red-500 cursor-pointer" />
+                                           </td>
+                                       </tr>
+                                   );
+                               })}
+                               <tr className="bg-slate-900 border-t-2 border-slate-700 text-white font-bold text-xs sticky bottom-0 z-20 shadow-xl">
+                                   <td className="p-4 text-center">TOTALES</td>
+                                   <td className="p-4 text-right text-green-400">{formatMoney(totals.profit, baseCurrency)}</td>
+                                   <td className="p-4 text-right text-orange-400">{formatMoney(totals.loss, baseCurrency)}</td>
+                                   <td className="p-4 text-right text-slate-500">{formatMoney(totals.fees, baseCurrency)}</td>
+                                   <td className="p-4 text-right text-blue-300 bg-blue-900/20 text-lg">{formatMoney(totals.result, baseCurrency)}</td>
+                                   <td className="p-4 text-right text-purple-400">{formatMoney(totals.tax, baseCurrency)}</td>
+                                   <td className="p-4 bg-slate-950"></td>
+                                   <td></td>
+                               </tr>
+                           </tbody>
+                       </table>
+                   </div>
+              </div>
+          );
+      }
+
+const App = () => {
           const [activeTab, setActiveTab] = useState('portfolio');
           const [apiKey, setApiKey] = usePersistentState('bg_api_key', '');
           const [baseCurrency, setBaseCurrency] = usePersistentState('bg_base_currency', 'EUR');
           const [refreshInterval, setRefreshInterval] = usePersistentState('bg_refresh_interval', 10);
           const [portfolio, setPortfolio] = usePersistentState('bg_portfolio', []);
+          const [resultsData, setResultsData] = usePersistentState('bg_results_data', {}); // Nuevo estado persistente
           const [lastUpdate, setLastUpdate] = usePersistentState('bg_last_update', null);
           const [rk, setRk] = usePersistentState('bg_app_rk_st', '');
 
@@ -1133,6 +1365,10 @@
                       <nav className="flex bg-slate-800 rounded-lg p-1 gap-1 border border-slate-700">
                           <button onClick={() => setActiveTab('portfolio')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'portfolio' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Briefcase size={14}/> Cartera</button>
                           <button onClick={() => setActiveTab('dividends')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'dividends' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.DollarSign size={14}/> Dividendos</button>
+                          
+                          {/* NUEVO BOTÓN PARA RESULTADOS */}
+                          <button onClick={() => setActiveTab('results')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'results' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.BarChart size={14}/> Resultados</button>
+                          
                           <button onClick={() => setActiveTab('analysis')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'analysis' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Search size={14}/> Estudio</button>
                           <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'settings' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Settings size={14}/> Ajustes</button>
                       </nav>
@@ -1140,16 +1376,19 @@
                   <main className="flex-1 overflow-hidden relative">
                       {activeTab === 'portfolio' && <PortfolioTab portfolio={portfolio} setPortfolio={setPortfolio} apiKey={apiKey} baseCurrency={baseCurrency} refreshInterval={refreshInterval} lastUpdate={lastUpdate} setLastUpdate={setLastUpdate} />}
                       {activeTab === 'dividends' && <DividendTab portfolio={portfolio} setPortfolio={setPortfolio} baseCurrency={baseCurrency} />}
+                      
+                      {/* RENDERIZADO DE LA NUEVA PESTAÑA */}
+                      {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={setResultsData} baseCurrency={baseCurrency} />}
+                      
                       {activeTab === 'analysis' && <AnalysisTab apiKey={apiKey} baseCurrency={baseCurrency} />}
                       {activeTab === 'settings' && <SettingsTab apiKey={apiKey} setApiKey={setApiKey} isAuth={isAuth} onActivate={handleActivate} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={setPortfolio} />}
                   </main>
                   <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase">
-                      <div>BoardingGate 2.5</div><div>Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleString() : '--'}</div>
+                      <div>BoardingGate 2.6</div><div>Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleString() : '--'}</div>
                   </footer>
               </div>
           );
       };
-
 
    
       createRoot(document.getElementById('root')).render(<App />);
