@@ -1137,24 +1137,29 @@
    // --- NUEVA PESTAÑA DE RESULTADOS (INSERCIÓN SOLICITADA) ---
       const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency }) => {
           
-          // Inicializar años si no existen
+          // Inicializar estructura de datos si no existe
           useEffect(() => {
-              const years = Array.from({length: 13}, (_, i) => 2019 + i);
+              const years = Array.from({length: 13}, (_, i) => 2019 + i); // 2019 a 2031
               const newData = { ...resultsData };
               let changed = false;
               years.forEach(y => {
                   if (!newData[y]) {
                       newData[y] = { 
-                          profit: 0, 
-                          loss: 0, 
-                          fees: 0, 
-                          result: 0, 
-                          tax: 0, 
-                          accumulated: 0, 
                           locked: false,
-                          // Extra fields for calculation display
-                          capitalGain: 0,
-                          dividends: 0
+                          soldCount: 0,
+                          profitPrice: 0, // Beneficio solo por precio
+                          dividends: 0,   // Dividendos cobrados
+                          lossPrice: 0,   // Pérdida solo por precio
+                          fees: 0,        // Gastos totales
+                          resNoDiv: 0,    // Resultado SIN div
+                          resWithDiv: 0,  // Resultado CON div
+                          tax: 0,         // Impuesto est.
+                          accumulated: 0,
+                          // Campos Renta Manuales/Automáticos
+                          rentaResNoDiv: 0,
+                          rentaFees: 0,
+                          rentaAdj: 0,
+                          rentaBase: 0
                       };
                       changed = true;
                   }
@@ -1170,69 +1175,73 @@
               years.forEach(year => {
                   const y = parseInt(year);
                   
-                  // Si está bloqueado, usamos los valores manuales para el acumulado y saltamos cálculo
+                  // Si está bloqueado, respetamos los valores manuales, solo actualizamos el acumulado arrastrado
                   if (newData[y].locked) {
-                      runningAccum += parseFloat(newData[y].result);
+                      runningAccum += parseFloat(newData[y].resWithDiv);
                       newData[y].accumulated = runningAccum;
                       return;
                   }
 
-                  // 1. Calcular Ventas Cerradas en este año (Capital Gains)
-                  let yearCapGains = 0;
-                  let yearLosses = 0;
+                  // 1. Calcular Datos de Ventas (Capital Gains/Losses)
+                  let yearProfitPrice = 0;
+                  let yearLossPrice = 0;
                   let yearFees = 0;
+                  let count = 0;
 
-                  // Filtrar ventas de este año
                   const sales = portfolio.filter(p => p.sellDate && new Date(p.sellDate).getFullYear() === y);
+                  count = sales.length;
                   
                   sales.forEach(p => {
+                      // Coste: (Precio * Acciones * FX) + Gastos Compra + Ajustes Compra
                       const cost = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0);
-                      const revenue = (p.sellPrice * p.shares * p.sellFx) - (p.sellFees || 0) - (p.sellAdjustments || 0);
-                      const pl = revenue - cost;
+                      // Ingreso Venta Bruto: (Precio Venta * Acciones * FX) 
+                      // Nota: Para calcular ganancia/pérdida patrimonial, los gastos de venta RESTAN valor de transmisión.
+                      const revenueNet = (p.sellPrice * p.shares * p.sellFx) - (p.sellFees || 0) - (p.sellAdjustments || 0);
                       
-                      // Separar para la vista: Beneficio vs Pérdida
-                      // OJO: La lógica contable estricta vs visualización. 
-                      // Aquí sumamos netamente:
-                      if (pl >= 0) yearCapGains += pl;
-                      else yearLosses += Math.abs(pl);
+                      const pl = revenueNet - cost; // Ganancia/Pérdida Neta
                       
-                      // Gastos informativos (ya están descontados en PL arriba, pero para mostrar en columna)
+                      if (pl >= 0) yearProfitPrice += pl;
+                      else yearLossPrice += Math.abs(pl);
+                      
+                      // Gastos totales (Informativo): Gtos Compra + Gtos Venta + Ajustes
                       yearFees += (p.fees || 0) + (p.adjustments || 0) + (p.sellFees || 0) + (p.sellAdjustments || 0);
                   });
 
-                  // 2. Calcular Dividendos cobrados en este año (independiente de venta)
+                  // 2. Calcular Dividendos (Todo lo cobrado en ese año)
                   let yearDivs = 0;
                   portfolio.forEach(p => {
                       if (p.dividends) {
                           p.dividends.forEach(d => {
-                              if (d.year === y) yearDivs += d.net; // Usamos Neto
+                              if (d.year === y) yearDivs += d.net;
                           });
                       }
                   });
 
-                  // 3. Ensamblar Datos
-                  // Columna BENEFICIO: Ganancias capital + Dividendos
-                  const totalProfit = yearCapGains + yearDivs;
+                  // 3. Cálculos de Columnas
+                  const resNoDiv = yearProfitPrice - yearLossPrice; // Resultado SIN Dividendos
+                  const resWithDiv = resNoDiv + yearDivs;           // Resultado CON Dividendos
                   
-                  // Columna RESULTADO: (Ganancias + Divs) - Pérdidas
-                  // Nota: Los gastos ya se dedujeron en el cálculo de PL individual de venta
-                  const netResult = totalProfit - yearLosses;
-                  
-                  // Columna IMPUESTOS (Estimación simple sobre ganancias > 0, sin compensar pérdidas antiguas aquí para simplificar vista anual)
-                  // Si el resultado es positivo, aplicamos 19%
-                  const tax = netResult > 0 ? netResult * 0.19 : 0;
+                  // Impuestos: 19% sobre Res Sin Dividendos (si es positivo)
+                  const tax = resNoDiv > 0 ? resNoDiv * 0.19 : 0;
 
-                  runningAccum += netResult;
+                  runningAccum += resWithDiv;
 
                   newData[y] = {
                       ...newData[y],
-                      profit: totalProfit,
-                      loss: yearLosses,
+                      soldCount: count,
+                      profitPrice: yearProfitPrice,
+                      dividends: yearDivs,
+                      lossPrice: yearLossPrice,
                       fees: yearFees,
-                      result: netResult,
+                      resNoDiv: resNoDiv,
+                      resWithDiv: resWithDiv,
                       tax: tax,
                       accumulated: runningAccum,
-                      locked: false 
+                      // Pre-rellenado Renta (Editable después)
+                      rentaResNoDiv: resNoDiv, 
+                      rentaFees: yearFees,
+                      rentaAdj: 0, // Por defecto 0
+                      rentaBase: resNoDiv // Base imponible por defecto = Res Sin Div
                   };
               });
 
@@ -1240,7 +1249,9 @@
           };
 
           const handleEdit = (year, field, val) => {
+              if (resultsData[year]?.locked && !field.startsWith('renta')) return; // Permitir editar renta incluso si bloqueado? Asumimos no por coherencia, salvo desbloqueo.
               if (resultsData[year]?.locked) return;
+
               const v = parseFloat(val);
               setResultsData(prev => ({
                   ...prev,
@@ -1255,95 +1266,133 @@
               }));
           };
 
-          // Calcular totales para pie de tabla
+          // Totales Pie de Tabla
           const totals = Object.values(resultsData).reduce((acc, curr) => ({
-              profit: acc.profit + (curr.profit || 0),
-              loss: acc.loss + (curr.loss || 0),
+              profitPrice: acc.profitPrice + (curr.profitPrice || 0),
+              dividends: acc.dividends + (curr.dividends || 0),
+              lossPrice: acc.lossPrice + (curr.lossPrice || 0),
               fees: acc.fees + (curr.fees || 0),
-              result: acc.result + (curr.result || 0),
-              tax: acc.tax + (curr.tax || 0)
-          }), { profit: 0, loss: 0, fees: 0, result: 0, tax: 0 });
+              resNoDiv: acc.resNoDiv + (curr.resNoDiv || 0),
+              resWithDiv: acc.resWithDiv + (curr.resWithDiv || 0),
+              tax: acc.tax + (curr.tax || 0),
+              rentaBase: acc.rentaBase + (curr.rentaBase || 0)
+          }), { profitPrice: 0, dividends: 0, lossPrice: 0, fees: 0, resNoDiv: 0, resWithDiv: 0, tax: 0, rentaBase: 0 });
 
           return (
               <div className="h-full flex flex-col p-6 overflow-hidden fade-in">
                    <div className="flex justify-between items-center mb-4 bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
                       <div>
-                          <h2 className="text-xl font-display font-bold text-white">Resultados Anuales</h2>
-                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Consolidación de Ventas y Dividendos</p>
+                          <h2 className="text-xl font-display font-bold text-white">Resultados y Fiscalidad</h2>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Consolidación Anual de Rendimiento</p>
                       </div>
-                      <button onClick={handleRecalculate} className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg text-xs font-bold uppercase transition-colors shadow-lg border border-blue-400">
-                          Recalcular Datos (Cartera)
+                      <button onClick={handleRecalculate} className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg text-xs font-bold uppercase transition-colors shadow-lg border border-blue-400 flex items-center gap-2">
+                          <Icons.Refresh size={14}/> Recalcular Datos
                       </button>
                    </div>
 
                    <div className="flex-1 overflow-auto custom-scrollbar border border-slate-800 rounded-xl bg-slate-950">
-                       <table className="w-full text-sm border-collapse">
+                       <table className="w-full text-sm border-collapse min-w-[1400px]">
                            <thead className="sticky top-0 z-20 bg-slate-800 text-[10px] uppercase font-bold text-slate-400">
                                <tr>
-                                   <th className="p-3 text-center border-b border-slate-700 w-20">Año</th>
-                                   <th className="p-3 text-right border-b border-slate-700 border-l border-slate-700/50 bg-slate-800/50">Beneficio<br/><span className="text-[8px] opacity-60">(Divs + Ganancias)</span></th>
-                                   <th className="p-3 text-right border-b border-slate-700 text-red-400">Pérdida<br/><span className="text-[8px] opacity-60">(Cerrada)</span></th>
-                                   <th className="p-3 text-right border-b border-slate-700 text-slate-500">Gastos<br/><span className="text-[8px] opacity-60">(Informativo)</span></th>
-                                   <th className="p-3 text-right border-b border-slate-700 border-l border-slate-700/50 bg-blue-900/10 text-white">Resultado Neto<br/><span className="text-[8px] opacity-60">(Ben - Pérd)</span></th>
-                                   <th className="p-3 text-right border-b border-slate-700 text-purple-400">Impuestos<br/><span className="text-[8px] opacity-60">(Est. 19%)</span></th>
-                                   <th className="p-3 text-right border-b border-slate-700 border-l border-slate-700/50 font-black text-white">Acumulado</th>
-                                   <th className="p-3 text-center border-b border-slate-700 w-16">Bloq.</th>
+                                   <th className="p-2 text-center border-b border-slate-700 w-10 bg-slate-900 sticky left-0 z-30"><Icons.CheckCircle size={12}/></th>
+                                   <th className="p-2 text-center border-b border-slate-700 w-16 bg-slate-900/50">Año</th>
+                                   <th className="p-2 text-center border-b border-slate-700 w-14">Lotes</th>
+                                   
+                                   <th className="p-2 text-right border-b border-slate-700 border-l border-slate-700/50 text-green-400">Beneficio<br/><span className="text-[7px] opacity-60 font-normal">(Acciones)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 text-blue-400">Dividendos<br/><span className="text-[7px] opacity-60 font-normal">(Cobrados)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 text-red-400">Pérdida<br/><span className="text-[7px] opacity-60 font-normal">(Acciones)</span></th>
+                                   
+                                   <th className="p-2 text-right border-b border-slate-700 border-l border-slate-700/50 bg-slate-800/30 font-bold text-slate-200">Res. SIN Div<br/><span className="text-[7px] opacity-60 font-normal">(Ben - Pérd)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 bg-slate-800/30 font-bold text-white">Res. CON Div<br/><span className="text-[7px] opacity-60 font-normal">(+ Divs)</span></th>
+                                   
+                                   <th className="p-2 text-right border-b border-slate-700 text-purple-400">Impuestos<br/><span className="text-[7px] opacity-60 font-normal">(19% s/ Sin Div)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 font-bold text-yellow-500">Acumulado<br/><span className="text-[7px] opacity-60 font-normal">(Total)</span></th>
+                                   
+                                   {/* SECCION RENTA */}
+                                   <th className="p-2 text-right border-b border-slate-700 border-l-4 border-slate-900 bg-[#1e2330] text-slate-300">Res. SIN Div<br/><span className="text-[7px] opacity-60 font-normal">(Renta)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-slate-400">Gtos Broker<br/><span className="text-[7px] opacity-60 font-normal">(Total)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-slate-300">Ajustes<br/><span className="text-[7px] opacity-60 font-normal">(Manual)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-blue-200 font-bold">Base Imp. 19%<br/><span className="text-[7px] opacity-60 font-normal">(Imponible)</span></th>
                                </tr>
                            </thead>
-                           <tbody className="divide-y divide-slate-800 font-mono">
+                           <tbody className="divide-y divide-slate-800 font-mono text-xs">
                                {Object.keys(resultsData).sort().map(year => {
                                    const d = resultsData[year];
-                                   const isPos = d.result >= 0;
                                    return (
-                                       <tr key={year} className={`hover:bg-slate-900/40 transition-colors ${d.locked ? 'bg-slate-900/20' : ''}`}>
-                                           <td className="p-3 text-center font-bold text-white bg-slate-900/50 border-r border-slate-800">{year}</td>
+                                       <tr key={year} className={`hover:bg-slate-900/40 transition-colors ${d.locked ? 'opacity-70' : ''}`}>
+                                           {/* BLOQUEO */}
+                                           <td className="p-2 text-center bg-slate-900/50 sticky left-0 z-20 border-r border-slate-800">
+                                                <input type="checkbox" checked={d.locked} onChange={()=>toggleLock(year)} className="w-3 h-3 accent-red-500 cursor-pointer" />
+                                           </td>
+                                           <td className="p-2 text-center font-bold text-white bg-slate-900/20">{year}</td>
+                                           <td className="p-2 text-center text-slate-400">{d.soldCount}</td>
                                            
-                                           <td className="p-2 border-r border-slate-800/50">
-                                               <input type="number" value={d.profit} onChange={e=>handleEdit(year, 'profit', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.locked ? 'text-slate-500' : 'text-green-400'}`} />
+                                           {/* DATOS DESGLOSADOS */}
+                                           <td className="p-2 border-l border-slate-800/50">
+                                               <input type="number" value={d.profitPrice} onChange={e=>handleEdit(year, 'profitPrice', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-green-500 outline-none" />
+                                           </td>
+                                           <td className="p-2">
+                                               <input type="number" value={d.dividends} onChange={e=>handleEdit(year, 'dividends', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-blue-400 outline-none" />
+                                           </td>
+                                           <td className="p-2">
+                                               <input type="number" value={d.lossPrice} onChange={e=>handleEdit(year, 'lossPrice', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-red-500 outline-none" />
                                            </td>
                                            
-                                           <td className="p-2 border-r border-slate-800/50">
-                                               <input type="number" value={d.loss} onChange={e=>handleEdit(year, 'loss', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.locked ? 'text-slate-500' : 'text-orange-400'}`} />
+                                           {/* RESULTADOS CALCULADOS */}
+                                           <td className="p-2 border-l border-slate-800/50 bg-slate-900/20">
+                                               <input type="number" value={d.resNoDiv} onChange={e=>handleEdit(year, 'resNoDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resNoDiv >=0 ? 'text-slate-200':'text-red-400'}`} />
+                                           </td>
+                                           <td className="p-2 bg-slate-900/20">
+                                               <input type="number" value={d.resWithDiv} onChange={e=>handleEdit(year, 'resWithDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resWithDiv >=0 ? 'text-white':'text-red-400'}`} />
                                            </td>
                                            
-                                           <td className="p-2 border-r border-slate-800/50">
-                                               <input type="number" value={d.fees} onChange={e=>handleEdit(year, 'fees', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-500 outline-none" />
-                                           </td>
-
-                                           <td className="p-2 border-r border-slate-800/50 bg-blue-900/5">
-                                               <input type="number" value={d.result} onChange={e=>handleEdit(year, 'result', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-black text-lg outline-none ${isPos ? 'text-blue-300' : 'text-red-400'}`} />
-                                           </td>
-
-                                           <td className="p-2 border-r border-slate-800/50">
+                                           {/* IMPUESTOS Y ACUMULADO */}
+                                           <td className="p-2">
                                                <input type="number" value={d.tax} onChange={e=>handleEdit(year, 'tax', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-purple-400 font-bold outline-none" />
                                            </td>
-
-                                           <td className="p-2 border-r border-slate-800/50">
-                                               <div className={`text-right font-black ${d.accumulated >= 0 ? 'text-white' : 'text-red-500'}`}>{formatMoney(d.accumulated, baseCurrency)}</div>
+                                           <td className="p-2 border-r border-slate-800 bg-slate-900/10">
+                                               <div className={`text-right font-bold ${d.accumulated >= 0 ? 'text-yellow-500' : 'text-red-500'}`}>{formatMoney(d.accumulated, baseCurrency)}</div>
                                            </td>
 
-                                           <td className="p-2 text-center">
-                                                <input type="checkbox" checked={d.locked} onChange={()=>toggleLock(year)} className="w-4 h-4 accent-red-500 cursor-pointer" />
+                                           {/* SECCIÓN RENTA (FONDO OSCURO) */}
+                                           <td className="p-2 border-l-4 border-slate-900 bg-[#161b25]">
+                                               <input type="number" value={d.rentaResNoDiv} onChange={e=>handleEdit(year, 'rentaResNoDiv', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-300 outline-none font-bold" />
+                                           </td>
+                                           <td className="p-2 bg-[#161b25]">
+                                               <input type="number" value={d.rentaFees} onChange={e=>handleEdit(year, 'rentaFees', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-500 outline-none" />
+                                           </td>
+                                           <td className="p-2 bg-[#161b25]">
+                                               <input type="number" value={d.rentaAdj} onChange={e=>handleEdit(year, 'rentaAdj', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-300 outline-none border-b border-slate-700/50 focus:border-blue-500" />
+                                           </td>
+                                           <td className="p-2 bg-[#161b25]">
+                                               <input type="number" value={d.rentaBase} onChange={e=>handleEdit(year, 'rentaBase', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-blue-200 font-bold outline-none" />
                                            </td>
                                        </tr>
                                    );
                                })}
+                               {/* FILA DE TOTALES */}
                                <tr className="bg-slate-900 border-t-2 border-slate-700 text-white font-bold text-xs sticky bottom-0 z-20 shadow-xl">
-                                   <td className="p-4 text-center">TOTALES</td>
-                                   <td className="p-4 text-right text-green-400">{formatMoney(totals.profit, baseCurrency)}</td>
-                                   <td className="p-4 text-right text-orange-400">{formatMoney(totals.loss, baseCurrency)}</td>
-                                   <td className="p-4 text-right text-slate-500">{formatMoney(totals.fees, baseCurrency)}</td>
-                                   <td className="p-4 text-right text-blue-300 bg-blue-900/20 text-lg">{formatMoney(totals.result, baseCurrency)}</td>
-                                   <td className="p-4 text-right text-purple-400">{formatMoney(totals.tax, baseCurrency)}</td>
-                                   <td className="p-4 bg-slate-950"></td>
-                                   <td></td>
+                                   <td colSpan="3" className="p-3 text-right text-[10px] uppercase text-slate-500 tracking-widest sticky left-0 z-30 bg-slate-900">Totales Globales:</td>
+                                   <td className="p-3 text-right text-green-500">{formatMoney(totals.profitPrice, baseCurrency)}</td>
+                                   <td className="p-3 text-right text-blue-400">{formatMoney(totals.dividends, baseCurrency)}</td>
+                                   <td className="p-3 text-right text-red-500">{formatMoney(totals.lossPrice, baseCurrency)}</td>
+                                   <td className="p-3 text-right text-slate-300">{formatMoney(totals.resNoDiv, baseCurrency)}</td>
+                                   <td className="p-3 text-right text-white text-sm">{formatMoney(totals.resWithDiv, baseCurrency)}</td>
+                                   <td className="p-3 text-right text-purple-400">{formatMoney(totals.tax, baseCurrency)}</td>
+                                   <td className="p-3 bg-slate-950"></td>
+                                   <td className="p-3 bg-[#11151d]"></td>
+                                   <td className="p-3 text-right text-slate-500 bg-[#11151d]">{formatMoney(totals.fees, baseCurrency)}</td>
+                                   <td className="p-3 bg-[#11151d]"></td>
+                                   <td className="p-3 text-right text-blue-200 bg-[#11151d]">{formatMoney(totals.rentaBase, baseCurrency)}</td>
                                </tr>
                            </tbody>
                        </table>
                    </div>
               </div>
           );
-      }
+      };
+
+
 
 const App = () => {
           const [activeTab, setActiveTab] = useState('portfolio');
