@@ -546,13 +546,8 @@
 
 
 
-      
-  
-
-
-
-// --- PESTAÑA DIVIDENDOS (VERSIÓN COMPLETA RECONSTRUIDA) ---
- const DividendTab = ({ portfolio, setPortfolio, baseCurrency }) => {
+      // --- PESTAÑA DIVIDENDOS (FINAL: CON TOTALES MENSUALES) ---
+      const DividendTab = ({ portfolio, setPortfolio, baseCurrency }) => {
           const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
           
           const filtered = useMemo(() => portfolio.filter(p => {
@@ -585,9 +580,13 @@
 
           const stats = useMemo(() => {
               let tNet = 0, tOrg = 0, tDest = 0, tBruto = 0, tDIB = 0, tDI15 = 0;
+              // Inicializamos array para totales mensuales [0..11] -> {n, o, d}
+              const monthlyT = Array.from({ length: 12 }, () => ({ n: 0, o: 0, d: 0 }));
               
               const rows = filtered.map(p => {
                   const ds = (p.dividends || []).filter(d => d.year === selectedYear);
+                  
+                  // Acumulados por Valor
                   const n = ds.reduce((a, b) => a + b.net, 0);
                   const o = ds.reduce((a, b) => a + b.taxOrigin, 0);
                   const d = ds.reduce((a, b) => a + b.taxDest, 0);
@@ -596,13 +595,23 @@
                   const diBruto = o > 0 ? b : 0;
                   const di15 = o > 0 ? b * 0.15 : 0;
                   
+                  // Sumar a totales globales
                   tNet += n; tOrg += o; tDest += d; tBruto += b;
                   tDIB += diBruto; tDI15 += di15;
+
+                  // Sumar a totales mensuales específicos
+                  ds.forEach(div => {
+                      if (div.month >= 0 && div.month < 12) {
+                          monthlyT[div.month].n += div.net || 0;
+                          monthlyT[div.month].o += div.taxOrigin || 0;
+                          monthlyT[div.month].d += div.taxDest || 0;
+                      }
+                  });
                   
                   return { id: p.id, name: p.name || p.ticker, n, o, d, b, diBruto, di15 };
               });
               
-              return { rows, tNet, tOrg, tDest, tBruto, tDIB, tDI15 };
+              return { rows, tNet, tOrg, tDest, tBruto, tDIB, tDI15, monthlyT };
           }, [filtered, selectedYear]);
 
           return (
@@ -652,7 +661,6 @@
                           </thead>
                           <tbody>
                               {stats.rows.map(r => {
-                                  // LÓGICA DE COLOR Y FECHA AÑADIDA AQUÍ
                                   const p = portfolio.find(x => x.id === r.id);
                                   const isSold = !!p.sellDate;
                                   return (
@@ -685,11 +693,25 @@
                                       </tr>
                                   );
                               })}
-                              <tr className="bg-slate-900 font-black text-white text-xs border-t-2 border-slate-700">
-                                  <td colSpan="2" className="p-3 text-right sticky left-0 bg-slate-900 uppercase tracking-widest">Suma Total Columnas Doble Imp. →</td>
-                                  <td colSpan="12"></td>
-                                  <td className="p-3 text-center bg-purple-600/50">{formatN(stats.tDIB)}</td>
-                                  <td className="p-3 text-center bg-purple-800/50">{formatN(stats.tDI15)}</td>
+                              
+                              {/* FILA DE TOTALES MENSUALES Y GLOBALES */}
+                              <tr className="bg-slate-900 font-black text-white text-xs border-t-2 border-slate-700 sticky bottom-0 z-30 shadow-2xl">
+                                  <td colSpan="2" className="p-3 text-right sticky left-0 bg-slate-900 uppercase tracking-widest border-r border-slate-700">TOTALES MENSUALES →</td>
+                                  
+                                  {/* Renderizar sumas de cada mes */}
+                                  {MONTHS.map((_, i) => (
+                                      <td key={i} className="p-1 border-l border-slate-700 bg-[#0f121a]">
+                                          <div className="grid grid-cols-3 gap-0.5 text-[7px] font-mono text-center">
+                                              <span className="text-green-400">{formatN(stats.monthlyT[i].n)}</span>
+                                              <span className="text-slate-500">{formatN(stats.monthlyT[i].o)}</span>
+                                              <span className="text-slate-500">{formatN(stats.monthlyT[i].d)}</span>
+                                          </div>
+                                      </td>
+                                  ))}
+
+                                  {/* Totales Doble Imposición */}
+                                  <td className="p-3 text-center bg-purple-600/20 text-purple-300 border-l border-purple-500/30">{formatN(stats.tDIB)}</td>
+                                  <td className="p-3 text-center bg-purple-800/20 text-purple-300 border-l border-slate-700">{formatN(stats.tDI15)}</td>
                               </tr>
                           </tbody>
                       </table>
@@ -712,7 +734,8 @@
                   </div>
               </div>
           );
-      };   
+      };
+ 
 
 
 
