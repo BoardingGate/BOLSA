@@ -738,7 +738,7 @@
 
 
       // --- PESTAÑA DIVIDENDOS (FINAL: CON TOTALES MENSUALES) ---
-      const DividendTab = ({ portfolio, setPortfolio, baseCurrency }) => {
+   const DividendTab = ({ portfolio, setPortfolio, baseCurrency }) => {
           const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
           
           const filtered = useMemo(() => portfolio.filter(p => {
@@ -753,179 +753,76 @@
                   if (p.id !== id) return p;
                   let divs = [...(p.dividends || [])];
                   const idx = divs.findIndex(d => d.year === selectedYear && d.month === month);
-                  if (idx >= 0) {
-                      divs[idx][field] = numVal;
-                  } else {
-                      divs.push({ 
-                          id: Date.now() + Math.random(), 
-                          year: selectedYear, 
-                          month, 
-                          net: field === 'net' ? numVal : 0, 
-                          taxOrigin: field === 'taxOrigin' ? numVal : 0, 
-                          taxDest: field === 'taxDest' ? numVal : 0 
-                      });
-                  }
+                  if (idx >= 0) divs[idx][field] = numVal; else divs.push({ id: Date.now() + Math.random(), year: selectedYear, month, net: field === 'net' ? numVal : 0, taxOrigin: field === 'taxOrigin' ? numVal : 0, taxDest: field === 'taxDest' ? numVal : 0 });
                   return { ...p, dividends: divs };
               }));
           };
 
           const stats = useMemo(() => {
               let tNet = 0, tOrg = 0, tDest = 0, tBruto = 0, tDIB = 0, tDI15 = 0;
-              // Inicializamos array para totales mensuales [0..11] -> {n, o, d}
               const monthlyT = Array.from({ length: 12 }, () => ({ n: 0, o: 0, d: 0 }));
-              
               const rows = filtered.map(p => {
                   const ds = (p.dividends || []).filter(d => d.year === selectedYear);
-                  
-                  // Acumulados por Valor
                   const n = ds.reduce((a, b) => a + b.net, 0);
                   const o = ds.reduce((a, b) => a + b.taxOrigin, 0);
                   const d = ds.reduce((a, b) => a + b.taxDest, 0);
                   const b = n + o + d;
-                  
                   const diBruto = o > 0 ? b : 0;
                   const di15 = o > 0 ? b * 0.15 : 0;
-                  
-                  // Sumar a totales globales
-                  tNet += n; tOrg += o; tDest += d; tBruto += b;
-                  tDIB += diBruto; tDI15 += di15;
-
-                  // Sumar a totales mensuales específicos
-                  ds.forEach(div => {
-                      if (div.month >= 0 && div.month < 12) {
-                          monthlyT[div.month].n += div.net || 0;
-                          monthlyT[div.month].o += div.taxOrigin || 0;
-                          monthlyT[div.month].d += div.taxDest || 0;
-                      }
-                  });
-                  
+                  tNet += n; tOrg += o; tDest += d; tBruto += b; tDIB += diBruto; tDI15 += di15;
+                  ds.forEach(div => { if (div.month >= 0 && div.month < 12) { monthlyT[div.month].n += div.net || 0; monthlyT[div.month].o += div.taxOrigin || 0; monthlyT[div.month].d += div.taxDest || 0; } });
                   return { id: p.id, name: p.name || p.ticker, n, o, d, b, diBruto, di15 };
               });
-              
               return { rows, tNet, tOrg, tDest, tBruto, tDIB, tDI15, monthlyT };
           }, [filtered, selectedYear]);
+
+          const handlePrint = () => {
+              const printWindow = window.open('', '', 'height=800,width=1200');
+              const emissionTime = new Date().toLocaleString();
+              let html = `<html><head><title>Informe Dividendos</title><style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:9px;} h1{font-size:16px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:20px;} th{background:#f1f5f9;text-align:center;padding:4px;border:1px solid #94a3b8;font-size:8px;text-transform:uppercase;} td{padding:4px;border:1px solid #e2e8f0;text-align:right;} .name{text-align:left;font-weight:bold;} .header-row{background:#e2e8f0;} .sub-col{font-size:7px;color:#666;} .total-row{background:#f1f5f9;font-weight:bold;}</style></head><body>`;
+              html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:10px;"><div><h1>INFORME DE DIVIDENDOS AÑO: ${selectedYear}</h1></div><div style="font-size:9px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`;
+              
+              html += `<table><thead><tr><th rowspan="2" style="width:150px;">Valor</th><th rowspan="2">ACUMULADO</th>`;
+              MONTHS.forEach(m => html += `<th colspan="3">${m}</th>`);
+              html += `<th rowspan="2">BRUTO D.I.</th><th rowspan="2">15% D.I.</th></tr><tr>`;
+              MONTHS.forEach(() => html += `<th class="sub-col">N</th><th class="sub-col">O</th><th class="sub-col">D</th>`);
+              html += `</tr></thead><tbody>`;
+
+              stats.rows.forEach(r => {
+                  html += `<tr><td class="name">${r.name}</td><td>${formatN(r.b)}</td>`;
+                  MONTHS.forEach((_, i) => {
+                      const p = portfolio.find(x => x.id === r.id);
+                      const d = (p.dividends || []).find(dv => dv.year === selectedYear && dv.month === i) || {net:0, taxOrigin:0, taxDest:0};
+                      html += `<td>${d.net?formatN(d.net):''}</td><td>${d.taxOrigin?formatN(d.taxOrigin):''}</td><td>${d.taxDest?formatN(d.taxDest):''}</td>`;
+                  });
+                  html += `<td>${formatN(r.diBruto)}</td><td>${formatN(r.di15)}</td></tr>`;
+              });
+
+              html += `<tr class="total-row"><td colspan="2" style="text-align:right;">TOTALES MENSUALES -></td>`;
+              MONTHS.forEach((_, i) => html += `<td>${formatN(stats.monthlyT[i].n)}</td><td>${formatN(stats.monthlyT[i].o)}</td><td>${formatN(stats.monthlyT[i].d)}</td>`);
+              html += `<td>${formatN(stats.tDIB)}</td><td>${formatN(stats.tDI15)}</td></tr>`;
+              
+              html += `</tbody></table><div style="margin-top:20px; font-size:10px;"><b>TOTALES GLOBALES:</b> Bruto: ${formatMoney(stats.tBruto, baseCurrency)} | Ret. Origen: ${formatMoney(stats.tOrg, baseCurrency)} | Ret. Destino: ${formatMoney(stats.tDest, baseCurrency)} | Neto: ${formatMoney(stats.tNet, baseCurrency)}</div></body></html>`;
+              printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(()=>printWindow.print(),500);
+          };
 
           return (
               <div className="h-full flex flex-col p-4 overflow-hidden fade-in">
                   <div className="flex justify-between items-center mb-4 bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
-                      <div className="flex items-center gap-4">
-                          <button onClick={() => setSelectedYear(y => y - 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">←</button>
-                          <span className="text-2xl font-bold font-display text-blue-400">{selectedYear}</span>
-                          <button onClick={() => setSelectedYear(y => y + 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">→</button>
-                      </div>
-                      <div className="flex gap-8">
-                          <div className="text-right">
-                              <div className="text-[10px] text-slate-500 uppercase font-bold">Total Bruto</div>
-                              <div className="text-xl font-bold text-white">{formatMoney(stats.tBruto, baseCurrency)}</div>
-                          </div>
-                          <div className="text-right border-l border-slate-700 pl-8">
-                              <div className="text-[10px] text-red-400 uppercase font-bold">Total Retenciones</div>
-                              <div className="text-xl font-bold text-red-400">{formatMoney(stats.tOrg + stats.tDest, baseCurrency)}</div>
-                              <div className="text-[9px] text-slate-500 mt-0.5 font-bold uppercase">
-                                  Origen: {formatMoney(stats.tOrg, baseCurrency)} | Destino: {formatMoney(stats.tDest, baseCurrency)}
-                              </div>
-                          </div>
-                          <div className="text-right border-l border-slate-700 pl-8">
-                              <div className="text-[10px] text-green-400 uppercase font-bold">Total Netos</div>
-                              <div className="text-xl font-bold text-green-400">{formatMoney(stats.tNet, baseCurrency)}</div>
-                          </div>
+                      <div className="flex items-center gap-4"><button onClick={() => setSelectedYear(y => y - 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">←</button><span className="text-2xl font-bold font-display text-blue-400">{selectedYear}</span><button onClick={() => setSelectedYear(y => y + 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">→</button></div>
+                      <div className="flex gap-4 items-center">
+                          <div className="flex gap-8 mr-4"><div className="text-right"><div className="text-[10px] text-slate-500 uppercase font-bold">Total Bruto</div><div className="text-xl font-bold text-white">{formatMoney(stats.tBruto, baseCurrency)}</div></div><div className="text-right border-l border-slate-700 pl-8"><div className="text-[10px] text-red-400 uppercase font-bold">Total Retenciones</div><div className="text-xl font-bold text-red-400">{formatMoney(stats.tOrg + stats.tDest, baseCurrency)}</div></div><div className="text-right border-l border-slate-700 pl-8"><div className="text-[10px] text-green-400 uppercase font-bold">Total Netos</div><div className="text-xl font-bold text-green-400">{formatMoney(stats.tNet, baseCurrency)}</div></div></div>
+                          <button onClick={handlePrint} className="bg-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button>
                       </div>
                   </div>
-
                   <div className="flex-1 overflow-auto custom-scrollbar border border-slate-800 rounded-xl bg-slate-950">
-                      <table className="w-full text-[10px] border-collapse min-w-[2200px]">
-                          <thead className="sticky top-0 z-20 bg-slate-900 border-b border-slate-700 uppercase">
-                              <tr>
-                                  <th className="p-2 w-[180px] text-left sticky left-0 bg-slate-900 z-30 border-r border-slate-800">VALOR (LOTE)</th>
-                                  <th className="p-2 w-[150px] bg-yellow-900/20 text-yellow-500 text-center">ACUM. (B / O / D)</th>
-                                  {MONTHS.map(m => (
-                                      <th key={m} className="p-1 border-l border-slate-800 w-[140px]">
-                                          <div className="text-blue-300 mb-1 text-center">{m}</div>
-                                          <div className="grid grid-cols-3 gap-0.5 text-[7px] text-slate-500">
-                                              <span>NETO</span><span>ORIG</span><span>DEST</span>
-                                          </div>
-                                      </th>
-                                  ))}
-                                  <th className="p-2 w-[110px] bg-purple-900/30 border-l border-purple-500/50">BRUTO D.I.</th>
-                                  <th className="p-2 w-[110px] bg-purple-900/30 border-l border-slate-800">15% D.I.</th>
-                              </tr>
-                          </thead>
-                          <tbody>
-                              {stats.rows.map(r => {
-                                  const p = portfolio.find(x => x.id === r.id);
-                                  const isSold = !!p.sellDate;
-                                  return (
-                                      <tr key={r.id} className="hover:bg-white/5 border-b border-slate-800">
-                                          <td className="p-2 sticky left-0 bg-slate-950 border-r border-slate-800">
-                                              <div className={`font-bold ${isSold ? 'text-red-400' : 'text-green-400'}`}>{r.name}</div>
-                                              <div className="text-[8px] text-slate-500 font-mono mt-0.5">
-                                                  {isSold ? `V: ${p.sellDate}` : `C: ${p.buyDate}`}
-                                              </div>
-                                          </td>
-                                          <td className="p-2 bg-yellow-900/5 text-right font-mono space-x-2 text-[9px]">
-                                              <span className="text-white">{formatN(r.b)}</span> | 
-                                              <span className="text-slate-400">{formatN(r.o)}</span> | 
-                                              <span className="text-slate-400">{formatN(r.d)}</span>
-                                          </td>
-                                          {MONTHS.map((_, i) => {
-                                              const d = (p.dividends || []).find(dv => dv.year === selectedYear && dv.month === i) || {net:0, taxOrigin:0, taxDest:0};
-                                              return (
-                                                  <td key={i} className="p-1 border-l border-slate-800">
-                                                      <div className="grid grid-cols-3 gap-1">
-                                                          <input type="number" step="0.01" value={d.net || ''} onChange={e => handleDivChange(r.id, i, 'net', e.target.value)} className="w-full text-center text-green-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-green-500" />
-                                                          <input type="number" step="0.01" value={d.taxOrigin || ''} onChange={e => handleDivChange(r.id, i, 'taxOrigin', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" />
-                                                          <input type="number" step="0.01" value={d.taxDest || ''} onChange={e => handleDivChange(r.id, i, 'taxDest', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" />
-                                                      </div>
-                                                  </td>
-                                              );
-                                          })}
-                                          <td className="p-2 text-center bg-purple-900/10 font-bold text-purple-300">{formatN(r.diBruto)}</td>
-                                          <td className="p-2 text-center bg-purple-900/10 border-l border-slate-800 font-bold text-purple-300">{formatN(r.di15)}</td>
-                                      </tr>
-                                  );
-                              })}
-                              
-                              {/* FILA DE TOTALES MENSUALES Y GLOBALES */}
-                              <tr className="bg-slate-900 font-black text-white text-xs border-t-2 border-slate-700 sticky bottom-0 z-30 shadow-2xl">
-                                  <td colSpan="2" className="p-3 text-right sticky left-0 bg-slate-900 uppercase tracking-widest border-r border-slate-700">TOTALES MENSUALES →</td>
-                                  
-                                  {/* Renderizar sumas de cada mes */}
-                                  {MONTHS.map((_, i) => (
-                                      <td key={i} className="p-1 border-l border-slate-700 bg-[#0f121a]">
-                                          <div className="grid grid-cols-3 gap-0.5 text-[7px] font-mono text-center">
-                                              <span className="text-green-400">{formatN(stats.monthlyT[i].n)}</span>
-                                              <span className="text-slate-500">{formatN(stats.monthlyT[i].o)}</span>
-                                              <span className="text-slate-500">{formatN(stats.monthlyT[i].d)}</span>
-                                          </div>
-                                      </td>
-                                  ))}
-
-                                  {/* Totales Doble Imposición */}
-                                  <td className="p-3 text-center bg-purple-600/20 text-purple-300 border-l border-purple-500/30">{formatN(stats.tDIB)}</td>
-                                  <td className="p-3 text-center bg-purple-800/20 text-purple-300 border-l border-slate-700">{formatN(stats.tDI15)}</td>
-                              </tr>
-                          </tbody>
-                      </table>
+                      <table className="w-full text-[10px] border-collapse min-w-[2200px]"><thead className="sticky top-0 z-20 bg-slate-900 border-b border-slate-700 uppercase"><tr><th className="p-2 w-[180px] text-left sticky left-0 bg-slate-900 z-30 border-r border-slate-800">VALOR (LOTE)</th><th className="p-2 w-[150px] bg-yellow-900/20 text-yellow-500 text-center">ACUM. (B / O / D)</th>{MONTHS.map(m => (<th key={m} className="p-1 border-l border-slate-800 w-[140px]"><div className="text-blue-300 mb-1 text-center">{m}</div><div className="grid grid-cols-3 gap-0.5 text-[7px] text-slate-500"><span>NETO</span><span>ORIG</span><span>DEST</span></div></th>))}<th className="p-2 w-[110px] bg-purple-900/30 border-l border-purple-500/50">BRUTO D.I.</th><th className="p-2 w-[110px] bg-purple-900/30 border-l border-slate-800">15% D.I.</th></tr></thead>
+                          <tbody>{stats.rows.map(r => { const p = portfolio.find(x => x.id === r.id); const isSold = !!p.sellDate; return ( <tr key={r.id} className="hover:bg-white/5 border-b border-slate-800"><td className="p-2 sticky left-0 bg-slate-950 border-r border-slate-800"><div className={`font-bold ${isSold ? 'text-red-400' : 'text-green-400'}`}>{r.name}</div><div className="text-[8px] text-slate-500 font-mono mt-0.5">{isSold ? `V: ${p.sellDate}` : `C: ${p.buyDate}`}</div></td><td className="p-2 bg-yellow-900/5 text-right font-mono space-x-2 text-[9px]"><span className="text-white">{formatN(r.b)}</span>|<span className="text-slate-400">{formatN(r.o)}</span>|<span className="text-slate-400">{formatN(r.d)}</span></td>{MONTHS.map((_, i) => { const d = (p.dividends || []).find(dv => dv.year === selectedYear && dv.month === i) || {net:0, taxOrigin:0, taxDest:0}; return ( <td key={i} className="p-1 border-l border-slate-800"><div className="grid grid-cols-3 gap-1"><input type="number" step="0.01" value={d.net || ''} onChange={e => handleDivChange(r.id, i, 'net', e.target.value)} className="w-full text-center text-green-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-green-500" /><input type="number" step="0.01" value={d.taxOrigin || ''} onChange={e => handleDivChange(r.id, i, 'taxOrigin', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" /><input type="number" step="0.01" value={d.taxDest || ''} onChange={e => handleDivChange(r.id, i, 'taxDest', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" /></div></td> ); })}<td className="p-2 text-center bg-purple-900/10 font-bold text-purple-300">{formatN(r.diBruto)}</td><td className="p-2 text-center bg-purple-900/10 border-l border-slate-800 font-bold text-purple-300">{formatN(r.di15)}</td></tr> ); })}<tr className="bg-slate-900 font-black text-white text-xs border-t-2 border-slate-700 sticky bottom-0 z-30 shadow-2xl"><td colSpan="2" className="p-3 text-right sticky left-0 bg-slate-900 uppercase tracking-widest border-r border-slate-700">TOTALES MENSUALES →</td>{MONTHS.map((_, i) => ( <td key={i} className="p-1 border-l border-slate-700 bg-[#0f121a]"><div className="grid grid-cols-3 gap-0.5 text-[7px] font-mono text-center"><span className="text-green-400">{formatN(stats.monthlyT[i].n)}</span><span className="text-slate-500">{formatN(stats.monthlyT[i].o)}</span><span className="text-slate-500">{formatN(stats.monthlyT[i].d)}</span></div></td> ))}<td className="p-3 text-center bg-purple-600/20 text-purple-300 border-l border-purple-500/30">{formatN(stats.tDIB)}</td><td className="p-3 text-center bg-purple-800/20 text-purple-300 border-l border-slate-700">{formatN(stats.tDI15)}</td></tr></tbody></table>
                   </div>
-
-                  <div className="mt-4 bg-blue-900/20 p-4 rounded-xl border border-blue-500/30 flex justify-between items-center px-10 shrink-0">
-                      <div className="text-blue-400 font-display font-bold text-xs uppercase tracking-widest">Confeccionar Renta (AEAT):</div>
-                      <div className="text-center">
-                          <div className="text-[9px] uppercase font-bold text-blue-300">Dividendos Brutos</div>
-                          <div className="text-lg font-bold text-white">{formatMoney(stats.tBruto, baseCurrency)}</div>
-                      </div>
-                      <div className="text-center">
-                          <div className="text-[9px] uppercase font-bold text-blue-300">Retenido España (Destino)</div>
-                          <div className="text-lg font-bold text-white">{formatMoney(stats.tDest, baseCurrency)}</div>
-                      </div>
-                      <div className="text-center bg-blue-600 px-10 py-1 rounded shadow-lg shadow-blue-900/40">
-                          <div className="text-[9px] uppercase font-bold text-white">Íntegro Renta (Bruto - Destino)</div>
-                          <div className="text-xl font-bold text-white">{formatMoney(stats.tBruto - stats.tDest, baseCurrency)}</div>
-                      </div>
-                  </div>
+                  <div className="mt-4 bg-blue-900/20 p-4 rounded-xl border border-blue-500/30 flex justify-between items-center px-10 shrink-0"><div className="text-blue-400 font-display font-bold text-xs uppercase tracking-widest">Confeccionar Renta (AEAT):</div><div className="text-center"><div className="text-[9px] uppercase font-bold text-blue-300">Dividendos Brutos</div><div className="text-lg font-bold text-white">{formatMoney(stats.tBruto, baseCurrency)}</div></div><div className="text-center"><div className="text-[9px] uppercase font-bold text-blue-300">Retenido España (Destino)</div><div className="text-lg font-bold text-white">{formatMoney(stats.tDest, baseCurrency)}</div></div><div className="text-center bg-blue-600 px-10 py-1 rounded shadow-lg shadow-blue-900/40"><div className="text-[9px] uppercase font-bold text-white">Íntegro Renta (Bruto - Destino)</div><div className="text-xl font-bold text-white">{formatMoney(stats.tBruto - stats.tDest, baseCurrency)}</div></div></div>
               </div>
           );
-      };
+      }
  
 
 
