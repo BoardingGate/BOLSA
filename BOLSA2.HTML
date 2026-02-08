@@ -1,4 +1,5 @@
 
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -139,7 +140,7 @@
       };
 
       // --- COMPONENTE GRAFICOS AVANZADO (Ejes y Escalas) ---
-      const SimpleChart = ({ type, data, title, height = 200, color = "#3b82f6" }) => {
+      const SimpleChart = ({ type, data, title, height = 400, color = "#3b82f6" }) => {
           if (!data || data.length === 0) return <div className="text-center text-xs text-slate-500 py-4">Sin datos suficientes</div>;
 
           // 1. Escalas y Rangos
@@ -148,7 +149,7 @@
           const maxVal = Math.max(0, ...values);
           const range = (maxVal - minVal) * 1.1 || 1; 
           
-          const padding = { top: 20, right: 10, bottom: 40, left: 50 };
+          const padding = { top: 20, right: 10, bottom: 50, left: 50 };
           const chartH = height; 
           const chartW = 1000; 
           const innerH = chartH - padding.top - padding.bottom;
@@ -174,26 +175,15 @@
 
           // Gradiente dinámico para línea (Verde arriba de 0, Rojo abajo de 0)
           const gradId = `grad-${title.replace(/[^a-zA-Z0-9]/g, '')}`;
-          let offsetZero = 0;
-          if (maxVal > 0 && minVal < 0) {
-              offsetZero = maxVal / (maxVal - minVal); // Porcentaje relativo del rango total donde está el 0
-          } else if (minVal >= 0) {
-              offsetZero = 1; // Todo es positivo (verde)
-          } else {
-              offsetZero = 0; // Todo es negativo (rojo)
-          }
+          // Calcular el porcentaje donde cae el 0.
+          // El rango va de effectiveMin (abajo, 100%) a maxVal (arriba, 0%).
+          const effectiveMin = minVal < 0 ? minVal * 1.1 : 0;
+          const effectiveMax = minVal < 0 ? (maxVal * 1.1) : (maxVal * 1.1); // max siempre un poco más alto
+          const totalRange = effectiveMax - effectiveMin;
           
-          // El SVG usa coordenadas invertidas (0 arriba), así que offset 0 es arriba (max positivo)
-          // Gradient va de arriba (0%) a abajo (100%).
-          // Si offsetZero = 1 (todo pos), queremos verde hasta el final.
-          // Si offsetZero = 0.5 (mitad), queremos verde hasta 50%, luego rojo.
-          // OJO: Y crece hacia abajo. MaxVal está en Y=top (0%). MinVal está en Y=bottom (100%).
-          // offsetZero calculado como (max / range) nos da qué % del rango es positivo.
-          // Ejemplo: Max 100, Min -100. Range 200. offsetZero = 0.5. El 0 está al 50%.
-          // De 0% a 50% es positivo (Verde). De 50% a 100% es negativo (Rojo).
-          const stopPct = (maxVal / (maxVal - minVal)) * 100;
-          // Ajuste fino si todo es + o -
-          const finalStop = minVal >= 0 ? 100 : (maxVal <= 0 ? 0 : stopPct);
+          // Porcentaje desde arriba (Max) hasta 0.
+          const zeroPct = totalRange === 0 ? 100 : ((effectiveMax - 0) / totalRange) * 100;
+          const finalStop = Math.max(0, Math.min(100, zeroPct));
 
           return (
               <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 flex flex-col h-full overflow-hidden relative">
@@ -201,7 +191,7 @@
                   <div className="flex-1 w-full relative">
                       {type === 'pie' ? (
                           <div className="flex items-center justify-center h-full gap-8">
-                             <svg viewBox="0 0 32 32" className="w-32 h-32 rotate-[-90deg]">
+                             <svg viewBox="0 0 32 32" className="w-48 h-48 rotate-[-90deg]">
                                 {(() => {
                                     const total = data.reduce((a, b) => a + Math.abs(b.value), 0) || 1;
                                     let acc = 0;
@@ -209,23 +199,28 @@
                                         const val = Math.abs(d.value);
                                         const pct = val / total;
                                         const dash = pct * 100;
-                                        const c = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'][i % 5];
+                                        const c = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#a855f7', '#06b6d4', '#f43f5e'][i % 8];
                                         const seg = <circle key={i} r="16" cx="16" cy="16" fill="transparent" stroke={c} strokeWidth="32" strokeDasharray={`${dash} 100`} strokeDashoffset={-1 * acc} className="hover:opacity-80 transition-all" />;
                                         acc += dash;
                                         return seg;
                                     });
                                 })()}
                              </svg>
-                             <div className="flex flex-col gap-1 max-h-[140px] overflow-y-auto custom-scrollbar">
+                             <div className="flex flex-col gap-1 max-h-[250px] overflow-y-auto custom-scrollbar min-w-[150px]">
                                 {(() => {
                                     const total = data.reduce((a, b) => a + Math.abs(b.value), 0) || 1;
                                     return data.map((d, i) => {
                                         const pct = (Math.abs(d.value) / total) * 100;
                                         return (
-                                            <div key={i} className="flex items-center gap-2 text-[9px] text-slate-300">
-                                                <span className="w-2 h-2 rounded-full" style={{backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'][i % 5]}}></span>
-                                                <span className="font-bold flex-1">{d.label}</span>
-                                                <span className="text-slate-500 font-mono">{pct.toFixed(1)}%</span>
+                                            <div key={i} className="flex items-center gap-2 text-[9px] text-slate-300 border-b border-slate-800/50 pb-1">
+                                                <span className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#a855f7', '#06b6d4', '#f43f5e'][i % 8]}}></span>
+                                                <div className="flex flex-col w-full">
+                                                    <span className="font-bold">{d.label}</span>
+                                                    <div className="flex justify-between w-full opacity-60 font-mono text-[8px]">
+                                                        <span>{formatN(d.value)}</span>
+                                                        <span>{pct.toFixed(1)}%</span>
+                                                    </div>
+                                                </div>
                                             </div>
                                         );
                                     });
@@ -264,7 +259,7 @@
                                   const points = data.map((d, i) => `${padding.left + (i * stepX)},${getY(d.value)}`).join(' ');
                                   const areaPoints = `${padding.left},${zeroY} ${points} ${chartW - padding.right},${zeroY}`;
                                   
-                                  const labelStep = Math.max(1, Math.floor(data.length / 6));
+                                  const labelStep = Math.max(1, Math.floor(data.length / 8));
 
                                   return (
                                       <g>
@@ -289,12 +284,18 @@
                                           {data.map((d, i) => (
                                               <g key={i}>
                                                  <circle cx={padding.left + (i * stepX)} cy={getY(d.value)} r="3" fill={d.value >= 0 ? "#22c55e" : "#ef4444"} className="hover:r-5 transition-all" />
-                                                 {/* Etiquetas X (Fechas MM/YY) */}
+                                                 {/* Etiquetas X (Fechas DD/MM y AA) */}
                                                  {(i % labelStep === 0 || i === data.length - 1) && (() => {
                                                      const dateObj = new Date(d.label);
+                                                     const day = dateObj.getDate().toString().padStart(2,'0');
                                                      const mm = (dateObj.getMonth()+1).toString().padStart(2,'0');
                                                      const yy = dateObj.getFullYear().toString().slice(-2);
-                                                     return <text x={padding.left + (i * stepX)} y={chartH - 10} textAnchor="middle" fill="#94a3b8" fontSize="10" fontWeight="bold">{`${mm}/${yy}`}</text>;
+                                                     return (
+                                                         <text x={padding.left + (i * stepX)} y={chartH - 25} textAnchor="middle" fill="#94a3b8" fontSize="9" fontWeight="bold">
+                                                             <tspan x={padding.left + (i * stepX)} dy="0">{day}/{mm}</tspan>
+                                                             <tspan x={padding.left + (i * stepX)} dy="10">{yy}</tspan>
+                                                         </text>
+                                                     );
                                                  })()}
                                               </g>
                                           ))}
@@ -309,41 +310,54 @@
       };
 
       // --- COMPONENTE ESTADÍSTICAS ---
-      const StatsBlock = ({ title, data, color, baseCurrency }) => (
-          <div className="glass-panel p-3 rounded-xl border-t-4 flex-1 min-w-[280px]" style={{borderTopColor: color}}>
-              <div className="flex justify-between items-center mb-1">
-                 <span className="text-[9px] font-bold text-slate-500 uppercase">{title}</span>
-                 <span className="text-[8px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 font-bold">{formatN(data.num, 0)} VALORES</span>
-              </div>
-              <div className="grid grid-cols-2 gap-2 mb-2">
-                  <div className="text-left">
-                      <div className="text-[8px] text-slate-500 uppercase font-black">Invertido</div>
-                      <div className="text-sm font-black text-slate-300">{formatMoney(data.inv, baseCurrency)}</div>
+      const StatsBlock = ({ title, data, color, baseCurrency, type }) => {
+          // Calcular Yield %: (Total Dividendos / Total Invertido) * 100
+          const yieldPct = data.inv > 0 ? (data.divN / data.inv) * 100 : 0;
+          
+          let titleColorClass = "text-slate-500";
+          if (type === 'active') titleColorClass = "text-green-500";
+          if (type === 'sold') titleColorClass = "text-orange-500";
+          if (type === 'total') titleColorClass = "text-purple-500";
+
+          return (
+              <div className="glass-panel p-3 rounded-xl border-t-4 flex-1 min-w-[280px]" style={{borderTopColor: color}}>
+                  <div className="flex justify-between items-center mb-1">
+                     <span className={`text-[9px] font-black uppercase ${titleColorClass}`}>{title}</span>
+                     <span className="text-[8px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 font-bold">{formatN(data.num, 0)} VALORES</span>
                   </div>
-                  <div className="text-right">
-                      <div className="text-[8px] text-slate-500 uppercase font-black">Valor Actual</div>
-                      <div className="text-sm font-black text-white">{formatMoney(data.cur, baseCurrency)}</div>
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                      <div className="text-left">
+                          <div className="text-[8px] text-slate-500 uppercase font-black">Invertido</div>
+                          <div className="text-sm font-black text-slate-300">{formatMoney(data.inv, baseCurrency)}</div>
+                      </div>
+                      <div className="text-right">
+                          <div className="text-[8px] text-slate-500 uppercase font-black">Valor Actual</div>
+                          <div className="text-sm font-black text-white">{formatMoney(data.cur, baseCurrency)}</div>
+                      </div>
+                  </div>
+                  <div className="text-center bg-slate-900/60 rounded-lg py-1 border border-slate-700/50 mb-2">
+                      <div className="text-[8px] text-slate-400 uppercase font-bold tracking-widest">BALANCE</div>
+                      <div className={`text-base font-black ${data.plPrice >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(data.plPrice, baseCurrency)}</div>
+                      <div className="text-[10px] text-slate-300 mt-1">Simple: <span className="font-bold text-white">{formatN(data.plP_S)}%</span> | Anual: <span className="font-bold text-white">{formatN(data.plP_A)}%</span></div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 border-t border-slate-800/50 pt-2">
+                      <div>
+                          <div className="text-[8px] text-blue-400 uppercase font-bold">Dividendos</div>
+                          <div className="text-xs font-bold text-blue-300">
+                              {formatMoney(data.divN, baseCurrency)} 
+                              <span className="text-[9px] text-slate-400 font-mono ml-1">[{formatN(yieldPct)}%]</span>
+                          </div>
+                          <div className="text-[7px] text-slate-500 mt-1">FX: <span className={data.fX >= 0 ? 'text-green-500' : 'text-red-500'}>{formatMoney(data.fX, baseCurrency)}</span></div>
+                      </div>
+                      <div className="text-right">
+                          <div className="text-[8px] text-purple-400 uppercase font-bold">Total Retorno</div>
+                          <div className="text-xs font-bold text-white">{formatMoney(data.plTotal, baseCurrency)}</div>
+                          <div className="text-[8px] text-slate-500">Total: <span className={`font-bold text-sm ${data.plTotal>=0?'text-green-400':'text-red-400'}`}>{formatN(data.plT_S)}%</span></div>
+                      </div>
                   </div>
               </div>
-              <div className="text-center bg-slate-900/60 rounded-lg py-1 border border-slate-700/50 mb-2">
-                  <div className="text-[8px] text-slate-400 uppercase font-bold tracking-widest">BALANCE</div>
-                  <div className={`text-base font-black ${data.plPrice >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(data.plPrice, baseCurrency)}</div>
-                  <div className="text-[10px] text-slate-300 mt-1">Simple: <span className="font-bold text-white">{formatN(data.plP_S)}%</span> | Anual: <span className="font-bold text-white">{formatN(data.plP_A)}%</span></div>
-              </div>
-              <div className="grid grid-cols-2 gap-2 border-t border-slate-800/50 pt-2">
-                  <div>
-                      <div className="text-[8px] text-blue-400 uppercase font-bold">Dividendos</div>
-                      <div className="text-xs font-bold text-blue-300">{formatMoney(data.divN, baseCurrency)}</div>
-                      <div className="text-[7px] text-slate-500 mt-1">FX: <span className={data.fX >= 0 ? 'text-green-500' : 'text-red-500'}>{formatMoney(data.fX, baseCurrency)}</span></div>
-                  </div>
-                  <div className="text-right">
-                      <div className="text-[8px] text-purple-400 uppercase font-bold">Total Retorno</div>
-                      <div className="text-xs font-bold text-white">{formatMoney(data.plTotal, baseCurrency)}</div>
-                      <div className="text-[8px] text-slate-500">Total: <span className={`font-bold text-sm ${data.plTotal>=0?'text-green-400':'text-red-400'}`}>{formatN(data.plT_S)}%</span></div>
-                  </div>
-              </div>
-          </div>
-      );
+          );
+      };
 
       const AnalysisTab = ({ apiKey, baseCurrency }) => {
           const [ticker, setTicker] = useState('');
@@ -620,8 +634,8 @@
                            <tr className="bg-slate-900 border-t-2 border-slate-700 text-white font-bold text-xs shadow-xl"><td colSpan="3" className="p-3 text-right text-[10px] uppercase text-slate-500 tracking-widest bg-slate-900 sticky left-0">Total Global: <span className="text-white ml-2">{formatN(totals.soldCount, 0)} Op.</span></td><td className="p-3 text-right text-green-500">{formatMoney(totals.profitPrice, baseCurrency)}</td><td className="p-3 text-right text-blue-400">{formatMoney(totals.dividends, baseCurrency)}</td><td className="p-3 text-right text-red-500">{formatMoney(totals.lossPrice, baseCurrency)}</td><td className="p-3 text-right text-slate-300">{formatMoney(totals.resNoDiv, baseCurrency)}</td><td className="p-3 text-right text-white text-sm">{formatMoney(totals.resWithDiv, baseCurrency)}</td><td className="p-3 text-right text-purple-400">{formatMoney(totals.tax, baseCurrency)}</td><td className="p-3 bg-slate-950"></td><td className="p-3 bg-[#11151d]"></td><td className="p-3 text-right text-slate-500 bg-[#11151d]">{formatMoney(totals.fees, baseCurrency)}</td><td className="p-3 bg-[#11151d]"></td><td className="p-3 text-right text-blue-200 bg-[#11151d]">{formatMoney(totals.rentaBase, baseCurrency)}</td></tr></tbody></table>
                    </div>
                    
-                   <div className="h-[300px] shrink-0">
-                       <SimpleChart type="bar" data={chartData} title="Beneficio/Pérdida Neto Total (Precio + Divs) por Año" height={250} />
+                   <div className="h-[400px] shrink-0">
+                       <SimpleChart type="bar" data={chartData} title="Beneficio/Pérdida Neto Total (Precio + Divs) por Año" height={400} />
                    </div>
               </div>
           );
@@ -671,6 +685,21 @@
               return isNaN(n) ? 0 : n;
           };
 
+          // Función para inferir geografía
+          const getRegion = (ticker) => {
+              if (!ticker) return 'Otros';
+              const t = ticker.toUpperCase();
+              if (t.endsWith('.MC')) return 'España';
+              if (t.endsWith('.DE')) return 'Alemania';
+              if (t.endsWith('.PA')) return 'Francia';
+              if (t.endsWith('.AS')) return 'Holanda';
+              if (t.endsWith('.MI')) return 'Italia';
+              if (t.endsWith('.L')) return 'Reino Unido';
+              if (t.endsWith('.TO')) return 'Canadá';
+              if (t.includes('.')) return 'Europa/Otros'; // Si tiene punto y no es de los anteriores
+              return 'EE.UU'; // Sin punto suele ser US
+          };
+
           // --- 1. LÓGICA DE FILTRADO Y ORDENACIÓN ---
           const filteredPortfolio = useMemo(() => {
               let list = portfolio.filter(p => {
@@ -695,34 +724,15 @@
                   return true;
               });
 
-              // ORDENACIÓN: 
-              // Active: Buy Date Desc (Newest First)
-              // Sold: Sell Date Desc (Newest First)
-              // All: Active (Buy Date Desc) then Sold (Sell Date Desc)
               return list.sort((a, b) => {
                   if (filterType === 'all') {
                       const aSold = !!a.sellDate; const bSold = !!b.sellDate;
-                      if (aSold !== bSold) return aSold ? 1 : -1; // Activas primero (aSold=false, bSold=true -> -1)
-                      
-                      // Si ambas son del mismo tipo
-                      if (!aSold) {
-                          // Ambas Activas -> Ordenar por Fecha Compra DESC (Más reciente arriba)
-                          return new Date(b.buyDate) - new Date(a.buyDate);
-                      } else {
-                          // Ambas Vendidas -> Ordenar por Fecha Venta DESC (Más reciente arriba)
-                          return new Date(b.sellDate) - new Date(a.sellDate);
-                      }
+                      if (aSold !== bSold) return aSold ? 1 : -1; 
+                      if (!aSold) return new Date(b.buyDate) - new Date(a.buyDate);
+                      else return new Date(b.sellDate) - new Date(a.sellDate);
                   }
-                  
-                  if (filterType === 'active') {
-                      // Solo activas -> Fecha Compra DESC
-                      return new Date(b.buyDate) - new Date(a.buyDate);
-                  }
-                  
-                  if (filterType === 'sold') {
-                      // Solo ventas -> Fecha Venta DESC
-                      return new Date(b.sellDate) - new Date(a.sellDate);
-                  }
+                  if (filterType === 'active') return new Date(b.buyDate) - new Date(a.buyDate);
+                  if (filterType === 'sold') return new Date(b.sellDate) - new Date(a.sellDate);
                   return 0;
               });
 
@@ -762,11 +772,10 @@
               };
           }, [filteredPortfolio, portfolio, filterText, filterDateStart, filterDateEnd, baseCurrency]);
 
-          // --- DATOS PARA GRAFICOS (AHORA REACTIVOS A CHECKS) ---
+          // --- DATOS PARA GRAFICOS (REACTIVOS A CHECKS) ---
           const activeFilteredPortfolio = useMemo(() => {
-              // Filtrar solo los visibles que estén activos (checked)
               return filteredPortfolio.filter(p => p.isActive !== false);
-          }, [filteredPortfolio]); // filteredPortfolio ya cambia cuando cambia portfolio (y por ende isActive)
+          }, [filteredPortfolio]); 
 
           const chartsData = useMemo(() => {
               // 1. Distribución (Pie)
@@ -775,7 +784,18 @@
                   value: (p.currentPrice * p.shares * p.currentFx)
               })).sort((a,b) => b.value - a.value);
 
-              // 2. Evolución (Linea Temporal) - AHORA CON FECHAS
+              // 2. Diversificación Geográfica (Pie)
+              const geoMap = {};
+              activeFilteredPortfolio.filter(p => !p.sellDate).forEach(p => {
+                  const region = getRegion(p.ticker);
+                  const val = (p.currentPrice * p.shares * p.currentFx);
+                  geoMap[region] = (geoMap[region] || 0) + val;
+              });
+              const geoDiversification = Object.keys(geoMap).map(k => ({
+                  label: k, value: geoMap[k]
+              })).sort((a,b) => b.value - a.value);
+
+              // 3. Evolución (Linea)
               const events = activeFilteredPortfolio.map(p => {
                    const isSold = !!p.sellDate;
                    const date = isSold ? p.sellDate : p.buyDate;
@@ -791,7 +811,7 @@
                   return { label: e.date, value: acc }; 
               });
 
-              return { distribution, evolution };
+              return { distribution, geoDiversification, evolution };
           }, [activeFilteredPortfolio]);
 
           // --- UPDATE AUTO ---
@@ -885,11 +905,11 @@
               const printWindow = window.open('', '', 'height=800,width=1200');
               const typeMap = { 'active': 'CARTERA ACTIVA', 'sold': 'HISTÓRICO VENTAS', 'all': 'INFORME GLOBAL' };
               const filterLabel = typeMap[filterType];
-              const dateLabel = (filterDateStart || filterDateEnd) ? ` | Fechas: ${filterDateStart || '..'} a ${filterDateEnd || '..'}` : '';
-              const textLabel = filterText ? ` | Buscando: "${filterText}"` : '';
               const emissionTime = new Date().toLocaleString();
 
-              const genStatsBlock = (t, d, c) => `
+              const genStatsBlock = (t, d, c) => {
+                  const yieldPct = d.inv > 0 ? (d.divN / d.inv) * 100 : 0;
+                  return `
                   <div style="border:1px solid #ccc; padding:5px; width:32%; border-top: 3px solid ${c}; background:#f9f9f9; font-size: 8px;">
                       <div style="font-weight:bold; color:#555; text-transform:uppercase; margin-bottom:2px;">${t} (${formatN(d.num, 0)} Val)</div>
                       <table style="width:100%; border:none; margin:0;">
@@ -897,14 +917,16 @@
                           <tr><td>Valor Act:</td><td style="text-align:right;"><b style="color:${c}">${formatMoney(d.cur, baseCurrency)}</b></td></tr>
                           <tr><td colspan="2" style="text-align:center; padding-top:5px; border-top:1px solid #ddd;"><b>BALANCE: ${formatMoney(d.plPrice, baseCurrency)}</b></td></tr>
                           <tr><td style="color:#666;">Rent. Simple/Anual:</td><td style="text-align:right;">${formatN(d.plP_S)}% / ${formatN(d.plP_A)}%</td></tr>
-                          <tr><td>Dividendos:</td><td style="text-align:right; color:#2563eb;">${formatMoney(d.divN, baseCurrency)}</td></tr>
+                          <tr><td>Dividendos:</td><td style="text-align:right; color:#2563eb;">${formatMoney(d.divN, baseCurrency)} [${formatN(yieldPct)}%]</td></tr>
+                          <tr><td>FX Total:</td><td style="text-align:right;">${formatMoney(d.fX, baseCurrency)}</td></tr>
                           <tr><td><b>Rdto Total:</b></td><td style="text-align:right;"><b>${formatMoney(d.plTotal, baseCurrency)}</b></td></tr>
                       </table>
                   </div>`;
+              };
 
               let html = `<html><head><title>Informe Cartera</title>`;
               html += `<style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:7px;} h1{font-size:14px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th{background:#f1f5f9;text-align:left;padding:3px;border-bottom:1px solid #94a3b8;font-size:6px;text-transform:uppercase;} td{padding:3px;border-bottom:1px solid #e2e8f0;vertical-align:top;font-size:7px;} .num{text-align:right;font-family:monospace;white-space:nowrap;} .center{text-align:center;} .profit{color:#16a34a;font-weight:bold;} .loss{color:#dc2626;font-weight:bold;} .blue{color:#3b82f6;} .orange{color:#f97316;}</style></head><body>`;
-              html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>INFORME DE CARTERA - BoardingGate</h1><div style="font-size:8px;color:#666;">(FILTRO: ${filterLabel} ${dateLabel} ${textLabel})</div></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`;
+              html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>INFORME DE CARTERA - BoardingGate</h1><div style="font-size:8px;color:#666;">(FILTRO: ${filterLabel})</div></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`;
               html += `<div style="display:flex; gap:5px; margin-top:5px;">`;
               if (filterType === 'all') { html += genStatsBlock("Cartera Activa", stats.active, "#3b82f6") + genStatsBlock("Posiciones Cerradas", stats.sold, "#f97316") + genStatsBlock("Cartera Global", stats.total, "#a855f7"); }
               else if (filterType === 'active') { html += genStatsBlock("Cartera Activa (Filtrada)", stats.active, "#3b82f6"); }
@@ -922,18 +944,20 @@
           const toggleAllActive = () => {
               const allActive = filteredPortfolio.every(p => p.isActive !== false);
               setPortfolio(prev => prev.map(p => {
-                  // Solo afecta a los filtrados visibles
                   const isVisible = filteredPortfolio.some(fp => fp.id === p.id);
                   return isVisible ? { ...p, isActive: !allActive } : p;
               }));
           };
+
+          // Yield on Cost para el Modal
+          const yieldOnCost = form.buyPrice > 0 ? (form.annualDividend / form.buyPrice) * 100 : 0;
 
           return (
               <div className="w-full p-4 md:p-6 flex flex-col gap-6">
                   {/* OVERLAY DE CARGA PARA INFORME IA CARTERA */}
                   {analyzing && <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center fade-in"><Icons.Wand size={60} className="text-purple-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando Cartera Global...</div></div>}
 
-                  <div className="flex gap-4 overflow-x-auto pb-2 custom-scrollbar shrink-0"><StatsBlock title="Activos Filtrados" data={stats.active} color="#3b82f6" baseCurrency={baseCurrency} /><StatsBlock title="Ventas Filtradas" data={stats.sold} color="#f97316" baseCurrency={baseCurrency} /><StatsBlock title="Total Vista Actual" data={stats.total} color="#a855f7" baseCurrency={baseCurrency} /></div>
+                  <div className="flex gap-4 overflow-x-auto pb-2 custom-scrollbar shrink-0"><StatsBlock title="ACTIVOS FILTRADOS" data={stats.active} color="#22c55e" baseCurrency={baseCurrency} type="active" /><StatsBlock title="VENTAS FILTRADAS" data={stats.sold} color="#f97316" baseCurrency={baseCurrency} type="sold" /><StatsBlock title="TOTAL FILTRADO" data={stats.total} color="#a855f7" baseCurrency={baseCurrency} type="total" /></div>
                   
                   <div className="flex flex-col gap-3 shrink-0 bg-slate-900/50 p-3 rounded-xl border border-slate-800">
                       <div className="flex justify-between items-center"><div className="flex gap-2 items-start"><div className="flex flex-col"><button onClick={() => updatePrices(false)} disabled={updating} className="bg-slate-800 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-700 hover:bg-slate-700 transition-colors flex items-center gap-2">{updating ? <Icons.Loader/> : <Icons.Refresh/>} ACTUALIZAR</button><span className="text-[9px] text-slate-500 mt-1 uppercase font-bold text-center tracking-wider">Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}</span></div><button onClick={analyzePortfolio} className="bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 transition-colors flex items-center gap-2"><Icons.Wand/> INFORME iA</button><button onClick={handlePrint} className="bg-slate-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button></div><button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, buyPE:0, annualDividend:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, currentPE:0, dividends: [] }); setIsModalOpen(true); }} className="bg-blue-600 px-4 h-9 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg hover:bg-blue-500"><Icons.Plus size={14}/> NUEVA POSICIÓN</button></div>
@@ -948,9 +972,16 @@
                   </div>
 
                   {/* GRAFICOS AL FINAL (BOTTON OF PAGE) - REACTIVOS */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-[300px] shrink-0 mb-6">
-                      <SimpleChart type="pie" data={chartsData.distribution} title="Distribución de Valor (Activos)" height={250} />
-                      <SimpleChart type="line" data={chartsData.evolution} title="Evolución Rendimiento Acumulado" height={250} color="#10b981" />
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 shrink-0 mb-6 mt-6">
+                      <div className="h-[400px]">
+                          <SimpleChart type="pie" data={chartsData.distribution} title="Distribución de Valor (Activos)" height={400} />
+                      </div>
+                      <div className="h-[400px]">
+                          <SimpleChart type="pie" data={chartsData.geoDiversification} title="Diversificación Geográfica (Activos)" height={400} />
+                      </div>
+                      <div className="h-[400px]">
+                          <SimpleChart type="line" data={chartsData.evolution} title="Evolución Rendimiento Acumulado" height={400} color="#10b981" />
+                      </div>
                   </div>
 
                   {/* MODAL FICHA */}
@@ -964,7 +995,10 @@
                               <div className="grid grid-cols-3 gap-3"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">FX Compra</label><input type="number" step="0.0001" value={form.buyFx} onChange={e=>setForm({...form, buyFx: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Gastos/Fee</label><input type="number" step="0.01" value={form.fees} onChange={e=>setForm({...form, fees: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Ajustes</label><input type="number" step="0.01" value={form.adjustments} onChange={e=>setForm({...form, adjustments: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div></div>
                               
                               {/* NUEVO CAMPO DIVIDENDO */}
-                              <div><label className="text-[10px] uppercase font-bold text-green-400 mb-1 block">Dividendo Anual (Est.)</label><input type="number" step="0.01" value={form.annualDividend} onChange={e=>setForm({...form, annualDividend: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-green-600/50 text-right text-green-400" /></div>
+                              <div className="flex items-center gap-4">
+                                  <div className="flex-1"><label className="text-[10px] uppercase font-bold text-green-400 mb-1 block">Dividendo Anual (Est.)</label><input type="number" step="0.01" value={form.annualDividend} onChange={e=>setForm({...form, annualDividend: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-green-600/50 text-right text-green-400" /></div>
+                                  <div className="bg-green-900/30 px-3 py-2 rounded border border-green-600/30 text-center"><div className="text-[8px] text-green-300 uppercase font-bold">Rent. s/ Coste</div><div className="text-sm font-bold text-white">{formatN(yieldOnCost)}%</div></div>
+                              </div>
 
                               <div className="bg-blue-600/20 border-2 border-blue-500 p-4 rounded-xl flex justify-between items-center shadow-lg"><div className="text-[10px] uppercase font-bold text-blue-400 italic font-mono">({formatN(form.shares)} x {formatN(form.buyPrice)} x {formatN(form.buyFx, 4)}) + {formatN((form.fees||0)+(form.adjustments||0))}</div><div className="text-right"><div className="text-[8px] text-blue-400 font-black uppercase mb-1">Costo Adquisición</div><div className="text-lg font-black text-white leading-none font-mono">{formatMoney((form.shares * form.buyPrice * form.buyFx) + (form.fees||0) + (form.adjustments||0), baseCurrency)}</div></div></div>
                           </div>
@@ -1261,8 +1295,19 @@
                   .map(r => ({ label: r.ticker, value: r.n }))
                   .sort((a,b) => b.value - a.value);
 
-              return { rows, tNet, tOrg, tDest, tBruto, tDIB, tDI15, monthlyT, tickerChartData };
-          }, [filtered, selectedYear]);
+              // Datos para gráfica ANUAL HISTÓRICO
+              const annualHistoryMap = {};
+              portfolio.forEach(p => {
+                  (p.dividends || []).forEach(d => {
+                      annualHistoryMap[d.year] = (annualHistoryMap[d.year] || 0) + d.net;
+                  });
+              });
+              const annualChartData = Object.keys(annualHistoryMap)
+                  .sort((a,b) => a - b)
+                  .map(year => ({ label: year, value: annualHistoryMap[year] }));
+
+              return { rows, tNet, tOrg, tDest, tBruto, tDIB, tDI15, monthlyT, tickerChartData, annualChartData };
+          }, [filtered, selectedYear, portfolio]);
 
           const chartDataMonthly = useMemo(() => stats.monthlyT.map((m, i) => ({ label: MONTHS[i].substring(0,3), value: m.n })), [stats]);
 
@@ -1308,14 +1353,14 @@
                       </div>
                   </div>
                   
-                  {/* TABLA PRINCIPAL (SCROLLABLE) */}
-                  <div className="flex-1 w-full overflow-x-auto custom-scrollbar border border-slate-800 rounded-xl bg-slate-950 mb-4 min-h-0">
-                      <table className="w-full text-[10px] border-collapse min-w-[2200px]"><thead className="sticky top-0 z-20 bg-slate-900 border-b border-slate-700 uppercase"><tr><th className="p-2 w-[180px] text-left sticky left-0 bg-slate-900 z-30 border-r border-slate-800">VALOR (LOTE)</th><th className="p-2 w-[180px] bg-yellow-900/20 text-yellow-500 text-center">ACUM. (N | O | D | B)</th>{MONTHS.map(m => (<th key={m} className="p-1 border-l border-slate-800 w-[140px]"><div className="text-blue-300 mb-1 text-center">{m}</div><div className="grid grid-cols-3 gap-0.5 text-[7px] text-slate-500"><span>NETO</span><span>ORIG</span><span>DEST</span></div></th>))}<th className="p-2 w-[110px] bg-purple-900/30 border-l border-purple-500/50">BRUTO D.I.</th><th className="p-2 w-[110px] bg-purple-900/30 border-l border-slate-800">15% D.I.</th></tr></thead>
+                  {/* TABLA PRINCIPAL (SCROLLABLE - Eliminada restricción height) */}
+                  <div className="w-full overflow-x-auto custom-scrollbar border border-slate-800 rounded-xl bg-slate-950 mb-4">
+                      <table className="w-full text-[10px] border-collapse min-w-[2200px]"><thead className="bg-slate-900 border-b border-slate-700 uppercase sticky top-0 z-20"><tr><th className="p-2 w-[180px] text-left sticky left-0 bg-slate-900 z-30 border-r border-slate-800">VALOR (LOTE)</th><th className="p-2 w-[180px] bg-yellow-900/20 text-yellow-500 text-center">ACUM. (N | O | D | B)</th>{MONTHS.map(m => (<th key={m} className="p-1 border-l border-slate-800 w-[140px]"><div className="text-blue-300 mb-1 text-center">{m}</div><div className="grid grid-cols-3 gap-0.5 text-[7px] text-slate-500"><span>NETO</span><span>ORIG</span><span>DEST</span></div></th>))}<th className="p-2 w-[110px] bg-purple-900/30 border-l border-purple-500/50">BRUTO D.I.</th><th className="p-2 w-[110px] bg-purple-900/30 border-l border-slate-800">15% D.I.</th></tr></thead>
                           <tbody>{stats.rows.map(r => { const p = portfolio.find(x => x.id === r.id); const isSold = !!p.sellDate; return ( <tr key={r.id} className="hover:bg-white/5 border-b border-slate-800"><td className="p-2 sticky left-0 bg-slate-950 border-r border-slate-800"><div className={`font-bold ${isSold ? 'text-red-400' : 'text-green-400'}`}>{r.ticker} <span className="text-[9px] text-slate-400 font-normal">({formatDateSimple(isSold ? p.sellDate : p.buyDate)})</span></div><div className="text-[8px] text-slate-500 font-mono mt-0.5">{r.name.substring(0,20)}</div></td><td className="p-2 bg-yellow-900/5 text-right font-mono space-x-2 text-[9px]"><span className="text-green-300">{formatN(r.n)}</span>|<span className="text-slate-400">{formatN(r.o)}</span>|<span className="text-slate-400">{formatN(r.d)}</span>|<span className="text-white font-bold">{formatN(r.b)}</span></td>{MONTHS.map((_, i) => { const d = (p.dividends || []).find(dv => dv.year === selectedYear && dv.month === i) || {net:0, taxOrigin:0, taxDest:0}; return ( <td key={i} className="p-1 border-l border-slate-800"><div className="grid grid-cols-3 gap-1"><input type="number" step="0.01" value={d.net || ''} onChange={e => handleDivChange(r.id, i, 'net', e.target.value)} className="w-full text-center text-green-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-green-500" /><input type="number" step="0.01" value={d.taxOrigin || ''} onChange={e => handleDivChange(r.id, i, 'taxOrigin', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" /><input type="number" step="0.01" value={d.taxDest || ''} onChange={e => handleDivChange(r.id, i, 'taxDest', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" /></div></td> ); })}<td className="p-2 text-center bg-purple-900/10 font-bold text-purple-300">{formatN(r.diBruto)}</td><td className="p-2 text-center bg-purple-900/10 border-l border-slate-800 font-bold text-purple-300">{formatN(r.di15)}</td></tr> ); })}<tr className="bg-slate-900 font-black text-white text-xs border-t-2 border-slate-700 sticky bottom-0 z-30 shadow-2xl"><td colSpan="2" className="p-3 text-right sticky left-0 bg-slate-900 uppercase tracking-widest border-r border-slate-700">TOTALES MENSUALES →</td>{MONTHS.map((_, i) => ( <td key={i} className="p-1 border-l border-slate-700 bg-[#0f121a]"><div className="grid grid-cols-3 gap-0.5 text-[7px] font-mono text-center"><span className="text-green-400">{formatN(stats.monthlyT[i].n)}</span><span className="text-slate-500">{formatN(stats.monthlyT[i].o)}</span><span className="text-slate-500">{formatN(stats.monthlyT[i].d)}</span></div></td> ))}<td className="p-3 text-center bg-purple-600/20 text-purple-300 border-l border-purple-500/30">{formatN(stats.tDIB)}</td><td className="p-3 text-center bg-purple-800/20 text-purple-300 border-l border-slate-700">{formatN(stats.tDI15)}</td></tr></tbody></table>
                   </div>
 
-                  {/* GRAFICOS Y DATOS FISCALES ABAJO (FIJOS AL PIE, APILADOS VERTICALMENTE) */}
-                  <div className="shrink-0 flex flex-col gap-4 overflow-y-auto max-h-[450px] mb-2 pr-2 custom-scrollbar">
+                  {/* GRAFICOS Y DATOS FISCALES ABAJO (APILADOS VERTICALMENTE) */}
+                  <div className="flex flex-col gap-6 shrink-0 mb-6">
                       
                       {/* 1. SECCIÓN DATOS FISCALES */}
                       <div className="bg-blue-900/20 p-4 rounded-xl border border-blue-500/30">
@@ -1333,12 +1378,15 @@
                           </div>
                       </div>
 
-                      {/* 2. GRÁFICAS APILADAS */}
-                      <div className="h-[200px] shrink-0">
-                          <SimpleChart type="bar" data={chartDataMonthly} title={`Cobro Mensual Dividendos ${selectedYear}`} height={180} color="#10b981" />
+                      {/* 2. GRÁFICAS APILADAS (MENSUAL, TICKER, ANUAL) */}
+                      <div className="h-[400px] w-full">
+                          <SimpleChart type="bar" data={chartDataMonthly} title={`Cobro Mensual Dividendos ${selectedYear}`} height={400} color="#10b981" />
                       </div>
-                      <div className="h-[200px] shrink-0">
-                          <SimpleChart type="bar" data={stats.tickerChartData} title={`Dividendos Acumulados por Ticker ${selectedYear}`} height={180} color="#3b82f6" />
+                      <div className="h-[400px] w-full">
+                          <SimpleChart type="bar" data={stats.tickerChartData} title={`Dividendos Acumulados por Ticker ${selectedYear}`} height={400} color="#3b82f6" />
+                      </div>
+                      <div className="h-[400px] w-full">
+                          <SimpleChart type="bar" data={stats.annualChartData} title="Histórico Dividendos Netos Anuales" height={400} color="#a855f7" />
                       </div>
 
                   </div>
