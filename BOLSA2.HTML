@@ -145,10 +145,11 @@
           const values = data.map(d => d.value);
           const minVal = Math.min(0, ...values); // Siempre incluir el 0 para referencia
           const maxVal = Math.max(0, ...values);
-          const range = maxVal - minVal || 1; // Evitar división por 0
+          const absMax = Math.max(Math.abs(minVal), Math.abs(maxVal));
+          const range = (maxVal - minVal) * 1.1 || 1; // Añadir 10% de buffer para que no toque bordes
           
-          // Margenes internos para ejes
-          const padding = { top: 20, right: 10, bottom: 20, left: 40 };
+          // Margenes internos para ejes (AUMENTADOS PARA ETIQUETAS)
+          const padding = { top: 20, right: 10, bottom: 40, left: 50 };
           const chartH = height; 
           const chartW = 1000; // Ancho virtual SVG grande para escalar bien
           const innerH = chartH - padding.top - padding.bottom;
@@ -156,7 +157,10 @@
           // Función: Valor -> Y coordenada
           const getY = (val) => {
               // Invertir eje Y (0 arriba)
-              const pct = (val - minVal) / range; 
+              // Ajustar escala para que minVal esté abajo y maxVal arriba
+              const effectiveMin = minVal < 0 ? minVal * 1.1 : 0;
+              const effectiveRange = (maxVal * 1.1) - effectiveMin;
+              const pct = (val - effectiveMin) / effectiveRange; 
               return padding.top + innerH - (pct * innerH);
           };
           
@@ -166,7 +170,9 @@
           const gridLines = [];
           const steps = 4;
           for(let i=0; i<=steps; i++){
-              const val = minVal + (range * (i/steps));
+              const effectiveMin = minVal < 0 ? minVal * 1.1 : 0;
+              const effectiveRange = (maxVal * 1.1) - effectiveMin;
+              const val = effectiveMin + (effectiveRange * (i/steps));
               const y = getY(val);
               gridLines.push({ y, val });
           }
@@ -199,7 +205,7 @@
                                   <g key={i} className="group">
                                       <rect x={x} y={finalY} width={barW * 0.8} height={Math.max(1, h)} fill={d.value >=0 ? color : '#ef4444'} rx="2" className="hover:opacity-80 transition-all" />
                                       {/* Etiqueta X (truncada) */}
-                                      <text x={x + barW*0.4} y={chartH - 5} textAnchor="middle" fill="#64748b" fontSize="9">{d.label.substring(0,6)}</text>
+                                      <text x={x + barW*0.4} y={chartH - 10} textAnchor="middle" fill="#94a3b8" fontSize="10" fontWeight="bold">{d.label.substring(0,6)}</text>
                                   </g>
                               );
                           })}
@@ -214,15 +220,21 @@
                               return (
                                   <g>
                                       <defs>
-                                          <linearGradient id={`grad-${title}`} x1="0" y1="0" x2="0" y2="1">
+                                          <linearGradient id={`grad-${title.replace(/\s/g,'')}`} x1="0" y1="0" x2="0" y2="1">
                                               <stop offset="0%" stopColor={color} stopOpacity="0.3"/>
                                               <stop offset="100%" stopColor={color} stopOpacity="0"/>
                                           </linearGradient>
                                       </defs>
-                                      <polygon points={areaPoints} fill={`url(#grad-${title})`} />
+                                      <polygon points={areaPoints} fill={`url(#grad-${title.replace(/\s/g,'')})`} />
                                       <polyline points={points} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" />
                                       {data.map((d, i) => (
-                                          <circle key={i} cx={padding.left + (i * stepX)} cy={getY(d.value)} r="3" fill={color} className="hover:r-5 transition-all" />
+                                          <g key={i}>
+                                             <circle cx={padding.left + (i * stepX)} cy={getY(d.value)} r="3" fill={color} className="hover:r-5 transition-all" />
+                                             {/* Etiquetas X para Linea - Solo algunas para no saturar */}
+                                             {(i % Math.ceil(data.length/6) === 0 || i === data.length-1) && 
+                                                <text x={padding.left + (i * stepX)} y={chartH - 10} textAnchor="middle" fill="#94a3b8" fontSize="10" fontWeight="bold">{d.label.substring(0,8)}</text>
+                                             }
+                                          </g>
                                       ))}
                                   </g>
                               );
@@ -537,7 +549,7 @@
           const chartData = useMemo(() => {
               return yearsToShow.map(y => ({
                   label: y.toString(),
-                  value: (resultsData[y]?.profitPrice || 0) - (resultsData[y]?.lossPrice || 0)
+                  value: (resultsData[y]?.resWithDiv || 0) // MODIFICADO: Muestra Resultado Total (con div)
               }));
           }, [resultsData, yearsToShow]);
 
@@ -575,7 +587,7 @@
                        </div>
                        
                        <div className="h-[220px] mb-4 shrink-0">
-                           <SimpleChart type="bar" data={chartData} title="Beneficio/Pérdida Neto por Año" height={180} />
+                           <SimpleChart type="bar" data={chartData} title="Beneficio/Pérdida Neto Total (Precio + Divs) por Año" height={180} />
                        </div>
                    </div>
               </div>
@@ -851,17 +863,17 @@
                       <div className="flex flex-wrap gap-2 items-center bg-slate-950/50 p-2 rounded-lg border border-slate-800/50"><div className="flex-1 min-w-[150px] relative"><Icons.Search className="absolute left-2 top-2 text-slate-500" size={14}/><input type="text" value={filterText} onChange={e => setFilterText(e.target.value)} placeholder="Filtrar por Ticker o Nombre..." className="w-full bg-slate-900 border border-slate-700 h-8 pl-8 pr-2 text-xs rounded focus:border-blue-500 font-bold" /></div><div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-2 h-8"><span className="text-[9px] font-bold text-slate-500 uppercase">Desde</span><input type="date" value={filterDateStart} onChange={e => setFilterDateStart(e.target.value)} className="bg-transparent border-none text-xs text-white p-0 w-[95px] focus:ring-0 font-bold" /></div><div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-2 h-8"><span className="text-[9px] font-bold text-slate-500 uppercase">Hasta</span><input type="date" value={filterDateEnd} onChange={e => setFilterDateEnd(e.target.value)} className="bg-transparent border-none text-xs text-white p-0 w-[95px] focus:ring-0 font-bold" /></div><div className="flex bg-slate-900 rounded border border-slate-700 h-8 p-0.5"><button onClick={() => setFilterType('all')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'all' ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white'}`}>TODO</button><button onClick={() => setFilterType('active')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'active' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>ACTIVAS</button><button onClick={() => setFilterType('sold')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'sold' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>VENTAS</button></div><button onClick={resetFilters} title="Limpiar Filtros" className="h-8 px-3 bg-red-900/30 text-red-400 border border-red-500/30 rounded text-[10px] font-bold hover:bg-red-900/50 flex items-center justify-center"><Icons.Trash2 size={16}/></button></div>
                   </div>
                   
-                  {/* TABLA: SCROLL HORIZONTAL (X), SIN ALTURA FIJA (CRECE HACIA ABAJO) */}
-                  <div className="w-full overflow-x-auto custom-scrollbar bg-slate-900/50 border border-slate-800 rounded-xl mb-6">
-                      <table className="w-full text-left min-w-[1700px] text-sm"><thead className="bg-slate-800 text-slate-400 text-[10px] uppercase font-bold"><tr><th className="p-3 w-10 text-center">#</th><th className="p-3">Valor</th><th className="p-3 text-center">Fechas / Días</th><th className="p-3 text-right">Títulos</th><th className="p-3 text-right">Precios (Inv/Act)</th><th className="p-3 text-center">FX (I/A)</th><th className="p-3 text-center">Gastos / Adj</th><th className="p-3 text-right">Coste Total</th><th className="p-3 text-right">Valor Final</th><th className="p-3 text-right">RENDIMIENTO</th><th className="p-3 text-right">% Ben/Pérd</th><th className="p-3 text-center">PER (I/A)</th><th className="p-3 text-center">Acciones</th></tr></thead>
+                  {/* TABLA: SCROLL HORIZONTAL (X) */}
+                  <div className="w-full flex-1 min-h-[300px] overflow-x-auto custom-scrollbar bg-slate-900/50 border border-slate-800 rounded-xl mb-6">
+                      <table className="w-full text-left min-w-[1700px] text-sm"><thead className="bg-slate-800 text-slate-400 text-[10px] uppercase font-bold sticky top-0 z-20"><tr><th className="p-3 w-10 text-center">#</th><th className="p-3">Valor</th><th className="p-3 text-center">Fechas / Días</th><th className="p-3 text-right">Títulos</th><th className="p-3 text-right">Precios (Inv/Act)</th><th className="p-3 text-center">FX (I/A)</th><th className="p-3 text-center">Gastos / Adj</th><th className="p-3 text-right">Coste Total</th><th className="p-3 text-right">Valor Final</th><th className="p-3 text-right">RENDIMIENTO</th><th className="p-3 text-right">% Ben/Pérd</th><th className="p-3 text-center">PER (I/A)</th><th className="p-3 text-center">Acciones</th></tr></thead>
                           <tbody className="divide-y divide-slate-800">{filteredPortfolio.length === 0 ? ( <tr><td colSpan="13" className="p-10 text-center text-slate-500 italic">No hay registros que coincidan con los filtros aplicados.</td></tr> ) : ( filteredPortfolio.map(p => { const cT = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFees + p.sellAdjustments) : 0); const ds = (p.dividends || []).reduce((a,b)=>a+b.net,0); const capitalGain = vF - cT; const days = calculateDays(p.buyDate, p.sellDate || new Date()); const rs = calcReturns(cT, vF + ds, days); return ( <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''}`}><td className="p-3 text-center" onClick={() => setPortfolio(prev => prev.map(x => x.id === p.id ? {...x, isActive: !x.isActive} : x))}><input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" /></td><td className="p-3"><b>{p.ticker}</b>{isS && <span className="ml-2 px-1.5 py-0.5 bg-red-900/40 text-red-400 text-[8px] rounded uppercase font-bold border border-red-500/20">VENDIDA</span>}<br/><span className="text-[10px] text-slate-400 uppercase">{p.name}</span></td><td className="p-3 text-center text-[10px] font-bold"><div className="text-blue-400">{formatDateES(p.buyDate)}</div>{p.sellDate && <div className="text-orange-400">{formatDateES(p.sellDate)}</div>}<div className="text-slate-500 text-[9px] mt-1">{formatN(days, 0)} días</div></td><td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td><td className="p-3 text-right text-xs font-mono">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td><td className="p-3 text-center text-[10px] font-mono text-slate-400">I: {formatN(p.buyFx, 4)}<br/>A: {formatN(curF, 4)}</td><td className="p-3 text-center text-[10px] font-mono text-slate-400">G: {formatN(isS?p.sellFees:p.fees)}<br/>A: {formatN(isS?p.sellAdjustments:p.adjustments)}</td><td className="p-3 text-right text-slate-400 font-mono">{formatMoney(cT, baseCurrency)}</td><td className="p-3 text-right font-mono text-white"><div className="font-bold">{formatMoney(vF, baseCurrency)}</div></td><td className="p-3 text-right font-mono"><div className={`font-bold ${capitalGain >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(capitalGain, baseCurrency)}</div>{ds > 0 && <div className="text-[10px] text-blue-300 font-bold mt-0.5">+ {formatMoney(ds, baseCurrency)} (Div)</div>}</td><td className="p-3 text-right text-xs"><div className={rs.simple>=0?'text-green-400 font-bold':'text-red-400 font-bold'}>{formatN(rs.simple)}%</div><div className="text-[9px] text-slate-500">Anual: {formatN(rs.annual)}%</div></td><td className="p-3 text-center text-xs font-mono">I: {formatN(p.buyPE, 1)}<br/>A: <span className="text-yellow-500 font-bold">{formatN(p.currentPE, 1)}</span></td><td className="p-3 text-center flex gap-2 justify-center">{!p.sellDate && <button onClick={() => { setSellItem(p); setSellForm({sharesToSell: p.shares, sellPrice: parseFloat(curP.toFixed(3)), sellDate: new Date().toISOString().slice(0,10), sellFx: p.currentFx, sellFees: 0, sellAdjustments: 0}); setIsSellModalOpen(true); }} className="bg-green-600/20 text-green-400 border border-green-500/30 px-2 py-1 rounded text-[10px] font-bold hover:bg-green-600/40">VENDER</button>}<button onClick={() => { setForm(p); setEditingId(p.id); setIsModalOpen(true); }} className="text-blue-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors"><Icons.Edit size={14}/></button><button onClick={() => setConfirmModal({isOpen:true, title:'Borrado', msg:`¿Eliminar permanentemente?`, onConfirm:()=>{setPortfolio(prev=>prev.filter(x=>x.id!==p.id)); setConfirmModal({isOpen:false})} })} className="text-red-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors"><Icons.Trash2 size={14}/></button></td></tr> ); }) )}</tbody>
                       </table>
                   </div>
 
                   {/* GRAFICOS AL FINAL (BOTTON OF PAGE) */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-[220px] shrink-0 mb-6">
-                      <SimpleChart type="pie" data={chartsData.distribution} title="Distribución de Valor (Activos)" height={180} />
-                      <SimpleChart type="line" data={chartsData.evolution} title="Evolución Rendimiento Acumulado" height={180} color="#10b981" />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-[300px] shrink-0 mb-6">
+                      <SimpleChart type="pie" data={chartsData.distribution} title="Distribución de Valor (Activos)" height={250} />
+                      <SimpleChart type="line" data={chartsData.evolution} title="Evolución Rendimiento Acumulado" height={250} color="#10b981" />
                   </div>
 
                   {/* MODAL FICHA */}
@@ -1158,10 +1170,17 @@
                   });
                   return { id: p.id, name: p.name || p.ticker, ticker: p.ticker, n, o, d, b, diBruto, di15 };
               });
-              return { rows, tNet, tOrg, tDest, tBruto, tDIB, tDI15, monthlyT };
+              
+              // Datos para gráfica de TICKERS (Acumulado)
+              const tickerChartData = rows
+                  .filter(r => r.n > 0)
+                  .map(r => ({ label: r.ticker, value: r.n }))
+                  .sort((a,b) => b.value - a.value);
+
+              return { rows, tNet, tOrg, tDest, tBruto, tDIB, tDI15, monthlyT, tickerChartData };
           }, [filtered, selectedYear]);
 
-          const chartData = useMemo(() => stats.monthlyT.map((m, i) => ({ label: MONTHS[i].substring(0,3), value: m.n })), [stats]);
+          const chartDataMonthly = useMemo(() => stats.monthlyT.map((m, i) => ({ label: MONTHS[i].substring(0,3), value: m.n })), [stats]);
 
           const handlePrint = () => {
               const printWindow = window.open('', '', 'height=800,width=1200');
@@ -1196,7 +1215,7 @@
           };
 
           return (
-              <div className="h-full flex flex-col p-4 md:p-6 overflow-y-auto custom-scrollbar relative">
+              <div className="h-full flex flex-col p-4 md:p-6 overflow-hidden relative">
                   <div className="flex justify-between items-center mb-4 bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
                       <div className="flex items-center gap-4"><button onClick={() => setSelectedYear(y => y - 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">←</button><span className="text-2xl font-bold font-display text-blue-400">{selectedYear}</span><button onClick={() => setSelectedYear(y => y + 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">→</button></div>
                       <div className="flex gap-4 items-center">
@@ -1205,18 +1224,21 @@
                       </div>
                   </div>
                   
-                  {/* TABLA PRINCIPAL */}
-                  <div className="w-full overflow-x-auto custom-scrollbar border border-slate-800 rounded-xl bg-slate-950 mb-6">
+                  {/* TABLA PRINCIPAL (SCROLLABLE) */}
+                  <div className="flex-1 w-full overflow-x-auto custom-scrollbar border border-slate-800 rounded-xl bg-slate-950 mb-4 min-h-0">
                       <table className="w-full text-[10px] border-collapse min-w-[2200px]"><thead className="sticky top-0 z-20 bg-slate-900 border-b border-slate-700 uppercase"><tr><th className="p-2 w-[180px] text-left sticky left-0 bg-slate-900 z-30 border-r border-slate-800">VALOR (LOTE)</th><th className="p-2 w-[180px] bg-yellow-900/20 text-yellow-500 text-center">ACUM. (N | O | D | B)</th>{MONTHS.map(m => (<th key={m} className="p-1 border-l border-slate-800 w-[140px]"><div className="text-blue-300 mb-1 text-center">{m}</div><div className="grid grid-cols-3 gap-0.5 text-[7px] text-slate-500"><span>NETO</span><span>ORIG</span><span>DEST</span></div></th>))}<th className="p-2 w-[110px] bg-purple-900/30 border-l border-purple-500/50">BRUTO D.I.</th><th className="p-2 w-[110px] bg-purple-900/30 border-l border-slate-800">15% D.I.</th></tr></thead>
                           <tbody>{stats.rows.map(r => { const p = portfolio.find(x => x.id === r.id); const isSold = !!p.sellDate; return ( <tr key={r.id} className="hover:bg-white/5 border-b border-slate-800"><td className="p-2 sticky left-0 bg-slate-950 border-r border-slate-800"><div className={`font-bold ${isSold ? 'text-red-400' : 'text-green-400'}`}>{r.ticker}</div><div className="text-[8px] text-slate-500 font-mono mt-0.5">{r.name.substring(0,20)}</div></td><td className="p-2 bg-yellow-900/5 text-right font-mono space-x-2 text-[9px]"><span className="text-green-300">{formatN(r.n)}</span>|<span className="text-slate-400">{formatN(r.o)}</span>|<span className="text-slate-400">{formatN(r.d)}</span>|<span className="text-white font-bold">{formatN(r.b)}</span></td>{MONTHS.map((_, i) => { const d = (p.dividends || []).find(dv => dv.year === selectedYear && dv.month === i) || {net:0, taxOrigin:0, taxDest:0}; return ( <td key={i} className="p-1 border-l border-slate-800"><div className="grid grid-cols-3 gap-1"><input type="number" step="0.01" value={d.net || ''} onChange={e => handleDivChange(r.id, i, 'net', e.target.value)} className="w-full text-center text-green-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-green-500" /><input type="number" step="0.01" value={d.taxOrigin || ''} onChange={e => handleDivChange(r.id, i, 'taxOrigin', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" /><input type="number" step="0.01" value={d.taxDest || ''} onChange={e => handleDivChange(r.id, i, 'taxDest', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" /></div></td> ); })}<td className="p-2 text-center bg-purple-900/10 font-bold text-purple-300">{formatN(r.diBruto)}</td><td className="p-2 text-center bg-purple-900/10 border-l border-slate-800 font-bold text-purple-300">{formatN(r.di15)}</td></tr> ); })}<tr className="bg-slate-900 font-black text-white text-xs border-t-2 border-slate-700 sticky bottom-0 z-30 shadow-2xl"><td colSpan="2" className="p-3 text-right sticky left-0 bg-slate-900 uppercase tracking-widest border-r border-slate-700">TOTALES MENSUALES →</td>{MONTHS.map((_, i) => ( <td key={i} className="p-1 border-l border-slate-700 bg-[#0f121a]"><div className="grid grid-cols-3 gap-0.5 text-[7px] font-mono text-center"><span className="text-green-400">{formatN(stats.monthlyT[i].n)}</span><span className="text-slate-500">{formatN(stats.monthlyT[i].o)}</span><span className="text-slate-500">{formatN(stats.monthlyT[i].d)}</span></div></td> ))}<td className="p-3 text-center bg-purple-600/20 text-purple-300 border-l border-purple-500/30">{formatN(stats.tDIB)}</td><td className="p-3 text-center bg-purple-800/20 text-purple-300 border-l border-slate-700">{formatN(stats.tDI15)}</td></tr></tbody></table>
                   </div>
 
-                  {/* GRAFICOS Y DATOS FISCALES ABAJO */}
-                  <div className="flex flex-col md:flex-row gap-6 shrink-0">
-                      <div className="flex-1 h-[200px]">
-                          <SimpleChart type="bar" data={chartData} title={`Cobro Mensual Dividendos ${selectedYear}`} height={160} color="#10b981" />
+                  {/* GRAFICOS Y DATOS FISCALES ABAJO (FIJOS AL PIE) */}
+                  <div className="shrink-0 h-[240px] flex gap-4 overflow-hidden mb-2">
+                      <div className="w-1/3 h-full">
+                          <SimpleChart type="bar" data={chartDataMonthly} title={`Cobro Mensual Dividendos ${selectedYear}`} height={200} color="#10b981" />
                       </div>
-                      <div className="flex-1 bg-blue-900/20 p-6 rounded-xl border border-blue-500/30 flex flex-col justify-center gap-4">
+                      <div className="w-1/3 h-full">
+                          <SimpleChart type="bar" data={stats.tickerChartData} title={`Dividendos Acumulados por Ticker ${selectedYear}`} height={200} color="#3b82f6" />
+                      </div>
+                      <div className="w-1/3 h-full bg-blue-900/20 p-6 rounded-xl border border-blue-500/30 flex flex-col justify-center gap-4">
                           <div className="text-blue-400 font-display font-bold text-sm uppercase tracking-widest border-b border-blue-500/30 pb-2">Fiscalidad Renta (AEAT)</div>
                           <div className="grid grid-cols-2 gap-6">
                               <div><div className="text-[10px] uppercase font-bold text-blue-300">Dividendos Brutos</div><div className="text-xl font-bold text-white">{formatMoney(stats.tBruto, baseCurrency)}</div></div>
@@ -1258,7 +1280,7 @@
                           <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'settings' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Settings size={14}/> Ajustes</button>
                       </nav>
                   </header>
-                  <main className="flex-1 overflow-y-auto bg-[#0a0a0a] relative custom-scrollbar">
+                  <main className="flex-1 overflow-hidden bg-[#0a0a0a] relative custom-scrollbar">
                       {activeTab === 'portfolio' && <PortfolioTab portfolio={portfolio} setPortfolio={setPortfolio} apiKey={apiKey} baseCurrency={baseCurrency} refreshInterval={refreshInterval} lastUpdate={lastUpdate} setLastUpdate={setLastUpdate} />}
                       {activeTab === 'dividends' && <DividendTab portfolio={portfolio} setPortfolio={setPortfolio} baseCurrency={baseCurrency} />}
                       {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={setResultsData} baseCurrency={baseCurrency} />}
