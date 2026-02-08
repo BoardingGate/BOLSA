@@ -828,6 +828,252 @@
           );
       };
 
+   
+
+
+      // --- PESTAÑA CONFIGURACIÓN ---
+      const SettingsTab = ({ apiKey, setApiKey, isAuth, onActivate, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio }) => {
+          const [localLic, setLocalLic] = useState('');
+          const [showKey, setShowKey] = useState(false);
+          const [testStatus, setTestStatus] = useState(null); 
+          const [errorDetail, setErrorDetail] = useState('');
+          const [ioStatus, setIoStatus] = useState('idle');
+
+          const testConnection = async () => {
+              if(!apiKey) return alert("Introduce una clave primero.");
+              setTestStatus('loading'); setErrorDetail('');
+              try {
+                  await askGemini(apiKey, "Test conexión");
+                  setTestStatus('success'); 
+              } catch(e) { 
+                  setTestStatus('error'); setErrorDetail(e.message); 
+              }
+          };
+
+          const handleRunExport = () => {
+              setIoStatus('processing');
+              try {
+                  const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 2 };
+                  const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"});
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a'); a.href = url; a.download = `BoardingGate_Backup_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+                  setIoStatus('success'); setTimeout(() => setIoStatus('idle'), 2000);
+              } catch (e) { alert("Error: " + e.message); setIoStatus('error'); }
+          };
+
+          const handleRunImport = (e) => {
+              const file = e.target.files[0];
+              if (!file) return;
+              if(!confirm("⚠️ IMPORTANTE:\n\nEsta acción reemplazará TODA tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) { e.target.value = null; return; }
+              setIoStatus('processing');
+              const reader = new FileReader();
+              reader.onload = (ev) => {
+                  try {
+                      const d = JSON.parse(ev.target.result);
+                      if (d.portfolio) setPortfolio(d.portfolio);
+                      if (d.apiKey) setApiKey(d.apiKey);
+                      if (d.baseCurrency) setBaseCurrency(d.baseCurrency);
+                      if (d.refreshInterval) setRefreshInterval(d.refreshInterval);
+                      setIoStatus('success');
+                      alert("✅ Restauración completada correctamente.");
+                      window.location.reload();
+                  } catch (err) { alert("Archivo inválido o corrupto."); setIoStatus('error'); }
+              };
+              reader.readAsText(file);
+          };
+
+          return (
+              <div className="h-full p-6 flex flex-col items-center justify-start fade-in overflow-y-auto custom-scrollbar">
+                  {/* 1. PREFERENCIAS GENERALES */}
+                  <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
+                      <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
+                          <div className="p-3 bg-blue-500/20 rounded-xl text-blue-400"><Icons.Settings size={32} /></div>
+                          <div><h2 className="text-2xl font-bold text-white">Preferencias Generales</h2><p className="text-slate-400 text-sm">Personalización de la cartera</p></div>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div>
+                               <label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">Divisa Base (Totales)</label>
+                               <select value={baseCurrency} onChange={(e) => setBaseCurrency(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded-xl p-3 text-white text-sm focus:outline-none focus:border-blue-500">
+                                   {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.code} - {c.name}</option>)}
+                               </select>
+                               <p className="text-[10px] text-slate-500 mt-2">Moneda para mostrar resultados globales.</p>
+                          </div>
+                          <div>
+                               <label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">Refresco Automático</label>
+                               <div className="bg-slate-800 p-3 rounded-xl border border-slate-600 flex items-center gap-4">
+                                   <input type="range" min="5" max="60" step="5" value={refreshInterval} onChange={(e) => setRefreshInterval(parseInt(e.target.value))} className="flex-1 accent-blue-500 h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer" />
+                                   <div className="font-mono font-bold text-blue-400 w-16 text-right">{refreshInterval} min</div>
+                               </div>
+                               <p className="text-[10px] text-slate-500 mt-2">Frecuencia de actualización de precios.</p>
+                          </div>
+                      </div>
+                  </div>
+
+                  {/* 2. CONFIGURACIÓN IA */}
+                  <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
+                      <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
+                          <div className="p-3 bg-purple-500/20 rounded-xl text-purple-400"><Icons.Wand size={32} /></div>
+                          <div><h2 className="text-2xl font-bold text-white">Configuración IA</h2><p className="text-slate-400 text-sm">Conexión con Google Gemini</p></div>
+                      </div>
+                      <div className="space-y-6">
+                          <div>
+                              <label className="block text-sm font-bold text-slate-300 mb-2">Google Gemini API Key</label>
+                              <div className="relative mb-4">
+                                  <input type={showKey ? "text" : "password"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full bg-black/50 border border-slate-600 rounded-xl p-4 pr-12 text-white focus:border-purple-500 focus:outline-none font-mono"/>
+                                  <button onClick={() => setShowKey(!showKey)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showKey ? <Icons.EyeOff size={20}/> : <Icons.Eye size={20}/>}</button>
+                              </div>
+                              <div className="flex justify-end gap-3 items-center">
+                                  <button onClick={testConnection} className={`h-[40px] px-6 rounded-xl border font-bold text-sm flex items-center gap-2 ${testStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : testStatus === 'error' ? 'bg-red-600 border-red-500 text-white' : 'bg-slate-700 border-slate-600 text-slate-300'}`}>
+                                      {testStatus === 'loading' ? <Icons.Loader/> : testStatus === 'success' ? <Icons.CheckCircle size={18}/> : 'PROBAR CONEXIÓN'}
+                                  </button>
+                              </div>
+                              {testStatus === 'error' && <div className="mt-4 p-4 bg-red-900/30 border border-red-500/50 rounded-xl text-red-200 text-xs font-mono whitespace-pre-wrap">{errorDetail}</div>}
+                              
+                              <div className="mt-6 p-6 bg-[#1e293b] border border-[#334155] rounded-xl relative overflow-hidden">
+                                  <h4 className="text-lg font-bold text-blue-400 mb-4 flex items-center gap-2">
+                                      <Icons.HelpCircle size={20} /> Gestión de la API Key (Gratis vs Pago)
+                                  </h4>
+
+                                  <div className="mb-6 border-b border-slate-700 pb-6">
+                                      <h5 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+                                          <span className="bg-green-500/20 text-green-400 px-2 py-0.5 rounded text-[10px] uppercase border border-green-500/30">Opción Gratuita</span>
+                                          <span className="text-slate-400 text-xs font-normal">Ideal para uso básico</span>
+                                      </h5>
+                                      <ol className="list-decimal list-inside text-xs text-slate-300 space-y-2 mb-4 leading-relaxed">
+                                          <li>Accede a <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-blue-400 hover:underline font-bold">Google AI Studio</a>.</li>
+                                          <li>Haz clic en <strong>"Get API key"</strong> (arriba izquierda) y luego en <strong>"Create API key in new project"</strong>.</li>
+                                          <li>Copia la clave y pégala arriba.</li>
+                                      </ol>
+                                      <p className="text-[10px] text-slate-400 bg-slate-900/50 p-3 rounded border border-slate-700">
+                                          <strong>Límites actuales:</strong> 15 peticiones/minuto (RPM) y 1.500/día. Si la IA falla o tarda mucho, es probable que hayas superado este límite temporalmente.
+                                      </p>
+                                  </div>
+
+                                  <div>
+                                      <h5 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+                                          <span className="bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded text-[10px] uppercase border border-blue-500/30">Opción Ilimitada (Pay-as-you-go)</span>
+                                          <span className="text-slate-400 text-xs font-normal">Para uso intensivo</span>
+                                      </h5>
+                                      <p className="text-xs text-slate-300 mb-3 leading-relaxed">
+                                          Si actualizas precios de muchos valores frecuentemente o realizas análisis complejos, te conviene activar la facturación para eliminar esperas.
+                                      </p>
+                                      <ol className="list-decimal list-inside text-xs text-slate-300 space-y-2 mb-6 leading-relaxed">
+                                          <li>Ve a la <a href="https://console.cloud.google.com/billing" target="_blank" className="text-blue-400 hover:underline font-bold">Consola de Google Cloud Billing</a>.</li>
+                                          <li>Selecciona el <strong>mismo proyecto</strong> que se creó automáticamente en AI Studio (suele llamarse "Generative Language Client").</li>
+                                          <li>Haz clic en <strong>"Vincular una cuenta de facturación"</strong> e introduce tu tarjeta.</li>
+                                          <li><strong>Coste:</strong> Es extremadamente barato (aprox. $0.35 por millón de tokens). Actualizar una cartera consume centavos.</li>
+                                      </ol>
+                                      
+                                      <div className="flex gap-3">
+                                          <a href="https://aistudio.google.com/app/apikey" target="_blank" className="flex-1 text-center py-2.5 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2 border border-slate-600">
+                                              <Icons.ExternalLink size={14}/> Obtener Key (AI Studio)
+                                          </a>
+                                          <a href="https://console.cloud.google.com/billing" target="_blank" className="flex-1 text-center py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2 border border-blue-500">
+                                              <Icons.ExternalLink size={14}/> Activar Facturación (Cloud)
+                                          </a>
+                                      </div>
+                                  </div>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+
+                  {/* 3. COPIA DE SEGURIDAD */}
+                  <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
+                      <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
+                          <div className="p-3 bg-cyan-500/20 rounded-xl text-cyan-400"><Icons.Upload size={32} className="rotate-180" /></div>
+                          <div><h2 className="text-2xl font-bold text-white">Copia de Seguridad</h2><p className="text-slate-400 text-sm">Exporta tu configuración y cartera</p></div>
+                      </div>
+                      
+                      <div className="bg-yellow-900/20 border border-yellow-600/30 rounded-xl p-4 mb-6">
+                          <h4 className="text-yellow-500 font-bold text-sm mb-2 flex items-center gap-2"><Icons.AlertCircle size={16}/> Información Importante</h4>
+                          <p className="text-sm text-slate-300 leading-relaxed">
+                              El archivo de exportación contiene <strong>toda tu configuración, claves, y cartera de inversiones</strong>. Guárdalo en un lugar seguro.
+                          </p>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <button 
+                              onClick={handleRunExport} 
+                              disabled={ioStatus === 'processing'}
+                              className={`flex items-center justify-center gap-2 py-4 px-6 rounded-xl border transition-all font-bold ${ioStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : 'bg-slate-800 border-slate-600 hover:bg-slate-700 text-white'}`}
+                          >
+                              {ioStatus === 'processing' ? <Icons.Loader size={20}/> : <Icons.Upload size={20} className="rotate-180" />} 
+                              EXPORTAR DATOS
+                          </button>
+
+                          <label className={`cursor-pointer flex items-center justify-center gap-2 py-4 px-6 rounded-xl border transition-all font-bold ${ioStatus === 'processing' ? 'bg-slate-800 opacity-50 cursor-not-allowed' : 'bg-blue-600 border-blue-500 hover:bg-blue-500 text-white'}`}>
+                              <input type="file" accept=".json" className="hidden" onChange={handleRunImport} disabled={ioStatus === 'processing'} />
+                              <Icons.Upload size={20} /> RESTAURAR DATOS
+                          </label>
+                      </div>
+                  </div>
+
+                  {/* 4. REGISTRO Y LICENCIA */}
+                  <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-20">
+                      <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
+                          <div className={`p-3 rounded-xl ${isAuth ? 'bg-green-500/20 text-green-400' : 'bg-blue-500/20 text-blue-400'}`}><Icons.CheckCircle size={32} /></div>
+                          <div><h2 className="text-2xl font-bold text-white">Registro de la aplicación</h2><p className="text-slate-400 text-sm">Estado de la instalación y licencia</p></div>
+                      </div>
+                      <div className="space-y-6">
+                          <p className="text-sm text-slate-400 leading-relaxed italic">Esta plataforma es un proyecto independiente que se sustenta exclusivamente mediante un modelo de <strong>crowdfunding</strong> y las aportaciones directas de sus usuarios. Tu registro ayuda a mantener los costes de desarrollo y mantenimiento. Sin registro, la aplicación está limitada a la gestión de <strong>5 acciones</strong>.</p>
+                          <div className="bg-black/30 border border-slate-700 rounded-xl p-5">
+                              <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">Número de Registro / Código de Instalación</label>
+                              <div className="flex gap-3">
+                                  <input type="text" value={localLic} onChange={(e) => setLocalLic(e.target.value.toUpperCase())} placeholder="BG-XXXX-XXXX" className={`flex-1 bg-slate-900 border ${isAuth ? 'border-green-600' : 'border-slate-600'} rounded-lg p-3 text-white font-mono focus:outline-none`} />
+                                  <button onClick={() => onActivate(localLic)} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-xs">ACTIVAR</button>
+                              </div>
+                              {isAuth && <div className="mt-3 text-center text-green-400 text-xs font-bold uppercase tracking-widest">● Dispositivo Registrado</div>}
+                          </div>
+                          <div className="text-center bg-slate-800/50 p-4 rounded-xl">
+                              <p className="text-xs text-slate-400 mb-2">Para obtener tu Nº de registro o colaborar con el crowdfunding:</p>
+                              <a href="https://x.com/BoardingGate" target="_blank" className="inline-flex items-center gap-2 text-blue-400 hover:text-blue-300 font-bold transition-colors"><Icons.Globe size={16}/> @BoardingGate en X (Twitter)</a>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          );
+      };
+
+      const App = () => {
+          const [activeTab, setActiveTab] = useState('portfolio');
+          const [apiKey, setApiKey] = usePersistentState('bg_api_key', '');
+          const [baseCurrency, setBaseCurrency] = usePersistentState('bg_base_currency', 'EUR');
+          const [refreshInterval, setRefreshInterval] = usePersistentState('bg_refresh_interval', 10);
+          const [portfolio, setPortfolio] = usePersistentState('bg_portfolio', []);
+          const [resultsData, setResultsData] = usePersistentState('bg_results_data', {});
+          const [lastUpdate, setLastUpdate] = usePersistentState('bg_last_update', null);
+          const [rk, setRk] = usePersistentState('bg_app_rk_st', '');
+
+          const isAuth = _0x7a2(rk);
+          const handleActivate = v => { if(_0x7a2(v)){ setRk(v); alert("¡Sistema Activado!"); } else alert("Código No Válido."); };
+
+          return (
+              <div className="h-full flex flex-col bg-[#0a0a0a] text-white">
+                  <header className="shrink-0 bg-slate-900 border-b border-slate-800 px-6 py-4 flex justify-between items-center z-50">
+                      <div><h1 className="text-2xl font-display font-bold">Boarding<span className="text-blue-600">Gate</span></h1><p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Gestor de Cartera de Valores iA</p></div>
+                      <nav className="flex bg-slate-800 rounded-lg p-1 gap-1 border border-slate-700 overflow-x-auto whitespace-nowrap custom-scrollbar">
+                          <button onClick={() => setActiveTab('portfolio')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'portfolio' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Briefcase size={14}/> Cartera</button>
+                          <button onClick={() => setActiveTab('dividends')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'dividends' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.DollarSign size={14}/> Dividendos</button>
+                          <button onClick={() => setActiveTab('results')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'results' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.ChartBar size={14}/> Resultados</button>
+                          <button onClick={() => setActiveTab('analysis')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'analysis' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Search size={14}/> Estudio</button>
+                          <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'settings' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Settings size={14}/> Ajustes</button>
+                      </nav>
+                  </header>
+                  <main className="flex-1 overflow-hidden relative">
+                      {activeTab === 'portfolio' && <PortfolioTab portfolio={portfolio} setPortfolio={setPortfolio} apiKey={apiKey} baseCurrency={baseCurrency} refreshInterval={refreshInterval} lastUpdate={lastUpdate} setLastUpdate={setLastUpdate} />}
+                      {activeTab === 'dividends' && <DividendTab portfolio={portfolio} setPortfolio={setPortfolio} baseCurrency={baseCurrency} />}
+                      {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={setResultsData} baseCurrency={baseCurrency} />}
+                      {activeTab === 'analysis' && <AnalysisTab apiKey={apiKey} baseCurrency={baseCurrency} />}
+                      {activeTab === 'settings' && <SettingsTab apiKey={apiKey} setApiKey={setApiKey} isAuth={isAuth} onActivate={handleActivate} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={setPortfolio} />}
+                  </main>
+                  <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase">
+                      <div>BoardingGate 3.0</div><div>Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleString() : '--'}</div>
+                  </footer>
+              </div>
+          );
+      };
+
       createRoot(document.getElementById('root')).render(<App />);
     </script>
 </body>
