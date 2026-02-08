@@ -48,7 +48,7 @@
 
       const _0x7a2=k=>{let x=Object.values(new Intl.DateTimeFormat('es').formatToParts(new Date())).filter(p=>['year','month','day'].includes(p.type)).reduce((a,c)=>a+~~c.value,0)*new Date().getDate();return k==x||k==x.toString(16).toUpperCase()};
 
-      // --- UTILIDADES DE FORMATO ---
+      // --- UTILIDADES ---
       const formatN = (v, dec = 2) => {
           let n = parseFloat(v) || 0;
           let parts = n.toFixed(dec).split('.');
@@ -65,29 +65,18 @@
           let parts = base.split(',');
           parts[0] = parts[0].replace(/\./g, '').replace(/\B(?=(\d{3})+(?!\d))/g, ".");
           base = parts.join(',');
-          if (c === 'USD') return `$ ${base}`;
-          if (c === 'GBP') return `£ ${base}`;
-          if (c === 'JPY') return `¥ ${base}`;
-          if (c === 'CHF') return `Fr ${base}`;
+          if (c === 'USD') return `$ ${base}`; if (c === 'GBP') return `£ ${base}`; if (c === 'JPY') return `¥ ${base}`; if (c === 'CHF') return `Fr ${base}`;
           return `${base} €`;
       };
       
       const calculateDays = (d1, d2 = new Date()) => Math.max(1, Math.ceil(Math.abs(new Date(d2) - new Date(d1)) / (1000 * 60 * 60 * 24)));
       const extractJSON = (t) => { try { const m = t.match(/(\{[\s\S]*\}|\[[\s\S]*\])/); return m ? JSON.parse(m[0]) : null; } catch { return null; } };
-
       const usePersistentState = (key, initialValue) => {
-        const [state, setState] = useState(() => {
-            try { const item = window.localStorage.getItem(key); return item ? JSON.parse(item) : initialValue; } 
-            catch { return initialValue; }
-        });
-        useEffect(() => { window.localStorage.setItem(key, JSON.stringify(state)); }, [key, state]);
-        return [state, setState];
+        const [state, setState] = useState(() => { try { const item = window.localStorage.getItem(key); return item ? JSON.parse(item) : initialValue; } catch { return initialValue; } });
+        useEffect(() => { window.localStorage.setItem(key, JSON.stringify(state)); }, [key, state]); return [state, setState];
       };
 
-      const CURRENCIES = [
-        { code: 'EUR', name: 'Euro' }, { code: 'USD', name: 'Dólar USA' }, { code: 'GBP', name: 'Libra Est.' },
-        { code: 'CHF', name: 'Franco Suizo' }, { code: 'JPY', name: 'Yen Jap.' }, { code: 'CAD', name: 'Dólar Can.' }
-      ];
+      const CURRENCIES = [{ code: 'EUR', name: 'Euro' }, { code: 'USD', name: 'Dólar USA' }, { code: 'GBP', name: 'Libra Est.' }, { code: 'CHF', name: 'Franco Suizo' }, { code: 'JPY', name: 'Yen Jap.' }, { code: 'CAD', name: 'Dólar Can.' }];
       const MONTHS = ["ENERO", "FEBRE", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOST", "SEPTIE", "OCTUB", "NOVIEM", "DICIE"];
 
       // --- ICONOS ---
@@ -148,48 +137,126 @@
           );
       };
 
-      // --- COMPONENTE CHART SVG BÁSICO ---
-      const SimpleChart = ({ type, data, title, height = 150 }) => {
-          if (!data || data.length === 0) return <div className="text-center text-xs text-slate-500 py-4">Sin datos</div>;
+      // --- COMPONENTE GRAFICOS AVANZADO (Ejes y Escalas) ---
+      const SimpleChart = ({ type, data, title, height = 200, color = "#3b82f6" }) => {
+          if (!data || data.length === 0) return <div className="text-center text-xs text-slate-500 py-4">Sin datos suficientes</div>;
+
+          // 1. Escalas y Rangos
+          const values = data.map(d => d.value);
+          const minVal = Math.min(0, ...values); // Siempre incluir el 0 para referencia
+          const maxVal = Math.max(0, ...values);
+          const range = maxVal - minVal || 1; // Evitar división por 0
+          
+          // Margenes internos para ejes
+          const padding = { top: 20, right: 10, bottom: 20, left: 40 };
+          const chartH = height; 
+          const chartW = 1000; // Ancho virtual SVG grande para escalar bien
+          const innerH = chartH - padding.top - padding.bottom;
+          
+          // Función: Valor -> Y coordenada
+          const getY = (val) => {
+              // Invertir eje Y (0 arriba)
+              const pct = (val - minVal) / range; 
+              return padding.top + innerH - (pct * innerH);
+          };
+          
+          const zeroY = getY(0);
+
+          // 2. Generar Ejes Y (Líneas horizontales)
+          const gridLines = [];
+          const steps = 4;
+          for(let i=0; i<=steps; i++){
+              const val = minVal + (range * (i/steps));
+              const y = getY(val);
+              gridLines.push({ y, val });
+          }
+
           return (
-              <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 flex flex-col h-full">
+              <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 flex flex-col h-full overflow-hidden relative">
                   <h4 className="text-[10px] uppercase font-bold text-slate-400 mb-2">{title}</h4>
-                  <div className="flex-1 flex items-end justify-between gap-1 relative" style={{ height: `${height}px` }}>
-                      {type === 'bar' && (() => {
-                          const max = Math.max(...data.map(d => Math.abs(d.value)));
-                          return data.map((d, i) => (
-                              <div key={i} className="flex flex-col items-center flex-1 group relative h-full justify-end">
-                                  <div className={`w-full max-w-[20px] rounded-t transition-all duration-500 ${d.value >= 0 ? 'bg-blue-600 hover:bg-blue-500' : 'bg-red-600 hover:bg-red-500'}`} style={{ height: `${Math.max(4, Math.abs(d.value) / (max || 1) * 90)}%` }}></div>
-                                  <div className="text-[7px] text-slate-500 mt-1 truncate w-full text-center">{d.label}</div>
-                                  <div className="absolute bottom-full mb-1 hidden group-hover:block bg-slate-800 text-white text-[9px] px-2 py-1 rounded z-10 whitespace-nowrap border border-slate-700 font-bold">{d.label}: {formatN(d.value)}</div>
-                              </div>
-                          ));
-                      })()}
-                      {type === 'pie' && (() => {
-                          const total = data.reduce((a, b) => a + b.value, 0);
-                          let acc = 0;
-                          return (
-                              <div className="flex w-full items-center justify-center gap-4">
-                                  <svg viewBox="0 0 32 32" className="w-24 h-24 rotate-[-90deg]">
-                                      {data.map((d, i) => {
-                                          const pct = d.value / total;
-                                          const dash = pct * 100;
-                                          const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
-                                          const circle = <circle key={i} r="16" cx="16" cy="16" fill="transparent" stroke={colors[i % colors.length]} strokeWidth="32" strokeDasharray={`${dash} 100`} strokeDashoffset={-1 * acc} className="hover:opacity-80 transition-all" />;
-                                          acc += dash;
-                                          return circle;
-                                      })}
-                                  </svg>
-                                  <div className="flex flex-col gap-1 overflow-y-auto max-h-[100px] custom-scrollbar">
-                                      {data.map((d, i) => {
-                                          const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
-                                          return <div key={i} className="flex items-center gap-1 text-[8px] text-slate-300"><span className="w-2 h-2 rounded-full" style={{backgroundColor: colors[i % colors.length]}}></span> <span className="font-bold">{d.label}</span> ({Math.round(d.value/total*100)}%)</div>;
-                                      })}
-                                  </div>
-                              </div>
-                          );
-                      })()}
+                  <div className="flex-1 w-full relative">
+                      <svg viewBox={`0 0 ${chartW} ${chartH}`} className="w-full h-full" preserveAspectRatio="none">
+                          {/* GRID y Etiquetas Eje Y */}
+                          {gridLines.map((g, i) => (
+                              <g key={i}>
+                                  <line x1={padding.left} y1={g.y} x2={chartW} y2={g.y} stroke="#334155" strokeWidth="1" strokeDasharray="4" opacity="0.5" />
+                                  <text x={padding.left - 5} y={g.y + 3} textAnchor="end" fill="#64748b" fontSize="10" fontFamily="monospace">{formatN(g.val, 0)}</text>
+                              </g>
+                          ))}
+                          
+                          {/* LINEA CERO */}
+                          <line x1={padding.left} y1={zeroY} x2={chartW} y2={zeroY} stroke="#94a3b8" strokeWidth="1" />
+
+                          {/* DIBUJO SEGUN TIPO */}
+                          {type === 'bar' && data.map((d, i) => {
+                              const barW = (chartW - padding.left) / data.length;
+                              const x = padding.left + (i * barW) + (barW * 0.1); // Espacio entre barras
+                              const y = getY(Math.max(0, d.value));
+                              const h = Math.abs(getY(d.value) - zeroY);
+                              const finalY = d.value >= 0 ? y : zeroY;
+                              
+                              return (
+                                  <g key={i} className="group">
+                                      <rect x={x} y={finalY} width={barW * 0.8} height={Math.max(1, h)} fill={d.value >=0 ? color : '#ef4444'} rx="2" className="hover:opacity-80 transition-all" />
+                                      {/* Etiqueta X (truncada) */}
+                                      <text x={x + barW*0.4} y={chartH - 5} textAnchor="middle" fill="#64748b" fontSize="9">{d.label.substring(0,6)}</text>
+                                  </g>
+                              );
+                          })}
+
+                          {type === 'line' && (() => {
+                              if (data.length < 2) return null;
+                              const stepX = (chartW - padding.left) / (data.length - 1);
+                              const points = data.map((d, i) => `${padding.left + (i * stepX)},${getY(d.value)}`).join(' ');
+                              // Area bajo la curva (gradiente)
+                              const areaPoints = `${padding.left},${zeroY} ${points} ${chartW - padding.right},${zeroY}`;
+
+                              return (
+                                  <g>
+                                      <defs>
+                                          <linearGradient id={`grad-${title}`} x1="0" y1="0" x2="0" y2="1">
+                                              <stop offset="0%" stopColor={color} stopOpacity="0.3"/>
+                                              <stop offset="100%" stopColor={color} stopOpacity="0"/>
+                                          </linearGradient>
+                                      </defs>
+                                      <polygon points={areaPoints} fill={`url(#grad-${title})`} />
+                                      <polyline points={points} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+                                      {data.map((d, i) => (
+                                          <circle key={i} cx={padding.left + (i * stepX)} cy={getY(d.value)} r="3" fill={color} className="hover:r-5 transition-all" />
+                                      ))}
+                                  </g>
+                              );
+                          })()}
+                      </svg>
                   </div>
+                  {/* LEYENDA PIE CHART (CASO ESPECIAL FUERA DE SVG) */}
+                  {type === 'pie' && (
+                      <div className="flex items-center justify-center h-full gap-8">
+                          <svg viewBox="0 0 32 32" className="w-32 h-32 rotate-[-90deg]">
+                              {(() => {
+                                  const total = data.reduce((a, b) => a + Math.abs(b.value), 0) || 1;
+                                  let acc = 0;
+                                  return data.map((d, i) => {
+                                      const val = Math.abs(d.value);
+                                      const pct = val / total;
+                                      const dash = pct * 100;
+                                      const c = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'][i % 5];
+                                      const seg = <circle key={i} r="16" cx="16" cy="16" fill="transparent" stroke={c} strokeWidth="32" strokeDasharray={`${dash} 100`} strokeDashoffset={-1 * acc} className="hover:opacity-80 transition-all" />;
+                                      acc += dash;
+                                      return seg;
+                                  });
+                              })()}
+                          </svg>
+                          <div className="flex flex-col gap-1 max-h-[140px] overflow-y-auto custom-scrollbar">
+                              {data.map((d, i) => (
+                                  <div key={i} className="flex items-center gap-2 text-[9px] text-slate-300">
+                                      <span className="w-2 h-2 rounded-full" style={{backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'][i % 5]}}></span>
+                                      <span className="font-bold">{d.label}</span>
+                                  </div>
+                              ))}
+                          </div>
+                      </div>
+                  )}
               </div>
           );
       };
@@ -201,7 +268,6 @@
                  <span className="text-[9px] font-bold text-slate-500 uppercase">{title}</span>
                  <span className="text-[8px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 font-bold">{formatN(data.num, 0)} VALORES</span>
               </div>
-              
               <div className="grid grid-cols-2 gap-2 mb-2">
                   <div className="text-left">
                       <div className="text-[8px] text-slate-500 uppercase font-black">Invertido</div>
@@ -217,14 +283,11 @@
                   <div className={`text-base font-black ${data.plPrice >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(data.plPrice, baseCurrency)}</div>
                   <div className="text-[10px] text-slate-300 mt-1">Simple: <span className="font-bold text-white">{formatN(data.plP_S)}%</span> | Anual: <span className="font-bold text-white">{formatN(data.plP_A)}%</span></div>
               </div>
-
               <div className="grid grid-cols-2 gap-2 border-t border-slate-800/50 pt-2">
                   <div>
                       <div className="text-[8px] text-blue-400 uppercase font-bold">Dividendos</div>
                       <div className="text-xs font-bold text-blue-300">{formatMoney(data.divN, baseCurrency)}</div>
-                      <div className="text-[7px] text-slate-500 mt-1">
-                          FX: <span className={data.fX >= 0 ? 'text-green-500' : 'text-red-500'}>{formatMoney(data.fX, baseCurrency)}</span>
-                      </div>
+                      <div className="text-[7px] text-slate-500 mt-1">FX: <span className={data.fX >= 0 ? 'text-green-500' : 'text-red-500'}>{formatMoney(data.fX, baseCurrency)}</span></div>
                   </div>
                   <div className="text-right">
                       <div className="text-[8px] text-purple-400 uppercase font-bold">Total Retorno</div>
@@ -552,7 +615,6 @@
           const calcReturns = (startVal, endVal, days) => {
               if (startVal === 0) return { simple: 0, annual: 0 };
               const simple = ((endVal - startVal) / startVal) * 100;
-              // LOGICA ACTUALIZADA: (Simple / Dias) * 365
               const d = Math.max(days, 1);
               const annual = (simple / d) * 365;
               return { simple, annual };
@@ -625,20 +687,30 @@
 
           // --- DATOS PARA GRAFICOS ---
           const chartsData = useMemo(() => {
-              const active = filteredPortfolio.filter(p => !p.sellDate);
-              
-              const distribution = active.map(p => ({
+              // 1. Distribución (Pie)
+              const distribution = filteredPortfolio.filter(p => !p.sellDate).map(p => ({
                   label: p.ticker,
                   value: (p.currentPrice * p.shares * p.currentFx)
               })).sort((a,b) => b.value - a.value);
 
-              const performance = active.map(p => {
-                  const cost = (p.buyPrice * p.shares * p.buyFx);
-                  const val = (p.currentPrice * p.shares * p.currentFx);
-                  return { label: p.ticker, value: val - cost };
-              }).sort((a,b) => b.value - a.value).slice(0, 8); 
+              // 2. Evolución (Linea Temporal) - Ahora basado en lo FILTRADO
+              const events = filteredPortfolio.map(p => {
+                   const isSold = !!p.sellDate;
+                   const date = isSold ? p.sellDate : p.buyDate;
+                   const value = isSold 
+                       ? ((p.sellPrice * p.shares * p.sellFx) - (p.buyPrice * p.shares * p.buyFx)) // Profit for sold
+                       : ((p.currentPrice * p.shares * p.currentFx) - (p.buyPrice * p.shares * p.buyFx)); // Unrealized profit for active
+                   return { date, value, label: p.ticker };
+              }).sort((a,b) => new Date(a.date) - new Date(b.date));
 
-              return { distribution, performance };
+              // Acumular evolución
+              let acc = 0;
+              const evolution = events.map(e => {
+                  acc += e.value;
+                  return { label: e.date, value: acc }; // Cumulative
+              });
+
+              return { distribution, evolution };
           }, [filteredPortfolio]);
 
           // --- UPDATE AUTO ---
@@ -768,7 +840,7 @@
 
 
           return (
-              <div className="flex flex-col p-4 md:p-6 pb-20">
+              <div className="h-full flex flex-col p-4 md:p-6 overflow-y-auto custom-scrollbar relative">
                   {/* OVERLAY DE CARGA PARA INFORME IA CARTERA */}
                   {analyzing && <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center fade-in"><Icons.Wand size={60} className="text-purple-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando Cartera Global...</div></div>}
 
@@ -789,7 +861,7 @@
                   {/* GRAFICOS AL FINAL (BOTTON OF PAGE) */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-[220px] shrink-0 mb-6">
                       <SimpleChart type="pie" data={chartsData.distribution} title="Distribución de Valor (Activos)" height={180} />
-                      <SimpleChart type="bar" data={chartsData.performance} title="Top Rendimiento Neto (Activos)" height={180} />
+                      <SimpleChart type="line" data={chartsData.evolution} title="Evolución Rendimiento Acumulado" height={180} color="#10b981" />
                   </div>
 
                   {/* MODAL FICHA */}
@@ -822,6 +894,8 @@
               </div>
           );
       };
+
+   
 
       // --- PESTAÑA CONFIGURACIÓN ---
       const SettingsTab = ({ apiKey, setApiKey, isAuth, onActivate, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio }) => {
@@ -1026,6 +1100,138 @@
               </div>
           );
       };
+
+
+
+      const DividendTab = ({ portfolio, setPortfolio, baseCurrency }) => {
+          const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+          
+          const filtered = useMemo(() => {
+              const list = portfolio.filter(p => { 
+                  // FILTRO: Solo si se indicó que paga dividendo (> 0) y cae en el año seleccionado
+                  const paysDiv = p.annualDividend > 0;
+                  const bY = new Date(p.buyDate).getFullYear(); 
+                  const sY = p.sellDate ? new Date(p.sellDate).getFullYear() : 9999; 
+                  return paysDiv && bY <= selectedYear && sY >= selectedYear; 
+              });
+              // ORDENACIÓN: 1. Activas (Fecha Compra) / 2. Cerradas (Fecha Venta)
+              return list.sort((a,b) => {
+                  const aClosed = !!a.sellDate; const bClosed = !!b.sellDate;
+                  if(aClosed !== bClosed) return aClosed ? 1 : -1; // Activas primero
+                  if(!aClosed) return new Date(a.buyDate) - new Date(b.buyDate); 
+                  return new Date(a.sellDate) - new Date(b.sellDate); 
+              });
+          }, [portfolio, selectedYear]);
+          
+          const handleDivChange = (id, month, field, val) => { 
+              const numVal = parseFloat(val) || 0; 
+              setPortfolio(prev => prev.map(p => { 
+                  if (p.id !== id) return p; 
+                  let divs = [...(p.dividends || [])]; 
+                  const idx = divs.findIndex(d => d.year === selectedYear && d.month === month); 
+                  if (idx >= 0) divs[idx][field] = numVal; 
+                  else divs.push({ id: Date.now() + Math.random(), year: selectedYear, month, net: field === 'net' ? numVal : 0, taxOrigin: field === 'taxOrigin' ? numVal : 0, taxDest: field === 'taxDest' ? numVal : 0 }); 
+                  return { ...p, dividends: divs }; 
+              })); 
+          };
+          
+          const stats = useMemo(() => {
+              let tNet = 0, tOrg = 0, tDest = 0, tBruto = 0, tDIB = 0, tDI15 = 0;
+              const monthlyT = Array.from({ length: 12 }, () => ({ n: 0, o: 0, d: 0 }));
+              const rows = filtered.map(p => {
+                  const ds = (p.dividends || []).filter(d => d.year === selectedYear);
+                  const n = ds.reduce((a, b) => a + b.net, 0);
+                  const o = ds.reduce((a, b) => a + b.taxOrigin, 0);
+                  const d = ds.reduce((a, b) => a + b.taxDest, 0);
+                  const b = n + o + d;
+                  const diBruto = o > 0 ? b : 0; // Dividendo Internacional Bruto
+                  const di15 = o > 0 ? b * 0.15 : 0; // 15% del Bruto
+                  
+                  tNet += n; tOrg += o; tDest += d; tBruto += b; tDIB += diBruto; tDI15 += di15;
+                  
+                  ds.forEach(div => { 
+                      if (div.month >= 0 && div.month < 12) { 
+                          monthlyT[div.month].n += div.net || 0; 
+                          monthlyT[div.month].o += div.taxOrigin || 0; 
+                          monthlyT[div.month].d += div.taxDest || 0; 
+                      } 
+                  });
+                  return { id: p.id, name: p.name || p.ticker, ticker: p.ticker, n, o, d, b, diBruto, di15 };
+              });
+              return { rows, tNet, tOrg, tDest, tBruto, tDIB, tDI15, monthlyT };
+          }, [filtered, selectedYear]);
+
+          const chartData = useMemo(() => stats.monthlyT.map((m, i) => ({ label: MONTHS[i].substring(0,3), value: m.n })), [stats]);
+
+          const handlePrint = () => {
+              const printWindow = window.open('', '', 'height=800,width=1200');
+              const emissionTime = new Date().toLocaleString();
+              let html = `<html><head><title>Informe Dividendos</title><style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:7px;} h1{font-size:14px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:20px;} th{background:#f1f5f9;text-align:center;padding:2px;border:1px solid #94a3b8;font-size:6px;text-transform:uppercase;} td{padding:2px;border:1px solid #e2e8f0;text-align:right;font-size:7px;} .name{text-align:left;font-weight:bold;} .header-row{background:#e2e8f0;} .sub-col{font-size:6px;color:#666;} .total-row{background:#f1f5f9;font-weight:bold;} .green{color:#16a34a;} .red{color:#dc2626;} .date{font-size:5px;color:#555;display:block;}</style></head><body>`;
+              html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>INFORME DE DIVIDENDOS AÑO: ${selectedYear}</h1></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`;
+              html += `<table><thead><tr><th rowspan="2" style="width:120px;">Valor</th><th rowspan="2" style="width:140px;">ACUMULADO<br/>(N | O | D | B)</th>`;
+              MONTHS.forEach(m => html += `<th colspan="3">${m}</th>`);
+              html += `<th rowspan="2">BRUTO D.I.</th><th rowspan="2">15% D.I.</th></tr><tr>`;
+              MONTHS.forEach(() => html += `<th class="sub-col">N</th><th class="sub-col">O</th><th class="sub-col">D</th>`);
+              html += `</tr></thead><tbody>`;
+              stats.rows.forEach(r => {
+                  const p = portfolio.find(x => x.id === r.id); const isSold = !!p.sellDate; const date = isSold ? `V:${p.sellDate}` : `C:${p.buyDate}`;
+                  html += `<tr><td class="name"><span class="${isSold?'red':'green'}">${r.name}</span><span class="date">${date}</span></td><td style="font-size:6px; font-family:monospace;">${formatN(r.n)} | ${formatN(r.o)} | ${formatN(r.d)} | <b>${formatN(r.b)}</b></td>`;
+                  MONTHS.forEach((_, i) => { const d = (p.dividends || []).find(dv => dv.year === selectedYear && dv.month === i) || {net:0, taxOrigin:0, taxDest:0}; html += `<td>${d.net?formatN(d.net):''}</td><td>${d.taxOrigin?formatN(d.taxOrigin):''}</td><td>${d.taxDest?formatN(d.taxDest):''}</td>`; });
+                  html += `<td>${formatN(r.diBruto)}</td><td>${formatN(r.di15)}</td></tr>`;
+              });
+              html += `<tr class="total-row"><td colspan="2" style="text-align:right;">TOTALES -></td>`;
+              MONTHS.forEach((_, i) => html += `<td>${formatN(stats.monthlyT[i].n)}</td><td>${formatN(stats.monthlyT[i].o)}</td><td>${formatN(stats.monthlyT[i].d)}</td>`);
+              html += `<td>${formatN(stats.tDIB)}</td><td>${formatN(stats.tDI15)}</td></tr>`;
+              html += `</tbody></table>`;
+              html += `<div style="margin-top:20px; border:2px solid #333; padding:10px; background:#f9f9f9; width:60%;">
+                  <div style="font-size:10px; font-weight:bold; margin-bottom:5px; border-bottom:1px solid #ccc;">RESUMEN FISCAL DEL EJERCICIO</div>
+                  <table style="width:100%; font-size:10px; border:none;">
+                      <tr><td style="border:none; text-align:left;">Dividendos Brutos Totales:</td><td style="border:none; font-weight:bold;">${formatMoney(stats.tBruto, baseCurrency)}</td></tr>
+                      <tr><td style="border:none; text-align:left;">Retenciones en Origen:</td><td style="border:none; color:#dc2626;">${formatMoney(stats.tOrg, baseCurrency)}</td></tr>
+                      <tr><td style="border:none; text-align:left;">Retenciones en Destino (España):</td><td style="border:none; color:#dc2626;">${formatMoney(stats.tDest, baseCurrency)}</td></tr>
+                      <tr><td style="border:none; text-align:left; border-top:1px solid #aaa;"><b>Líquido Percibido (Neto):</b></td><td style="border:none; border-top:1px solid #aaa; color:#16a34a; font-size:12px;"><b>${formatMoney(stats.tNet, baseCurrency)}</b></td></tr>
+                  </table>
+              </div></body></html>`;
+              printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(()=>printWindow.print(),500);
+          };
+
+          return (
+              <div className="h-full flex flex-col p-4 md:p-6 overflow-y-auto custom-scrollbar relative">
+                  <div className="flex justify-between items-center mb-4 bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
+                      <div className="flex items-center gap-4"><button onClick={() => setSelectedYear(y => y - 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">←</button><span className="text-2xl font-bold font-display text-blue-400">{selectedYear}</span><button onClick={() => setSelectedYear(y => y + 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">→</button></div>
+                      <div className="flex gap-4 items-center">
+                          <div className="flex gap-8 mr-4"><div className="text-right"><div className="text-[10px] text-slate-500 uppercase font-bold">Total Bruto</div><div className="text-xl font-bold text-white">{formatMoney(stats.tBruto, baseCurrency)}</div></div><div className="text-right border-l border-slate-700 pl-8"><div className="text-[10px] text-red-400 uppercase font-bold">Total Retenciones</div><div className="text-xl font-bold text-red-400">{formatMoney(stats.tOrg + stats.tDest, baseCurrency)}</div></div><div className="text-right border-l border-slate-700 pl-8"><div className="text-[10px] text-green-400 uppercase font-bold">Total Netos</div><div className="text-xl font-bold text-green-400">{formatMoney(stats.tNet, baseCurrency)}</div></div></div>
+                          <button onClick={handlePrint} className="bg-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button>
+                      </div>
+                  </div>
+                  
+                  {/* TABLA PRINCIPAL */}
+                  <div className="w-full overflow-x-auto custom-scrollbar border border-slate-800 rounded-xl bg-slate-950 mb-6">
+                      <table className="w-full text-[10px] border-collapse min-w-[2200px]"><thead className="sticky top-0 z-20 bg-slate-900 border-b border-slate-700 uppercase"><tr><th className="p-2 w-[180px] text-left sticky left-0 bg-slate-900 z-30 border-r border-slate-800">VALOR (LOTE)</th><th className="p-2 w-[180px] bg-yellow-900/20 text-yellow-500 text-center">ACUM. (N | O | D | B)</th>{MONTHS.map(m => (<th key={m} className="p-1 border-l border-slate-800 w-[140px]"><div className="text-blue-300 mb-1 text-center">{m}</div><div className="grid grid-cols-3 gap-0.5 text-[7px] text-slate-500"><span>NETO</span><span>ORIG</span><span>DEST</span></div></th>))}<th className="p-2 w-[110px] bg-purple-900/30 border-l border-purple-500/50">BRUTO D.I.</th><th className="p-2 w-[110px] bg-purple-900/30 border-l border-slate-800">15% D.I.</th></tr></thead>
+                          <tbody>{stats.rows.map(r => { const p = portfolio.find(x => x.id === r.id); const isSold = !!p.sellDate; return ( <tr key={r.id} className="hover:bg-white/5 border-b border-slate-800"><td className="p-2 sticky left-0 bg-slate-950 border-r border-slate-800"><div className={`font-bold ${isSold ? 'text-red-400' : 'text-green-400'}`}>{r.ticker}</div><div className="text-[8px] text-slate-500 font-mono mt-0.5">{r.name.substring(0,20)}</div></td><td className="p-2 bg-yellow-900/5 text-right font-mono space-x-2 text-[9px]"><span className="text-green-300">{formatN(r.n)}</span>|<span className="text-slate-400">{formatN(r.o)}</span>|<span className="text-slate-400">{formatN(r.d)}</span>|<span className="text-white font-bold">{formatN(r.b)}</span></td>{MONTHS.map((_, i) => { const d = (p.dividends || []).find(dv => dv.year === selectedYear && dv.month === i) || {net:0, taxOrigin:0, taxDest:0}; return ( <td key={i} className="p-1 border-l border-slate-800"><div className="grid grid-cols-3 gap-1"><input type="number" step="0.01" value={d.net || ''} onChange={e => handleDivChange(r.id, i, 'net', e.target.value)} className="w-full text-center text-green-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-green-500" /><input type="number" step="0.01" value={d.taxOrigin || ''} onChange={e => handleDivChange(r.id, i, 'taxOrigin', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" /><input type="number" step="0.01" value={d.taxDest || ''} onChange={e => handleDivChange(r.id, i, 'taxDest', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" /></div></td> ); })}<td className="p-2 text-center bg-purple-900/10 font-bold text-purple-300">{formatN(r.diBruto)}</td><td className="p-2 text-center bg-purple-900/10 border-l border-slate-800 font-bold text-purple-300">{formatN(r.di15)}</td></tr> ); })}<tr className="bg-slate-900 font-black text-white text-xs border-t-2 border-slate-700 sticky bottom-0 z-30 shadow-2xl"><td colSpan="2" className="p-3 text-right sticky left-0 bg-slate-900 uppercase tracking-widest border-r border-slate-700">TOTALES MENSUALES →</td>{MONTHS.map((_, i) => ( <td key={i} className="p-1 border-l border-slate-700 bg-[#0f121a]"><div className="grid grid-cols-3 gap-0.5 text-[7px] font-mono text-center"><span className="text-green-400">{formatN(stats.monthlyT[i].n)}</span><span className="text-slate-500">{formatN(stats.monthlyT[i].o)}</span><span className="text-slate-500">{formatN(stats.monthlyT[i].d)}</span></div></td> ))}<td className="p-3 text-center bg-purple-600/20 text-purple-300 border-l border-purple-500/30">{formatN(stats.tDIB)}</td><td className="p-3 text-center bg-purple-800/20 text-purple-300 border-l border-slate-700">{formatN(stats.tDI15)}</td></tr></tbody></table>
+                  </div>
+
+                  {/* GRAFICOS Y DATOS FISCALES ABAJO */}
+                  <div className="flex flex-col md:flex-row gap-6 shrink-0">
+                      <div className="flex-1 h-[200px]">
+                          <SimpleChart type="bar" data={chartData} title={`Cobro Mensual Dividendos ${selectedYear}`} height={160} color="#10b981" />
+                      </div>
+                      <div className="flex-1 bg-blue-900/20 p-6 rounded-xl border border-blue-500/30 flex flex-col justify-center gap-4">
+                          <div className="text-blue-400 font-display font-bold text-sm uppercase tracking-widest border-b border-blue-500/30 pb-2">Fiscalidad Renta (AEAT)</div>
+                          <div className="grid grid-cols-2 gap-6">
+                              <div><div className="text-[10px] uppercase font-bold text-blue-300">Dividendos Brutos</div><div className="text-xl font-bold text-white">{formatMoney(stats.tBruto, baseCurrency)}</div></div>
+                              <div><div className="text-[10px] uppercase font-bold text-blue-300">Retenido Destino</div><div className="text-xl font-bold text-white">{formatMoney(stats.tDest, baseCurrency)}</div></div>
+                          </div>
+                          <div className="bg-blue-600 p-3 rounded-lg shadow-lg shadow-blue-900/40 mt-2 text-center">
+                              <div className="text-[10px] uppercase font-bold text-white/80">Íntegro Renta (Casilla 0029)</div>
+                              <div className="text-2xl font-black text-white">{formatMoney(stats.tBruto - stats.tDest, baseCurrency)}</div>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          );
+      };
+
 
       const App = () => {
           const [activeTab, setActiveTab] = useState('portfolio');
