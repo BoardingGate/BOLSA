@@ -172,6 +172,29 @@
               gridLines.push({ y, val });
           }
 
+          // Gradiente dinámico para línea (Verde arriba de 0, Rojo abajo de 0)
+          const gradId = `grad-${title.replace(/[^a-zA-Z0-9]/g, '')}`;
+          let offsetZero = 0;
+          if (maxVal > 0 && minVal < 0) {
+              offsetZero = maxVal / (maxVal - minVal); // Porcentaje relativo del rango total donde está el 0
+          } else if (minVal >= 0) {
+              offsetZero = 1; // Todo es positivo (verde)
+          } else {
+              offsetZero = 0; // Todo es negativo (rojo)
+          }
+          
+          // El SVG usa coordenadas invertidas (0 arriba), así que offset 0 es arriba (max positivo)
+          // Gradient va de arriba (0%) a abajo (100%).
+          // Si offsetZero = 1 (todo pos), queremos verde hasta el final.
+          // Si offsetZero = 0.5 (mitad), queremos verde hasta 50%, luego rojo.
+          // OJO: Y crece hacia abajo. MaxVal está en Y=top (0%). MinVal está en Y=bottom (100%).
+          // offsetZero calculado como (max / range) nos da qué % del rango es positivo.
+          // Ejemplo: Max 100, Min -100. Range 200. offsetZero = 0.5. El 0 está al 50%.
+          // De 0% a 50% es positivo (Verde). De 50% a 100% es negativo (Rojo).
+          const stopPct = (maxVal / (maxVal - minVal)) * 100;
+          // Ajuste fino si todo es + o -
+          const finalStop = minVal >= 0 ? 100 : (maxVal <= 0 ? 0 : stopPct);
+
           return (
               <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 flex flex-col h-full overflow-hidden relative">
                   <h4 className="text-[10px] uppercase font-bold text-slate-400 mb-2">{title}</h4>
@@ -194,12 +217,19 @@
                                 })()}
                              </svg>
                              <div className="flex flex-col gap-1 max-h-[140px] overflow-y-auto custom-scrollbar">
-                                {data.map((d, i) => (
-                                    <div key={i} className="flex items-center gap-2 text-[9px] text-slate-300">
-                                        <span className="w-2 h-2 rounded-full" style={{backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'][i % 5]}}></span>
-                                        <span className="font-bold">{d.label}</span>
-                                    </div>
-                                ))}
+                                {(() => {
+                                    const total = data.reduce((a, b) => a + Math.abs(b.value), 0) || 1;
+                                    return data.map((d, i) => {
+                                        const pct = (Math.abs(d.value) / total) * 100;
+                                        return (
+                                            <div key={i} className="flex items-center gap-2 text-[9px] text-slate-300">
+                                                <span className="w-2 h-2 rounded-full" style={{backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'][i % 5]}}></span>
+                                                <span className="font-bold flex-1">{d.label}</span>
+                                                <span className="text-slate-500 font-mono">{pct.toFixed(1)}%</span>
+                                            </div>
+                                        );
+                                    });
+                                })()}
                              </div>
                           </div>
                       ) : (
@@ -234,26 +264,38 @@
                                   const points = data.map((d, i) => `${padding.left + (i * stepX)},${getY(d.value)}`).join(' ');
                                   const areaPoints = `${padding.left},${zeroY} ${points} ${chartW - padding.right},${zeroY}`;
                                   
-                                  // Calcular etiquetas X para que no se solapen
                                   const labelStep = Math.max(1, Math.floor(data.length / 6));
 
                                   return (
                                       <g>
                                           <defs>
-                                              <linearGradient id={`grad-${title.replace(/\s/g,'')}`} x1="0" y1="0" x2="0" y2="1">
-                                                  <stop offset="0%" stopColor={color} stopOpacity="0.3"/>
-                                                  <stop offset="100%" stopColor={color} stopOpacity="0"/>
+                                              <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+                                                  <stop offset="0%" stopColor="#22c55e" stopOpacity="0.4"/> {/* Verde arriba */}
+                                                  <stop offset={`${finalStop}%`} stopColor="#22c55e" stopOpacity="0.1"/>
+                                                  <stop offset={`${finalStop}%`} stopColor="#ef4444" stopOpacity="0.1"/> {/* Rojo abajo */}
+                                                  <stop offset="100%" stopColor="#ef4444" stopOpacity="0.4"/>
+                                              </linearGradient>
+                                              <linearGradient id={`${gradId}-stroke`} x1="0" y1="0" x2="0" y2="1">
+                                                  <stop offset="0%" stopColor="#22c55e" />
+                                                  <stop offset={`${finalStop}%`} stopColor="#22c55e" />
+                                                  <stop offset={`${finalStop}%`} stopColor="#ef4444" />
+                                                  <stop offset="100%" stopColor="#ef4444" />
                                               </linearGradient>
                                           </defs>
-                                          <polygon points={areaPoints} fill={`url(#grad-${title.replace(/\s/g,'')})`} />
-                                          <polyline points={points} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+                                          
+                                          <polygon points={areaPoints} fill={`url(#${gradId})`} />
+                                          <polyline points={points} fill="none" stroke={`url(#${gradId}-stroke)`} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+                                          
                                           {data.map((d, i) => (
                                               <g key={i}>
-                                                 <circle cx={padding.left + (i * stepX)} cy={getY(d.value)} r="3" fill={color} className="hover:r-5 transition-all" />
-                                                 {/* Etiquetas X (Fechas) */}
-                                                 {(i % labelStep === 0 || i === data.length - 1) && 
-                                                    <text x={padding.left + (i * stepX)} y={chartH - 10} textAnchor="middle" fill="#94a3b8" fontSize="10" fontWeight="bold">{d.label.split('T')[0].substring(5)}</text>
-                                                 }
+                                                 <circle cx={padding.left + (i * stepX)} cy={getY(d.value)} r="3" fill={d.value >= 0 ? "#22c55e" : "#ef4444"} className="hover:r-5 transition-all" />
+                                                 {/* Etiquetas X (Fechas MM/YY) */}
+                                                 {(i % labelStep === 0 || i === data.length - 1) && (() => {
+                                                     const dateObj = new Date(d.label);
+                                                     const mm = (dateObj.getMonth()+1).toString().padStart(2,'0');
+                                                     const yy = dateObj.getFullYear().toString().slice(-2);
+                                                     return <text x={padding.left + (i * stepX)} y={chartH - 10} textAnchor="middle" fill="#94a3b8" fontSize="10" fontWeight="bold">{`${mm}/${yy}`}</text>;
+                                                 })()}
                                               </g>
                                           ))}
                                       </g>
@@ -720,16 +762,21 @@
               };
           }, [filteredPortfolio, portfolio, filterText, filterDateStart, filterDateEnd, baseCurrency]);
 
-          // --- DATOS PARA GRAFICOS ---
+          // --- DATOS PARA GRAFICOS (AHORA REACTIVOS A CHECKS) ---
+          const activeFilteredPortfolio = useMemo(() => {
+              // Filtrar solo los visibles que estén activos (checked)
+              return filteredPortfolio.filter(p => p.isActive !== false);
+          }, [filteredPortfolio]); // filteredPortfolio ya cambia cuando cambia portfolio (y por ende isActive)
+
           const chartsData = useMemo(() => {
               // 1. Distribución (Pie)
-              const distribution = filteredPortfolio.filter(p => !p.sellDate).map(p => ({
+              const distribution = activeFilteredPortfolio.filter(p => !p.sellDate).map(p => ({
                   label: p.ticker,
                   value: (p.currentPrice * p.shares * p.currentFx)
               })).sort((a,b) => b.value - a.value);
 
               // 2. Evolución (Linea Temporal) - AHORA CON FECHAS
-              const events = filteredPortfolio.map(p => {
+              const events = activeFilteredPortfolio.map(p => {
                    const isSold = !!p.sellDate;
                    const date = isSold ? p.sellDate : p.buyDate;
                    const value = isSold 
@@ -745,7 +792,7 @@
               });
 
               return { distribution, evolution };
-          }, [filteredPortfolio]);
+          }, [activeFilteredPortfolio]);
 
           // --- UPDATE AUTO ---
           useEffect(() => {
@@ -900,7 +947,7 @@
                       </table>
                   </div>
 
-                  {/* GRAFICOS AL FINAL (BOTTON OF PAGE) */}
+                  {/* GRAFICOS AL FINAL (BOTTON OF PAGE) - REACTIVOS */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-[300px] shrink-0 mb-6">
                       <SimpleChart type="pie" data={chartsData.distribution} title="Distribución de Valor (Activos)" height={250} />
                       <SimpleChart type="line" data={chartsData.evolution} title="Evolución Rendimiento Acumulado" height={250} color="#10b981" />
@@ -1148,6 +1195,13 @@
       const DividendTab = ({ portfolio, setPortfolio, baseCurrency }) => {
           const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
           
+          // --- FUNCION AUXILIAR FECHA ---
+          const formatDateSimple = (d) => {
+              if(!d) return '';
+              const date = new Date(d);
+              return `${date.getDate().toString().padStart(2,'0')}/${(date.getMonth()+1).toString().padStart(2,'0')}/${date.getFullYear().toString().slice(-2)}`;
+          };
+
           const filtered = useMemo(() => {
               const list = portfolio.filter(p => { 
                   // FILTRO: Solo si se indicó que paga dividendo (> 0) y cae en el año seleccionado
@@ -1245,8 +1299,8 @@
           };
 
           return (
-              <div className="w-full p-4 md:p-6 flex flex-col gap-6">
-                  <div className="flex justify-between items-center bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
+              <div className="h-full flex flex-col p-4 md:p-6 overflow-hidden relative">
+                  <div className="flex justify-between items-center mb-4 bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
                       <div className="flex items-center gap-4"><button onClick={() => setSelectedYear(y => y - 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">←</button><span className="text-2xl font-bold font-display text-blue-400">{selectedYear}</span><button onClick={() => setSelectedYear(y => y + 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">→</button></div>
                       <div className="flex gap-4 items-center">
                           <div className="flex gap-8 mr-4"><div className="text-right"><div className="text-[10px] text-slate-500 uppercase font-bold">Total Bruto</div><div className="text-xl font-bold text-white">{formatMoney(stats.tBruto, baseCurrency)}</div></div><div className="text-right border-l border-slate-700 pl-8"><div className="text-[10px] text-red-400 uppercase font-bold">Total Retenciones</div><div className="text-xl font-bold text-red-400">{formatMoney(stats.tOrg + stats.tDest, baseCurrency)}</div></div><div className="text-right border-l border-slate-700 pl-8"><div className="text-[10px] text-green-400 uppercase font-bold">Total Netos</div><div className="text-xl font-bold text-green-400">{formatMoney(stats.tNet, baseCurrency)}</div></div></div>
@@ -1255,13 +1309,13 @@
                   </div>
                   
                   {/* TABLA PRINCIPAL (SCROLLABLE) */}
-                  <div className="w-full overflow-x-auto border border-slate-800 rounded-xl bg-slate-950">
+                  <div className="flex-1 w-full overflow-x-auto custom-scrollbar border border-slate-800 rounded-xl bg-slate-950 mb-4 min-h-0">
                       <table className="w-full text-[10px] border-collapse min-w-[2200px]"><thead className="sticky top-0 z-20 bg-slate-900 border-b border-slate-700 uppercase"><tr><th className="p-2 w-[180px] text-left sticky left-0 bg-slate-900 z-30 border-r border-slate-800">VALOR (LOTE)</th><th className="p-2 w-[180px] bg-yellow-900/20 text-yellow-500 text-center">ACUM. (N | O | D | B)</th>{MONTHS.map(m => (<th key={m} className="p-1 border-l border-slate-800 w-[140px]"><div className="text-blue-300 mb-1 text-center">{m}</div><div className="grid grid-cols-3 gap-0.5 text-[7px] text-slate-500"><span>NETO</span><span>ORIG</span><span>DEST</span></div></th>))}<th className="p-2 w-[110px] bg-purple-900/30 border-l border-purple-500/50">BRUTO D.I.</th><th className="p-2 w-[110px] bg-purple-900/30 border-l border-slate-800">15% D.I.</th></tr></thead>
-                          <tbody>{stats.rows.map(r => { const p = portfolio.find(x => x.id === r.id); const isSold = !!p.sellDate; return ( <tr key={r.id} className="hover:bg-white/5 border-b border-slate-800"><td className="p-2 sticky left-0 bg-slate-950 border-r border-slate-800"><div className={`font-bold ${isSold ? 'text-red-400' : 'text-green-400'}`}>{r.ticker}</div><div className="text-[8px] text-slate-500 font-mono mt-0.5">{r.name.substring(0,20)}</div></td><td className="p-2 bg-yellow-900/5 text-right font-mono space-x-2 text-[9px]"><span className="text-green-300">{formatN(r.n)}</span>|<span className="text-slate-400">{formatN(r.o)}</span>|<span className="text-slate-400">{formatN(r.d)}</span>|<span className="text-white font-bold">{formatN(r.b)}</span></td>{MONTHS.map((_, i) => { const d = (p.dividends || []).find(dv => dv.year === selectedYear && dv.month === i) || {net:0, taxOrigin:0, taxDest:0}; return ( <td key={i} className="p-1 border-l border-slate-800"><div className="grid grid-cols-3 gap-1"><input type="number" step="0.01" value={d.net || ''} onChange={e => handleDivChange(r.id, i, 'net', e.target.value)} className="w-full text-center text-green-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-green-500" /><input type="number" step="0.01" value={d.taxOrigin || ''} onChange={e => handleDivChange(r.id, i, 'taxOrigin', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" /><input type="number" step="0.01" value={d.taxDest || ''} onChange={e => handleDivChange(r.id, i, 'taxDest', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" /></div></td> ); })}<td className="p-2 text-center bg-purple-900/10 font-bold text-purple-300">{formatN(r.diBruto)}</td><td className="p-2 text-center bg-purple-900/10 border-l border-slate-800 font-bold text-purple-300">{formatN(r.di15)}</td></tr> ); })}<tr className="bg-slate-900 font-black text-white text-xs border-t-2 border-slate-700 sticky bottom-0 z-30 shadow-2xl"><td colSpan="2" className="p-3 text-right sticky left-0 bg-slate-900 uppercase tracking-widest border-r border-slate-700">TOTALES MENSUALES →</td>{MONTHS.map((_, i) => ( <td key={i} className="p-1 border-l border-slate-700 bg-[#0f121a]"><div className="grid grid-cols-3 gap-0.5 text-[7px] font-mono text-center"><span className="text-green-400">{formatN(stats.monthlyT[i].n)}</span><span className="text-slate-500">{formatN(stats.monthlyT[i].o)}</span><span className="text-slate-500">{formatN(stats.monthlyT[i].d)}</span></div></td> ))}<td className="p-3 text-center bg-purple-600/20 text-purple-300 border-l border-purple-500/30">{formatN(stats.tDIB)}</td><td className="p-3 text-center bg-purple-800/20 text-purple-300 border-l border-slate-700">{formatN(stats.tDI15)}</td></tr></tbody></table>
+                          <tbody>{stats.rows.map(r => { const p = portfolio.find(x => x.id === r.id); const isSold = !!p.sellDate; return ( <tr key={r.id} className="hover:bg-white/5 border-b border-slate-800"><td className="p-2 sticky left-0 bg-slate-950 border-r border-slate-800"><div className={`font-bold ${isSold ? 'text-red-400' : 'text-green-400'}`}>{r.ticker} <span className="text-[9px] text-slate-400 font-normal">({formatDateSimple(isSold ? p.sellDate : p.buyDate)})</span></div><div className="text-[8px] text-slate-500 font-mono mt-0.5">{r.name.substring(0,20)}</div></td><td className="p-2 bg-yellow-900/5 text-right font-mono space-x-2 text-[9px]"><span className="text-green-300">{formatN(r.n)}</span>|<span className="text-slate-400">{formatN(r.o)}</span>|<span className="text-slate-400">{formatN(r.d)}</span>|<span className="text-white font-bold">{formatN(r.b)}</span></td>{MONTHS.map((_, i) => { const d = (p.dividends || []).find(dv => dv.year === selectedYear && dv.month === i) || {net:0, taxOrigin:0, taxDest:0}; return ( <td key={i} className="p-1 border-l border-slate-800"><div className="grid grid-cols-3 gap-1"><input type="number" step="0.01" value={d.net || ''} onChange={e => handleDivChange(r.id, i, 'net', e.target.value)} className="w-full text-center text-green-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-green-500" /><input type="number" step="0.01" value={d.taxOrigin || ''} onChange={e => handleDivChange(r.id, i, 'taxOrigin', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" /><input type="number" step="0.01" value={d.taxDest || ''} onChange={e => handleDivChange(r.id, i, 'taxDest', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" /></div></td> ); })}<td className="p-2 text-center bg-purple-900/10 font-bold text-purple-300">{formatN(r.diBruto)}</td><td className="p-2 text-center bg-purple-900/10 border-l border-slate-800 font-bold text-purple-300">{formatN(r.di15)}</td></tr> ); })}<tr className="bg-slate-900 font-black text-white text-xs border-t-2 border-slate-700 sticky bottom-0 z-30 shadow-2xl"><td colSpan="2" className="p-3 text-right sticky left-0 bg-slate-900 uppercase tracking-widest border-r border-slate-700">TOTALES MENSUALES →</td>{MONTHS.map((_, i) => ( <td key={i} className="p-1 border-l border-slate-700 bg-[#0f121a]"><div className="grid grid-cols-3 gap-0.5 text-[7px] font-mono text-center"><span className="text-green-400">{formatN(stats.monthlyT[i].n)}</span><span className="text-slate-500">{formatN(stats.monthlyT[i].o)}</span><span className="text-slate-500">{formatN(stats.monthlyT[i].d)}</span></div></td> ))}<td className="p-3 text-center bg-purple-600/20 text-purple-300 border-l border-purple-500/30">{formatN(stats.tDIB)}</td><td className="p-3 text-center bg-purple-800/20 text-purple-300 border-l border-slate-700">{formatN(stats.tDI15)}</td></tr></tbody></table>
                   </div>
 
-                  {/* GRAFICOS Y DATOS FISCALES ABAJO (APILADOS VERTICALMENTE) */}
-                  <div className="flex flex-col gap-6 shrink-0">
+                  {/* GRAFICOS Y DATOS FISCALES ABAJO (FIJOS AL PIE, APILADOS VERTICALMENTE) */}
+                  <div className="shrink-0 flex flex-col gap-4 overflow-y-auto max-h-[450px] mb-2 pr-2 custom-scrollbar">
                       
                       {/* 1. SECCIÓN DATOS FISCALES */}
                       <div className="bg-blue-900/20 p-4 rounded-xl border border-blue-500/30">
@@ -1280,11 +1334,11 @@
                       </div>
 
                       {/* 2. GRÁFICAS APILADAS */}
-                      <div className="h-[200px] w-full">
-                          <SimpleChart type="bar" data={chartDataMonthly} title={`Cobro Mensual Dividendos ${selectedYear}`} height={200} color="#10b981" />
+                      <div className="h-[200px] shrink-0">
+                          <SimpleChart type="bar" data={chartDataMonthly} title={`Cobro Mensual Dividendos ${selectedYear}`} height={180} color="#10b981" />
                       </div>
-                      <div className="h-[200px] w-full">
-                          <SimpleChart type="bar" data={stats.tickerChartData} title={`Dividendos Acumulados por Ticker ${selectedYear}`} height={200} color="#3b82f6" />
+                      <div className="h-[200px] shrink-0">
+                          <SimpleChart type="bar" data={stats.tickerChartData} title={`Dividendos Acumulados por Ticker ${selectedYear}`} height={180} color="#3b82f6" />
                       </div>
 
                   </div>
