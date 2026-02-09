@@ -367,7 +367,7 @@
 
 
 
-      const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency }) => {
+    const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency }) => {
           const r2 = (num) => Math.round((parseFloat(num) || 0) * 100) / 100;
           
           const getDisplayYears = () => {
@@ -381,7 +381,6 @@
               return range;
           };
 
-          // Inicialización de datos asegurando los campos nuevos de compensación
           useEffect(() => {
               const yearsNeeded = getDisplayYears();
               const newData = { ...resultsData };
@@ -391,7 +390,6 @@
                       newData[y] = { locked: false, soldCount: 0, uniqueCount: 0, profitPrice: 0, dividends: 0, lossPrice: 0, fees: 0, resNoDiv: 0, resWithDiv: 0, tax: 0, accumulated: 0, rentaResNoDiv: 0, rentaFees: 0, rentaAdj: 0, rentaBase: 0, comp1: 0, comp2: 0, comp3: 0, comp4: 0, compRest: 0 }; 
                       changed = true; 
                   } else {
-                      // Asegurar que existan los campos nuevos si el año ya existía
                       const fields = ['comp1', 'comp2', 'comp3', 'comp4', 'compRest'];
                       fields.forEach(f => { if(newData[y][f] === undefined) { newData[y][f] = 0; changed = true; } });
                   }
@@ -404,7 +402,6 @@
               const yearsToCalc = getDisplayYears();
               let runningAccum = 0;
               yearsToCalc.forEach(y => {
-                  // Preservar datos manuales de compensación al recalcular
                   const existingComp = newData[y] || {};
                   
                   if (!newData[y]) newData[y] = { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, fees:0, resNoDiv:0, resWithDiv:0, tax:0, accumulated:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0, comp1: 0, comp2: 0, comp3: 0, comp4: 0, compRest: 0 };
@@ -419,12 +416,26 @@
                   const resNoDiv = r2(yearProfitPrice - yearLossPrice); const resWithDiv = r2(resNoDiv + yearDivs); const tax = resNoDiv > 0 ? r2(resNoDiv * 0.19) : 0;
                   runningAccum = r2(runningAccum + resWithDiv);
                   
+                  const rentaBaseCalc = resNoDiv; 
+
+                  // Recalcular Resta Compensar
+                  let finalCompRest = existingComp.compRest || 0;
+                  if (rentaBaseCalc < 0) {
+                      const c1 = parseFloat(existingComp.comp1) || 0;
+                      const c2 = parseFloat(existingComp.comp2) || 0;
+                      const c3 = parseFloat(existingComp.comp3) || 0;
+                      const c4 = parseFloat(existingComp.comp4) || 0;
+                      // Resta = Base Negativa (ej -1000) + Compensaciones aplicadas (ej +200) = -800 pendiente
+                      finalCompRest = r2(rentaBaseCalc + c1 + c2 + c3 + c4);
+                  }
+
                   newData[y] = { 
                       ...newData[y], 
                       soldCount: lotesTotal, uniqueCount: uniqueTickers.size, profitPrice: yearProfitPrice, dividends: yearDivs, lossPrice: yearLossPrice, fees: yearFees, resNoDiv: resNoDiv, resWithDiv: resWithDiv, tax: tax, accumulated: runningAccum, rentaResNoDiv: resNoDiv, rentaFees: yearFees, 
                       rentaAdj: existingComp.rentaAdj || 0, 
-                      rentaBase: resNoDiv, // Reset base to simple result initially
-                      comp1: existingComp.comp1 || 0, comp2: existingComp.comp2 || 0, comp3: existingComp.comp3 || 0, comp4: existingComp.comp4 || 0, compRest: existingComp.compRest || 0
+                      rentaBase: rentaBaseCalc, 
+                      comp1: existingComp.comp1 || 0, comp2: existingComp.comp2 || 0, comp3: existingComp.comp3 || 0, comp4: existingComp.comp4 || 0, 
+                      compRest: finalCompRest
                   };
               });
               setResultsData(newData);
@@ -432,8 +443,31 @@
 
           const handleEdit = (year, field, val) => { 
               if (resultsData[year]?.locked && !field.startsWith('renta') && !field.startsWith('comp')) return; 
+              
               const v = parseFloat(val); 
-              setResultsData(prev => ({ ...prev, [year]: { ...prev[year], [field]: isNaN(v) ? 0 : r2(v) } })); 
+              const safeVal = isNaN(v) ? 0 : r2(v);
+
+              setResultsData(prev => {
+                  const currentYearData = { ...prev[year], [field]: safeVal };
+                  
+                  // LÓGICA DE RECÁLCULO AUTOMÁTICO DE COMPENSACIÓN
+                  // Si modificamos cualquier campo de compensación o la base, actualizamos el RESTO
+                  if (['comp1', 'comp2', 'comp3', 'comp4', 'rentaBase'].includes(field)) {
+                      const base = field === 'rentaBase' ? safeVal : currentYearData.rentaBase;
+                      // Solo tiene sentido calcular "pendiente" si partimos de una pérdida
+                      if (base < 0) {
+                          const c1 = field === 'comp1' ? safeVal : (currentYearData.comp1 || 0);
+                          const c2 = field === 'comp2' ? safeVal : (currentYearData.comp2 || 0);
+                          const c3 = field === 'comp3' ? safeVal : (currentYearData.comp3 || 0);
+                          const c4 = field === 'comp4' ? safeVal : (currentYearData.comp4 || 0);
+                          
+                          // Resta = Base (negativa) + Lo que ya hemos compensado (positivo)
+                          currentYearData.compRest = r2(base + c1 + c2 + c3 + c4);
+                      }
+                  }
+
+                  return { ...prev, [year]: currentYearData };
+              });
           };
           
           const toggleLock = (year) => { setResultsData(prev => ({ ...prev, [year]: { ...prev[year], locked: !prev[year].locked } })); };
@@ -451,15 +485,40 @@
           const handlePrint = () => {
               const printWindow = window.open('', '', 'height=800,width=1200');
               const emissionTime = new Date().toLocaleString();
-              let html = `<html><head><title>Resultados Anuales</title><style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:9px;} h1{font-size:9px;margin-bottom:2px;text-transform:uppercase;} table{width:100%;border-collapse:collapse;margin-top:15px;} th{background:#f1f5f9;text-align:center;padding:3px;border:1px solid #94a3b8;font-size:7px;text-transform:uppercase;} td{padding:3px;border:1px solid #e2e8f0;text-align:right;} .gray-bg{background:#f1f5f9;} .dark-bg{background:#e2e8f0;font-weight:bold;}</style></head><body>`;
+              let html = `<html><head><title>Resultados Anuales</title><style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:9px;} h1{font-size:10px;margin-bottom:2px;text-transform:uppercase;} h2{font-size:9px;margin-top:15px;margin-bottom:2px;color:#d97706;} table{width:100%;border-collapse:collapse;margin-bottom:10px;} th{background:#f1f5f9;text-align:center;padding:2px;border:1px solid #94a3b8;font-size:7px;text-transform:uppercase;} td{padding:2px;border:1px solid #e2e8f0;text-align:right;font-family:monospace;font-size:7px;} .gray-bg{background:#f1f5f9;} .dark-bg{background:#e2e8f0;font-weight:bold;} .orange-bg{background:#fff7ed;color:#ea580c;font-weight:bold;} .info-box{border:1px solid #ccc; background:#f9f9f9; padding:5px; font-size:7px; text-align:justify; margin-top:10px;}</style></head><body>`;
+              
               html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>INFORME DE RESULTADOS ANUALES CARTERA</h1></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`;
+              
+              // TABLA 1: RESULTADOS FINANCIEROS Y FISCALIDAD BÁSICA
+              html += `<h2>1. Rendimiento y Fiscalidad Base</h2>`;
               html += `<table><thead><tr><th>Año</th><th>Lotes</th><th>Beneficio</th><th>Dividendos</th><th>Pérdida</th><th>Res. SIN Div</th><th>Res. CON Div</th><th>Impuestos</th><th>Acumulado</th><th style="border-left:2px solid #333;">Res. SIN Div (R)</th><th>Gtos Broker</th><th>Ajustes</th><th>Base Imp. 19%</th></tr></thead><tbody>`;
               yearsToShow.forEach(year => {
-                  const d = resultsData[year] || { soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, resNoDiv:0, resWithDiv:0, tax:0, accumulated:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0 };
-                  html += `<tr><td style="text-align:center;"><b>${year}</b></td><td style="text-align:center;">${formatN(d.soldCount, 0)} / ${formatN(d.uniqueCount, 0)}</td><td>${formatMoney(d.profitPrice, baseCurrency)}</td><td>${formatMoney(d.dividends, baseCurrency)}</td><td style="color:#dc2626;">${formatMoney(d.lossPrice, baseCurrency)}</td><td class="gray-bg">${formatMoney(d.resNoDiv, baseCurrency)}</td><td class="gray-bg">${formatMoney(d.resWithDiv, baseCurrency)}</td><td>${formatMoney(d.tax, baseCurrency)}</td><td>${formatMoney(d.accumulated, baseCurrency)}</td><td style="border-left:2px solid #333;">${formatMoney(d.rentaResNoDiv, baseCurrency)}</td><td>${formatMoney(d.rentaFees, baseCurrency)}</td><td>${formatMoney(d.rentaAdj, baseCurrency)}</td><td class="dark-bg">${formatMoney(d.rentaBase, baseCurrency)}</td></tr>`;
+                  const d = resultsData[year] || {};
+                  html += `<tr><td style="text-align:center;"><b>${year}</b></td><td style="text-align:center;">${formatN(d.soldCount, 0)}</td><td>${formatMoney(d.profitPrice, baseCurrency)}</td><td>${formatMoney(d.dividends, baseCurrency)}</td><td style="color:#dc2626;">${formatMoney(d.lossPrice, baseCurrency)}</td><td class="gray-bg">${formatMoney(d.resNoDiv, baseCurrency)}</td><td class="gray-bg">${formatMoney(d.resWithDiv, baseCurrency)}</td><td>${formatMoney(d.tax, baseCurrency)}</td><td>${formatMoney(d.accumulated, baseCurrency)}</td><td style="border-left:2px solid #333;">${formatMoney(d.rentaResNoDiv, baseCurrency)}</td><td>${formatMoney(d.rentaFees, baseCurrency)}</td><td>${formatMoney(d.rentaAdj, baseCurrency)}</td><td class="dark-bg">${formatMoney(d.rentaBase, baseCurrency)}</td></tr>`;
               });
-              html += `<tr style="background:#333;color:white;font-weight:bold;"><td style="text-align:center;">TOTAL</td><td style="text-align:center;">${formatN(totals.soldCount, 0)}</td><td>${formatMoney(totals.profitPrice, baseCurrency)}</td><td>${formatMoney(totals.dividends, baseCurrency)}</td><td>${formatMoney(totals.lossPrice, baseCurrency)}</td><td>${formatMoney(totals.resNoDiv, baseCurrency)}</td><td>${formatMoney(totals.resWithDiv, baseCurrency)}</td><td>${formatMoney(totals.tax, baseCurrency)}</td><td></td><td style="border-left:2px solid #fff;"></td><td>${formatMoney(totals.fees, baseCurrency)}</td><td></td><td>${formatMoney(totals.rentaBase, baseCurrency)}</td></tr>`;
-              html += `</tbody></table></body></html>`;
+              html += `</tbody></table>`;
+
+              // TABLA 2: CUADRO DE COMPENSACIÓN (Separado para que quepa y con fuentes pequeñas)
+              html += `<h2>2. Cuadro de Seguimiento de Compensación de Pérdidas (4 Años)</h2>`;
+              html += `<table><thead><tr><th style="width:10%;">Año Origen</th><th style="width:15%;">Base Imponible (G/P)</th><th>Compensado 1er Año</th><th>Compensado 2do Año</th><th>Compensado 3er Año</th><th>Compensado 4to Año</th><th style="border-left:2px solid #ea580c; background:#fff7ed; color:#ea580c;">PENDIENTE COMPENSAR</th></tr></thead><tbody>`;
+              yearsToShow.forEach(year => {
+                  const d = resultsData[year] || {};
+                  // Solo mostrar filas relevantes para limpiar el reporte
+                  if (d.rentaBase < 0 || d.compRest !== 0 || d.comp1 !==0) {
+                      html += `<tr><td style="text-align:center;"><b>${year}</b></td><td style="font-weight:bold; color:${d.rentaBase<0?'red':'black'}">${formatMoney(d.rentaBase, baseCurrency)}</td><td>${formatMoney(d.comp1, baseCurrency)}</td><td>${formatMoney(d.comp2, baseCurrency)}</td><td>${formatMoney(d.comp3, baseCurrency)}</td><td>${formatMoney(d.comp4, baseCurrency)}</td><td class="orange-bg" style="border-left:2px solid #ea580c;">${formatMoney(d.compRest, baseCurrency)}</td></tr>`;
+                  }
+              });
+              html += `</tbody></table>`;
+              
+              // INFO FISCAL
+              html += `<div class="info-box">
+                  <strong>NORMATIVA COMPENSACIÓN (Base del Ahorro IRPF):</strong> Si el saldo de Ganancias y Pérdidas Patrimoniales (ventas) es negativo, se compensa en los 4 años siguientes en este orden:<br/>
+                  1. Contra el saldo positivo de <strong>Ganancias Patrimoniales</strong> (otras ventas) de esos años (Sin límite).<br/>
+                  2. Si aún queda pérdida, contra el saldo positivo de <strong>Rendimientos de Capital Mobiliario</strong> (dividendos/intereses) de esos años (Con límite del 25% de dicho saldo).<br/>
+                  <i>(*) Verificar anualmente Casillas de "Pendiente de compensación ejercicios anteriores" en la sección Base Imponible del Ahorro del Modelo 100.</i>
+              </div>`;
+
+              html += `</body></html>`;
               printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(()=>printWindow.print(),500);
           };
 
@@ -496,7 +555,7 @@
                                    <th className="p-2 text-right border-b border-slate-700 bg-orange-900/10 text-orange-400 w-24">2do AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
                                    <th className="p-2 text-right border-b border-slate-700 bg-orange-900/10 text-orange-400 w-24">3er AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
                                    <th className="p-2 text-right border-b border-slate-700 bg-orange-900/10 text-orange-400 w-24">4do AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
-                                   <th className="p-2 text-right border-b border-slate-700 bg-orange-600/20 text-yellow-500 font-black border-l border-orange-500/30 w-32">RESTA COMPENSAR<br/><span className="text-[7px] opacity-60 font-normal">(Saldo Neg.)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 bg-orange-600/20 text-yellow-500 font-black border-l border-orange-500/30 w-32">PENDIENTE<br/><span className="text-[7px] opacity-60 font-normal">(Resta)</span></th>
                                </tr>
                            </thead>
                            <tbody className="divide-y divide-slate-800 font-mono text-xs">{yearsToShow.map(year => { const d = resultsData[year] || { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, resNoDiv:0, resWithDiv:0, tax:0, accumulated:0, fees:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0, comp1:0, comp2:0, comp3:0, comp4:0, compRest:0 }; return ( <tr key={year} className={`hover:bg-slate-900/40 transition-colors ${d.locked ? 'opacity-70' : ''}`}><td className="p-2 text-center bg-slate-900/50 sticky left-0 z-20 border-r border-slate-800"><input type="checkbox" checked={d.locked} onChange={()=>toggleLock(year)} className="w-3 h-3 accent-red-500 cursor-pointer" /></td><td className="p-2 text-center font-bold text-white bg-slate-900/20">{year}</td><td className="p-2 text-center text-slate-400 text-[10px]">{formatN(d.soldCount, 0)} <span className="text-slate-600">/</span> <span className="text-slate-300 font-bold">{formatN(d.uniqueCount, 0)}</span></td><td className="p-2 border-l border-slate-800/50"><input type="number" step="0.01" value={d.profitPrice} onChange={e=>handleEdit(year, 'profitPrice', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-green-500 outline-none" /></td><td className="p-2"><input type="number" step="0.01" value={d.dividends} onChange={e=>handleEdit(year, 'dividends', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-blue-400 outline-none" /></td><td className="p-2"><input type="number" step="0.01" value={d.lossPrice} onChange={e=>handleEdit(year, 'lossPrice', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-red-500 outline-none" /></td><td className="p-2 border-l border-slate-800/50 bg-slate-900/20"><input type="number" step="0.01" value={d.resNoDiv} onChange={e=>handleEdit(year, 'resNoDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resNoDiv >=0 ? 'text-slate-200':'text-red-400'}`} /></td><td className="p-2 bg-slate-900/20"><input type="number" step="0.01" value={d.resWithDiv} onChange={e=>handleEdit(year, 'resWithDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resWithDiv >=0 ? 'text-white':'text-red-400'}`} /></td><td className="p-2"><input type="number" step="0.01" value={d.tax} onChange={e=>handleEdit(year, 'tax', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-purple-400 font-bold outline-none" /></td><td className="p-2 border-r border-slate-800 bg-slate-900/10"><div className={`text-right font-bold ${d.accumulated >= 0 ? 'text-yellow-500' : 'text-red-500'}`}>{formatMoney(d.accumulated, baseCurrency)}</div></td><td className="p-2 border-l-4 border-slate-900 bg-[#161b25]"><input type="number" step="0.01" value={d.rentaResNoDiv} onChange={e=>handleEdit(year, 'rentaResNoDiv', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-300 outline-none font-bold" /></td><td className="p-2 bg-[#161b25]"><input type="number" step="0.01" value={d.rentaFees} onChange={e=>handleEdit(year, 'rentaFees', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-500 outline-none" /></td><td className="p-2 bg-[#161b25]"><input type="number" step="0.01" value={d.rentaAdj} onChange={e=>handleEdit(year, 'rentaAdj', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-300 outline-none border-b border-slate-700/50 focus:border-blue-500" /></td><td className="p-2 bg-[#161b25]"><input type="number" step="0.01" value={d.rentaBase} onChange={e=>handleEdit(year, 'rentaBase', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-blue-200 font-bold outline-none" /></td>
@@ -504,30 +563,31 @@
                                <td className="p-2 bg-orange-900/5"><input type="number" step="0.01" value={d.comp2} onChange={e=>handleEdit(year, 'comp2', e.target.value)} className="w-full bg-transparent text-right text-orange-200 outline-none" placeholder="0.00" /></td>
                                <td className="p-2 bg-orange-900/5"><input type="number" step="0.01" value={d.comp3} onChange={e=>handleEdit(year, 'comp3', e.target.value)} className="w-full bg-transparent text-right text-orange-200 outline-none" placeholder="0.00" /></td>
                                <td className="p-2 bg-orange-900/5"><input type="number" step="0.01" value={d.comp4} onChange={e=>handleEdit(year, 'comp4', e.target.value)} className="w-full bg-transparent text-right text-orange-200 outline-none" placeholder="0.00" /></td>
-                               <td className="p-2 border-l border-orange-500/20 bg-orange-600/10"><input type="number" step="0.01" value={d.compRest} onChange={e=>handleEdit(year, 'compRest', e.target.value)} className="w-full bg-transparent text-right text-yellow-400 font-bold outline-none" placeholder="0.00" /></td>
+                               <td className="p-2 border-l border-orange-500/20 bg-orange-600/10"><input type="number" step="0.01" value={d.compRest} readOnly className="w-full bg-transparent text-right text-yellow-400 font-bold outline-none" placeholder="0.00" /></td>
                            </tr> ); })}
                            <tr className="bg-slate-900 border-t-2 border-slate-700 text-white font-bold text-xs shadow-xl"><td colSpan="3" className="p-3 text-right text-[10px] uppercase text-slate-500 tracking-widest bg-slate-900 sticky left-0">Total Global: <span className="text-white ml-2">{formatN(totals.soldCount, 0)} Op.</span></td><td className="p-3 text-right text-green-500">{formatMoney(totals.profitPrice, baseCurrency)}</td><td className="p-3 text-right text-blue-400">{formatMoney(totals.dividends, baseCurrency)}</td><td className="p-3 text-right text-red-500">{formatMoney(totals.lossPrice, baseCurrency)}</td><td className="p-3 text-right text-slate-300">{formatMoney(totals.resNoDiv, baseCurrency)}</td><td className="p-3 text-right text-white text-sm">{formatMoney(totals.resWithDiv, baseCurrency)}</td><td className="p-3 text-right text-purple-400">{formatMoney(totals.tax, baseCurrency)}</td><td className="p-3 bg-slate-950"></td><td className="p-3 bg-[#11151d]"></td><td className="p-3 text-right text-slate-500 bg-[#11151d]">{formatMoney(totals.fees, baseCurrency)}</td><td className="p-3 bg-[#11151d]"></td><td className="p-3 text-right text-blue-200 bg-[#11151d]">{formatMoney(totals.rentaBase, baseCurrency)}</td><td colSpan="5" className="bg-[#11151d]"></td></tr></tbody></table>
                    </div>
                    
-                   {/* INFORMACIÓN FISCAL AL PIE */}
                    <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-6 flex flex-col md:flex-row gap-6">
                        <div className="flex-1">
                            <h4 className="text-sm font-bold text-orange-400 mb-3 flex items-center gap-2"><Icons.HelpCircle size={16}/> Información Fiscal: Compensación de Pérdidas (España)</h4>
-                           <div className="text-[11px] text-slate-400 space-y-2 leading-relaxed text-justify">
-                               <p>Las pérdidas patrimoniales (ventas con resultado negativo) derivadas de la transmisión de elementos patrimoniales pueden compensarse con las ganancias patrimoniales obtenidas en el mismo ejercicio.</p>
-                               <p>Si tras esta compensación el <strong>saldo es negativo</strong>, este importe se puede compensar con el saldo positivo de los rendimientos del capital mobiliario (dividendos, intereses) obtenidos en el mismo año, con el límite del <strong>25% de dicho saldo positivo</strong>.</p>
-                               <p>Si todavía quedase saldo negativo (pérdidas sin compensar), se podrá compensar en los <strong>4 ejercicios siguientes</strong> siguiendo el mismo orden.</p>
+                           <div className="text-[11px] text-slate-400 space-y-3 leading-relaxed text-justify">
+                               <p><strong className="text-white">Regla 1: Año en Curso.</strong> Las pérdidas por ventas de acciones (Ganancias y Pérdidas Patrimoniales - GPP) se compensan primero con las ganancias del mismo tipo. Si el saldo sigue siendo negativo, se puede compensar con hasta el <strong>25%</strong> del saldo positivo de dividendos e intereses (Rendimientos Capital Mobiliario - RCM).</p>
+                               <p><strong className="text-white">Regla 2: 4 Años Siguientes.</strong> Si tras lo anterior queda un saldo negativo (pérdida pendiente), se lleva a los 4 años siguientes para compensarse en este orden obligatorio:</p>
+                               <ul className="list-disc list-inside pl-2 space-y-1">
+                                   <li><strong className="text-blue-400">1º Contra Ganancias Patrimoniales:</strong> Se resta de los beneficios de futuras ventas de acciones de esos años (Sin límite).</li>
+                                   <li><strong className="text-blue-400">2º Contra Capital Mobiliario:</strong> Si aún sobra pérdida, se resta de los dividendos de esos años (Límite 25%).</li>
+                               </ul>
+                               <p className="mt-2 text-slate-500 italic border-t border-slate-800 pt-2">(*) Verificar casilla "Pendiente de compensación ejercicios anteriores" en el apartado <strong>Base Imponible del Ahorro</strong> del Modelo 100.</p>
                            </div>
                        </div>
-                       <div className="md:w-1/3 border-l border-slate-800 md:pl-6 pt-4 md:pt-0">
-                           <h5 className="text-xs font-bold text-slate-300 mb-2">Resumen Mecánica:</h5>
-                           <ul className="text-[10px] text-slate-400 space-y-1.5 list-disc list-inside">
-                               <li>Año actual: Ganancias vs Pérdidas.</li>
-                               <li>Si hay pérdidas netas -> Compensar con Dividendos (Max 25%).</li>
-                               <li>Si sigue habiendo pérdidas -> <strong>"Resta Compensar"</strong> para el futuro.</li>
-                               <li>Años siguientes (1º a 4º): Usar "Resta Compensar" contra nuevas ganancias.</li>
-                           </ul>
-                           <a href="https://sede.agenciatributaria.gob.es/" target="_blank" className="mt-3 inline-flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300 font-bold">Referencia AEAT <Icons.ExternalLink size={10}/></a>
+                       <div className="md:w-1/3 border-l border-slate-800 md:pl-6 pt-4 md:pt-0 flex flex-col justify-center">
+                           <div className="bg-orange-900/10 p-4 rounded-xl border border-orange-500/20 text-center">
+                               <Icons.AlertCircle className="mx-auto text-orange-500 mb-2" size={24}/>
+                               <div className="text-xs font-bold text-orange-200 mb-1">Estrategia Fiscal</div>
+                               <p className="text-[10px] text-slate-400">Aprovecha las caídas de fin de año para aflorar minusvalías y compensar beneficios fiscales ("Tax Loss Harvesting").</p>
+                           </div>
+                           <a href="https://sede.agenciatributaria.gob.es/" target="_blank" className="mt-4 text-center block text-[10px] text-blue-400 hover:text-blue-300 font-bold border border-blue-500/30 rounded py-2 hover:bg-blue-900/20 transition-colors">Consultar Normativa AEAT <Icons.ExternalLink size={10} className="inline"/></a>
                        </div>
                    </div>
 
@@ -537,6 +597,8 @@
               </div>
           );
       };
+
+      
 
 
 
