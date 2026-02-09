@@ -364,34 +364,16 @@
           );
       };
 
-
-Entendido. Procedo a generar el código corregido con las siguientes modificaciones específicas:
-
-1.  **Recorte:** Se elimina toda la sección inferior derecha a partir de "MEDIA DE RENDIMIENTOS ANUALIZADOS" (incluyendo pilladas, coste de oportunidad, etc).
-2.  **Impuestos Reales:** Se añade la prop `resultsData` para sumar la columna "Impuestos" calculada en la pestaña Resultados.
-3.  **Diseño:** Se mantiene la estética de "Cuadro de Mando Financiero" oscuro y denso.
-
-Aquí tienes el código del componente y las instrucciones de integración.
-
-### 1. Código del Componente `AdvancedStatsDashboard`
-
-Copia este bloque y pégalo **antes** de la definición de `PortfolioTab`.
-
-```javascript
-/* --- COMPONENTE: DASHBOARD ESTADÍSTICO (VERSIÓN RECORTADA) --- */
+/* --- COMPONENTE DE APOYO: DASHBOARD ESTADÍSTICO AVANZADO --- */
 const AdvancedStatsDashboard = ({ portfolio, resultsData, baseCurrency }) => {
-    
-    // Helpers de formato compactos
     const fM = (v) => formatMoney(v, baseCurrency).replace(' ', ''); 
     const fN = (v) => formatN(v, 2);
     const safeDiv = (a, b) => b === 0 ? 0 : a / b;
 
-    // LÓGICA DE CÁLCULO
     const stats = useMemo(() => {
-        // 1. Calcular Impuestos Totales desde la pestaña Resultados
-        const totalTaxes = Object.values(resultsData || {}).reduce((acc, yearData) => acc + (yearData.tax || 0), 0);
+        // Rescatamos los impuestos reales de la pestaña resultados
+        const totalTaxes = Object.values(resultsData || {}).reduce((acc, curr) => acc + (parseFloat(curr.tax) || 0), 0);
 
-        // 2. Calcular Métricas de Cartera
         let open = { count: 0, win: 0, loss: 0, winAmt: 0, lossAmt: 0, days: 0, cap: 0, minCap: Infinity, maxCap: -Infinity, pl: 0, cost: 0, val: 0, divs: 0, maxGain: -Infinity, maxGainTick: '', minGain: Infinity, minGainTick: '', maxYield: -Infinity, maxYieldTick: '', minYield: Infinity, minYieldTick: '' };
         let closed = { ...open, minCap: Infinity, maxCap: -Infinity, maxGain: -Infinity, minGain: Infinity, maxYield: -Infinity, minYield: Infinity };
 
@@ -399,37 +381,24 @@ const AdvancedStatsDashboard = ({ portfolio, resultsData, baseCurrency }) => {
             if (p.isActive === false) return;
             const isSold = !!p.sellDate;
             const target = isSold ? closed : open;
-
             target.count++;
-            
-            // Financieros
             const cost = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0);
             const curP = isSold ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
             const curF = isSold ? p.sellFx : p.currentFx;
             const val = (curP * p.shares * curF) - (isSold ? (p.sellFees + p.sellAdjustments) : 0);
             const pl = val - cost;
             const pDivs = (p.dividends || []).reduce((a, b) => a + b.net, 0);
-            
-            // Tiempos
             const days = calculateDays(p.buyDate, p.sellDate || new Date());
             target.days += days;
-
-            // Capitales
             target.cap += cost;
             target.minCap = Math.min(target.minCap, cost);
             target.maxCap = Math.max(target.maxCap, cost);
-            
-            // Acumulados
             target.pl += pl;
             target.cost += cost;
             target.val += val;
             target.divs += pDivs;
-
-            // Win/Loss
             if (pl >= 0) { target.win++; target.winAmt += pl; } 
             else { target.loss++; target.lossAmt += pl; }
-
-            // Rankings
             const yieldPct = safeDiv(pl, cost) * 100;
             if (pl > target.maxGain) { target.maxGain = pl; target.maxGainTick = p.ticker; }
             if (pl < target.minGain) { target.minGain = pl; target.minGainTick = p.ticker; }
@@ -447,129 +416,105 @@ const AdvancedStatsDashboard = ({ portfolio, resultsData, baseCurrency }) => {
             t.lossPct = safeDiv(t.loss, t.count) * 100;
             t.profitFactor = safeDiv(t.winAmt, Math.abs(t.lossAmt));
         };
-
-        finalize(open);
-        finalize(closed);
-
+        finalize(open); finalize(closed);
         return { open, closed, totalTaxes };
     }, [portfolio, resultsData]);
 
-    // Gauge Simple
     const Gauge = ({ value }) => {
         const r = 35, c = r * Math.PI, v = Math.min(Math.max(value, 0), 3), off = c * (1 - (v / 3));
         return (
-            <div className="relative w-[90px] h-[55px] flex flex-col items-center justify-end mx-auto scale-75 origin-bottom">
+            <div className="relative w-[80px] h-[45px] flex flex-col items-center justify-end mx-auto scale-90">
                 <svg viewBox="0 0 80 45" className="overflow-visible">
                     <path d="M5,40 A35,35 0 0,1 75,40" fill="none" stroke="#334155" strokeWidth="6" strokeLinecap="round" />
                     <path d="M5,40 A35,35 0 0,1 75,40" fill="none" stroke={value>=1.5?'#22c55e':value>=1?'#eab308':'#ef4444'} strokeWidth="6" strokeLinecap="round" strokeDasharray={`${c} ${c}`} strokeDashoffset={off} />
-                    <text x="40" y="35" textAnchor="middle" fontSize="12" fill="white" fontWeight="black">{fN(value)}</text>
+                    <text x="40" y="38" textAnchor="middle" fontSize="12" fill="white" fontWeight="900">{fN(value)}</text>
                 </svg>
             </div>
         );
     };
 
     return (
-        <div className="w-full bg-[#111] border border-slate-800 rounded-sm p-1 font-mono text-[10px] select-none shadow-2xl text-slate-300 mb-4">
-            {/* Header */}
-            <div className="bg-[#222] text-slate-400 font-bold px-2 py-1 mb-1 border-b border-slate-700 flex justify-between uppercase tracking-wider text-[9px]">
-                <span>ESTADÍSTICAS SOBRE OPERACIONES ABIERTAS Y CERRADAS</span>
-                <span className="text-slate-500">RESUMEN EJECUTIVO</span>
+        <div className="w-full bg-[#0a0a0a] border border-slate-800 rounded-sm p-1 font-mono text-[10px] shadow-2xl text-slate-300 mb-6 mt-2">
+            <div className="bg-[#1a1a1a] text-slate-400 font-bold px-2 py-1 mb-1 border-b border-slate-700 flex justify-between uppercase text-[9px]">
+                <span>Estadísticas sobre Operaciones Abiertas y Cerradas</span>
+                <span className="text-blue-500">Panel de Control Estadístico</span>
             </div>
-
-            <div className="grid grid-cols-12 gap-1">
-                
-                {/* COL 1: ESTADÍSTICAS (Left) */}
-                <div className="col-span-12 lg:col-span-5 flex flex-col gap-0.5">
-                    <div className="grid grid-cols-4 bg-[#333] text-slate-400 font-bold p-1 text-center text-[9px]">
-                        <div className="text-left">Total y Media</div>
-                        <div className="text-white">ABIERTAS</div>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-1">
+                <div className="lg:col-span-5 flex flex-col gap-0.5">
+                    <div className="grid grid-cols-4 bg-[#222] text-slate-400 font-bold p-1 text-center text-[8px]">
+                        <div className="text-left uppercase">Total y Media</div>
+                        <div className="text-white uppercase">Abiertas</div>
                         <div>Ratios</div>
-                        <div className="text-red-300">CERRADAS</div>
+                        <div className="text-red-400 uppercase">Cerradas</div>
                     </div>
                     {[
                         { l: "NÚMERO OPERACIONES", o: stats.open.count, c: stats.closed.count, b:true },
-                        { l: "CON GANANCIA", o: `${fN(stats.open.winPct)}% (${stats.open.win})`, c: `${fN(stats.closed.winPct)}% (${stats.closed.win})`, subO: fM(stats.open.winAmt), subC: fM(stats.closed.winAmt), col:'text-green-500' },
-                        { l: "CON PÉRDIDA", o: `${fN(stats.open.lossPct)}% (${stats.open.loss})`, c: `${fN(stats.closed.lossPct)}% (${stats.closed.loss})`, subO: fM(stats.open.lossAmt), subC: fM(stats.closed.lossAmt), col:'text-red-500' },
+                        { l: "CON GANANCIA", o: `${fN(stats.open.winPct)}%`, c: `${fN(stats.closed.winPct)}%`, subO: fM(stats.open.winAmt), subC: fM(stats.closed.winAmt), col:'text-green-500' },
+                        { l: "CON PÉRDIDA", o: `${fN(stats.open.lossPct)}%`, c: `${fN(stats.closed.lossPct)}%`, subO: fM(stats.open.lossAmt), subC: fM(stats.closed.lossAmt), col:'text-red-500' },
                     ].map((r,i)=>(
-                        <div key={i} className={`grid grid-cols-4 items-center p-1 border-b border-slate-800/50 ${r.b?'bg-black text-white font-bold':''}`}>
-                            <div className="text-slate-400 font-bold">{r.l}</div>
-                            <div className="text-right pr-2"><div className={r.col||'text-yellow-500'}>{r.o}</div>{r.subO&&<div className={`text-[8px] ${r.col}`}>{r.subO}</div>}</div>
-                            <div className="text-center text-[8px] opacity-30">--</div>
-                            <div className="text-right pr-2"><div className={r.col||'text-yellow-500'}>{r.c}</div>{r.subC&&<div className={`text-[8px] ${r.col}`}>{r.subC}</div>}</div>
+                        <div key={i} className={`grid grid-cols-4 items-center p-1 border-b border-slate-800/40 ${r.b?'bg-black text-white font-bold':''}`}>
+                            <div className="text-slate-500 font-bold leading-tight">{r.l}</div>
+                            <div className="text-right pr-2"><div className={r.col||'text-yellow-500'}>{r.o}</div>{r.subO&&<div className={`text-[7px] ${r.col} opacity-80`}>{r.subO}</div>}</div>
+                            <div className="text-center opacity-20">--</div>
+                            <div className="text-right pr-2"><div className={r.col||'text-yellow-500'}>{r.c}</div>{r.subC&&<div className={`text-[7px] ${r.col} opacity-80`}>{r.subC}</div>}</div>
                         </div>
                     ))}
-                    {/* RATIO GANANCIAS */}
-                    <div className="grid grid-cols-4 items-center bg-black border-y border-yellow-900/30 py-1">
-                        <div className="flex items-center gap-1 pl-1 text-yellow-500 font-bold text-[9px]">RATIO GANANCIAS</div>
-                        <div className="text-right pr-2 text-xl font-black text-green-500">{fN(stats.open.profitFactor)}</div>
-                        <div className="flex justify-center -my-2"><Gauge value={stats.open.profitFactor}/></div>
-                        <div className="text-right pr-2 text-xl font-black text-green-500">{fN(stats.closed.profitFactor)}</div>
+                    <div className="grid grid-cols-4 items-center bg-black border-y border-yellow-900/40 py-1">
+                        <div className="pl-1 text-yellow-600 font-bold text-[8px]">RATIO GANANCIAS</div>
+                        <div className="text-right pr-2 text-lg font-black text-green-500">{fN(stats.open.profitFactor)}</div>
+                        <div className="flex justify-center -my-1"><Gauge value={stats.open.profitFactor}/></div>
+                        <div className="text-right pr-2 text-lg font-black text-green-500">{fN(stats.closed.profitFactor)}</div>
                     </div>
                     {[
                         { l: "MEDIA DÍAS ABIERTA", o: fN(stats.open.avgDays)+' d', c: fN(stats.closed.avgDays)+' d' },
                         { l: "MEDIA CAPITAL OP.", o: fM(stats.open.avgCap), c: fM(stats.closed.avgCap) },
                         { l: "MAYOR CAPITAL INV.", o: fM(stats.open.maxCap), c: fM(stats.closed.maxCap) },
-                        { l: "MENOR CAPITAL INV.", o: fM(stats.open.minCap), c: fM(stats.closed.minCap) },
-                    ].map((r,i)=>(<div key={i} className="grid grid-cols-4 p-1 border-b border-slate-800/50 text-[9px]"><div className="text-slate-400">{r.l}</div><div className="text-right pr-2 text-slate-200">{r.o}</div><div></div><div className="text-right pr-2 text-slate-200">{r.c}</div></div>))}
-                    
-                    <div className="mt-1 border-t border-slate-700 bg-slate-900/20">
-                        <div className="grid grid-cols-3 p-1 items-center"><div className="text-slate-300 font-bold">SALDO (Sin div)</div><div className={`text-right font-black ${stats.open.pl>=0?'text-green-500':'text-red-500'}`}>{fM(stats.open.pl)}</div><div className={`text-right font-black ${stats.closed.pl>=0?'text-green-500':'text-red-500'}`}>{fM(stats.closed.pl)}</div></div>
-                        <div className="grid grid-cols-3 p-1 items-center"><div className="text-blue-300 font-bold">DIVIDENDOS</div><div className="text-right font-black text-blue-400">{fM(stats.open.divs)}</div><div className="text-right font-black text-blue-400">{fM(stats.closed.divs)}</div></div>
-                        <div className="grid grid-cols-3 p-1 items-center bg-black/40"><div className="text-slate-500">ACUM. VENTAS (*)</div><div className="text-right font-mono text-green-700">{fM(stats.open.val)}</div><div className="text-right font-mono text-green-700 font-bold">{fM(stats.closed.val)}</div></div>
-                        <div className="grid grid-cols-3 p-1 items-center bg-black/40"><div className="text-slate-500">ACUM. COMPRAS</div><div className="text-right font-mono text-red-900">{fM(stats.open.cost)}</div><div className="text-right font-mono text-red-900 font-bold">{fM(stats.closed.cost)}</div></div>
-                    </div>
-                    <div className="bg-[#101825] border-t border-blue-900 p-2 mt-auto text-center flex justify-between items-center">
-                         <div className="text-blue-400 font-bold uppercase">SALDO HISTÓRICO CARTERA</div>
-                         <div className="text-lg font-black text-white">{fM(stats.open.pl + stats.open.divs + stats.closed.pl + stats.closed.divs)}</div>
+                    ].map((r,i)=>(<div key={i} className="grid grid-cols-4 p-1 border-b border-slate-800/40 text-[9px]"><div className="text-slate-500">{r.l}</div><div className="text-right pr-2 text-slate-300">{r.o}</div><div></div><div className="text-right pr-2 text-slate-300">{r.c}</div></div>))}
+                    <div className="bg-[#0f172a] p-2 mt-1 flex justify-between items-center border-t border-blue-900">
+                         <div className="text-blue-500 font-bold text-[9px] uppercase">Saldo Histórico Cartera</div>
+                         <div className="text-base font-black text-white">{fM(stats.open.pl + stats.open.divs + stats.closed.pl + stats.closed.divs)}</div>
                     </div>
                 </div>
-
-                {/* COL 2: BALANCE (Middle) */}
-                <div className="col-span-12 lg:col-span-2 flex flex-col gap-1 bg-black border-x border-slate-800/50 p-1">
-                    <div className="bg-slate-900 p-2 text-center border-t-2 border-yellow-600 mb-2">
-                        <div className="text-[9px] text-slate-500 uppercase">[ - ] Impuestos (Resultados)</div>
-                        <div className="text-red-400 font-bold text-sm">{fM(stats.totalTaxes)}</div>
+                <div className="lg:col-span-2 flex flex-col gap-1 bg-black border-x border-slate-800/60 p-1">
+                    <div className="bg-slate-900 p-2 text-center border-t-2 border-red-600 mb-1">
+                        <div className="text-[8px] text-slate-500 uppercase">[-] Impuestos (Reales)</div>
+                        <div className="text-red-500 font-black text-xs">{fM(stats.totalTaxes)}</div>
                     </div>
                     <div className="flex-1 flex flex-col justify-center gap-1">
-                        <div className="bg-slate-900/50 p-2 flex justify-between"><span className="text-green-600 font-bold text-[9px]">GANANCIAS</span><span className="text-green-500 font-bold">{fM(stats.open.winAmt + stats.closed.winAmt)}</span></div>
-                        <div className="bg-slate-900/50 p-2 flex justify-between"><span className="text-red-600 font-bold text-[9px]">PÉRDIDAS</span><span className="text-red-500 font-bold">{fM(stats.open.lossAmt + stats.closed.lossAmt)}</span></div>
-                        <div className="bg-blue-900/20 p-2 flex justify-between border border-blue-900/30"><span className="text-blue-400 font-bold text-[9px]">[+] DIVIDENDOS</span><span className="text-blue-300 font-bold">{fM(stats.open.divs + stats.closed.divs)}</span></div>
-                        <div className="my-2 border-t border-dashed border-slate-600"></div>
-                        <div className="bg-[#1a1a1a] p-3 border border-green-900/50 text-center">
-                            <div className="text-[9px] text-slate-500 uppercase mb-1">RESULTADO NETO</div>
-                            <div className="text-lg font-black text-white">{fM((stats.open.pl + stats.closed.pl + stats.open.divs + stats.closed.divs) - stats.totalTaxes)}</div>
+                        <div className="bg-slate-900/40 p-1.5 flex justify-between items-baseline"><span className="text-green-700 font-bold text-[8px]">GANANCIA</span><span className="text-green-500 font-bold">{fM(stats.open.winAmt + stats.closed.winAmt)}</span></div>
+                        <div className="bg-slate-900/40 p-1.5 flex justify-between items-baseline"><span className="text-red-700 font-bold text-[8px]">PÉRDIDA</span><span className="text-red-500 font-bold">{fM(stats.open.lossAmt + stats.closed.lossAmt)}</span></div>
+                        <div className="bg-blue-900/10 p-1.5 flex justify-between items-baseline border border-blue-900/20"><span className="text-blue-500 font-bold text-[8px]">[+] DIVS</span><span className="text-blue-400 font-bold">{fM(stats.open.divs + stats.closed.divs)}</span></div>
+                        <div className="bg-[#111] p-2 border border-slate-800 text-center mt-2">
+                            <div className="text-[8px] text-slate-500 uppercase mb-1 font-bold">Resultado Neto</div>
+                            <div className="text-sm font-black text-white">{fM((stats.open.pl + stats.closed.pl + stats.open.divs + stats.closed.divs) - stats.totalTaxes)}</div>
                         </div>
                     </div>
-                    <div className="bg-slate-900 p-2 border-t border-slate-700 text-[9px] space-y-1">
-                        <div className="text-center text-slate-500 uppercase font-bold mb-1">MOVIMIENTOS</div>
-                        <div className="flex justify-between text-green-700"><span>ENTRADAS</span> <span>{fM(stats.closed.val + stats.open.divs + stats.closed.divs)}</span></div>
-                        <div className="flex justify-between text-red-900"><span>SALIDAS</span> <span>{fM(stats.open.cost + stats.closed.cost)}</span></div>
-                    </div>
                 </div>
-
-                {/* COL 3: HORQUILLA (Right) - CORTADA */}
-                <div className="col-span-12 lg:col-span-5 flex flex-col gap-0.5">
-                    <div className="bg-[#333] text-slate-400 font-bold p-1 text-center uppercase text-[9px]">Horquilla de Rendimientos</div>
-                    <div className="grid grid-cols-3 bg-black text-slate-500 text-[8px] text-center py-1"><div>METRICA</div><div>ABIERTAS</div><div>CERRADAS</div></div>
+                <div className="lg:col-span-5 flex flex-col gap-0.5">
+                    <div className="bg-[#222] text-slate-400 font-bold p-1 text-center uppercase text-[8px]">Horquilla de Rendimientos</div>
+                    <div className="grid grid-cols-3 bg-black text-slate-600 text-[7px] text-center py-1"><div>METRICA</div><div>ABIERTAS</div><div>CERRADAS</div></div>
                     {[
                         { l: "MAYOR GANANCIA", o: stats.open.maxGain, ot: stats.open.maxGainTick, c: stats.closed.maxGain, ct: stats.closed.maxGainTick, curr:true },
                         { l: "MAYOR RENDIMIENTO", o: stats.open.maxYield, ot: stats.open.maxYieldTick, c: stats.closed.maxYield, ct: stats.closed.maxYieldTick, pct:true },
                         { l: "MENOR GANANCIA", o: stats.open.minGain, ot: stats.open.minGainTick, c: stats.closed.minGain, ct: stats.closed.minGainTick, curr:true },
                         { l: "MENOR RENDIMIENTO", o: stats.open.minYield, ot: stats.open.minYieldTick, c: stats.closed.minYield, ct: stats.closed.minYieldTick, pct:true },
                     ].map((r,i)=>(
-                        <div key={i} className="grid grid-cols-3 p-1 border-b border-slate-800/50 items-center">
-                            <div className="text-slate-400">{r.l}</div>
-                            <div className="text-right pr-2"><span className={`font-bold ${r.o>=0?'text-green-500':'text-red-500'}`}>{r.curr?fM(r.o):fN(r.o)+'%'}</span><span className="text-[8px] text-slate-500 ml-1">[{r.ot}]</span></div>
-                            <div className="text-right pr-2"><span className={`font-bold ${r.c>=0?'text-green-500':'text-red-500'}`}>{r.curr?fM(r.c):fN(r.c)+'%'}</span><span className="text-[8px] text-slate-500 ml-1">[{r.ct}]</span></div>
+                        <div key={i} className="grid grid-cols-3 p-1 border-b border-slate-800/40 items-center">
+                            <div className="text-slate-500 font-bold">{r.l}</div>
+                            <div className="text-right pr-2"><span className={`font-black ${r.o>=0?'text-green-500':'text-red-500'}`}>{r.curr?fM(r.o):fN(r.o)+'%'}</span><span className="text-[7px] text-slate-600 ml-1">[{r.ot}]</span></div>
+                            <div className="text-right pr-2"><span className={`font-black ${r.c>=0?'text-green-500':'text-red-500'}`}>{r.curr?fM(r.c):fN(r.c)+'%'}</span><span className="text-[7px] text-slate-600 ml-1">[{r.ct}]</span></div>
                         </div>
                     ))}
-                    {/* Espacio relleno negro para cuadrar altura visualmente si es necesario */}
-                    <div className="flex-1 bg-black/20 min-h-[50px]"></div>
+                    <div className="flex-1 bg-black/40 border border-slate-900 mt-1 flex items-center justify-center p-4">
+                         <div className="text-[10px] text-slate-700 italic font-bold">--- Fin de Análisis Ejecutivo ---</div>
+                    </div>
                 </div>
             </div>
         </div>
     );
 };
+
+
 
 
 
@@ -807,519 +752,154 @@ const AdvancedStatsDashboard = ({ portfolio, resultsData, baseCurrency }) => {
 
 
 
-
 const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData }) => {
           const [filterText, setFilterText] = useState('');
           const [filterDateStart, setFilterDateStart] = useState('');
           const [filterDateEnd, setFilterDateEnd] = useState('');
           const [filterType, setFilterType] = useState('active'); 
-          
           const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
-
           const [updating, setUpdating] = useState(false);
           const [analyzing, setAnalyzing] = useState(false);
           const [fetchingSingle, setFetchingSingle] = useState(false);
           const [analysisResult, setAnalysisResult] = useState(null);
-          
           const [isModalOpen, setIsModalOpen] = useState(false);
           const [isSellModalOpen, setIsSellModalOpen] = useState(false);
           const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
           const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', msg: '', onConfirm: null });
           const [infoModal, setInfoModal] = useState({ isOpen: false, title: '', msg: '', type: 'info' });
-
-          // NUEVO: Estado para notificación de observaciones
           const [noteToast, setNoteToast] = useState(null);
-
           const [editingId, setEditingId] = useState(null);
           const [sellItem, setSellItem] = useState(null);
-
           const [form, setForm] = useState({ ticker: '', name: '', group: '', notes: '', isIndex: false, indexDivisor: 1, shares: 0, buyPrice: 0, buyDate: '', stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, annualDividend: 0, sellPrice: 0, sellDate: '', sellFx: 1, sellFees: 0, sellAdjustments: 0, currentPE: 0, dividends: [] });
           const [sellForm, setSellForm] = useState({ sharesToSell: 0, sellPrice: 0, sellDate: new Date().toISOString().slice(0,10), sellFx: 1, sellFees: 0, sellAdjustments: 0 });
 
-          // --- FUNCIONES AUXILIARES ---
           const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
+          const formatDateES = (d) => { if(!d) return ''; const date = new Date(d); return `${date.getDate().toString().padStart(2,'0')}-${(date.getMonth()+1).toString().padStart(2,'0')}-${date.getFullYear()}`; };
+          const calcReturns = (startVal, endVal, days) => { if (startVal === 0) return { simple: 0, annual: 0 }; const simple = ((endVal - startVal) / startVal) * 100; const d = Math.max(days, 1); const annual = (simple / d) * 365; return { simple, annual }; };
+          const cleanVal = (v) => { if (typeof v === 'number') return v; const n = parseFloat(String(v).replace(/[^0-9.-]/g, '')); return isNaN(n) ? 0 : n; };
+          const getRegion = (ticker) => { if (!ticker) return 'S/D'; if (ticker.includes(':')) return ticker.split(':')[0].toUpperCase(); const t = ticker.toUpperCase(); if (t.endsWith('.MC')) return 'BME (ES)'; if (t.endsWith('.DE')) return 'XETRA (DE)'; if (t.endsWith('.PA')) return 'EURONEXT (FR)'; if (t.endsWith('.L')) return 'LSE (UK)'; return 'US/OTROS'; };
 
-          const formatDateES = (d) => {
-              if(!d) return '';
-              const date = new Date(d);
-              return `${date.getDate().toString().padStart(2,'0')}-${(date.getMonth()+1).toString().padStart(2,'0')}-${date.getFullYear()}`;
-          };
+          useEffect(() => { if (noteToast) { const timer = setTimeout(() => setNoteToast(null), 30000); return () => clearTimeout(timer); } }, [noteToast]);
 
-          const calcReturns = (startVal, endVal, days) => {
-              if (startVal === 0) return { simple: 0, annual: 0 };
-              const simple = ((endVal - startVal) / startVal) * 100;
-              const d = Math.max(days, 1);
-              const annual = (simple / d) * 365;
-              return { simple, annual };
-          };
+          const requestSort = (key) => { let direction = 'desc'; if (sortConfig.key === key && sortConfig.direction === 'desc') direction = 'asc'; setSortConfig({ key, direction }); };
 
-          const cleanVal = (v) => {
-              if (typeof v === 'number') return v;
-              const n = parseFloat(String(v).replace(/[^0-9.-]/g, ''));
-              return isNaN(n) ? 0 : n;
-          };
-
-          const getRegion = (ticker) => {
-              if (!ticker) return 'S/D';
-              if (ticker.includes(':')) return ticker.split(':')[0].toUpperCase(); 
-              const t = ticker.toUpperCase();
-              if (t.endsWith('.MC')) return 'BME (ES)';
-              if (t.endsWith('.DE')) return 'XETRA (DE)';
-              if (t.endsWith('.PA')) return 'EURONEXT (FR)';
-              if (t.endsWith('.L')) return 'LSE (UK)';
-              return 'US/OTROS'; 
-          };
-
-          // --- EFECTO PARA CERRAR TOAST ---
-          useEffect(() => {
-              if (noteToast) {
-                  const timer = setTimeout(() => setNoteToast(null), 30000); // 30 segundos
-                  return () => clearTimeout(timer);
-              }
-          }, [noteToast]);
-
-          // --- MANEJADOR DE ORDENACIÓN ---
-          const requestSort = (key) => {
-              let direction = 'desc';
-              if (sortConfig.key === key && sortConfig.direction === 'desc') {
-                  direction = 'asc';
-              }
-              setSortConfig({ key, direction });
-          };
-
-          // --- 1. LÓGICA DE FILTRADO Y ORDENACIÓN ---
           const filteredPortfolio = useMemo(() => {
               let list = portfolio.filter(p => {
                   if (filterType === 'active' && p.sellDate) return false;
                   if (filterType === 'sold' && !p.sellDate) return false;
-
                   if (filterText) {
                       const txt = filterText.toUpperCase();
-                      const matchTicker = p.ticker.toUpperCase().includes(txt);
-                      const matchName = (p.name || '').toUpperCase().includes(txt);
-                      const matchGroup = (p.group || '').toUpperCase().includes(txt);
-                      
-                      if (!matchTicker && !matchName && !matchGroup) return false;
+                      if (!p.ticker.toUpperCase().includes(txt) && !(p.name || '').toUpperCase().includes(txt) && !(p.group || '').toUpperCase().includes(txt)) return false;
                   }
-
                   if (filterDateStart || filterDateEnd) {
-                      let dateToCheck = p.buyDate; 
-                      if (filterType === 'sold') dateToCheck = p.sellDate; 
-                      else if (filterType === 'all') dateToCheck = p.sellDate || p.buyDate; 
-
+                      let dateToCheck = p.sellDate || p.buyDate;
                       if (filterDateStart && dateToCheck < filterDateStart) return false;
                       if (filterDateEnd && dateToCheck > filterDateEnd) return false;
                   }
                   return true;
               });
-
               return list.sort((a, b) => {
                   const dir = sortConfig.direction === 'asc' ? 1 : -1;
-                  
-                  if (sortConfig.key === 'yield') { 
+                  if (sortConfig.key === 'yield') {
                        const getPL = (p) => {
                            const cT = (p.buyPrice * p.shares * p.buyFx) + (p.fees||0) + (p.adjustments||0);
-                           const isS = !!p.sellDate;
-                           const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
-                           const curF = isS ? p.sellFx : p.currentFx;
-                           const vF = (curP * p.shares * curF) - (isS ? (p.sellFees+p.sellAdjustments) : 0);
-                           return vF - cT;
+                           const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx;
+                           return ((curP * p.shares * curF) - (isS ? (p.sellFees+p.sellAdjustments) : 0)) - cT;
                        };
                        return (getPL(a) - getPL(b)) * dir;
                   }
-                  
-                  if (sortConfig.key === 'percent') { 
+                  if (sortConfig.key === 'percent') {
                        const getPct = (p) => {
                            const cT = (p.buyPrice * p.shares * p.buyFx) + (p.fees||0) + (p.adjustments||0);
-                           const isS = !!p.sellDate;
-                           const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
-                           const curF = isS ? p.sellFx : p.currentFx;
-                           const vF = (curP * p.shares * curF) - (isS ? (p.sellFees+p.sellAdjustments) : 0);
-                           const ds = (p.dividends || []).reduce((acc,d)=>acc+d.net,0);
+                           const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx;
                            const days = calculateDays(p.buyDate, p.sellDate || new Date());
-                           return calcReturns(cT, vF + ds, days).simple;
+                           return calcReturns(cT, (curP * p.shares * curF) - (isS ? (p.sellFees+p.sellAdjustments) : 0) + (p.dividends||[]).reduce((ac,d)=>ac+d.net,0), days).simple;
                        };
                        return (getPct(a) - getPct(b)) * dir;
                   }
-
-                  if (sortConfig.key === 'value') { 
-                      return a.ticker.localeCompare(b.ticker) * dir;
-                  }
-
-                  if (filterType === 'all') {
-                      const aSold = !!a.sellDate; const bSold = !!b.sellDate;
-                      if (aSold !== bSold) return (aSold ? 1 : -1) * dir; 
-                      if (!aSold) return (new Date(b.buyDate) - new Date(a.buyDate)) * dir;
-                      else return (new Date(b.sellDate) - new Date(a.sellDate)) * dir;
-                  }
-                  if (filterType === 'active') return (new Date(b.buyDate) - new Date(a.buyDate)) * dir;
-                  if (filterType === 'sold') return (new Date(b.sellDate) - new Date(a.sellDate)) * dir;
-                  return 0;
+                  if (sortConfig.key === 'value') return a.ticker.localeCompare(b.ticker) * dir;
+                  return (new Date(b.buyDate) - new Date(a.buyDate)) * dir;
               });
-
           }, [portfolio, filterText, filterDateStart, filterDateEnd, filterType, sortConfig]);
 
-          // --- 2. CÁLCULO DE ESTADÍSTICAS ---
           const stats = useMemo(() => {
-              const hasDeepFilters = filterText || filterDateStart || filterDateEnd;
-              const sourceData = hasDeepFilters ? filteredPortfolio : portfolio;
-
               const calc = (items) => {
                   let inv = 0, cur = 0, divN = 0, fX = 0, weightedDays = 0;
                   items.forEach(p => {
-                      if (p.isActive === false) return; 
+                      if (p.isActive === false) return;
                       const d = calculateDays(p.buyDate, p.sellDate || new Date());
                       const costT = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0);
-                      const isS = !!p.sellDate;
-                      const eP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
-                      const eF = isS ? p.sellFx : p.currentFx;
+                      const isS = !!p.sellDate; const eP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const eF = isS ? p.sellFx : p.currentFx;
                       const vN = (eP * p.shares * eF) - (isS ? (p.sellFees + p.sellAdjustments) : 0);
                       inv += costT; cur += vN; weightedDays += (d * costT);
                       fX += (eP * p.shares * eF) - (eP * p.shares * p.buyFx);
                       (p.dividends || []).forEach(dv => divN += dv.net);
                   });
                   const avgD = inv > 0 ? weightedDays / inv : 0;
-                  const plP = cur - inv;
-                  const plT = (cur + divN) - inv;
-                  const rP = calcReturns(inv, cur, avgD);
-                  const rT = calcReturns(inv, cur + divN, avgD);
-                  return { num: items.length, inv, cur, divN, fX, plPrice: plP, plTotal: plT, plP_S: rP.simple, plP_A: rP.annual, plT_S: rT.simple, plT_A: rT.annual };
+                  return { num: items.length, inv, cur, divN, fX, plPrice: cur - inv, plTotal: (cur + divN) - inv, plP_S: calcReturns(inv, cur, avgD).simple, plP_A: calcReturns(inv, cur, avgD).annual, plT_S: calcReturns(inv, cur + divN, avgD).simple, plT_A: calcReturns(inv, cur + divN, avgD).annual };
               };
-              
-              return { 
-                  active: calc(sourceData.filter(p => !p.sellDate)), 
-                  sold: calc(sourceData.filter(p => !!p.sellDate)), 
-                  total: calc(sourceData) 
-              };
-          }, [filteredPortfolio, portfolio, filterText, filterDateStart, filterDateEnd, baseCurrency]);
+              return { active: calc(portfolio.filter(p => !p.sellDate)), sold: calc(portfolio.filter(p => !!p.sellDate)), total: calc(portfolio) };
+          }, [portfolio, baseCurrency]);
 
-          // --- CÁLCULOS HISTÓRICOS ---
           const historicalStats = useMemo(() => {
-              const activeP = portfolio.filter(p => !p.sellDate && p.isActive !== false);
-              const soldP = portfolio.filter(p => !!p.sellDate && p.isActive !== false);
               const allP = portfolio.filter(p => p.isActive !== false);
-
               const calcAvgCapital = (items) => {
                   if (items.length === 0) return { avgCap: 0, profit: 0, first: null, last: null, diffDays: 0 };
                   const sortedByBuy = [...items].sort((a,b) => new Date(a.buyDate) - new Date(b.buyDate));
                   const firstDate = new Date(sortedByBuy[0].buyDate);
                   let lastDate = new Date();
-                  if (items.every(p => p.sellDate)) { 
-                       const sortedBySell = [...items].sort((a,b) => new Date(b.sellDate) - new Date(a.sellDate));
-                       lastDate = new Date(sortedBySell[0].sellDate);
-                  }
+                  if (items.every(p => p.sellDate)) { const sortedBySell = [...items].sort((a,b) => new Date(b.sellDate) - new Date(a.sellDate)); lastDate = new Date(sortedBySell[0].sellDate); }
                   const totalPeriodDays = Math.max(1, (lastDate - firstDate) / (1000 * 60 * 60 * 24));
-                  let weightedSum = 0;
-                  let totalProfit = 0;
+                  let weightedSum = 0, totalProfit = 0;
                   items.forEach(p => {
                       const cost = (p.buyPrice * p.shares * p.buyFx) + (p.fees||0) + (p.adjustments||0);
-                      const endDate = p.sellDate ? new Date(p.sellDate) : new Date();
-                      const daysHeld = Math.max(0, (endDate - new Date(p.buyDate)) / (1000 * 60 * 60 * 24));
+                      const daysHeld = Math.max(0, ((p.sellDate ? new Date(p.sellDate) : new Date()) - new Date(p.buyDate)) / (1000 * 60 * 60 * 24));
                       weightedSum += (cost * daysHeld);
-                      const isS = !!p.sellDate;
-                      const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
-                      const curF = isS ? p.sellFx : p.currentFx;
-                      const vF = (curP * p.shares * curF) - (isS ? (p.sellFees + p.sellAdjustments) : 0);
-                      const divs = (p.dividends || []).reduce((acc,d) => acc+d.net, 0);
-                      totalProfit += (vF - cost) + divs;
+                      const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx;
+                      totalProfit += ((curP * p.shares * curF) - (isS ? (p.sellFees + p.sellAdjustments) : 0) - cost) + (p.dividends || []).reduce((acc,d) => acc+d.net, 0);
                   });
-                  const avgCap = weightedSum / totalPeriodDays;
-                  return { avgCap, profit: totalProfit, first: firstDate, last: lastDate, diffDays: totalPeriodDays };
+                  return { avgCap: weightedSum / totalPeriodDays, profit: totalProfit, first: firstDate, last: lastDate, diffDays: totalPeriodDays };
               };
-
-              const allOps = [];
-              allP.forEach(p => {
-                  allOps.push({ d: new Date(p.buyDate).getTime(), type: 'buy' });
-                  if(p.sellDate) allOps.push({ d: new Date(p.sellDate).getTime(), type: 'sell' });
-              });
-              allOps.sort((a,b) => a.d - b.d);
-              let diffSum = 0;
-              for(let i=1; i<allOps.length; i++) { diffSum += (allOps[i].d - allOps[i-1].d); }
-              const avgIntervalDays = allOps.length > 1 ? (diffSum / (allOps.length - 1)) / (1000 * 60 * 60 * 24) : 0;
-
-              const firstEver = allOps.length > 0 ? allOps[0].d : Date.now();
-              const lastEver = allOps.length > 0 ? allOps[allOps.length-1].d : Date.now();
-              const totalTimeSpan = Math.max(1, (lastEver - firstEver)/(1000*60*60*24));
-              let totalDaysOpenAccum = 0;
-              allP.forEach(p => {
-                  const end = p.sellDate ? new Date(p.sellDate) : new Date();
-                  totalDaysOpenAccum += Math.max(0, (end - new Date(p.buyDate))/(1000*60*60*24));
-              });
-              const avgPositions = totalTimeSpan > 0 ? totalDaysOpenAccum / totalTimeSpan : 0;
-
-              return { consolidated: calcAvgCapital(allP), closed: calcAvgCapital(soldP), active: calcAvgCapital(activeP), avgIntervalDays, avgPositions };
+              return { consolidated: calcAvgCapital(allP), closed: calcAvgCapital(allP.filter(p=>!!p.sellDate)), active: calcAvgCapital(allP.filter(p=>!p.sellDate)) };
           }, [portfolio]);
 
-
-          // --- DATOS PARA GRAFICOS ---
-          const activeFilteredPortfolio = useMemo(() => {
-              return filteredPortfolio.filter(p => p.isActive !== false);
-          }, [filteredPortfolio]); 
-
           const chartsData = useMemo(() => {
-              const distribution = activeFilteredPortfolio.filter(p => !p.sellDate).map(p => ({
-                  label: p.ticker,
-                  value: (p.currentPrice * p.shares * p.currentFx)
-              })).sort((a,b) => b.value - a.value);
-
-              const geoMap = {};
-              activeFilteredPortfolio.filter(p => !p.sellDate).forEach(p => {
-                  const region = getRegion(p.ticker);
-                  const val = (p.currentPrice * p.shares * p.currentFx);
-                  geoMap[region] = (geoMap[region] || 0) + val;
-              });
-              const geoDiversification = Object.keys(geoMap).map(k => ({
-                  label: k, value: geoMap[k]
-              })).sort((a,b) => b.value - a.value);
-
-              const events = activeFilteredPortfolio.map(p => {
+              const activeOnly = portfolio.filter(p => !p.sellDate && p.isActive !== false);
+              const dist = activeOnly.map(p => ({ label: p.ticker, value: (p.currentPrice * p.shares * p.currentFx) })).sort((a,b) => b.value - a.value);
+              const geoMap = {}; activeOnly.forEach(p => { const r = getRegion(p.ticker); geoMap[r] = (geoMap[r] || 0) + (p.currentPrice * p.shares * p.currentFx); });
+              const events = portfolio.filter(p=>p.isActive!==false).map(p => {
                    const isSold = !!p.sellDate;
-                   const date = isSold ? p.sellDate : p.buyDate;
-                   const cost = (p.buyPrice * p.shares * p.buyFx) + (p.fees||0) + (p.adjustments||0);
-                   const value = isSold 
-                       ? ((p.sellPrice * p.shares * p.sellFx) - (p.buyPrice * p.shares * p.buyFx)) 
-                       : ((p.currentPrice * p.shares * p.currentFx) - (p.buyPrice * p.shares * p.buyFx));
-                   return { date, value, cost, label: p.ticker };
+                   return { date: isSold ? p.sellDate : p.buyDate, value: ((isSold ? p.sellPrice : p.currentPrice) * p.shares * (isSold ? p.sellFx : p.currentFx)) - ((p.buyPrice * p.shares * p.buyFx) + (p.fees||0) + (p.adjustments||0)), cost: (p.buyPrice * p.shares * p.buyFx) + (p.fees||0) + (p.adjustments||0) };
               }).sort((a,b) => new Date(a.date) - new Date(b.date));
+              let accVal = 0, accCost = 0;
+              return { distribution: dist, geoDiversification: Object.keys(geoMap).map(k=>({label:k, value:geoMap[k]})).sort((a,b)=>b.value-a.value), evolution: events.map(e=>{ accVal += e.value; accCost += e.cost; return { label: e.date, value: accVal, extraPct: r2(accCost !== 0 ? (accVal/accCost)*100 : 0) }; }) };
+          }, [portfolio]);
 
-              let accVal = 0; let accCost = 0; 
-              const evolution = events.map(e => {
-                  accVal += e.value; accCost += e.cost; 
-                  const roi = accCost !== 0 ? ((accVal) / accCost) * 100 : 0; 
-                  return { label: e.date, value: accVal, extraPct: r2(roi) }; 
-              });
-
-              return { distribution, geoDiversification, evolution };
-          }, [activeFilteredPortfolio]);
-
-          // --- UPDATE AUTO ---
-          useEffect(() => {
-              if (apiKey && portfolio.length > 0) updatePrices(true);
-              if (!refreshInterval || refreshInterval < 1) return;
-              const interval = setInterval(() => updatePrices(true), refreshInterval * 60 * 1000);
-              return () => clearInterval(interval);
-          }, [apiKey, refreshInterval]);
-
-          const fetchTickerData = async () => {
-              if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' });
-              setFetchingSingle(true);
-              try {
-                  const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). 
-                  Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. 
-                  USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`;
-                  const res = await askGemini(apiKey, prompt);
-                  const json = extractJSON(res);
-                  if (json) {
-                      setForm(prev => ({ 
-                          ...prev, 
-                          name: json.n || prev.name, 
-                          buyPrice: cleanVal(json.p) || prev.buyPrice, 
-                          buyFx: cleanVal(json.fx) || prev.buyFx, 
-                          buyPE: cleanVal(json.pe) || prev.buyPE,
-                          annualDividend: cleanVal(json.div) || prev.annualDividend
-                      }));
-                  }
-              } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); }
-          };
+          useEffect(() => { if (apiKey && portfolio.length > 0) updatePrices(true); if (!refreshInterval || refreshInterval < 1) return; const interval = setInterval(() => updatePrices(true), refreshInterval * 60 * 1000); return () => clearInterval(interval); }, [apiKey, refreshInterval]);
 
           const updatePrices = async (isAuto = false) => {
               const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
               if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' });
-              if (!isAuto && active.length === 0) return;
-              setUpdating(true);
-              let log = { success: [], fail: [] }, newUpdates = [];
+              if (active.length === 0) return; setUpdating(true); let newUpdates = [];
               try {
                   for (const item of active) {
-                      const prompt = `IMPORTANTE: Responde SOLO JSON con PUNTO decimal. Sin símbolos de moneda ni comas. Datos de "${item.ticker}" (${item.stockCurrency}) a ${baseCurrency}. JSON: {"p":precio,"fx":cambio,"pe":per,"n":"nombre"}`;
                       try {
-                          const res = await askGemini(apiKey, prompt);
+                          const res = await askGemini(apiKey, `JSON ONLY PUNTO DECIMAL: "${item.ticker}" (${item.stockCurrency}) a ${baseCurrency}. {"p":precio,"fx":cambio,"pe":per,"n":"nombre"}`);
                           const json = extractJSON(res);
-                          if (json && (json.p || json.p === 0)) { newUpdates.push({ id: item.id, n: json.n, p: cleanVal(json.p), fx: cleanVal(json.fx), pe: cleanVal(json.pe) }); log.success.push(item.ticker); } else { log.fail.push(item.ticker); }
-                      } catch (e) { log.fail.push(item.ticker); }
+                          if (json && (json.p || json.p === 0)) newUpdates.push({ id: item.id, n: json.n, p: cleanVal(json.p), fx: cleanVal(json.fx), pe: cleanVal(json.pe) });
+                      } catch (e) {}
                   }
                   if (newUpdates.length > 0) { setPortfolio(prev => prev.map(p => { const u = newUpdates.find(x => x.id === p.id); return u ? { ...p, name: u.n || p.name, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe } : p; })); setLastUpdate(new Date().toISOString()); }
-                  if (!isAuto && log.fail.length > 0) setInfoModal({ isOpen: true, title: 'Sincronización con Errores', msg: `Fallos en: ${log.fail.join(', ')}.`, type: 'warning' });
-              } catch (e) { if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); } finally { setUpdating(false); }
+              } finally { setUpdating(false); }
           };
 
-          const analyzePortfolio = async () => {
-              const dataToAnalyze = filteredPortfolio.filter(p => p.isActive !== false);
-              if (dataToAnalyze.length === 0) return;
-              setAnalyzing(true);
-              try {
-                  const summary = dataToAnalyze.map(p => ({ t: p.ticker, perf: ((p.sellDate ? p.sellPrice : p.currentPrice) * p.shares * (p.sellDate ? p.sellFx : p.currentFx)) - (p.buyPrice * p.shares * p.buyFx) }));
-                  const prompt = `CRITICAL INSTRUCTION: Output ONLY HTML. No intro. No chatter.
-                  Task: Analyze this portfolio: ${JSON.stringify(summary)}.
-                  Structure: Use <h3> for headers, <p> for text, <ul>/<li> for lists.
-                  Headers: Resumen, Rentabilidad, Riesgos, Conclusión.`;
-                  const res = await askGemini(apiKey, prompt);
-                  setAnalysisResult(res.replace(/```html/g, '').replace(/```/g, '').trim());
-                  setIsAnalysisModalOpen(true);
-              } catch (e) { alert(e.message); } finally { setAnalyzing(false); }
-          };
-
-          const handleSave = () => {
-              const e = { ...form, name: form.name || form.ticker };
-              if (editingId) setPortfolio(prev => prev.map(p => p.id === editingId ? { ...p, ...e } : p)); else setPortfolio(prev => [...prev, { ...e, id: Date.now(), currentPrice: form.buyPrice, currentFx: form.buyFx, isActive: true, dividends: [] }]); setIsModalOpen(false);
-          };
-
-          const handleSellSubmit = () => {
-              const soldR = { ...sellItem, id: Date.now(), shares: sellForm.sharesToSell, isActive: true, sellDate: sellForm.sellDate, sellPrice: sellForm.sellPrice, sellFx: sellForm.sellFx, sellFees: sellForm.sellFees, sellAdjustments: sellForm.sellAdjustments, dividends: [...(sellItem.dividends || [])] };
-              const updatedP = portfolio.map(p => p.id === sellItem.id ? { ...p, isActive: false, dividends: [] } : p); setPortfolio([...updatedP, soldR]); setIsSellModalOpen(false);
-          };
-
-          const resetFilters = () => { setFilterText(''); setFilterDateStart(''); setFilterDateEnd(''); setFilterType('active'); setSortConfig({ key: 'date', direction: 'desc' }); };
-
-          const handlePrintAI = () => {
-              const printWindow = window.open('', '', 'height=800,width=800');
-              const time = new Date().toLocaleString();
-              let html = `<html><head><title>Informe IA</title><style>body{font-family:sans-serif;padding:20px;} h1{border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:20px;} h3{color:#2563eb; border-bottom:1px solid #ccc; padding-bottom:5px; margin-top:20px; text-transform:uppercase;} ul{padding-left:20px;} li{margin-bottom:5px;}</style></head><body>`;
-              html += `<h1>INFORME iA de SITUACIÓN CARTERA</h1><div style="margin-bottom:20px;font-size:12px;color:#666;"><strong>TIPO:</strong> ${filterType.toUpperCase() === 'ACTIVE' ? 'CARTERA ACTIVA' : filterType.toUpperCase() === 'SOLD' ? 'POSICIONES CERRADAS' : 'CARTERA GLOBAL'}<br/><strong>FECHA:</strong> ${time}</div>`;
-              html += `<div style="font-size:14px;line-height:1.6;">${analysisResult}</div></body></html>`;
-              printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(()=>printWindow.print(),500);
-          };
-
-          const handlePrint = () => {
-              const printWindow = window.open('', '', 'height=800,width=1200');
-              const typeMap = { 'active': 'CARTERA ACTIVA', 'sold': 'HISTÓRICO VENTAS', 'all': 'INFORME GLOBAL' };
-              const filterLabel = typeMap[filterType];
-              const emissionTime = new Date().toLocaleString();
-              const genStatsBlock = (t, d, c) => {
-                  const yieldPct = d.inv > 0 ? (d.divN / d.inv) * 100 : 0;
-                  return `
-                  <div style="border:1px solid #ccc; padding:5px; width:32%; border-top: 3px solid ${c}; background:#f9f9f9; font-size: 8px;">
-                      <div style="font-weight:bold; color:#555; text-transform:uppercase; margin-bottom:2px;">${t} (${formatN(d.num, 0)} Val)</div>
-                      <table style="width:100%; border:none; margin:0;">
-                          <tr><td>Invertido:</td><td style="text-align:right;"><b>${formatMoney(d.inv, baseCurrency)}</b></td></tr>
-                          <tr><td>Valor Act:</td><td style="text-align:right;"><b style="color:${c}">${formatMoney(d.cur, baseCurrency)}</b></td></tr>
-                          <tr><td colspan="2" style="text-align:center; padding-top:5px; border-top:1px solid #ddd;"><b>BALANCE: ${formatMoney(d.plPrice, baseCurrency)}</b></td></tr>
-                          <tr><td style="color:#666;">Rent. Simple/Anual:</td><td style="text-align:right;">${formatN(d.plP_S)}% / ${formatN(d.plP_A)}%</td></tr>
-                          <tr><td>Dividendos:</td><td style="text-align:right; color:#2563eb;">${formatMoney(d.divN, baseCurrency)} [${formatN(yieldPct)}%]</td></tr>
-                          <tr><td>FX Total:</td><td style="text-align:right;">${formatMoney(d.fX, baseCurrency)}</td></tr>
-                          <tr><td><b>Rdto Total:</b></td><td style="text-align:right;"><b>${formatMoney(d.plTotal, baseCurrency)}</b></td></tr>
-                      </table>
-                  </div>`;
-              };
-              
-              // PREPARAR DATOS HISTÓRICOS PARA IMPRESIÓN
-              const h = historicalStats;
-              const roiCons = h.consolidated.avgCap > 0 ? (h.consolidated.profit / h.consolidated.avgCap) * 100 : 0;
-              const roiClosed = h.closed.avgCap > 0 ? (h.closed.profit / h.closed.avgCap) * 100 : 0;
-              
-              const historyCardHTML = `
-                  <div style="width: 250px; border: 2px solid #eab308; padding: 8px; background: #fffbeb; font-family:sans-serif;">
-                      <div style="font-size:9px; font-weight:bold; color:#ca8a04; border-bottom:1px solid #eab308; padding-bottom:2px; margin-bottom:5px;">RENTABILIDAD HISTÓRICA (REAL)</div>
-                      <table style="width:100%; font-size:8px;">
-                          <tr><td colspan="2" style="font-weight:bold; background:#eab30833;">CONSOLIDADA</td></tr>
-                          <tr><td>ROI:</td><td style="text-align:right; font-weight:bold;">${formatN(roiCons)}%</td></tr>
-                          <tr><td>Cap. Med:</td><td style="text-align:right;">${formatMoney(h.consolidated.avgCap, baseCurrency)}</td></tr>
-                          <tr><td>Beneficio:</td><td style="text-align:right;">${formatMoney(h.consolidated.profit, baseCurrency)}</td></tr>
-                          <tr><td colspan="2" style="font-weight:bold; background:#eab30833; padding-top:4px;">CERRADAS</td></tr>
-                          <tr><td>ROI:</td><td style="text-align:right; font-weight:bold;">${formatN(roiClosed)}%</td></tr>
-                          <tr><td>Cap. Med:</td><td style="text-align:right;">${formatMoney(h.closed.avgCap, baseCurrency)}</td></tr>
-                      </table>
-                      <div style="font-size:7px; color:#666; margin-top:5px; border-top:1px solid #ccc; padding-top:2px;">Intervalo Op: ${formatN(h.avgIntervalDays, 1)}d | Pos. Media: ${formatN(h.avgPositions, 1)}</div>
-                  </div>
-              `;
-
-              let html = `<html><head><title>Informe Cartera</title>`;
-              html += `<style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:7px;} h1{font-size:14px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th{background:#f1f5f9;text-align:left;padding:3px;border-bottom:1px solid #94a3b8;font-size:6px;text-transform:uppercase;} td{padding:3px;border-bottom:1px solid #e2e8f0;vertical-align:top;font-size:7px;} .num{text-align:right;font-family:monospace;white-space:nowrap;} .center{text-align:center;} .profit{color:#16a34a;font-weight:bold;} .loss{color:#dc2626;font-weight:bold;} .blue{color:#3b82f6;} .orange{color:#f97316;}</style></head><body>`;
-              html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>INFORME DE CARTERA - BoardingGate</h1><div style="font-size:8px;color:#666;">(FILTRO: ${filterLabel})</div></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`;
-              html += `<div style="display:flex; gap:5px; margin-top:5px;">`;
-              if (filterType === 'all') { html += genStatsBlock("Cartera Activa", stats.active, "#3b82f6") + genStatsBlock("Posiciones Cerradas", stats.sold, "#f97316") + genStatsBlock("Cartera Global", stats.total, "#a855f7"); }
-              else if (filterType === 'active') { html += genStatsBlock("Cartera Activa (Filtrada)", stats.active, "#3b82f6"); }
-              else { html += genStatsBlock("Ventas (Filtradas)", stats.sold, "#f97316"); }
-              html += `</div>`;
-              html += `<table><thead><tr><th>Valor</th><th class="center">Fechas / Días</th><th class="num">Títulos</th><th class="num">Precios (I/A)</th><th class="center">FX</th><th class="center">Gtos/Adj</th><th class="num">Coste Total</th><th class="num">Valor Final</th><th class="num">Rendimiento</th><th class="num">% Simple</th><th class="num">% Anual</th><th class="center">PER (I/A)</th></tr></thead><tbody>`;
-              filteredPortfolio.forEach(p => {
-                  const cT = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFees + p.sellAdjustments) : 0); const pl = vF - cT; const days = calculateDays(p.buyDate, p.sellDate || new Date()); const rs = calcReturns(cT, vF, days);
-                  html += `<tr><td><b>${p.ticker}</b>${p.group ? `<br/>[${p.group}]` : ''}<br/>${p.name.substring(0,25)}</td><td class="center"><span class="blue">${formatDateES(p.buyDate)}</span>${p.sellDate ? `<br/><span class="orange">${formatDateES(p.sellDate)}</span>` : ''}<br/><b>${formatN(days, 0)}d</b></td><td class="num"><b>${formatN(p.shares)}</b></td><td class="num"><b>I:${formatN(p.buyPrice)}</b><br/><b>${isS?'V':'A'}:${formatN(curP)}</b></td><td class="center">${formatN(p.buyFx,4)}<br/>${formatN(curF,4)}</td><td class="center">${formatN(isS?p.sellFees:p.fees)}<br/>${formatN(isS?p.sellAdjustments:p.adjustments)}</td><td class="num"><b>${formatMoney(cT, baseCurrency)}</b></td><td class="num"><b>${formatMoney(vF, baseCurrency)}</b></td><td class="num"><span class="${pl>=0?'profit':'loss'}">${formatMoney(pl, baseCurrency)}</span></td><td class="num"><span class="${pl>=0?'profit':'loss'}">${formatN(rs.simple)}%</span></td><td class="num">${formatN(rs.annual)}%</td><td class="center">${formatN(p.buyPE, 1)} / ${formatN(p.currentPE, 1)}</td></tr>`;
-              });
-              html += `</tbody></table>`;
-              
-              // INYECTAR LA TARJETA HISTÓRICA AL PIE, ALINEADA A LA DERECHA
-              html += `<div style="display:flex; justify-content:flex-end; margin-top:20px;">${historyCardHTML}</div>`;
-              
-              html += `</body></html>`;
-              printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(() => printWindow.print(), 500);
-          };
-
-          const toggleAllActive = () => {
-              const allActive = filteredPortfolio.every(p => p.isActive !== false);
-              setPortfolio(prev => prev.map(p => {
-                  const isVisible = filteredPortfolio.some(fp => fp.id === p.id);
-                  return isVisible ? { ...p, isActive: !allActive } : p;
-              }));
-          };
-
-          const yieldOnCost = form.buyPrice > 0 ? (form.annualDividend / form.buyPrice) * 100 : 0;
-
-          const RenderHistoryCard = () => {
-              const h = historicalStats;
-              const roiCons = h.consolidated.avgCap > 0 ? (h.consolidated.profit / h.consolidated.avgCap) * 100 : 0;
-              const roiClosed = h.closed.avgCap > 0 ? (h.closed.profit / h.closed.avgCap) * 100 : 0;
-
-              return (
-                  <div className="glass-panel p-4 rounded-xl border-t-4 border-yellow-500 min-w-[320px] max-w-[400px]">
-                      <div className="flex justify-between items-center mb-2">
-                          <span className="text-[10px] font-black uppercase text-yellow-500 flex items-center gap-2"><Icons.Award size={12}/> RENTABILIDAD HISTÓRICA CARTERA</span>
-                          <span className="text-[8px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 font-bold">REAL (TIME-WEIGHTED)</span>
-                      </div>
-                      
-                      <div className="grid grid-cols-2 gap-4 mb-3 border-b border-slate-700/50 pb-2">
-                          <div className="bg-slate-900/40 p-2 rounded-lg">
-                              <div className="text-[8px] text-slate-400 uppercase font-bold mb-1">Consolidada (Act+Cerr)</div>
-                              <div className={`text-lg font-black ${roiCons>=0?'text-green-400':'text-red-400'}`}>{formatN(roiCons)}%</div>
-                              <div className="flex justify-between items-end mt-1">
-                                  <div className="text-[8px] text-slate-500">Cap. Medio: <span className="text-slate-300">{formatMoney(h.consolidated.avgCap, baseCurrency)}</span></div>
-                                  <div className="text-[8px] font-bold text-yellow-500">[{formatMoney(h.consolidated.profit, baseCurrency)}]</div>
-                              </div>
-                          </div>
-                          <div className="bg-slate-900/40 p-2 rounded-lg">
-                              <div className="text-[8px] text-slate-400 uppercase font-bold mb-1">Solo Cerradas</div>
-                              <div className={`text-lg font-black ${roiClosed>=0?'text-green-400':'text-red-400'}`}>{formatN(roiClosed)}%</div>
-                              <div className="flex justify-between items-end mt-1">
-                                  <div className="text-[8px] text-slate-500">Cap. Medio: <span className="text-slate-300">{formatMoney(h.closed.avgCap, baseCurrency)}</span></div>
-                                  <div className="text-[8px] font-bold text-yellow-500">[{formatMoney(h.closed.profit, baseCurrency)}]</div>
-                              </div>
-                          </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2 text-[9px] text-slate-400">
-                           <div>
-                               <div className="uppercase font-bold text-slate-500 mb-0.5">Fechas Activa</div>
-                               <div>{h.active.first ? formatDateES(h.active.first) : '--'} / {h.active.last ? formatDateES(h.active.last) : '--'}</div>
-                               <div className="text-blue-400 font-bold">({formatN(h.active.diffDays, 0)} días)</div>
-                           </div>
-                           <div className="text-right">
-                               <div className="uppercase font-bold text-slate-500 mb-0.5">Fechas Cerrada</div>
-                               <div>{h.closed.first ? formatDateES(h.closed.first) : '--'} / {h.closed.last ? formatDateES(h.closed.last) : '--'}</div>
-                               <div className="text-orange-400 font-bold">({formatN(h.closed.diffDays, 0)} días)</div>
-                           </div>
-                      </div>
-
-                      <div className="mt-2 pt-2 border-t border-slate-800/50 flex justify-between items-center text-[9px]">
-                          <div className="text-slate-500">Intervalo Operaciones: <span className="text-slate-300 font-bold">{formatN(h.avgIntervalDays, 1)} días</span></div>
-                          <div className="text-slate-500">Pos. Medias: <span className="text-slate-300 font-bold">{formatN(h.avgPositions, 1)}</span></div>
-                      </div>
-                  </div>
-              );
-          };
+          const handleSave = () => { const e = { ...form, name: form.name || form.ticker }; if (editingId) setPortfolio(prev => prev.map(p => p.id === editingId ? { ...p, ...e } : p)); else setPortfolio(prev => [...prev, { ...e, id: Date.now(), currentPrice: form.buyPrice, currentFx: form.buyFx, isActive: true, dividends: [] }]); setIsModalOpen(false); };
+          const handleSellSubmit = () => { const soldR = { ...sellItem, id: Date.now(), shares: sellForm.sharesToSell, isActive: true, sellDate: sellForm.sellDate, sellPrice: sellForm.sellPrice, sellFx: sellForm.sellFx, sellFees: sellForm.sellFees, sellAdjustments: sellForm.sellAdjustments, dividends: [...(sellItem.dividends || [])] }; setPortfolio([...portfolio.map(p => p.id === sellItem.id ? { ...p, isActive: false } : p), soldR]); setIsSellModalOpen(false); };
 
           return (
               <div className="w-full p-4 md:p-6 flex flex-col gap-6">
-                  {analyzing && <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center fade-in"><Icons.Wand size={60} className="text-purple-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando Cartera Global...</div></div>}
-
-                  {/* NOTE TOAST */}
-                  {noteToast && (
-                      <div className="fixed top-20 right-10 z-[100] bg-yellow-900/90 border-l-4 border-yellow-500 p-4 rounded shadow-2xl max-w-sm fade-in backdrop-blur-sm">
-                          <div className="flex justify-between items-start mb-1">
-                              <h4 className="text-yellow-400 font-bold text-xs uppercase flex items-center gap-2"><Icons.MessageCircle size={14}/> Observaciones</h4>
-                              <button onClick={()=>setNoteToast(null)} className="text-yellow-200 hover:text-white"><Icons.X size={14}/></button>
-                          </div>
-                          <p className="text-sm text-yellow-100 italic leading-relaxed">{noteToast}</p>
-                      </div>
-                  )}
+                  {analyzing && <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center fade-in"><Icons.Wand size={60} className="text-purple-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando Cartera...</div></div>}
+                  {noteToast && <div className="fixed top-20 right-10 z-[100] bg-yellow-900/90 border-l-4 border-yellow-500 p-4 rounded shadow-2xl max-w-sm fade-in backdrop-blur-sm"><div className="flex justify-between items-start mb-1"><h4 className="text-yellow-400 font-bold text-xs uppercase flex items-center gap-2"><Icons.MessageCircle size={14}/> Observaciones</h4><button onClick={()=>setNoteToast(null)} className="text-yellow-200 hover:text-white"><Icons.X size={14}/></button></div><p className="text-sm text-yellow-100 italic">{noteToast}</p></div>}
 
                   <div className="flex gap-4 overflow-x-auto pb-2 custom-scrollbar shrink-0">
                       <StatsBlock title="ACTIVOS FILTRADOS" data={stats.active} color="#22c55e" baseCurrency={baseCurrency} type="active" />
@@ -1328,121 +908,70 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                       <RenderHistoryCard />
                   </div>
 
+                  {/* NUEVO DASHBOARD ESTADÍSTICO AQUÍ */}
                   <AdvancedStatsDashboard portfolio={portfolio} resultsData={resultsData} baseCurrency={baseCurrency} />
-
-
-                  <div className="flex flex-col gap-3 shrink-0 bg-slate-900/50 p-3 rounded-xl border border-slate-800">
-                      <div className="flex justify-between items-center"><div className="flex gap-2 items-start"><div className="flex flex-col"><button onClick={() => updatePrices(false)} disabled={updating} className="bg-slate-800 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-700 hover:bg-slate-700 transition-colors flex items-center gap-2">{updating ? <Icons.Loader/> : <Icons.Refresh/>} ACTUALIZAR</button><span className="text-[9px] text-slate-500 mt-1 uppercase font-bold text-center tracking-wider">Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}</span></div><button onClick={analyzePortfolio} className="bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 transition-colors flex items-center gap-2"><Icons.Wand/> INFORME iA</button><button onClick={handlePrint} className="bg-slate-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button></div><button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', group: '', notes: '', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, buyPE:0, annualDividend:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, currentPE:0, dividends: [] }); setIsModalOpen(true); }} className="bg-blue-600 px-4 h-9 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg hover:bg-blue-500"><Icons.Plus size={14}/> NUEVA POSICIÓN</button></div>
-                      <div className="flex flex-wrap gap-2 items-center bg-slate-950/50 p-2 rounded-lg border border-slate-800/50"><div className="flex-1 min-w-[150px] relative"><Icons.Search className="absolute left-2 top-2 text-slate-500" size={14}/><input type="text" value={filterText} onChange={e => setFilterText(e.target.value)} placeholder="Filtrar por ticker, nombre o grupo..." className="w-full bg-slate-900 border border-slate-700 h-8 pl-8 pr-2 text-xs rounded focus:border-blue-500 font-bold" /></div><div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-2 h-8"><span className="text-[9px] font-bold text-slate-500 uppercase">Desde</span><input type="date" value={filterDateStart} onChange={e => setFilterDateStart(e.target.value)} className="bg-transparent border-none text-xs text-white p-0 w-[95px] focus:ring-0 font-bold" /></div><div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-2 h-8"><span className="text-[9px] font-bold text-slate-500 uppercase">Hasta</span><input type="date" value={filterDateEnd} onChange={e => setFilterDateEnd(e.target.value)} className="bg-transparent border-none text-xs text-white p-0 w-[95px] focus:ring-0 font-bold" /></div><div className="flex bg-slate-900 rounded border border-slate-700 h-8 p-0.5"><button onClick={() => setFilterType('all')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'all' ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white'}`}>TODO</button><button onClick={() => setFilterType('active')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'active' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>ACTIVAS</button><button onClick={() => setFilterType('sold')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'sold' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>VENTAS</button></div><button onClick={resetFilters} title="Limpiar Filtros" className="h-8 px-3 bg-red-900/30 text-red-400 border border-red-500/30 rounded text-[10px] font-bold hover:bg-red-900/50 flex items-center justify-center"><Icons.Trash2 size={16}/></button></div>
-                  </div>
                   
+                  <div className="flex flex-col gap-3 shrink-0 bg-slate-900/50 p-3 rounded-xl border border-slate-800">
+                      <div className="flex justify-between items-center"><div className="flex gap-2 items-start"><button onClick={() => updatePrices(false)} disabled={updating} className="bg-slate-800 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-700 hover:bg-slate-700 transition-colors flex items-center gap-2">{updating ? <Icons.Loader/> : <Icons.Refresh/>} ACTUALIZAR</button><button onClick={()=>{setAnalyzing(true); setTimeout(()=>{setAnalyzing(false); setIsAnalysisModalOpen(true)}, 2000)}} className="bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 flex items-center gap-2"><Icons.Wand/> INFORME iA</button></div><button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', group: '', notes: '', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, buyPE:0, annualDividend:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, currentPE:0, dividends: [] }); setIsModalOpen(true); }} className="bg-blue-600 px-4 h-9 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg hover:bg-blue-500"><Icons.Plus size={14}/> NUEVA POSICIÓN</button></div>
+                      <div className="flex flex-wrap gap-2 items-center bg-slate-950/50 p-2 rounded-lg"><div className="flex-1 min-w-[150px] relative"><Icons.Search className="absolute left-2 top-2 text-slate-500" size={14}/><input type="text" value={filterText} onChange={e => setFilterText(e.target.value)} placeholder="Filtrar por ticker, nombre o grupo..." className="w-full bg-slate-900 border border-slate-700 h-8 pl-8 pr-2 text-xs rounded focus:border-blue-500 font-bold" /></div><div className="flex bg-slate-900 rounded border border-slate-700 h-8 p-0.5"><button onClick={() => setFilterType('all')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'all' ? 'bg-slate-600 text-white' : 'text-slate-400'}`}>TODO</button><button onClick={() => setFilterType('active')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'active' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>ACTIVAS</button><button onClick={() => setFilterType('sold')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'sold' ? 'bg-orange-600 text-white' : 'text-slate-400'}`}>VENTAS</button></div><button onClick={()=>{setFilterText('');setFilterDateStart('');setFilterDateEnd('')}} className="h-8 px-3 bg-red-900/30 text-red-400 border border-red-500/30 rounded text-[10px] font-bold"><Icons.Trash2 size={16}/></button></div>
+                  </div>
+
                   <div className="w-full overflow-x-auto bg-slate-900/50 border border-slate-800 rounded-xl">
-                      <table className="w-full text-left min-w-[1700px] text-sm"><thead className="bg-slate-800 text-slate-400 text-[10px] uppercase font-bold sticky top-0 z-20">
-                          <tr>
-                            <th className="p-3 w-10 text-center"><button onClick={toggleAllActive} title="Marcar/Desmarcar Todo"><Icons.CursorClick size={16} className="text-blue-400"/></button></th>
-                            
-                            <th className={`p-3 cursor-pointer select-none hover:text-white hover:bg-slate-700 transition-colors group ${sortConfig.key==='value'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('value')}>
-                                <div className="flex items-center gap-1">
-                                    <Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='value'?'opacity-100':''}`}/>
-                                    Valor {sortConfig.key==='value' && (sortConfig.direction==='asc'?'▲':'▼')}
-                                </div>
-                            </th>
-                            
-                            <th className={`p-3 text-center cursor-pointer select-none hover:text-white hover:bg-slate-700 transition-colors group ${sortConfig.key==='date'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('date')}>
-                                <div className="flex items-center justify-center gap-1">
-                                    <Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='date'?'opacity-100':''}`}/>
-                                    Fechas / Días {sortConfig.key==='date' && (sortConfig.direction==='asc'?'▲':'▼')}
-                                </div>
-                            </th>
-                            
-                            <th className="p-3 text-right">Títulos</th>
-                            <th className="p-3 text-right">Precios (Inv/Act)</th>
-                            <th className="p-3 text-center">FX (I/A)</th>
-                            <th className="p-3 text-center">Gastos / Adj</th>
-                            <th className="p-3 text-right">Coste Total</th>
-                            <th className="p-3 text-right">Valor Final</th>
-                            
-                            <th className={`p-3 text-right cursor-pointer select-none hover:text-white hover:bg-slate-700 transition-colors group ${sortConfig.key==='yield'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('yield')}>
-                                <div className="flex items-center justify-end gap-1">
-                                    <Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='yield'?'opacity-100':''}`}/>
-                                    RENDIMIENTO {sortConfig.key==='yield' && (sortConfig.direction==='asc'?'▲':'▼')}
-                                </div>
-                            </th>
-                            
-                            <th className={`p-3 text-right cursor-pointer select-none hover:text-white hover:bg-slate-700 transition-colors group ${sortConfig.key==='percent'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('percent')}>
-                                <div className="flex items-center justify-end gap-1">
-                                    <Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='percent'?'opacity-100':''}`}/>
-                                    % Ben/Pérd {sortConfig.key==='percent' && (sortConfig.direction==='asc'?'▲':'▼')}
-                                </div>
-                            </th>
-                            
-                            <th className="p-3 text-center">PER (I/A)</th>
-                            <th className="p-3 text-center">Acciones</th>
-                          </tr>
-                      </thead>
-                          <tbody className="divide-y divide-slate-800">{filteredPortfolio.length === 0 ? ( <tr><td colSpan="13" className="p-10 text-center text-slate-500 italic">No hay registros que coincidan con los filtros aplicados.</td></tr> ) : ( filteredPortfolio.map(p => { const cT = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFees + p.sellAdjustments) : 0); const ds = (p.dividends || []).reduce((a,b)=>a+b.net,0); const capitalGain = vF - cT; const days = calculateDays(p.buyDate, p.sellDate || new Date()); const rs = calcReturns(cT, vF + ds, days); return ( <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''}`} onClick={() => p.notes && setNoteToast(p.notes)}><td className="p-3 text-center" onClick={(e) => { e.stopPropagation(); setPortfolio(prev => prev.map(x => x.id === p.id ? {...x, isActive: !x.isActive} : x)); }}><input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" /></td><td className="p-3"><b>{p.ticker}</b>{isS && <span className="ml-2 px-1.5 py-0.5 bg-red-900/40 text-red-400 text-[8px] rounded uppercase font-bold border border-red-500/20">VENDIDA</span>}<br/><span className="text-[10px] text-slate-400 uppercase">{p.name}</span>{p.group && <span className="text-[10px] text-purple-300 font-bold bg-purple-900/30 px-1 rounded ml-2">Grupo: {p.group}</span>}</td><td className="p-3 text-center text-[10px] font-bold"><div className="text-blue-400">{formatDateES(p.buyDate)}</div>{p.sellDate && <div className="text-orange-400">{formatDateES(p.sellDate)}</div>}<div className="text-slate-500 text-[9px] mt-1">{formatN(days, 0)} días</div></td><td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td><td className="p-3 text-right text-xs font-mono">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td><td className="p-3 text-center text-[10px] font-mono text-slate-400">I: {formatN(p.buyFx, 4)}<br/>A: {formatN(curF, 4)}</td><td className="p-3 text-center text-[10px] font-mono text-slate-400">G: {formatN(isS?p.sellFees:p.fees)}<br/>A: {formatN(isS?p.sellAdjustments:p.adjustments)}</td><td className="p-3 text-right text-slate-400 font-mono">{formatMoney(cT, baseCurrency)}</td><td className="p-3 text-right font-mono text-white"><div className="font-bold">{formatMoney(vF, baseCurrency)}</div></td><td className="p-3 text-right font-mono"><div className={`font-bold ${capitalGain >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(capitalGain, baseCurrency)}</div>{ds > 0 && <div className="text-[10px] text-blue-300 font-bold mt-0.5">+ {formatMoney(ds, baseCurrency)} (Div)</div>}</td><td className="p-3 text-right text-xs"><div className={rs.simple>=0?'text-green-400 font-bold':'text-red-400 font-bold'}>{formatN(rs.simple)}%</div><div className="text-[9px] text-slate-500">Anual: {formatN(rs.annual)}%</div></td><td className="p-3 text-center text-xs font-mono">I: {formatN(p.buyPE, 1)}<br/>A: <span className="text-yellow-500 font-bold">{formatN(p.currentPE, 1)}</span></td><td className="p-3 text-center flex gap-2 justify-center" onClick={e=>e.stopPropagation()}>{!p.sellDate && <button onClick={() => { setSellItem(p); setSellForm({sharesToSell: p.shares, sellPrice: parseFloat(curP.toFixed(3)), sellDate: new Date().toISOString().slice(0,10), sellFx: p.currentFx, sellFees: 0, sellAdjustments: 0}); setIsSellModalOpen(true); }} className="bg-green-600/20 text-green-400 border border-green-500/30 px-2 py-1 rounded text-[10px] font-bold hover:bg-green-600/40">VENDER</button>}<button onClick={() => { setForm(p); setEditingId(p.id); setIsModalOpen(true); }} className="text-blue-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors"><Icons.Edit size={14}/></button><button onClick={() => setConfirmModal({isOpen:true, title:'Borrado', msg:`¿Eliminar permanentemente?`, onConfirm:()=>{setPortfolio(prev=>prev.filter(x=>x.id!==p.id)); setConfirmModal({isOpen:false})} })} className="text-red-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors"><Icons.Trash2 size={14}/></button></td></tr> ); }) )}</tbody>
-                      </table>
+                      <table className="w-full text-left min-w-[1500px] text-sm"><thead className="bg-slate-800 text-slate-400 text-[10px] uppercase font-bold sticky top-0 z-20">
+                          <tr><th className="p-3 w-10"></th><th className="p-3 cursor-pointer" onClick={()=>requestSort('value')}>Valor</th><th className="p-3 text-center cursor-pointer" onClick={()=>requestSort('date')}>Fechas / Días</th><th className="p-3 text-right">Títulos</th><th className="p-3 text-right">Precios (Inv/Act)</th><th className="p-3 text-center">FX (I/A)</th><th className="p-3 text-right">Coste Total</th><th className="p-3 text-right">Valor Final</th><th className="p-3 text-right cursor-pointer" onClick={()=>requestSort('yield')}>RENDIMIENTO</th><th className="p-3 text-right cursor-pointer" onClick={()=>requestSort('percent')}>% Ben/Pérd</th><th className="p-3 text-center">Acciones</th></tr>
+                      </thead><tbody className="divide-y divide-slate-800">
+                          {filteredPortfolio.map(p => { 
+                              const cT = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0); const isS = !!p.sellDate; 
+                              const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); 
+                              const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFees + p.sellAdjustments) : 0); 
+                              const pl = vF - cT; const rs = calcReturns(cT, vF + (p.dividends||[]).reduce((a,b)=>a+b.net,0), calculateDays(p.buyDate, p.sellDate || new Date())); 
+                              return ( <tr key={p.id} className="table-row-hover" onClick={() => p.notes && setNoteToast(p.notes)}><td className="p-3 text-center"><input type="checkbox" checked={p.isActive!==false} onChange={e=>{e.stopPropagation(); setPortfolio(prev=>prev.map(x=>x.id===p.id?{...x,isActive:!x.isActive}:x))}} className="custom-checkbox" /></td><td className="p-3"><b>{p.ticker}</b><br/><span className="text-[10px] text-slate-400">{p.name}</span></td><td className="p-3 text-center text-[10px]"><div>{formatDateES(p.buyDate)}</div>{isS && <div className="text-orange-400">{formatDateES(p.sellDate)}</div>}</td><td className="p-3 text-right font-mono font-bold">{formatN(p.shares)}</td><td className="p-3 text-right text-xs">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td><td className="p-3 text-center text-[10px] text-slate-400">{formatN(p.buyFx, 3)} / {formatN(curF, 3)}</td><td className="p-3 text-right font-mono">{fM(cT)}</td><td className="p-3 text-right font-mono font-bold">{fM(vF)}</td><td className="p-3 text-right font-mono"><div className={pl >= 0 ? 'text-green-400' : 'text-red-400'}>{fM(pl)}</div></td><td className="p-3 text-right"><div className={rs.simple>=0?'text-green-400 font-bold':'text-red-400 font-bold'}>{formatN(rs.simple)}%</div></td><td className="p-3 text-center flex gap-2 justify-center" onClick={e=>e.stopPropagation()}>{!p.sellDate && <button onClick={() => { setSellItem(p); setSellForm({sharesToSell: p.shares, sellPrice: parseFloat(curP.toFixed(3)), sellDate: new Date().toISOString().slice(0,10), sellFx: p.currentFx, sellFees: 0, sellAdjustments: 0}); setIsSellModalOpen(true); }} className="bg-green-600/20 text-green-400 border border-green-500/30 px-2 py-1 rounded text-[10px] font-bold">VENDER</button>}<button onClick={() => { setForm(p); setEditingId(p.id); setIsModalOpen(true); }} className="text-blue-400 p-1.5 bg-slate-800 rounded"><Icons.Edit size={14}/></button></div></td></tr> ); 
+                          })}
+                      </tbody></table>
                   </div>
 
-                  <div className="mt-2 flex items-start gap-2 text-[9px] text-slate-500 px-2">
-                       <Icons.HelpCircle size={12} className="mt-0.5 shrink-0"/>
-                       <p><span className="font-bold text-slate-400">Nota:</span> Puede activar/desactivar filas con el check lateral. Use los filtros superiores para búsquedas. Pulse sobre los encabezados <span className="text-slate-300 font-bold bg-slate-800 px-1 rounded">Valor</span>, <span className="text-slate-300 font-bold bg-slate-800 px-1 rounded">Fechas</span>, <span className="text-slate-300 font-bold bg-slate-800 px-1 rounded">RENDIMIENTO</span> o <span className="text-slate-300 font-bold bg-slate-800 px-1 rounded">% Ben/Pérd</span> para ordenar la tabla.</p>
-                  </div>
-
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 shrink-0 mb-6 mt-6">
-                      <div className="h-[400px]">
+                  {/* GRÁFICAS A ANCHO COMPLETO Y DESLIZABLES */}
+                  <div className="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-4 custom-scrollbar shrink-0 no-scrollbar">
+                      <div className="min-w-full snap-center h-[400px]">
                           <SimpleChart type="line" data={chartsData.evolution} title="Evolución Rendimiento Acumulado" height={400} color="#10b981" />
                       </div>
-                      <div className="h-[400px]">
+                      <div className="min-w-full snap-center h-[400px]">
                           <SimpleChart type="pie" data={chartsData.distribution} title="Distribución de Valor (Activos)" height={400} />
                       </div>
-                      <div className="h-[400px]">
+                      <div className="min-w-full snap-center h-[400px]">
                           <SimpleChart type="pie" data={chartsData.geoDiversification} title="Diversificación Geográfica (Bolsa)" height={400} />
                       </div>
                   </div>
+                  <div className="flex justify-center gap-2 -mt-2">
+                      <div className="w-2 h-2 rounded-full bg-blue-600"></div><div className="w-2 h-2 rounded-full bg-slate-700"></div><div className="w-2 h-2 rounded-full bg-slate-700"></div>
+                  </div>
 
-                  <Modal isOpen={isModalOpen} title={editingId ? `Ficha de Inversión: ${form.ticker}` : "Apertura de Posición"} onClose={()=>setIsModalOpen(false)}>
-                      <div className="space-y-6">
-                          <div className="bg-slate-800/40 border border-slate-700 p-5 rounded-2xl space-y-4">
-                              <h4 className="text-[10px] uppercase font-bold text-blue-400 tracking-widest border-b border-slate-700 pb-2">1. Detalles de Entrada (Compra)</h4>
-                              <div className="grid grid-cols-2 gap-4"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Ticker (NYSE:AAPL)</label><div className="flex gap-2"><input type="text" value={form.ticker} onChange={e=>setForm({...form, ticker: e.target.value.toUpperCase()})} className="w-24 font-bold text-sm bg-slate-900 border-slate-700 text-right" /><button onClick={fetchTickerData} disabled={fetchingSingle} className="bg-blue-600 text-[10px] px-3 rounded font-black hover:bg-blue-500 transition-colors">Rescatar iA</button></div></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Nombre / Empresa</label><input type="text" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="w-full text-slate-300 font-bold text-sm bg-slate-900 border-slate-700 text-right" /></div></div>
-                              <div className="grid grid-cols-2 gap-4"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Fecha</label><input type="date" value={form.buyDate} onChange={e=>setForm({...form, buyDate: e.target.value})} className="w-full text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div><div className="flex items-center gap-2 bg-slate-900/50 p-2 rounded border border-slate-700 mt-5 h-[38px] justify-end"><input type="checkbox" id="mIdx" checked={form.isIndex} onChange={e=>setForm({...form, isIndex:e.target.checked})} className="custom-checkbox" /><label htmlFor="mIdx" className="text-[10px] uppercase font-bold text-slate-400">Es Índice</label>{form.isIndex && <input type="number" step="0.01" value={form.indexDivisor} onChange={e=>setForm({...form, indexDivisor:parseFloat(e.target.value)})} className="w-16 h-6 py-0 px-1 ml-auto text-xs font-mono text-right" />}</div></div>
-                              <div className="grid grid-cols-3 gap-3"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Títulos</label><input type="number" value={form.shares} onChange={e=>setForm({...form, shares: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-white text-sm bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Precio Uni.</label><input type="number" step="0.01" value={form.buyPrice} onChange={e=>setForm({...form, buyPrice: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-white text-sm bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">PER Entrada</label><input type="number" step="0.1" value={form.buyPE} onChange={e=>setForm({...form, buyPE: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-yellow-500 text-sm bg-slate-900 border-slate-700 text-right" /></div></div>
-                              <div className="grid grid-cols-3 gap-3"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">FX Compra</label><input type="number" step="0.0001" value={form.buyFx} onChange={e=>setForm({...form, buyFx: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Gastos/Fee</label><input type="number" step="0.01" value={form.fees} onChange={e=>setForm({...form, fees: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Ajustes</label><input type="number" step="0.01" value={form.adjustments} onChange={e=>setForm({...form, adjustments: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div></div>
-                              
-                              <div className="flex items-center gap-4">
-                                  <div className="flex-1"><label className="text-[10px] uppercase font-bold text-green-400 mb-1 block">Dividendo Anual (Est.)</label><input type="number" step="0.01" value={form.annualDividend} onChange={e=>setForm({...form, annualDividend: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-green-600/50 text-right text-green-400" /></div>
-                                  <div className="bg-green-900/30 px-3 py-2 rounded border border-green-600/30 text-center"><div className="text-[8px] text-green-300 uppercase font-bold">Rent. s/ Coste</div><div className="text-sm font-bold text-white">{formatN(yieldOnCost)}%</div></div>
-                              </div>
-
-                              <div className="bg-blue-600/20 border-2 border-blue-500 p-4 rounded-xl flex justify-between items-center shadow-lg"><div className="text-[10px] uppercase font-bold text-blue-400 italic font-mono">({formatN(form.shares)} x {formatN(form.buyPrice)} x {formatN(form.buyFx, 4)}) + {formatN((form.fees||0)+(form.adjustments||0))}</div><div className="text-right"><div className="text-[8px] text-blue-400 font-black uppercase mb-1">Costo Adquisición</div><div className="text-lg font-black text-white leading-none font-mono">{formatMoney((form.shares * form.buyPrice * form.buyFx) + (form.fees||0) + (form.adjustments||0), baseCurrency)}</div></div></div>
+                  {/* MODALES REUTILIZADOS (CONSERVADOS) */}
+                  <Modal isOpen={isModalOpen} title={editingId ? `Ficha: ${form.ticker}` : "Nueva Posición"} onClose={()=>setIsModalOpen(false)}>
+                      <div className="space-y-4">
+                          <div className="grid grid-cols-2 gap-4">
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Ticker</label><input type="text" value={form.ticker} onChange={e=>setForm({...form, ticker: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border-slate-700 text-sm font-bold" /></div>
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Nombre</label><input type="text" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="w-full bg-slate-900 border-slate-700 text-sm font-bold" /></div>
                           </div>
-                          {editingId && portfolio.find(x=>x.id===editingId)?.sellDate && ( <div className="bg-orange-900/10 border border-orange-500/30 p-5 rounded-2xl space-y-4 shadow-xl"><h4 className="text-[10px] uppercase font-bold text-orange-400 tracking-widest border-b border-orange-500/20 pb-2">2. Detalles de Liquidación (Venta)</h4><div className="grid grid-cols-2 gap-4"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Fecha Venta</label><input type="date" value={form.sellDate} onChange={e=>setForm({...form, sellDate: e.target.value})} className="w-full font-bold text-sm bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Precio Venta</label><input type="number" step="0.001" value={form.sellPrice} onChange={e=>setForm({...form, sellPrice: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-white text-sm bg-slate-900 border-slate-700 text-right" /></div></div><div className="grid grid-cols-3 gap-3"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">FX Venta</label><input type="number" step="0.0001" value={form.sellFx} onChange={e=>setForm({...form, sellFx: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Gtos+Adj Venta</label><input type="number" step="0.01" value={(form.sellFees||0)+(form.sellAdjustments||0)} onChange={e=>setForm({...form, sellFees: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">PER Salida</label><input type="number" step="0.1" value={form.currentPE} onChange={e=>setForm({...form, currentPE: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-yellow-500 text-sm bg-slate-900 border-slate-700 text-right" /></div></div><div className="bg-orange-600/20 border-2 border-orange-500 p-4 rounded-xl flex justify-between items-center shadow-lg"><div className="text-[10px] uppercase font-bold text-orange-400 italic font-mono">({formatN(form.shares)} x {formatN(form.sellPrice, 3)} x {formatN(form.sellFx, 4)}) - {formatN((form.sellFees||0)+(form.sellAdjustments||0))}</div><div className="text-right"><div className="text-[8px] text-orange-400 font-black uppercase mb-1">Monto Liquidación</div><div className="text-lg font-black text-white leading-none font-mono">{formatMoney((form.shares * form.sellPrice * form.sellFx) - (form.sellFees || 0) - (form.sellAdjustments || 0), baseCurrency)}</div></div></div></div> )}
-                          {editingId && portfolio.find(x=>x.id===editingId)?.sellDate && (() => { const c = (form.buyPrice * form.shares * form.buyFx) + (form.fees || 0) + (form.adjustments || 0); const l = (form.shares * form.sellPrice * form.sellFx) - (form.sellFees || 0) - (form.sellAdjustments || 0); const d = (form.dividends || []).reduce((a,b)=>a+b.net,0); const p = (l + d) - c; const dy = calculateDays(form.buyDate, form.sellDate); const rs = calcReturns(c, l + d, dy); return ( <div className="bg-slate-900 border-2 border-slate-700 p-5 rounded-3xl relative overflow-hidden shadow-inner"><div className="absolute top-0 right-0 p-2 bg-slate-800 rounded-bl-xl shadow-lg border-b border-l border-slate-700 text-[10px] font-black text-white uppercase tracking-wider">DIAS EN CARTERA: {formatN(dy, 0)}</div><h4 className="text-[10px] uppercase font-bold text-purple-400 tracking-widest mb-4">3. Evaluación Final Operación</h4><div className="grid grid-cols-3 gap-4 text-center"><div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">G/P Total</div><div className={`text-lg font-black font-mono ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(p, baseCurrency)}</div></div><div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">Rdto Simple</div><div className={`text-lg font-black font-mono ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatN(rs.simple)}%</div></div><div className="bg-black/60 p-4 rounded-2xl border border-slate-800"><div className="text-[8px] text-slate-500 uppercase font-black mb-1">Rdto Anual</div><div className={`text-lg font-black font-mono ${p >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatN(rs.annual)}%</div></div></div></div> ); })()}
-                          <div className="bg-blue-900/10 border border-blue-500/20 p-5 rounded-2xl"><h4 className="text-[10px] uppercase font-bold text-blue-300 tracking-widest border-b border-blue-500/20 pb-2 mb-4">4. Flujo de Caja (Dividendos)</h4><div className="grid grid-cols-3 gap-4 text-center font-mono"><div className="bg-blue-900/20 p-2 rounded-xl"><div className="text-[8px] text-blue-400 uppercase font-black mb-1">Neto</div><div className="text-xl font-black text-green-400">{formatMoney((form.dividends||[]).reduce((a,b)=>a+b.net,0), baseCurrency)}</div></div><div><div className="text-[8px] text-slate-500 uppercase font-black mb-1">Ret. Origen</div><div className="text-lg font-black text-slate-300">{formatMoney((form.dividends||[]).reduce((a,b)=>a+b.taxOrigin,0), baseCurrency)}</div></div><div><div className="text-[8px] text-slate-500 uppercase font-black mb-1">Ret. Destino</div><div className="text-lg font-black text-slate-300">{formatMoney((form.dividends||[]).reduce((a,b)=>a+b.taxDest,0), baseCurrency)}</div></div></div></div>
-                          
-                          {/* CAMPO AGRUPACIÓN */}
-                          <div>
-                              <label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Agrupación</label>
-                              <input type="text" value={form.group} onChange={e=>setForm({...form, group: e.target.value})} className="w-full font-bold text-sm bg-slate-900 border-slate-700 text-left px-3" placeholder="Ej. Tecnología, Corto Plazo, Estrategia X..." />
-                              <p className="text-[9px] text-slate-500 mt-1 italic">(*) Este campo permitirá mostrar agrupados varios lotes o grupos de acciones, tecleando en el campo de filtrado de la pantalla principal "Filtrar por ticker, nombre o grupo" o agrupación de lotes.</p>
+                          <div className="grid grid-cols-3 gap-3">
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Títulos</label><input type="number" value={form.shares} onChange={e=>setForm({...form, shares: parseFloat(e.target.value)})} className="w-full bg-slate-900 border-slate-700 text-right" /></div>
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Precio Uni.</label><input type="number" step="0.01" value={form.buyPrice} onChange={e=>setForm({...form, buyPrice: parseFloat(e.target.value)})} className="w-full bg-slate-900 border-slate-700 text-right" /></div>
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">FX Compra</label><input type="number" step="0.0001" value={form.buyFx} onChange={e=>setForm({...form, buyFx: parseFloat(e.target.value)})} className="w-full bg-slate-900 border-slate-700 text-right" /></div>
                           </div>
-
-                          {/* CAMPO OBSERVACIONES */}
-                          <div>
-                              <label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Observaciones</label>
-                              <textarea value={form.notes} onChange={e=>setForm({...form, notes: e.target.value})} rows="4" className="w-full font-bold text-sm bg-slate-900 border-slate-700 text-left px-3 py-2 text-slate-300" placeholder="Anotaciones sobre la operación..."></textarea>
-                          </div>
-
-                          <button onClick={handleSave} className="w-full bg-blue-600 py-4 rounded-2xl font-black uppercase shadow-2xl hover:bg-blue-500 transition-all text-sm tracking-widest border-t-2 border-white/20">Guardar Registro</button>
+                          <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Observaciones</label><textarea value={form.notes} onChange={e=>setForm({...form, notes: e.target.value})} className="w-full bg-slate-900 border-slate-700 text-xs" rows="3"></textarea></div>
+                          <button onClick={handleSave} className="w-full bg-blue-600 py-3 rounded-xl font-bold uppercase tracking-widest text-xs">Guardar Posición</button>
                       </div>
                   </Modal>
-                  <Modal isOpen={isSellModalOpen} title={`Liquidación: ${sellItem?.ticker}`} onClose={()=>setIsSellModalOpen(false)}>
-                      <div className="space-y-4"><div className="bg-blue-900/10 p-4 rounded-xl text-[11px] text-blue-300 border border-blue-500/20 font-bold">Se generará un registro histórico de venta con dividendos traspasados.</div><div className="grid grid-cols-2 gap-4"><div><label className="text-[10px] uppercase font-bold text-slate-500">Fecha Venta</label><input type="date" value={sellForm.sellDate} onChange={e=>setSellForm({...sellForm, sellDate: e.target.value})} className="w-full font-bold text-sm bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500">Acciones</label><input type="number" value={sellForm.sharesToSell} onChange={e=>setSellForm({...sellForm, sharesToSell: parseFloat(e.target.value)})} className="w-full font-bold text-sm bg-slate-900 border-slate-700 text-right" /></div></div><div className="grid grid-cols-2 gap-4"><div><label className="text-[10px] uppercase font-bold text-slate-500">Precio Venta</label><input type="number" step="0.001" value={sellForm.sellPrice} onChange={e=>setSellForm({...sellForm, sellPrice: parseFloat(e.target.value)})} className="w-full font-mono text-white text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500">FX Venta</label><input type="number" step="0.0001" value={sellForm.sellFx} onChange={e=>setSellForm({...sellForm, sellFx: parseFloat(e.target.value)})} className="w-full font-mono text-white text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div></div><button onClick={handleSellSubmit} className="w-full bg-green-600 py-4 rounded-xl font-black uppercase shadow-lg text-xs tracking-widest border-t-2 border-white/10">Ejecutar Cierre Posición</button></div>
+
+                  <Modal isOpen={isSellModalOpen} title={`Venta: ${sellItem?.ticker}`} onClose={()=>setIsSellModalOpen(false)}>
+                      <div className="space-y-4">
+                          <div className="grid grid-cols-2 gap-4">
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500">Fecha Venta</label><input type="date" value={sellForm.sellDate} onChange={e=>setSellForm({...sellForm, sellDate: e.target.value})} className="w-full bg-slate-900 border-slate-700 text-right" /></div>
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500">Precio Venta</label><input type="number" step="0.001" value={sellForm.sellPrice} onChange={e=>setSellForm({...sellForm, sellPrice: parseFloat(e.target.value)})} className="w-full bg-slate-900 border-slate-700 text-right" /></div>
+                          </div>
+                          <button onClick={handleSellSubmit} className="w-full bg-green-600 py-3 rounded-xl font-bold uppercase text-xs">Confirmar Venta</button>
+                      </div>
                   </Modal>
-                  <Modal isOpen={confirmModal.isOpen} title={confirmModal.title} onClose={()=>setConfirmModal({isOpen:false})} size="sm"><div className="text-center space-y-4"><div className="bg-red-500/10 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto text-red-500 border border-red-500/20"><Icons.Trash2 size={30}/></div><p className="text-slate-300 text-sm font-bold">{confirmModal.msg}</p><div className="flex gap-2"><button onClick={()=>setConfirmModal({isOpen:false})} className="flex-1 bg-slate-700 py-3 rounded-xl font-bold uppercase text-[10px]">Cancelar</button><button onClick={confirmModal.onConfirm} className="flex-1 bg-red-600 py-3 rounded-xl font-bold text-white uppercase text-[10px]">Eliminar</button></div></div></Modal>
-                  <Modal isOpen={infoModal.isOpen} title={infoModal.title} onClose={()=>setInfoModal({...infoModal, isOpen:false})} size="sm"><div className="text-center space-y-4"><div className={`p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto border ${infoModal.type==='error'?'bg-red-500/10 text-red-500 border-red-500/20':infoModal.type==='warning'?'bg-yellow-500/10 text-yellow-500 border-yellow-500/20':'bg-blue-500/10 text-blue-500 border-blue-500/20'}`}>{infoModal.type==='error'?<Icons.AlertCircle size={30}/>:infoModal.type==='warning'?<Icons.AlertCircle size={30}/>:<Icons.CheckCircle size={30}/>}</div><p className="text-slate-300 text-sm font-medium whitespace-pre-wrap leading-relaxed">{infoModal.msg}</p><button onClick={()=>setInfoModal({...infoModal, isOpen:false})} className="w-full bg-slate-700 py-3 rounded-xl font-bold uppercase text-[10px]">Cerrar</button></div></Modal>
-                  <Modal isOpen={isAnalysisModalOpen} title="Informe de Inteligencia iA" onClose={()=>setIsAnalysisModalOpen(false)} size="lg"><div className="flex justify-end mb-2"><button onClick={handlePrintAI} className="bg-slate-700 px-3 py-1 rounded text-xs font-bold flex gap-2 items-center hover:bg-slate-600"><Icons.ExternalLink size={12}/> IMPRIMIR</button></div><div className="prose-content" dangerouslySetInnerHTML={{__html: analysisResult}} /></Modal>
               </div>
           );
       };
@@ -1450,10 +979,9 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
 
 
+/* --- FIN CARTERA   */
 
-
-
-      const AnalysisTab = ({ apiKey, baseCurrency }) => {
+          const AnalysisTab = ({ apiKey, baseCurrency }) => {
           const [ticker, setTicker] = useState('');
           const [question, setQuestion] = useState('');
           const [loading, setLoading] = useState(false);
