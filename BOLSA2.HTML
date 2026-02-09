@@ -641,6 +641,9 @@
           );
       };
 
+
+
+
       const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate }) => {
           const [filterText, setFilterText] = useState('');
           const [filterDateStart, setFilterDateStart] = useState('');
@@ -685,19 +688,20 @@
               return isNaN(n) ? 0 : n;
           };
 
-          // Función para inferir geografía
+          // --- LÓGICA DE BOLSAS (NUEVA) ---
           const getRegion = (ticker) => {
-              if (!ticker) return 'Otros';
+              if (!ticker) return 'S/D';
+              // Formato esperado BBB:TTT. Extraemos BBB.
+              if (ticker.includes(':')) {
+                  return ticker.split(':')[0].toUpperCase(); 
+              }
+              // Fallback si no tiene formato bolsa:ticker
               const t = ticker.toUpperCase();
-              if (t.endsWith('.MC')) return 'España';
-              if (t.endsWith('.DE')) return 'Alemania';
-              if (t.endsWith('.PA')) return 'Francia';
-              if (t.endsWith('.AS')) return 'Holanda';
-              if (t.endsWith('.MI')) return 'Italia';
-              if (t.endsWith('.L')) return 'Reino Unido';
-              if (t.endsWith('.TO')) return 'Canadá';
-              if (t.includes('.')) return 'Europa/Otros'; // Si tiene punto y no es de los anteriores
-              return 'EE.UU'; // Sin punto suele ser US
+              if (t.endsWith('.MC')) return 'BME (ES)';
+              if (t.endsWith('.DE')) return 'XETRA (DE)';
+              if (t.endsWith('.PA')) return 'EURONEXT (FR)';
+              if (t.endsWith('.L')) return 'LSE (UK)';
+              return 'US/OTROS'; 
           };
 
           // --- 1. LÓGICA DE FILTRADO Y ORDENACIÓN ---
@@ -784,7 +788,7 @@
                   value: (p.currentPrice * p.shares * p.currentFx)
               })).sort((a,b) => b.value - a.value);
 
-              // 2. Diversificación Geográfica (Pie)
+              // 2. Diversificación Geográfica (Pie) - POR BOLSA
               const geoMap = {};
               activeFilteredPortfolio.filter(p => !p.sellDate).forEach(p => {
                   const region = getRegion(p.ticker);
@@ -977,7 +981,7 @@
                           <SimpleChart type="pie" data={chartsData.distribution} title="Distribución de Valor (Activos)" height={400} />
                       </div>
                       <div className="h-[400px]">
-                          <SimpleChart type="pie" data={chartsData.geoDiversification} title="Diversificación Geográfica (Activos)" height={400} />
+                          <SimpleChart type="pie" data={chartsData.geoDiversification} title="Diversificación Geográfica (Bolsa)" height={400} />
                       </div>
                       <div className="h-[400px]">
                           <SimpleChart type="line" data={chartsData.evolution} title="Evolución Rendimiento Acumulado" height={400} color="#10b981" />
@@ -1018,6 +1022,179 @@
           );
       };
 
+   
+
+
+      const DividendTab = ({ portfolio, setPortfolio, baseCurrency }) => {
+          const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+          
+          // --- FUNCION AUXILIAR FECHA ---
+          const formatDateSimple = (d) => {
+              if(!d) return '';
+              const date = new Date(d);
+              return `${date.getDate().toString().padStart(2,'0')}/${(date.getMonth()+1).toString().padStart(2,'0')}/${date.getFullYear().toString().slice(-2)}`;
+          };
+
+          const filtered = useMemo(() => {
+              const list = portfolio.filter(p => { 
+                  // FILTRO: Solo si se indicó que paga dividendo (> 0) y cae en el año seleccionado
+                  const paysDiv = p.annualDividend > 0;
+                  const bY = new Date(p.buyDate).getFullYear(); 
+                  const sY = p.sellDate ? new Date(p.sellDate).getFullYear() : 9999; 
+                  return paysDiv && bY <= selectedYear && sY >= selectedYear; 
+              });
+              // ORDENACIÓN: 1. Activas (Fecha Compra) / 2. Cerradas (Fecha Venta)
+              return list.sort((a,b) => {
+                  const aClosed = !!a.sellDate; const bClosed = !!b.sellDate;
+                  if(aClosed !== bClosed) return aClosed ? 1 : -1; // Activas primero
+                  if(!aClosed) return new Date(a.buyDate) - new Date(b.buyDate); 
+                  return new Date(a.sellDate) - new Date(b.sellDate); 
+              });
+          }, [portfolio, selectedYear]);
+          
+          const handleDivChange = (id, month, field, val) => { 
+              const numVal = parseFloat(val) || 0; 
+              setPortfolio(prev => prev.map(p => { 
+                  if (p.id !== id) return p; 
+                  let divs = [...(p.dividends || [])]; 
+                  const idx = divs.findIndex(d => d.year === selectedYear && d.month === month); 
+                  if (idx >= 0) divs[idx][field] = numVal; 
+                  else divs.push({ id: Date.now() + Math.random(), year: selectedYear, month, net: field === 'net' ? numVal : 0, taxOrigin: field === 'taxOrigin' ? numVal : 0, taxDest: field === 'taxDest' ? numVal : 0 }); 
+                  return { ...p, dividends: divs }; 
+              })); 
+          };
+          
+          const stats = useMemo(() => {
+              let tNet = 0, tOrg = 0, tDest = 0, tBruto = 0, tDIB = 0, tDI15 = 0;
+              const monthlyT = Array.from({ length: 12 }, () => ({ n: 0, o: 0, d: 0 }));
+              const rows = filtered.map(p => {
+                  const ds = (p.dividends || []).filter(d => d.year === selectedYear);
+                  const n = ds.reduce((a, b) => a + b.net, 0);
+                  const o = ds.reduce((a, b) => a + b.taxOrigin, 0);
+                  const d = ds.reduce((a, b) => a + b.taxDest, 0);
+                  const b = n + o + d;
+                  const diBruto = o > 0 ? b : 0; // Dividendo Internacional Bruto
+                  const di15 = o > 0 ? b * 0.15 : 0; // 15% del Bruto
+                  
+                  tNet += n; tOrg += o; tDest += d; tBruto += b; tDIB += diBruto; tDI15 += di15;
+                  
+                  ds.forEach(div => { 
+                      if (div.month >= 0 && div.month < 12) { 
+                          monthlyT[div.month].n += div.net || 0; 
+                          monthlyT[div.month].o += div.taxOrigin || 0; 
+                          monthlyT[div.month].d += div.taxDest || 0; 
+                      } 
+                  });
+                  return { id: p.id, name: p.name || p.ticker, ticker: p.ticker, n, o, d, b, diBruto, di15 };
+              });
+              
+              // Datos para gráfica de TICKERS (Acumulado)
+              const tickerChartData = rows
+                  .filter(r => r.n > 0)
+                  .map(r => ({ label: r.ticker, value: r.n }))
+                  .sort((a,b) => b.value - a.value);
+
+              // Datos para gráfica ANUAL HISTÓRICO
+              const annualHistoryMap = {};
+              portfolio.forEach(p => {
+                  (p.dividends || []).forEach(d => {
+                      annualHistoryMap[d.year] = (annualHistoryMap[d.year] || 0) + d.net;
+                  });
+              });
+              const annualChartData = Object.keys(annualHistoryMap)
+                  .sort((a,b) => a - b)
+                  .map(year => ({ label: year, value: annualHistoryMap[year] }));
+
+              return { rows, tNet, tOrg, tDest, tBruto, tDIB, tDI15, monthlyT, tickerChartData, annualChartData };
+          }, [filtered, selectedYear, portfolio]);
+
+          const chartDataMonthly = useMemo(() => stats.monthlyT.map((m, i) => ({ label: MONTHS[i].substring(0,3), value: m.n })), [stats]);
+
+          const handlePrint = () => {
+              const printWindow = window.open('', '', 'height=800,width=1200');
+              const emissionTime = new Date().toLocaleString();
+              let html = `<html><head><title>Informe Dividendos</title><style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:7px;} h1{font-size:14px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:20px;} th{background:#f1f5f9;text-align:center;padding:2px;border:1px solid #94a3b8;font-size:6px;text-transform:uppercase;} td{padding:2px;border:1px solid #e2e8f0;text-align:right;font-size:7px;} .name{text-align:left;font-weight:bold;} .header-row{background:#e2e8f0;} .sub-col{font-size:6px;color:#666;} .total-row{background:#f1f5f9;font-weight:bold;} .green{color:#16a34a;} .red{color:#dc2626;} .date{font-size:5px;color:#555;display:block;}</style></head><body>`;
+              html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>INFORME DE DIVIDENDOS AÑO: ${selectedYear}</h1></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`;
+              html += `<table><thead><tr><th rowspan="2" style="width:120px;">Valor</th><th rowspan="2" style="width:140px;">ACUMULADO<br/>(N | O | D | B)</th>`;
+              MONTHS.forEach(m => html += `<th colspan="3">${m}</th>`);
+              html += `<th rowspan="2">BRUTO D.I.</th><th rowspan="2">15% D.I.</th></tr><tr>`;
+              MONTHS.forEach(() => html += `<th class="sub-col">N</th><th class="sub-col">O</th><th class="sub-col">D</th>`);
+              html += `</tr></thead><tbody>`;
+              stats.rows.forEach(r => {
+                  const p = portfolio.find(x => x.id === r.id); const isSold = !!p.sellDate; const date = isSold ? `V:${p.sellDate}` : `C:${p.buyDate}`;
+                  html += `<tr><td class="name"><span class="${isSold?'red':'green'}">${r.name}</span><span class="date">${date}</span></td><td style="font-size:6px; font-family:monospace;">${formatN(r.n)} | ${formatN(r.o)} | ${formatN(r.d)} | <b>${formatN(r.b)}</b></td>`;
+                  MONTHS.forEach((_, i) => { const d = (p.dividends || []).find(dv => dv.year === selectedYear && dv.month === i) || {net:0, taxOrigin:0, taxDest:0}; html += `<td>${d.net?formatN(d.net):''}</td><td>${d.taxOrigin?formatN(d.taxOrigin):''}</td><td>${d.taxDest?formatN(d.taxDest):''}</td>`; });
+                  html += `<td>${formatN(r.diBruto)}</td><td>${formatN(r.di15)}</td></tr>`;
+              });
+              html += `<tr class="total-row"><td colspan="2" style="text-align:right;">TOTALES -></td>`;
+              MONTHS.forEach((_, i) => html += `<td>${formatN(stats.monthlyT[i].n)}</td><td>${formatN(stats.monthlyT[i].o)}</td><td>${formatN(stats.monthlyT[i].d)}</td>`);
+              html += `<td>${formatN(stats.tDIB)}</td><td>${formatN(stats.tDI15)}</td></tr>`;
+              html += `</tbody></table>`;
+              html += `<div style="margin-top:20px; border:2px solid #333; padding:10px; background:#f9f9f9; width:60%;">
+                  <div style="font-size:10px; font-weight:bold; margin-bottom:5px; border-bottom:1px solid #ccc;">RESUMEN FISCAL DEL EJERCICIO</div>
+                  <table style="width:100%; font-size:10px; border:none;">
+                      <tr><td style="border:none; text-align:left;">Dividendos Brutos Totales:</td><td style="border:none; font-weight:bold;">${formatMoney(stats.tBruto, baseCurrency)}</td></tr>
+                      <tr><td style="border:none; text-align:left;">Retenciones en Origen:</td><td style="border:none; color:#dc2626;">${formatMoney(stats.tOrg, baseCurrency)}</td></tr>
+                      <tr><td style="border:none; text-align:left;">Retenciones en Destino (España):</td><td style="border:none; color:#dc2626;">${formatMoney(stats.tDest, baseCurrency)}</td></tr>
+                      <tr><td style="border:none; text-align:left; border-top:1px solid #aaa;"><b>Líquido Percibido (Neto):</b></td><td style="border:none; border-top:1px solid #aaa; color:#16a34a; font-size:12px;"><b>${formatMoney(stats.tNet, baseCurrency)}</b></td></tr>
+                  </table>
+              </div></body></html>`;
+              printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(()=>printWindow.print(),500);
+          };
+
+          return (
+              <div className="w-full p-4 md:p-6 flex flex-col gap-6">
+                  <div className="flex justify-between items-center mb-4 bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
+                      <div className="flex items-center gap-4"><button onClick={() => setSelectedYear(y => y - 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">←</button><span className="text-2xl font-bold font-display text-blue-400">{selectedYear}</span><button onClick={() => setSelectedYear(y => y + 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">→</button></div>
+                      <div className="flex gap-4 items-center">
+                          <div className="flex gap-8 mr-4"><div className="text-right"><div className="text-[10px] text-slate-500 uppercase font-bold">Total Bruto</div><div className="text-xl font-bold text-white">{formatMoney(stats.tBruto, baseCurrency)}</div></div><div className="text-right border-l border-slate-700 pl-8"><div className="text-[10px] text-red-400 uppercase font-bold">Total Retenciones</div><div className="text-xl font-bold text-red-400">{formatMoney(stats.tOrg + stats.tDest, baseCurrency)}</div></div><div className="text-right border-l border-slate-700 pl-8"><div className="text-[10px] text-green-400 uppercase font-bold">Total Netos</div><div className="text-xl font-bold text-green-400">{formatMoney(stats.tNet, baseCurrency)}</div></div></div>
+                          <button onClick={handlePrint} className="bg-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button>
+                      </div>
+                  </div>
+                  
+                  {/* TABLA PRINCIPAL (SCROLLABLE - Eliminada restricción height) */}
+                  <div className="w-full overflow-x-auto custom-scrollbar border border-slate-800 rounded-xl bg-slate-950 mb-4">
+                      <table className="w-full text-[10px] border-collapse min-w-[2200px]"><thead className="bg-slate-900 border-b border-slate-700 uppercase sticky top-0 z-20"><tr><th className="p-2 w-[180px] text-left sticky left-0 bg-slate-900 z-30 border-r border-slate-800">VALOR (LOTE)</th><th className="p-2 w-[180px] bg-yellow-900/20 text-yellow-500 text-center">ACUM. (N | O | D | B)</th>{MONTHS.map(m => (<th key={m} className="p-1 border-l border-slate-800 w-[140px]"><div className="text-blue-300 mb-1 text-center">{m}</div><div className="grid grid-cols-3 gap-0.5 text-[7px] text-slate-500"><span>NETO</span><span>ORIG</span><span>DEST</span></div></th>))}<th className="p-2 w-[110px] bg-purple-900/30 border-l border-purple-500/50">BRUTO D.I.</th><th className="p-2 w-[110px] bg-purple-900/30 border-l border-slate-800">15% D.I.</th></tr></thead>
+                          <tbody>{stats.rows.map(r => { const p = portfolio.find(x => x.id === r.id); const isSold = !!p.sellDate; return ( <tr key={r.id} className="hover:bg-white/5 border-b border-slate-800"><td className="p-2 sticky left-0 bg-slate-950 border-r border-slate-800"><div className={`font-bold ${isSold ? 'text-red-400' : 'text-green-400'}`}>{r.ticker} <span className="text-[9px] text-slate-400 font-normal">({formatDateSimple(isSold ? p.sellDate : p.buyDate)})</span></div><div className="text-[8px] text-slate-500 font-mono mt-0.5">{r.name.substring(0,20)}</div></td><td className="p-2 bg-yellow-900/5 text-right font-mono space-x-2 text-[9px]"><span className="text-green-300">{formatN(r.n)}</span>|<span className="text-slate-400">{formatN(r.o)}</span>|<span className="text-slate-400">{formatN(r.d)}</span>|<span className="text-white font-bold">{formatN(r.b)}</span></td>{MONTHS.map((_, i) => { const d = (p.dividends || []).find(dv => dv.year === selectedYear && dv.month === i) || {net:0, taxOrigin:0, taxDest:0}; return ( <td key={i} className="p-1 border-l border-slate-800"><div className="grid grid-cols-3 gap-1"><input type="number" step="0.01" value={d.net || ''} onChange={e => handleDivChange(r.id, i, 'net', e.target.value)} className="w-full text-center text-green-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-green-500" /><input type="number" step="0.01" value={d.taxOrigin || ''} onChange={e => handleDivChange(r.id, i, 'taxOrigin', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" /><input type="number" step="0.01" value={d.taxDest || ''} onChange={e => handleDivChange(r.id, i, 'taxDest', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" /></div></td> ); })}<td className="p-2 text-center bg-purple-900/10 font-bold text-purple-300">{formatN(r.diBruto)}</td><td className="p-2 text-center bg-purple-900/10 border-l border-slate-800 font-bold text-purple-300">{formatN(r.di15)}</td></tr> ); })}<tr className="bg-slate-900 font-black text-white text-xs border-t-2 border-slate-700 sticky bottom-0 z-30 shadow-2xl"><td colSpan="2" className="p-3 text-right sticky left-0 bg-slate-900 uppercase tracking-widest border-r border-slate-700">TOTALES MENSUALES →</td>{MONTHS.map((_, i) => ( <td key={i} className="p-1 border-l border-slate-700 bg-[#0f121a]"><div className="grid grid-cols-3 gap-0.5 text-[7px] font-mono text-center"><span className="text-green-400">{formatN(stats.monthlyT[i].n)}</span><span className="text-slate-500">{formatN(stats.monthlyT[i].o)}</span><span className="text-slate-500">{formatN(stats.monthlyT[i].d)}</span></div></td> ))}<td className="p-3 text-center bg-purple-600/20 text-purple-300 border-l border-purple-500/30">{formatN(stats.tDIB)}</td><td className="p-3 text-center bg-purple-800/20 text-purple-300 border-l border-slate-700">{formatN(stats.tDI15)}</td></tr></tbody></table>
+                  </div>
+
+                  {/* GRAFICOS Y DATOS FISCALES ABAJO (APILADOS VERTICALMENTE) */}
+                  <div className="flex flex-col gap-6 shrink-0 mb-6">
+                      
+                      {/* 1. SECCIÓN DATOS FISCALES */}
+                      <div className="bg-blue-900/20 p-4 rounded-xl border border-blue-500/30">
+                          <div className="flex justify-between items-center border-b border-blue-500/30 pb-2 mb-2">
+                             <div className="text-blue-400 font-display font-bold text-xs uppercase tracking-widest">Fiscalidad Renta (AEAT)</div>
+                             <div className="text-[10px] text-white/50">Ejercicio {selectedYear}</div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-4 text-center">
+                              <div><div className="text-[9px] uppercase font-bold text-blue-300">Dividendos Brutos</div><div className="text-lg font-bold text-white">{formatMoney(stats.tBruto, baseCurrency)}</div></div>
+                              <div><div className="text-[9px] uppercase font-bold text-blue-300">Retenido Destino</div><div className="text-lg font-bold text-white">{formatMoney(stats.tDest, baseCurrency)}</div></div>
+                              <div className="bg-blue-600 rounded-lg shadow-lg shadow-blue-900/40 p-1">
+                                  <div className="text-[8px] uppercase font-bold text-white/80">Íntegro Renta (0029)</div>
+                                  <div className="text-lg font-black text-white">{formatMoney(stats.tBruto - stats.tDest, baseCurrency)}</div>
+                              </div>
+                          </div>
+                      </div>
+
+                      {/* 2. GRÁFICAS APILADAS (MENSUAL, TICKER, ANUAL) */}
+                      <div className="h-[400px] w-full">
+                          <SimpleChart type="bar" data={chartDataMonthly} title={`Cobro Mensual Dividendos ${selectedYear}`} height={400} color="#10b981" />
+                      </div>
+                      <div className="h-[400px] w-full">
+                          <SimpleChart type="bar" data={stats.tickerChartData} title={`Dividendos Acumulados por Ticker ${selectedYear}`} height={400} color="#3b82f6" />
+                      </div>
+                      <div className="h-[400px] w-full">
+                          <SimpleChart type="bar" data={stats.annualChartData} title="Histórico Dividendos Netos Anuales" height={400} color="#a855f7" />
+                      </div>
+
+                  </div>
+              </div>
+          );
+      };
+
+
+     
    
 
       // --- PESTAÑA CONFIGURACIÓN ---
@@ -1224,178 +1401,10 @@
           );
       };
 
+     
 
 
-      const DividendTab = ({ portfolio, setPortfolio, baseCurrency }) => {
-          const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-          
-          // --- FUNCION AUXILIAR FECHA ---
-          const formatDateSimple = (d) => {
-              if(!d) return '';
-              const date = new Date(d);
-              return `${date.getDate().toString().padStart(2,'0')}/${(date.getMonth()+1).toString().padStart(2,'0')}/${date.getFullYear().toString().slice(-2)}`;
-          };
-
-          const filtered = useMemo(() => {
-              const list = portfolio.filter(p => { 
-                  // FILTRO: Solo si se indicó que paga dividendo (> 0) y cae en el año seleccionado
-                  const paysDiv = p.annualDividend > 0;
-                  const bY = new Date(p.buyDate).getFullYear(); 
-                  const sY = p.sellDate ? new Date(p.sellDate).getFullYear() : 9999; 
-                  return paysDiv && bY <= selectedYear && sY >= selectedYear; 
-              });
-              // ORDENACIÓN: 1. Activas (Fecha Compra) / 2. Cerradas (Fecha Venta)
-              return list.sort((a,b) => {
-                  const aClosed = !!a.sellDate; const bClosed = !!b.sellDate;
-                  if(aClosed !== bClosed) return aClosed ? 1 : -1; // Activas primero
-                  if(!aClosed) return new Date(a.buyDate) - new Date(b.buyDate); 
-                  return new Date(a.sellDate) - new Date(b.sellDate); 
-              });
-          }, [portfolio, selectedYear]);
-          
-          const handleDivChange = (id, month, field, val) => { 
-              const numVal = parseFloat(val) || 0; 
-              setPortfolio(prev => prev.map(p => { 
-                  if (p.id !== id) return p; 
-                  let divs = [...(p.dividends || [])]; 
-                  const idx = divs.findIndex(d => d.year === selectedYear && d.month === month); 
-                  if (idx >= 0) divs[idx][field] = numVal; 
-                  else divs.push({ id: Date.now() + Math.random(), year: selectedYear, month, net: field === 'net' ? numVal : 0, taxOrigin: field === 'taxOrigin' ? numVal : 0, taxDest: field === 'taxDest' ? numVal : 0 }); 
-                  return { ...p, dividends: divs }; 
-              })); 
-          };
-          
-          const stats = useMemo(() => {
-              let tNet = 0, tOrg = 0, tDest = 0, tBruto = 0, tDIB = 0, tDI15 = 0;
-              const monthlyT = Array.from({ length: 12 }, () => ({ n: 0, o: 0, d: 0 }));
-              const rows = filtered.map(p => {
-                  const ds = (p.dividends || []).filter(d => d.year === selectedYear);
-                  const n = ds.reduce((a, b) => a + b.net, 0);
-                  const o = ds.reduce((a, b) => a + b.taxOrigin, 0);
-                  const d = ds.reduce((a, b) => a + b.taxDest, 0);
-                  const b = n + o + d;
-                  const diBruto = o > 0 ? b : 0; // Dividendo Internacional Bruto
-                  const di15 = o > 0 ? b * 0.15 : 0; // 15% del Bruto
-                  
-                  tNet += n; tOrg += o; tDest += d; tBruto += b; tDIB += diBruto; tDI15 += di15;
-                  
-                  ds.forEach(div => { 
-                      if (div.month >= 0 && div.month < 12) { 
-                          monthlyT[div.month].n += div.net || 0; 
-                          monthlyT[div.month].o += div.taxOrigin || 0; 
-                          monthlyT[div.month].d += div.taxDest || 0; 
-                      } 
-                  });
-                  return { id: p.id, name: p.name || p.ticker, ticker: p.ticker, n, o, d, b, diBruto, di15 };
-              });
-              
-              // Datos para gráfica de TICKERS (Acumulado)
-              const tickerChartData = rows
-                  .filter(r => r.n > 0)
-                  .map(r => ({ label: r.ticker, value: r.n }))
-                  .sort((a,b) => b.value - a.value);
-
-              // Datos para gráfica ANUAL HISTÓRICO
-              const annualHistoryMap = {};
-              portfolio.forEach(p => {
-                  (p.dividends || []).forEach(d => {
-                      annualHistoryMap[d.year] = (annualHistoryMap[d.year] || 0) + d.net;
-                  });
-              });
-              const annualChartData = Object.keys(annualHistoryMap)
-                  .sort((a,b) => a - b)
-                  .map(year => ({ label: year, value: annualHistoryMap[year] }));
-
-              return { rows, tNet, tOrg, tDest, tBruto, tDIB, tDI15, monthlyT, tickerChartData, annualChartData };
-          }, [filtered, selectedYear, portfolio]);
-
-          const chartDataMonthly = useMemo(() => stats.monthlyT.map((m, i) => ({ label: MONTHS[i].substring(0,3), value: m.n })), [stats]);
-
-          const handlePrint = () => {
-              const printWindow = window.open('', '', 'height=800,width=1200');
-              const emissionTime = new Date().toLocaleString();
-              let html = `<html><head><title>Informe Dividendos</title><style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:7px;} h1{font-size:14px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:20px;} th{background:#f1f5f9;text-align:center;padding:2px;border:1px solid #94a3b8;font-size:6px;text-transform:uppercase;} td{padding:2px;border:1px solid #e2e8f0;text-align:right;font-size:7px;} .name{text-align:left;font-weight:bold;} .header-row{background:#e2e8f0;} .sub-col{font-size:6px;color:#666;} .total-row{background:#f1f5f9;font-weight:bold;} .green{color:#16a34a;} .red{color:#dc2626;} .date{font-size:5px;color:#555;display:block;}</style></head><body>`;
-              html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>INFORME DE DIVIDENDOS AÑO: ${selectedYear}</h1></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`;
-              html += `<table><thead><tr><th rowspan="2" style="width:120px;">Valor</th><th rowspan="2" style="width:140px;">ACUMULADO<br/>(N | O | D | B)</th>`;
-              MONTHS.forEach(m => html += `<th colspan="3">${m}</th>`);
-              html += `<th rowspan="2">BRUTO D.I.</th><th rowspan="2">15% D.I.</th></tr><tr>`;
-              MONTHS.forEach(() => html += `<th class="sub-col">N</th><th class="sub-col">O</th><th class="sub-col">D</th>`);
-              html += `</tr></thead><tbody>`;
-              stats.rows.forEach(r => {
-                  const p = portfolio.find(x => x.id === r.id); const isSold = !!p.sellDate; const date = isSold ? `V:${p.sellDate}` : `C:${p.buyDate}`;
-                  html += `<tr><td class="name"><span class="${isSold?'red':'green'}">${r.name}</span><span class="date">${date}</span></td><td style="font-size:6px; font-family:monospace;">${formatN(r.n)} | ${formatN(r.o)} | ${formatN(r.d)} | <b>${formatN(r.b)}</b></td>`;
-                  MONTHS.forEach((_, i) => { const d = (p.dividends || []).find(dv => dv.year === selectedYear && dv.month === i) || {net:0, taxOrigin:0, taxDest:0}; html += `<td>${d.net?formatN(d.net):''}</td><td>${d.taxOrigin?formatN(d.taxOrigin):''}</td><td>${d.taxDest?formatN(d.taxDest):''}</td>`; });
-                  html += `<td>${formatN(r.diBruto)}</td><td>${formatN(r.di15)}</td></tr>`;
-              });
-              html += `<tr class="total-row"><td colspan="2" style="text-align:right;">TOTALES -></td>`;
-              MONTHS.forEach((_, i) => html += `<td>${formatN(stats.monthlyT[i].n)}</td><td>${formatN(stats.monthlyT[i].o)}</td><td>${formatN(stats.monthlyT[i].d)}</td>`);
-              html += `<td>${formatN(stats.tDIB)}</td><td>${formatN(stats.tDI15)}</td></tr>`;
-              html += `</tbody></table>`;
-              html += `<div style="margin-top:20px; border:2px solid #333; padding:10px; background:#f9f9f9; width:60%;">
-                  <div style="font-size:10px; font-weight:bold; margin-bottom:5px; border-bottom:1px solid #ccc;">RESUMEN FISCAL DEL EJERCICIO</div>
-                  <table style="width:100%; font-size:10px; border:none;">
-                      <tr><td style="border:none; text-align:left;">Dividendos Brutos Totales:</td><td style="border:none; font-weight:bold;">${formatMoney(stats.tBruto, baseCurrency)}</td></tr>
-                      <tr><td style="border:none; text-align:left;">Retenciones en Origen:</td><td style="border:none; color:#dc2626;">${formatMoney(stats.tOrg, baseCurrency)}</td></tr>
-                      <tr><td style="border:none; text-align:left;">Retenciones en Destino (España):</td><td style="border:none; color:#dc2626;">${formatMoney(stats.tDest, baseCurrency)}</td></tr>
-                      <tr><td style="border:none; text-align:left; border-top:1px solid #aaa;"><b>Líquido Percibido (Neto):</b></td><td style="border:none; border-top:1px solid #aaa; color:#16a34a; font-size:12px;"><b>${formatMoney(stats.tNet, baseCurrency)}</b></td></tr>
-                  </table>
-              </div></body></html>`;
-              printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(()=>printWindow.print(),500);
-          };
-
-          return (
-              <div className="h-full flex flex-col p-4 md:p-6 overflow-hidden relative">
-                  <div className="flex justify-between items-center mb-4 bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
-                      <div className="flex items-center gap-4"><button onClick={() => setSelectedYear(y => y - 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">←</button><span className="text-2xl font-bold font-display text-blue-400">{selectedYear}</span><button onClick={() => setSelectedYear(y => y + 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">→</button></div>
-                      <div className="flex gap-4 items-center">
-                          <div className="flex gap-8 mr-4"><div className="text-right"><div className="text-[10px] text-slate-500 uppercase font-bold">Total Bruto</div><div className="text-xl font-bold text-white">{formatMoney(stats.tBruto, baseCurrency)}</div></div><div className="text-right border-l border-slate-700 pl-8"><div className="text-[10px] text-red-400 uppercase font-bold">Total Retenciones</div><div className="text-xl font-bold text-red-400">{formatMoney(stats.tOrg + stats.tDest, baseCurrency)}</div></div><div className="text-right border-l border-slate-700 pl-8"><div className="text-[10px] text-green-400 uppercase font-bold">Total Netos</div><div className="text-xl font-bold text-green-400">{formatMoney(stats.tNet, baseCurrency)}</div></div></div>
-                          <button onClick={handlePrint} className="bg-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button>
-                      </div>
-                  </div>
-                  
-                  {/* TABLA PRINCIPAL (SCROLLABLE - Eliminada restricción height) */}
-                  <div className="w-full overflow-x-auto custom-scrollbar border border-slate-800 rounded-xl bg-slate-950 mb-4">
-                      <table className="w-full text-[10px] border-collapse min-w-[2200px]"><thead className="bg-slate-900 border-b border-slate-700 uppercase sticky top-0 z-20"><tr><th className="p-2 w-[180px] text-left sticky left-0 bg-slate-900 z-30 border-r border-slate-800">VALOR (LOTE)</th><th className="p-2 w-[180px] bg-yellow-900/20 text-yellow-500 text-center">ACUM. (N | O | D | B)</th>{MONTHS.map(m => (<th key={m} className="p-1 border-l border-slate-800 w-[140px]"><div className="text-blue-300 mb-1 text-center">{m}</div><div className="grid grid-cols-3 gap-0.5 text-[7px] text-slate-500"><span>NETO</span><span>ORIG</span><span>DEST</span></div></th>))}<th className="p-2 w-[110px] bg-purple-900/30 border-l border-purple-500/50">BRUTO D.I.</th><th className="p-2 w-[110px] bg-purple-900/30 border-l border-slate-800">15% D.I.</th></tr></thead>
-                          <tbody>{stats.rows.map(r => { const p = portfolio.find(x => x.id === r.id); const isSold = !!p.sellDate; return ( <tr key={r.id} className="hover:bg-white/5 border-b border-slate-800"><td className="p-2 sticky left-0 bg-slate-950 border-r border-slate-800"><div className={`font-bold ${isSold ? 'text-red-400' : 'text-green-400'}`}>{r.ticker} <span className="text-[9px] text-slate-400 font-normal">({formatDateSimple(isSold ? p.sellDate : p.buyDate)})</span></div><div className="text-[8px] text-slate-500 font-mono mt-0.5">{r.name.substring(0,20)}</div></td><td className="p-2 bg-yellow-900/5 text-right font-mono space-x-2 text-[9px]"><span className="text-green-300">{formatN(r.n)}</span>|<span className="text-slate-400">{formatN(r.o)}</span>|<span className="text-slate-400">{formatN(r.d)}</span>|<span className="text-white font-bold">{formatN(r.b)}</span></td>{MONTHS.map((_, i) => { const d = (p.dividends || []).find(dv => dv.year === selectedYear && dv.month === i) || {net:0, taxOrigin:0, taxDest:0}; return ( <td key={i} className="p-1 border-l border-slate-800"><div className="grid grid-cols-3 gap-1"><input type="number" step="0.01" value={d.net || ''} onChange={e => handleDivChange(r.id, i, 'net', e.target.value)} className="w-full text-center text-green-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-green-500" /><input type="number" step="0.01" value={d.taxOrigin || ''} onChange={e => handleDivChange(r.id, i, 'taxOrigin', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" /><input type="number" step="0.01" value={d.taxDest || ''} onChange={e => handleDivChange(r.id, i, 'taxDest', e.target.value)} className="w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500" /></div></td> ); })}<td className="p-2 text-center bg-purple-900/10 font-bold text-purple-300">{formatN(r.diBruto)}</td><td className="p-2 text-center bg-purple-900/10 border-l border-slate-800 font-bold text-purple-300">{formatN(r.di15)}</td></tr> ); })}<tr className="bg-slate-900 font-black text-white text-xs border-t-2 border-slate-700 sticky bottom-0 z-30 shadow-2xl"><td colSpan="2" className="p-3 text-right sticky left-0 bg-slate-900 uppercase tracking-widest border-r border-slate-700">TOTALES MENSUALES →</td>{MONTHS.map((_, i) => ( <td key={i} className="p-1 border-l border-slate-700 bg-[#0f121a]"><div className="grid grid-cols-3 gap-0.5 text-[7px] font-mono text-center"><span className="text-green-400">{formatN(stats.monthlyT[i].n)}</span><span className="text-slate-500">{formatN(stats.monthlyT[i].o)}</span><span className="text-slate-500">{formatN(stats.monthlyT[i].d)}</span></div></td> ))}<td className="p-3 text-center bg-purple-600/20 text-purple-300 border-l border-purple-500/30">{formatN(stats.tDIB)}</td><td className="p-3 text-center bg-purple-800/20 text-purple-300 border-l border-slate-700">{formatN(stats.tDI15)}</td></tr></tbody></table>
-                  </div>
-
-                  {/* GRAFICOS Y DATOS FISCALES ABAJO (APILADOS VERTICALMENTE) */}
-                  <div className="flex flex-col gap-6 shrink-0 mb-6">
-                      
-                      {/* 1. SECCIÓN DATOS FISCALES */}
-                      <div className="bg-blue-900/20 p-4 rounded-xl border border-blue-500/30">
-                          <div className="flex justify-between items-center border-b border-blue-500/30 pb-2 mb-2">
-                             <div className="text-blue-400 font-display font-bold text-xs uppercase tracking-widest">Fiscalidad Renta (AEAT)</div>
-                             <div className="text-[10px] text-white/50">Ejercicio {selectedYear}</div>
-                          </div>
-                          <div className="grid grid-cols-3 gap-4 text-center">
-                              <div><div className="text-[9px] uppercase font-bold text-blue-300">Dividendos Brutos</div><div className="text-lg font-bold text-white">{formatMoney(stats.tBruto, baseCurrency)}</div></div>
-                              <div><div className="text-[9px] uppercase font-bold text-blue-300">Retenido Destino</div><div className="text-lg font-bold text-white">{formatMoney(stats.tDest, baseCurrency)}</div></div>
-                              <div className="bg-blue-600 rounded-lg shadow-lg shadow-blue-900/40 p-1">
-                                  <div className="text-[8px] uppercase font-bold text-white/80">Íntegro Renta (0029)</div>
-                                  <div className="text-lg font-black text-white">{formatMoney(stats.tBruto - stats.tDest, baseCurrency)}</div>
-                              </div>
-                          </div>
-                      </div>
-
-                      {/* 2. GRÁFICAS APILADAS (MENSUAL, TICKER, ANUAL) */}
-                      <div className="h-[400px] w-full">
-                          <SimpleChart type="bar" data={chartDataMonthly} title={`Cobro Mensual Dividendos ${selectedYear}`} height={400} color="#10b981" />
-                      </div>
-                      <div className="h-[400px] w-full">
-                          <SimpleChart type="bar" data={stats.tickerChartData} title={`Dividendos Acumulados por Ticker ${selectedYear}`} height={400} color="#3b82f6" />
-                      </div>
-                      <div className="h-[400px] w-full">
-                          <SimpleChart type="bar" data={stats.annualChartData} title="Histórico Dividendos Netos Anuales" height={400} color="#a855f7" />
-                      </div>
-
-                  </div>
-              </div>
-          );
-      };
-
-
-      const App = () => {
+        const App = () => {
           const [activeTab, setActiveTab] = useState('portfolio');
           const [apiKey, setApiKey] = usePersistentState('bg_api_key', '');
           const [baseCurrency, setBaseCurrency] = usePersistentState('bg_base_currency', 'EUR');
