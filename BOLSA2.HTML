@@ -653,7 +653,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           const [filterDateEnd, setFilterDateEnd] = useState('');
           const [filterType, setFilterType] = useState('active'); 
           
-          // NUEVO: Estado de ordenación
+          // Estado de ordenación
           const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
 
           const [updating, setUpdating] = useState(false);
@@ -673,7 +673,11 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           const [form, setForm] = useState({ ticker: '', name: '', isIndex: false, indexDivisor: 1, shares: 0, buyPrice: 0, buyDate: '', stockCurrency: 'USD', buyFx: 1, fees: 0, adjustments: 0, buyPE: 0, annualDividend: 0, sellPrice: 0, sellDate: '', sellFx: 1, sellFees: 0, sellAdjustments: 0, currentPE: 0, dividends: [] });
           const [sellForm, setSellForm] = useState({ sharesToSell: 0, sellPrice: 0, sellDate: new Date().toISOString().slice(0,10), sellFx: 1, sellFees: 0, sellAdjustments: 0 });
 
-          // --- FUNCIONES AUXILIARES ---
+          // --- FUNCIONES AUXILIARES (Definidas al inicio para evitar errores) ---
+          
+          // Función de redondeo corregida y movida aquí arriba
+          const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
+
           const formatDateES = (d) => {
               if(!d) return '';
               const date = new Date(d);
@@ -931,34 +935,23 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                        ? ((p.sellPrice * p.shares * p.sellFx) - (p.buyPrice * p.shares * p.buyFx)) 
                        : ((p.currentPrice * p.shares * p.currentFx) - (p.buyPrice * p.shares * p.buyFx));
                    
-                   // Guardar Coste (negativo al comprar, se libera al vender para el cálculo de "capital invertido" si quisiéramos ser estrictos, 
-                   // pero para gráfico de línea ROI, necesitamos el acumulado de ganancia vs acumulado de coste)
-                   // Simplificación: Solo graficamos la Ganancia Acumulada, pero calcularemos el ROI% en base al Coste Acumulado en ese punto.
-                   
                    return { date, value, cost, label: p.ticker };
               }).sort((a,b) => new Date(a.date) - new Date(b.date));
 
               let accVal = 0;
-              let accCost = 0; // Coste acumulado "histórico"
+              let accCost = 0; 
               const evolution = events.map(e => {
-                  accVal += e.value; // Ganancia/Pérdida Acumulada
-                  accCost += e.cost; // Coste acumulado (aprox)
-                  // El ROI% en ese punto es (Ganancia Acumulada / Coste Acumulado Total hasta la fecha) * 100
-                  // Nota: Esto es una aproximación visual.
+                  accVal += e.value; 
+                  accCost += e.cost; 
+                  
+                  // ROI % APROXIMADO: (Ganancia Acumulada / Coste Acumulado Total) * 100
                   const roi = accCost !== 0 ? ((accVal) / accCost) * 100 : 0; 
-                  // OJO: e.value es P&L. accVal es P&L acumulado.
-                  // Para ROI necesitamos (Valor Total / Coste Total) - 1.
-                  // Valor Total = Coste Total + P&L Acumulado.
-                  // ROI = ((Coste + P&L) - Coste) / Coste = P&L / Coste.
-                  // Por tanto (accVal / accCost) * 100 es correcto si accCost es el acumulado de TODO lo comprado hasta esa fecha.
                   
                   return { label: e.date, value: accVal, extraPct: r2(roi) }; 
               });
 
               return { distribution, geoDiversification, evolution };
           }, [activeFilteredPortfolio]);
-
-          const r2 = (n) => Math.round(n * 100) / 100;
 
           // --- UPDATE AUTO ---
           useEffect(() => {
@@ -1048,21 +1041,43 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           };
 
           const handlePrint = () => {
-              // ... (Mantener función de impresión original o actualizar si se desea, por brevedad la dejo igual o resumida)
               const printWindow = window.open('', '', 'height=800,width=1200');
               const typeMap = { 'active': 'CARTERA ACTIVA', 'sold': 'HISTÓRICO VENTAS', 'all': 'INFORME GLOBAL' };
               const filterLabel = typeMap[filterType];
               const emissionTime = new Date().toLocaleString();
-              // (Código de impresión igual al original...)
-              let html = `<html><head><title>Informe Cartera</title><style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:8px;} table{width:100%;border-collapse:collapse;} th,td{border:1px solid #ccc;padding:4px;}</style></head><body><h1>INFORME CARTERA (${filterLabel})</h1>${emissionTime}<table><thead><tr><th>Valor</th><th>Shares</th><th>Coste</th><th>Valor</th><th>Dif</th></tr></thead><tbody>`;
-              filteredPortfolio.forEach(p => { 
-                 const cT = (p.buyPrice * p.shares * p.buyFx);
-                 const curP = p.sellDate ? p.sellPrice : p.currentPrice;
-                 const vF = (curP * p.shares * (p.sellDate?p.sellFx:p.currentFx));
-                 html+=`<tr><td>${p.ticker}</td><td>${p.shares}</td><td>${formatMoney(cT, baseCurrency)}</td><td>${formatMoney(vF, baseCurrency)}</td><td>${formatMoney(vF-cT, baseCurrency)}</td></tr>`;
+              
+              const genStatsBlock = (t, d, c) => {
+                  const yieldPct = d.inv > 0 ? (d.divN / d.inv) * 100 : 0;
+                  return `
+                  <div style="border:1px solid #ccc; padding:5px; width:32%; border-top: 3px solid ${c}; background:#f9f9f9; font-size: 8px;">
+                      <div style="font-weight:bold; color:#555; text-transform:uppercase; margin-bottom:2px;">${t} (${formatN(d.num, 0)} Val)</div>
+                      <table style="width:100%; border:none; margin:0;">
+                          <tr><td>Invertido:</td><td style="text-align:right;"><b>${formatMoney(d.inv, baseCurrency)}</b></td></tr>
+                          <tr><td>Valor Act:</td><td style="text-align:right;"><b style="color:${c}">${formatMoney(d.cur, baseCurrency)}</b></td></tr>
+                          <tr><td colspan="2" style="text-align:center; padding-top:5px; border-top:1px solid #ddd;"><b>BALANCE: ${formatMoney(d.plPrice, baseCurrency)}</b></td></tr>
+                          <tr><td style="color:#666;">Rent. Simple/Anual:</td><td style="text-align:right;">${formatN(d.plP_S)}% / ${formatN(d.plP_A)}%</td></tr>
+                          <tr><td>Dividendos:</td><td style="text-align:right; color:#2563eb;">${formatMoney(d.divN, baseCurrency)} [${formatN(yieldPct)}%]</td></tr>
+                          <tr><td>FX Total:</td><td style="text-align:right;">${formatMoney(d.fX, baseCurrency)}</td></tr>
+                          <tr><td><b>Rdto Total:</b></td><td style="text-align:right;"><b>${formatMoney(d.plTotal, baseCurrency)}</b></td></tr>
+                      </table>
+                  </div>`;
+              };
+
+              let html = `<html><head><title>Informe Cartera</title>`;
+              html += `<style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:7px;} h1{font-size:14px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th{background:#f1f5f9;text-align:left;padding:3px;border-bottom:1px solid #94a3b8;font-size:6px;text-transform:uppercase;} td{padding:3px;border-bottom:1px solid #e2e8f0;vertical-align:top;font-size:7px;} .num{text-align:right;font-family:monospace;white-space:nowrap;} .center{text-align:center;} .profit{color:#16a34a;font-weight:bold;} .loss{color:#dc2626;font-weight:bold;} .blue{color:#3b82f6;} .orange{color:#f97316;}</style></head><body>`;
+              html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>INFORME DE CARTERA - BoardingGate</h1><div style="font-size:8px;color:#666;">(FILTRO: ${filterLabel})</div></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`;
+              html += `<div style="display:flex; gap:5px; margin-top:5px;">`;
+              if (filterType === 'all') { html += genStatsBlock("Cartera Activa", stats.active, "#3b82f6") + genStatsBlock("Posiciones Cerradas", stats.sold, "#f97316") + genStatsBlock("Cartera Global", stats.total, "#a855f7"); }
+              else if (filterType === 'active') { html += genStatsBlock("Cartera Activa (Filtrada)", stats.active, "#3b82f6"); }
+              else { html += genStatsBlock("Ventas (Filtradas)", stats.sold, "#f97316"); }
+              html += `</div>`;
+              html += `<table><thead><tr><th>Valor</th><th class="center">Fechas / Días</th><th class="num">Títulos</th><th class="num">Precios (I/A)</th><th class="center">FX</th><th class="center">Gtos/Adj</th><th class="num">Coste Total</th><th class="num">Valor Final</th><th class="num">Rendimiento</th><th class="num">% Simple</th><th class="num">% Anual</th><th class="center">PER (I/A)</th></tr></thead><tbody>`;
+              filteredPortfolio.forEach(p => {
+                  const cT = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFees + p.sellAdjustments) : 0); const pl = vF - cT; const days = calculateDays(p.buyDate, p.sellDate || new Date()); const rs = calcReturns(cT, vF, days);
+                  html += `<tr><td><b>${p.ticker}</b><br/>${p.name.substring(0,25)}</td><td class="center"><span class="blue">${formatDateES(p.buyDate)}</span>${p.sellDate ? `<br/><span class="orange">${formatDateES(p.sellDate)}</span>` : ''}<br/><b>${formatN(days, 0)}d</b></td><td class="num"><b>${formatN(p.shares)}</b></td><td class="num"><b>I:${formatN(p.buyPrice)}</b><br/><b>${isS?'V':'A'}:${formatN(curP)}</b></td><td class="center">${formatN(p.buyFx,4)}<br/>${formatN(curF,4)}</td><td class="center">${formatN(isS?p.sellFees:p.fees)}<br/>${formatN(isS?p.sellAdjustments:p.adjustments)}</td><td class="num"><b>${formatMoney(cT, baseCurrency)}</b></td><td class="num"><b>${formatMoney(vF, baseCurrency)}</b></td><td class="num"><span class="${pl>=0?'profit':'loss'}">${formatMoney(pl, baseCurrency)}</span></td><td class="num"><span class="${pl>=0?'profit':'loss'}">${formatN(rs.simple)}%</span></td><td class="num">${formatN(rs.annual)}%</td><td class="center">${formatN(p.buyPE, 1)} / ${formatN(p.currentPE, 1)}</td></tr>`;
               });
-              html+=`</tbody></table></body></html>`;
-              printWindow.document.write(html); printWindow.document.close(); setTimeout(()=>printWindow.print(),500);
+              html += `</tbody></table></body></html>`;
+              printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(() => printWindow.print(), 500);
           };
 
           const toggleAllActive = () => {
@@ -1215,7 +1230,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
               </div>
           );
       };
-     
+
    
 
 
