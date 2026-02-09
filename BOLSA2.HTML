@@ -365,6 +365,212 @@
       };
 
 
+Entendido. Procedo a generar el código corregido con las siguientes modificaciones específicas:
+
+1.  **Recorte:** Se elimina toda la sección inferior derecha a partir de "MEDIA DE RENDIMIENTOS ANUALIZADOS" (incluyendo pilladas, coste de oportunidad, etc).
+2.  **Impuestos Reales:** Se añade la prop `resultsData` para sumar la columna "Impuestos" calculada en la pestaña Resultados.
+3.  **Diseño:** Se mantiene la estética de "Cuadro de Mando Financiero" oscuro y denso.
+
+Aquí tienes el código del componente y las instrucciones de integración.
+
+### 1. Código del Componente `AdvancedStatsDashboard`
+
+Copia este bloque y pégalo **antes** de la definición de `PortfolioTab`.
+
+```javascript
+/* --- COMPONENTE: DASHBOARD ESTADÍSTICO (VERSIÓN RECORTADA) --- */
+const AdvancedStatsDashboard = ({ portfolio, resultsData, baseCurrency }) => {
+    
+    // Helpers de formato compactos
+    const fM = (v) => formatMoney(v, baseCurrency).replace(' ', ''); 
+    const fN = (v) => formatN(v, 2);
+    const safeDiv = (a, b) => b === 0 ? 0 : a / b;
+
+    // LÓGICA DE CÁLCULO
+    const stats = useMemo(() => {
+        // 1. Calcular Impuestos Totales desde la pestaña Resultados
+        const totalTaxes = Object.values(resultsData || {}).reduce((acc, yearData) => acc + (yearData.tax || 0), 0);
+
+        // 2. Calcular Métricas de Cartera
+        let open = { count: 0, win: 0, loss: 0, winAmt: 0, lossAmt: 0, days: 0, cap: 0, minCap: Infinity, maxCap: -Infinity, pl: 0, cost: 0, val: 0, divs: 0, maxGain: -Infinity, maxGainTick: '', minGain: Infinity, minGainTick: '', maxYield: -Infinity, maxYieldTick: '', minYield: Infinity, minYieldTick: '' };
+        let closed = { ...open, minCap: Infinity, maxCap: -Infinity, maxGain: -Infinity, minGain: Infinity, maxYield: -Infinity, minYield: Infinity };
+
+        portfolio.forEach(p => {
+            if (p.isActive === false) return;
+            const isSold = !!p.sellDate;
+            const target = isSold ? closed : open;
+
+            target.count++;
+            
+            // Financieros
+            const cost = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0);
+            const curP = isSold ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
+            const curF = isSold ? p.sellFx : p.currentFx;
+            const val = (curP * p.shares * curF) - (isSold ? (p.sellFees + p.sellAdjustments) : 0);
+            const pl = val - cost;
+            const pDivs = (p.dividends || []).reduce((a, b) => a + b.net, 0);
+            
+            // Tiempos
+            const days = calculateDays(p.buyDate, p.sellDate || new Date());
+            target.days += days;
+
+            // Capitales
+            target.cap += cost;
+            target.minCap = Math.min(target.minCap, cost);
+            target.maxCap = Math.max(target.maxCap, cost);
+            
+            // Acumulados
+            target.pl += pl;
+            target.cost += cost;
+            target.val += val;
+            target.divs += pDivs;
+
+            // Win/Loss
+            if (pl >= 0) { target.win++; target.winAmt += pl; } 
+            else { target.loss++; target.lossAmt += pl; }
+
+            // Rankings
+            const yieldPct = safeDiv(pl, cost) * 100;
+            if (pl > target.maxGain) { target.maxGain = pl; target.maxGainTick = p.ticker; }
+            if (pl < target.minGain) { target.minGain = pl; target.minGainTick = p.ticker; }
+            if (yieldPct > target.maxYield) { target.maxYield = yieldPct; target.maxYieldTick = p.ticker; }
+            if (yieldPct < target.minYield) { target.minYield = yieldPct; target.minYieldTick = p.ticker; }
+        });
+
+        const finalize = (t) => {
+            if(t.minCap === Infinity) t.minCap = 0; if(t.maxCap === -Infinity) t.maxCap = 0;
+            if(t.maxGain === -Infinity) t.maxGain = 0; if(t.minGain === Infinity) t.minGain = 0;
+            if(t.maxYield === -Infinity) t.maxYield = 0; if(t.minYield === Infinity) t.minYield = 0;
+            t.avgDays = safeDiv(t.days, t.count);
+            t.avgCap = safeDiv(t.cap, t.count);
+            t.winPct = safeDiv(t.win, t.count) * 100;
+            t.lossPct = safeDiv(t.loss, t.count) * 100;
+            t.profitFactor = safeDiv(t.winAmt, Math.abs(t.lossAmt));
+        };
+
+        finalize(open);
+        finalize(closed);
+
+        return { open, closed, totalTaxes };
+    }, [portfolio, resultsData]);
+
+    // Gauge Simple
+    const Gauge = ({ value }) => {
+        const r = 35, c = r * Math.PI, v = Math.min(Math.max(value, 0), 3), off = c * (1 - (v / 3));
+        return (
+            <div className="relative w-[90px] h-[55px] flex flex-col items-center justify-end mx-auto scale-75 origin-bottom">
+                <svg viewBox="0 0 80 45" className="overflow-visible">
+                    <path d="M5,40 A35,35 0 0,1 75,40" fill="none" stroke="#334155" strokeWidth="6" strokeLinecap="round" />
+                    <path d="M5,40 A35,35 0 0,1 75,40" fill="none" stroke={value>=1.5?'#22c55e':value>=1?'#eab308':'#ef4444'} strokeWidth="6" strokeLinecap="round" strokeDasharray={`${c} ${c}`} strokeDashoffset={off} />
+                    <text x="40" y="35" textAnchor="middle" fontSize="12" fill="white" fontWeight="black">{fN(value)}</text>
+                </svg>
+            </div>
+        );
+    };
+
+    return (
+        <div className="w-full bg-[#111] border border-slate-800 rounded-sm p-1 font-mono text-[10px] select-none shadow-2xl text-slate-300 mb-4">
+            {/* Header */}
+            <div className="bg-[#222] text-slate-400 font-bold px-2 py-1 mb-1 border-b border-slate-700 flex justify-between uppercase tracking-wider text-[9px]">
+                <span>ESTADÍSTICAS SOBRE OPERACIONES ABIERTAS Y CERRADAS</span>
+                <span className="text-slate-500">RESUMEN EJECUTIVO</span>
+            </div>
+
+            <div className="grid grid-cols-12 gap-1">
+                
+                {/* COL 1: ESTADÍSTICAS (Left) */}
+                <div className="col-span-12 lg:col-span-5 flex flex-col gap-0.5">
+                    <div className="grid grid-cols-4 bg-[#333] text-slate-400 font-bold p-1 text-center text-[9px]">
+                        <div className="text-left">Total y Media</div>
+                        <div className="text-white">ABIERTAS</div>
+                        <div>Ratios</div>
+                        <div className="text-red-300">CERRADAS</div>
+                    </div>
+                    {[
+                        { l: "NÚMERO OPERACIONES", o: stats.open.count, c: stats.closed.count, b:true },
+                        { l: "CON GANANCIA", o: `${fN(stats.open.winPct)}% (${stats.open.win})`, c: `${fN(stats.closed.winPct)}% (${stats.closed.win})`, subO: fM(stats.open.winAmt), subC: fM(stats.closed.winAmt), col:'text-green-500' },
+                        { l: "CON PÉRDIDA", o: `${fN(stats.open.lossPct)}% (${stats.open.loss})`, c: `${fN(stats.closed.lossPct)}% (${stats.closed.loss})`, subO: fM(stats.open.lossAmt), subC: fM(stats.closed.lossAmt), col:'text-red-500' },
+                    ].map((r,i)=>(
+                        <div key={i} className={`grid grid-cols-4 items-center p-1 border-b border-slate-800/50 ${r.b?'bg-black text-white font-bold':''}`}>
+                            <div className="text-slate-400 font-bold">{r.l}</div>
+                            <div className="text-right pr-2"><div className={r.col||'text-yellow-500'}>{r.o}</div>{r.subO&&<div className={`text-[8px] ${r.col}`}>{r.subO}</div>}</div>
+                            <div className="text-center text-[8px] opacity-30">--</div>
+                            <div className="text-right pr-2"><div className={r.col||'text-yellow-500'}>{r.c}</div>{r.subC&&<div className={`text-[8px] ${r.col}`}>{r.subC}</div>}</div>
+                        </div>
+                    ))}
+                    {/* RATIO GANANCIAS */}
+                    <div className="grid grid-cols-4 items-center bg-black border-y border-yellow-900/30 py-1">
+                        <div className="flex items-center gap-1 pl-1 text-yellow-500 font-bold text-[9px]">RATIO GANANCIAS</div>
+                        <div className="text-right pr-2 text-xl font-black text-green-500">{fN(stats.open.profitFactor)}</div>
+                        <div className="flex justify-center -my-2"><Gauge value={stats.open.profitFactor}/></div>
+                        <div className="text-right pr-2 text-xl font-black text-green-500">{fN(stats.closed.profitFactor)}</div>
+                    </div>
+                    {[
+                        { l: "MEDIA DÍAS ABIERTA", o: fN(stats.open.avgDays)+' d', c: fN(stats.closed.avgDays)+' d' },
+                        { l: "MEDIA CAPITAL OP.", o: fM(stats.open.avgCap), c: fM(stats.closed.avgCap) },
+                        { l: "MAYOR CAPITAL INV.", o: fM(stats.open.maxCap), c: fM(stats.closed.maxCap) },
+                        { l: "MENOR CAPITAL INV.", o: fM(stats.open.minCap), c: fM(stats.closed.minCap) },
+                    ].map((r,i)=>(<div key={i} className="grid grid-cols-4 p-1 border-b border-slate-800/50 text-[9px]"><div className="text-slate-400">{r.l}</div><div className="text-right pr-2 text-slate-200">{r.o}</div><div></div><div className="text-right pr-2 text-slate-200">{r.c}</div></div>))}
+                    
+                    <div className="mt-1 border-t border-slate-700 bg-slate-900/20">
+                        <div className="grid grid-cols-3 p-1 items-center"><div className="text-slate-300 font-bold">SALDO (Sin div)</div><div className={`text-right font-black ${stats.open.pl>=0?'text-green-500':'text-red-500'}`}>{fM(stats.open.pl)}</div><div className={`text-right font-black ${stats.closed.pl>=0?'text-green-500':'text-red-500'}`}>{fM(stats.closed.pl)}</div></div>
+                        <div className="grid grid-cols-3 p-1 items-center"><div className="text-blue-300 font-bold">DIVIDENDOS</div><div className="text-right font-black text-blue-400">{fM(stats.open.divs)}</div><div className="text-right font-black text-blue-400">{fM(stats.closed.divs)}</div></div>
+                        <div className="grid grid-cols-3 p-1 items-center bg-black/40"><div className="text-slate-500">ACUM. VENTAS (*)</div><div className="text-right font-mono text-green-700">{fM(stats.open.val)}</div><div className="text-right font-mono text-green-700 font-bold">{fM(stats.closed.val)}</div></div>
+                        <div className="grid grid-cols-3 p-1 items-center bg-black/40"><div className="text-slate-500">ACUM. COMPRAS</div><div className="text-right font-mono text-red-900">{fM(stats.open.cost)}</div><div className="text-right font-mono text-red-900 font-bold">{fM(stats.closed.cost)}</div></div>
+                    </div>
+                    <div className="bg-[#101825] border-t border-blue-900 p-2 mt-auto text-center flex justify-between items-center">
+                         <div className="text-blue-400 font-bold uppercase">SALDO HISTÓRICO CARTERA</div>
+                         <div className="text-lg font-black text-white">{fM(stats.open.pl + stats.open.divs + stats.closed.pl + stats.closed.divs)}</div>
+                    </div>
+                </div>
+
+                {/* COL 2: BALANCE (Middle) */}
+                <div className="col-span-12 lg:col-span-2 flex flex-col gap-1 bg-black border-x border-slate-800/50 p-1">
+                    <div className="bg-slate-900 p-2 text-center border-t-2 border-yellow-600 mb-2">
+                        <div className="text-[9px] text-slate-500 uppercase">[ - ] Impuestos (Resultados)</div>
+                        <div className="text-red-400 font-bold text-sm">{fM(stats.totalTaxes)}</div>
+                    </div>
+                    <div className="flex-1 flex flex-col justify-center gap-1">
+                        <div className="bg-slate-900/50 p-2 flex justify-between"><span className="text-green-600 font-bold text-[9px]">GANANCIAS</span><span className="text-green-500 font-bold">{fM(stats.open.winAmt + stats.closed.winAmt)}</span></div>
+                        <div className="bg-slate-900/50 p-2 flex justify-between"><span className="text-red-600 font-bold text-[9px]">PÉRDIDAS</span><span className="text-red-500 font-bold">{fM(stats.open.lossAmt + stats.closed.lossAmt)}</span></div>
+                        <div className="bg-blue-900/20 p-2 flex justify-between border border-blue-900/30"><span className="text-blue-400 font-bold text-[9px]">[+] DIVIDENDOS</span><span className="text-blue-300 font-bold">{fM(stats.open.divs + stats.closed.divs)}</span></div>
+                        <div className="my-2 border-t border-dashed border-slate-600"></div>
+                        <div className="bg-[#1a1a1a] p-3 border border-green-900/50 text-center">
+                            <div className="text-[9px] text-slate-500 uppercase mb-1">RESULTADO NETO</div>
+                            <div className="text-lg font-black text-white">{fM((stats.open.pl + stats.closed.pl + stats.open.divs + stats.closed.divs) - stats.totalTaxes)}</div>
+                        </div>
+                    </div>
+                    <div className="bg-slate-900 p-2 border-t border-slate-700 text-[9px] space-y-1">
+                        <div className="text-center text-slate-500 uppercase font-bold mb-1">MOVIMIENTOS</div>
+                        <div className="flex justify-between text-green-700"><span>ENTRADAS</span> <span>{fM(stats.closed.val + stats.open.divs + stats.closed.divs)}</span></div>
+                        <div className="flex justify-between text-red-900"><span>SALIDAS</span> <span>{fM(stats.open.cost + stats.closed.cost)}</span></div>
+                    </div>
+                </div>
+
+                {/* COL 3: HORQUILLA (Right) - CORTADA */}
+                <div className="col-span-12 lg:col-span-5 flex flex-col gap-0.5">
+                    <div className="bg-[#333] text-slate-400 font-bold p-1 text-center uppercase text-[9px]">Horquilla de Rendimientos</div>
+                    <div className="grid grid-cols-3 bg-black text-slate-500 text-[8px] text-center py-1"><div>METRICA</div><div>ABIERTAS</div><div>CERRADAS</div></div>
+                    {[
+                        { l: "MAYOR GANANCIA", o: stats.open.maxGain, ot: stats.open.maxGainTick, c: stats.closed.maxGain, ct: stats.closed.maxGainTick, curr:true },
+                        { l: "MAYOR RENDIMIENTO", o: stats.open.maxYield, ot: stats.open.maxYieldTick, c: stats.closed.maxYield, ct: stats.closed.maxYieldTick, pct:true },
+                        { l: "MENOR GANANCIA", o: stats.open.minGain, ot: stats.open.minGainTick, c: stats.closed.minGain, ct: stats.closed.minGainTick, curr:true },
+                        { l: "MENOR RENDIMIENTO", o: stats.open.minYield, ot: stats.open.minYieldTick, c: stats.closed.minYield, ct: stats.closed.minYieldTick, pct:true },
+                    ].map((r,i)=>(
+                        <div key={i} className="grid grid-cols-3 p-1 border-b border-slate-800/50 items-center">
+                            <div className="text-slate-400">{r.l}</div>
+                            <div className="text-right pr-2"><span className={`font-bold ${r.o>=0?'text-green-500':'text-red-500'}`}>{r.curr?fM(r.o):fN(r.o)+'%'}</span><span className="text-[8px] text-slate-500 ml-1">[{r.ot}]</span></div>
+                            <div className="text-right pr-2"><span className={`font-bold ${r.c>=0?'text-green-500':'text-red-500'}`}>{r.curr?fM(r.c):fN(r.c)+'%'}</span><span className="text-[8px] text-slate-500 ml-1">[{r.ct}]</span></div>
+                        </div>
+                    ))}
+                    {/* Espacio relleno negro para cuadrar altura visualmente si es necesario */}
+                    <div className="flex-1 bg-black/20 min-h-[50px]"></div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 
 
     const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency }) => {
@@ -598,11 +804,11 @@
           );
       };
 
-      
 
 
 
-const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate }) => {
+
+const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData }) => {
           const [filterText, setFilterText] = useState('');
           const [filterDateStart, setFilterDateStart] = useState('');
           const [filterDateEnd, setFilterDateEnd] = useState('');
@@ -1121,7 +1327,10 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                       <StatsBlock title="TOTAL FILTRADO" data={stats.total} color="#a855f7" baseCurrency={baseCurrency} type="total" />
                       <RenderHistoryCard />
                   </div>
-                  
+
+                  <AdvancedStatsDashboard portfolio={portfolio} resultsData={resultsData} baseCurrency={baseCurrency} />
+
+
                   <div className="flex flex-col gap-3 shrink-0 bg-slate-900/50 p-3 rounded-xl border border-slate-800">
                       <div className="flex justify-between items-center"><div className="flex gap-2 items-start"><div className="flex flex-col"><button onClick={() => updatePrices(false)} disabled={updating} className="bg-slate-800 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-700 hover:bg-slate-700 transition-colors flex items-center gap-2">{updating ? <Icons.Loader/> : <Icons.Refresh/>} ACTUALIZAR</button><span className="text-[9px] text-slate-500 mt-1 uppercase font-bold text-center tracking-wider">Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}</span></div><button onClick={analyzePortfolio} className="bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 transition-colors flex items-center gap-2"><Icons.Wand/> INFORME iA</button><button onClick={handlePrint} className="bg-slate-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button></div><button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', group: '', notes: '', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, buyPE:0, annualDividend:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, currentPE:0, dividends: [] }); setIsModalOpen(true); }} className="bg-blue-600 px-4 h-9 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg hover:bg-blue-500"><Icons.Plus size={14}/> NUEVA POSICIÓN</button></div>
                       <div className="flex flex-wrap gap-2 items-center bg-slate-950/50 p-2 rounded-lg border border-slate-800/50"><div className="flex-1 min-w-[150px] relative"><Icons.Search className="absolute left-2 top-2 text-slate-500" size={14}/><input type="text" value={filterText} onChange={e => setFilterText(e.target.value)} placeholder="Filtrar por ticker, nombre o grupo..." className="w-full bg-slate-900 border border-slate-700 h-8 pl-8 pr-2 text-xs rounded focus:border-blue-500 font-bold" /></div><div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-2 h-8"><span className="text-[9px] font-bold text-slate-500 uppercase">Desde</span><input type="date" value={filterDateStart} onChange={e => setFilterDateStart(e.target.value)} className="bg-transparent border-none text-xs text-white p-0 w-[95px] focus:ring-0 font-bold" /></div><div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-2 h-8"><span className="text-[9px] font-bold text-slate-500 uppercase">Hasta</span><input type="date" value={filterDateEnd} onChange={e => setFilterDateEnd(e.target.value)} className="bg-transparent border-none text-xs text-white p-0 w-[95px] focus:ring-0 font-bold" /></div><div className="flex bg-slate-900 rounded border border-slate-700 h-8 p-0.5"><button onClick={() => setFilterType('all')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'all' ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white'}`}>TODO</button><button onClick={() => setFilterType('active')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'active' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>ACTIVAS</button><button onClick={() => setFilterType('sold')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'sold' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>VENTAS</button></div><button onClick={resetFilters} title="Limpiar Filtros" className="h-8 px-3 bg-red-900/30 text-red-400 border border-red-500/30 rounded text-[10px] font-bold hover:bg-red-900/50 flex items-center justify-center"><Icons.Trash2 size={16}/></button></div>
@@ -1841,7 +2050,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                       </nav>
                   </header>
                   <main className="flex-1 overflow-y-auto bg-[#0a0a0a] relative custom-scrollbar">
-                      {activeTab === 'portfolio' && <PortfolioTab portfolio={portfolio} setPortfolio={setPortfolio} apiKey={apiKey} baseCurrency={baseCurrency} refreshInterval={refreshInterval} lastUpdate={lastUpdate} setLastUpdate={setLastUpdate} />}
+                      {activeTab === 'portfolio' && <PortfolioTab portfolio={portfolio} setPortfolio={setPortfolio} apiKey={apiKey} baseCurrency={baseCurrency} refreshInterval={refreshInterval} lastUpdate={lastUpdate} setLastUpdate={setLastUpdate} resultsData={resultsData} />}
                       {activeTab === 'dividends' && <DividendTab portfolio={portfolio} setPortfolio={setPortfolio} baseCurrency={baseCurrency} />}
                       {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={setResultsData} baseCurrency={baseCurrency} />}
                       {activeTab === 'analysis' && <AnalysisTab apiKey={apiKey} baseCurrency={baseCurrency} />}
