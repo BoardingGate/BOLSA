@@ -366,13 +366,186 @@
 
 
 
-      const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate }) => {
+
+      const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency }) => {
+          const r2 = (num) => Math.round((parseFloat(num) || 0) * 100) / 100;
+          
+          const getDisplayYears = () => {
+              const yearsSet = new Set();
+              if (portfolio.length === 0) return [new Date().getFullYear()-1, new Date().getFullYear(), new Date().getFullYear()+1];
+              portfolio.forEach(p => { if (p.buyDate) yearsSet.add(new Date(p.buyDate).getFullYear()); if (p.sellDate) yearsSet.add(new Date(p.sellDate).getFullYear()); if (p.dividends) p.dividends.forEach(d => yearsSet.add(d.year)); });
+              if (yearsSet.size === 0) return [new Date().getFullYear()-1, new Date().getFullYear(), new Date().getFullYear()+1];
+              const sorted = Array.from(yearsSet).sort((a, b) => a - b);
+              const minYear = sorted[0], maxYear = sorted[sorted.length - 1];
+              const range = []; for (let y = minYear - 1; y <= maxYear + 1; y++) range.push(y);
+              return range;
+          };
+
+          // Inicialización de datos asegurando los campos nuevos de compensación
+          useEffect(() => {
+              const yearsNeeded = getDisplayYears();
+              const newData = { ...resultsData };
+              let changed = false;
+              yearsNeeded.forEach(y => { 
+                  if (!newData[y]) { 
+                      newData[y] = { locked: false, soldCount: 0, uniqueCount: 0, profitPrice: 0, dividends: 0, lossPrice: 0, fees: 0, resNoDiv: 0, resWithDiv: 0, tax: 0, accumulated: 0, rentaResNoDiv: 0, rentaFees: 0, rentaAdj: 0, rentaBase: 0, comp1: 0, comp2: 0, comp3: 0, comp4: 0, compRest: 0 }; 
+                      changed = true; 
+                  } else {
+                      // Asegurar que existan los campos nuevos si el año ya existía
+                      const fields = ['comp1', 'comp2', 'comp3', 'comp4', 'compRest'];
+                      fields.forEach(f => { if(newData[y][f] === undefined) { newData[y][f] = 0; changed = true; } });
+                  }
+              });
+              if (changed) setResultsData(newData);
+          }, [portfolio.length, portfolio, resultsData]);
+
+          const handleRecalculate = () => {
+              const newData = { ...resultsData };
+              const yearsToCalc = getDisplayYears();
+              let runningAccum = 0;
+              yearsToCalc.forEach(y => {
+                  // Preservar datos manuales de compensación al recalcular
+                  const existingComp = newData[y] || {};
+                  
+                  if (!newData[y]) newData[y] = { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, fees:0, resNoDiv:0, resWithDiv:0, tax:0, accumulated:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0, comp1: 0, comp2: 0, comp3: 0, comp4: 0, compRest: 0 };
+                  if (newData[y].locked) { runningAccum = r2(runningAccum + newData[y].resWithDiv); newData[y].accumulated = runningAccum; return; }
+                  
+                  let yearProfitPrice = 0, yearLossPrice = 0, yearFees = 0, lotesTotal = 0; const uniqueTickers = new Set();
+                  const sales = portfolio.filter(p => p.sellDate && new Date(p.sellDate).getFullYear() === y && p.isActive !== false);
+                  lotesTotal = sales.length;
+                  sales.forEach(p => { uniqueTickers.add(p.ticker); const cost = r2((p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0)); const revenueNet = r2((p.sellPrice * p.shares * p.sellFx) - (p.sellFees || 0) - (p.sellAdjustments || 0)); const pl = r2(revenueNet - cost); if (pl >= 0) yearProfitPrice += pl; else yearLossPrice += Math.abs(pl); yearFees += r2((p.fees || 0) + (p.adjustments || 0) + (p.sellFees || 0) + (p.sellAdjustments || 0)); });
+                  let yearDivs = 0; portfolio.forEach(p => { if (p.isActive !== false && p.dividends) { p.dividends.forEach(d => { if (d.year === y) yearDivs += d.net; }); } });
+                  yearProfitPrice = r2(yearProfitPrice); yearLossPrice = r2(yearLossPrice); yearDivs = r2(yearDivs); yearFees = r2(yearFees);
+                  const resNoDiv = r2(yearProfitPrice - yearLossPrice); const resWithDiv = r2(resNoDiv + yearDivs); const tax = resNoDiv > 0 ? r2(resNoDiv * 0.19) : 0;
+                  runningAccum = r2(runningAccum + resWithDiv);
+                  
+                  newData[y] = { 
+                      ...newData[y], 
+                      soldCount: lotesTotal, uniqueCount: uniqueTickers.size, profitPrice: yearProfitPrice, dividends: yearDivs, lossPrice: yearLossPrice, fees: yearFees, resNoDiv: resNoDiv, resWithDiv: resWithDiv, tax: tax, accumulated: runningAccum, rentaResNoDiv: resNoDiv, rentaFees: yearFees, 
+                      rentaAdj: existingComp.rentaAdj || 0, 
+                      rentaBase: resNoDiv, // Reset base to simple result initially
+                      comp1: existingComp.comp1 || 0, comp2: existingComp.comp2 || 0, comp3: existingComp.comp3 || 0, comp4: existingComp.comp4 || 0, compRest: existingComp.compRest || 0
+                  };
+              });
+              setResultsData(newData);
+          };
+
+          const handleEdit = (year, field, val) => { 
+              if (resultsData[year]?.locked && !field.startsWith('renta') && !field.startsWith('comp')) return; 
+              const v = parseFloat(val); 
+              setResultsData(prev => ({ ...prev, [year]: { ...prev[year], [field]: isNaN(v) ? 0 : r2(v) } })); 
+          };
+          
+          const toggleLock = (year) => { setResultsData(prev => ({ ...prev, [year]: { ...prev[year], locked: !prev[year].locked } })); };
+          
+          const yearsToShow = getDisplayYears();
+          const totals = yearsToShow.reduce((acc, year) => { const curr = resultsData[year] || {}; return { soldCount: acc.soldCount + (curr.soldCount || 0), profitPrice: acc.profitPrice + (curr.profitPrice || 0), dividends: acc.dividends + (curr.dividends || 0), lossPrice: acc.lossPrice + (curr.lossPrice || 0), fees: acc.fees + (curr.fees || 0), resNoDiv: acc.resNoDiv + (curr.resNoDiv || 0), resWithDiv: acc.resWithDiv + (curr.resWithDiv || 0), tax: acc.tax + (curr.tax || 0), rentaBase: acc.rentaBase + (curr.rentaBase || 0) }; }, { soldCount: 0, profitPrice: 0, dividends: 0, lossPrice: 0, fees: 0, resNoDiv: 0, resWithDiv: 0, tax: 0, rentaBase: 0 });
+
+          const chartData = useMemo(() => {
+              return yearsToShow.map(y => ({
+                  label: y.toString(),
+                  value: (resultsData[y]?.resWithDiv || 0) 
+              }));
+          }, [resultsData, yearsToShow]);
+
+          const handlePrint = () => {
+              const printWindow = window.open('', '', 'height=800,width=1200');
+              const emissionTime = new Date().toLocaleString();
+              let html = `<html><head><title>Resultados Anuales</title><style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:9px;} h1{font-size:9px;margin-bottom:2px;text-transform:uppercase;} table{width:100%;border-collapse:collapse;margin-top:15px;} th{background:#f1f5f9;text-align:center;padding:3px;border:1px solid #94a3b8;font-size:7px;text-transform:uppercase;} td{padding:3px;border:1px solid #e2e8f0;text-align:right;} .gray-bg{background:#f1f5f9;} .dark-bg{background:#e2e8f0;font-weight:bold;}</style></head><body>`;
+              html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>INFORME DE RESULTADOS ANUALES CARTERA</h1></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`;
+              html += `<table><thead><tr><th>Año</th><th>Lotes</th><th>Beneficio</th><th>Dividendos</th><th>Pérdida</th><th>Res. SIN Div</th><th>Res. CON Div</th><th>Impuestos</th><th>Acumulado</th><th style="border-left:2px solid #333;">Res. SIN Div (R)</th><th>Gtos Broker</th><th>Ajustes</th><th>Base Imp. 19%</th></tr></thead><tbody>`;
+              yearsToShow.forEach(year => {
+                  const d = resultsData[year] || { soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, resNoDiv:0, resWithDiv:0, tax:0, accumulated:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0 };
+                  html += `<tr><td style="text-align:center;"><b>${year}</b></td><td style="text-align:center;">${formatN(d.soldCount, 0)} / ${formatN(d.uniqueCount, 0)}</td><td>${formatMoney(d.profitPrice, baseCurrency)}</td><td>${formatMoney(d.dividends, baseCurrency)}</td><td style="color:#dc2626;">${formatMoney(d.lossPrice, baseCurrency)}</td><td class="gray-bg">${formatMoney(d.resNoDiv, baseCurrency)}</td><td class="gray-bg">${formatMoney(d.resWithDiv, baseCurrency)}</td><td>${formatMoney(d.tax, baseCurrency)}</td><td>${formatMoney(d.accumulated, baseCurrency)}</td><td style="border-left:2px solid #333;">${formatMoney(d.rentaResNoDiv, baseCurrency)}</td><td>${formatMoney(d.rentaFees, baseCurrency)}</td><td>${formatMoney(d.rentaAdj, baseCurrency)}</td><td class="dark-bg">${formatMoney(d.rentaBase, baseCurrency)}</td></tr>`;
+              });
+              html += `<tr style="background:#333;color:white;font-weight:bold;"><td style="text-align:center;">TOTAL</td><td style="text-align:center;">${formatN(totals.soldCount, 0)}</td><td>${formatMoney(totals.profitPrice, baseCurrency)}</td><td>${formatMoney(totals.dividends, baseCurrency)}</td><td>${formatMoney(totals.lossPrice, baseCurrency)}</td><td>${formatMoney(totals.resNoDiv, baseCurrency)}</td><td>${formatMoney(totals.resWithDiv, baseCurrency)}</td><td>${formatMoney(totals.tax, baseCurrency)}</td><td></td><td style="border-left:2px solid #fff;"></td><td>${formatMoney(totals.fees, baseCurrency)}</td><td></td><td>${formatMoney(totals.rentaBase, baseCurrency)}</td></tr>`;
+              html += `</tbody></table></body></html>`;
+              printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(()=>printWindow.print(),500);
+          };
+
+          return (
+              <div className="w-full p-4 md:p-6 flex flex-col gap-6">
+                   <div className="flex justify-between items-center bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
+                      <div><h2 className="text-xl font-display font-bold text-white">Resultados y Fiscalidad</h2><p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Consolidación Anual de Rendimiento</p></div>
+                      <div className="flex gap-2">
+                          <button onClick={handleRecalculate} className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg text-xs font-bold uppercase transition-colors shadow-lg border border-blue-400 flex items-center gap-2"><Icons.Refresh size={14}/> Recalcular Datos</button>
+                          <button onClick={handlePrint} className="bg-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button>
+                      </div>
+                   </div>
+                   
+                   <div className="w-full overflow-x-auto bg-slate-900/50 border border-slate-800 rounded-xl">
+                       <table className="w-full text-sm border-collapse min-w-[2000px]">
+                           <thead className="bg-slate-800 text-[10px] uppercase font-bold text-slate-400">
+                               <tr>
+                                   <th className="p-2 text-center border-b border-slate-700 w-10 bg-slate-900 sticky left-0 z-30"><Icons.CheckCircle size={12}/></th>
+                                   <th className="p-2 text-center border-b border-slate-700 w-16 bg-slate-900/50">Año</th>
+                                   <th className="p-2 text-center border-b border-slate-700 w-24">Lotes<br/><span className="text-[7px] opacity-60 font-normal">(Tot / Únicos)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 border-l border-slate-700/50 text-green-400">Beneficio<br/><span className="text-[7px] opacity-60 font-normal">(Precio)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 text-blue-400">Dividendos<br/><span className="text-[7px] opacity-60 font-normal">(Cobrados)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 text-red-400">Pérdida<br/><span className="text-[7px] opacity-60 font-normal">(Precio)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 border-l border-slate-700/50 bg-slate-800/30 font-bold text-slate-200">Res. SIN Div<br/><span className="text-[7px] opacity-60 font-normal">(Ben - Pérd)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 bg-slate-800/30 font-bold text-white">Res. CON Div<br/><span className="text-[7px] opacity-60 font-normal">(+ Divs)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 text-purple-400">Impuestos<br/><span className="text-[7px] opacity-60 font-normal">(19% s/ Sin Div)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 font-bold text-yellow-500">Acumulado<br/><span className="text-[7px] opacity-60 font-normal">(Total)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 border-l-4 border-slate-900 bg-[#1e2330] text-slate-300">Res. SIN Div<br/><span className="text-[7px] opacity-60 font-normal">(Renta)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-slate-400">Gtos Broker<br/><span className="text-[7px] opacity-60 font-normal">(Total)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-slate-300">Ajustes<br/><span className="text-[7px] opacity-60 font-normal">(Manual)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-blue-200 font-bold">Base Imp. 19%<br/><span className="text-[7px] opacity-60 font-normal">(Imponible)</span></th>
+                                   {/* SECCIÓN COMPENSACIÓN */}
+                                   <th className="p-2 text-right border-b border-slate-700 border-l-4 border-slate-900 bg-orange-900/10 text-orange-400 w-24">1er AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 bg-orange-900/10 text-orange-400 w-24">2do AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 bg-orange-900/10 text-orange-400 w-24">3er AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 bg-orange-900/10 text-orange-400 w-24">4do AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
+                                   <th className="p-2 text-right border-b border-slate-700 bg-orange-600/20 text-yellow-500 font-black border-l border-orange-500/30 w-32">RESTA COMPENSAR<br/><span className="text-[7px] opacity-60 font-normal">(Saldo Neg.)</span></th>
+                               </tr>
+                           </thead>
+                           <tbody className="divide-y divide-slate-800 font-mono text-xs">{yearsToShow.map(year => { const d = resultsData[year] || { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, resNoDiv:0, resWithDiv:0, tax:0, accumulated:0, fees:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0, comp1:0, comp2:0, comp3:0, comp4:0, compRest:0 }; return ( <tr key={year} className={`hover:bg-slate-900/40 transition-colors ${d.locked ? 'opacity-70' : ''}`}><td className="p-2 text-center bg-slate-900/50 sticky left-0 z-20 border-r border-slate-800"><input type="checkbox" checked={d.locked} onChange={()=>toggleLock(year)} className="w-3 h-3 accent-red-500 cursor-pointer" /></td><td className="p-2 text-center font-bold text-white bg-slate-900/20">{year}</td><td className="p-2 text-center text-slate-400 text-[10px]">{formatN(d.soldCount, 0)} <span className="text-slate-600">/</span> <span className="text-slate-300 font-bold">{formatN(d.uniqueCount, 0)}</span></td><td className="p-2 border-l border-slate-800/50"><input type="number" step="0.01" value={d.profitPrice} onChange={e=>handleEdit(year, 'profitPrice', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-green-500 outline-none" /></td><td className="p-2"><input type="number" step="0.01" value={d.dividends} onChange={e=>handleEdit(year, 'dividends', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-blue-400 outline-none" /></td><td className="p-2"><input type="number" step="0.01" value={d.lossPrice} onChange={e=>handleEdit(year, 'lossPrice', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-red-500 outline-none" /></td><td className="p-2 border-l border-slate-800/50 bg-slate-900/20"><input type="number" step="0.01" value={d.resNoDiv} onChange={e=>handleEdit(year, 'resNoDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resNoDiv >=0 ? 'text-slate-200':'text-red-400'}`} /></td><td className="p-2 bg-slate-900/20"><input type="number" step="0.01" value={d.resWithDiv} onChange={e=>handleEdit(year, 'resWithDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resWithDiv >=0 ? 'text-white':'text-red-400'}`} /></td><td className="p-2"><input type="number" step="0.01" value={d.tax} onChange={e=>handleEdit(year, 'tax', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-purple-400 font-bold outline-none" /></td><td className="p-2 border-r border-slate-800 bg-slate-900/10"><div className={`text-right font-bold ${d.accumulated >= 0 ? 'text-yellow-500' : 'text-red-500'}`}>{formatMoney(d.accumulated, baseCurrency)}</div></td><td className="p-2 border-l-4 border-slate-900 bg-[#161b25]"><input type="number" step="0.01" value={d.rentaResNoDiv} onChange={e=>handleEdit(year, 'rentaResNoDiv', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-300 outline-none font-bold" /></td><td className="p-2 bg-[#161b25]"><input type="number" step="0.01" value={d.rentaFees} onChange={e=>handleEdit(year, 'rentaFees', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-500 outline-none" /></td><td className="p-2 bg-[#161b25]"><input type="number" step="0.01" value={d.rentaAdj} onChange={e=>handleEdit(year, 'rentaAdj', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-300 outline-none border-b border-slate-700/50 focus:border-blue-500" /></td><td className="p-2 bg-[#161b25]"><input type="number" step="0.01" value={d.rentaBase} onChange={e=>handleEdit(year, 'rentaBase', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-blue-200 font-bold outline-none" /></td>
+                               <td className="p-2 border-l-4 border-slate-900 bg-orange-900/5"><input type="number" step="0.01" value={d.comp1} onChange={e=>handleEdit(year, 'comp1', e.target.value)} className="w-full bg-transparent text-right text-orange-200 outline-none" placeholder="0.00" /></td>
+                               <td className="p-2 bg-orange-900/5"><input type="number" step="0.01" value={d.comp2} onChange={e=>handleEdit(year, 'comp2', e.target.value)} className="w-full bg-transparent text-right text-orange-200 outline-none" placeholder="0.00" /></td>
+                               <td className="p-2 bg-orange-900/5"><input type="number" step="0.01" value={d.comp3} onChange={e=>handleEdit(year, 'comp3', e.target.value)} className="w-full bg-transparent text-right text-orange-200 outline-none" placeholder="0.00" /></td>
+                               <td className="p-2 bg-orange-900/5"><input type="number" step="0.01" value={d.comp4} onChange={e=>handleEdit(year, 'comp4', e.target.value)} className="w-full bg-transparent text-right text-orange-200 outline-none" placeholder="0.00" /></td>
+                               <td className="p-2 border-l border-orange-500/20 bg-orange-600/10"><input type="number" step="0.01" value={d.compRest} onChange={e=>handleEdit(year, 'compRest', e.target.value)} className="w-full bg-transparent text-right text-yellow-400 font-bold outline-none" placeholder="0.00" /></td>
+                           </tr> ); })}
+                           <tr className="bg-slate-900 border-t-2 border-slate-700 text-white font-bold text-xs shadow-xl"><td colSpan="3" className="p-3 text-right text-[10px] uppercase text-slate-500 tracking-widest bg-slate-900 sticky left-0">Total Global: <span className="text-white ml-2">{formatN(totals.soldCount, 0)} Op.</span></td><td className="p-3 text-right text-green-500">{formatMoney(totals.profitPrice, baseCurrency)}</td><td className="p-3 text-right text-blue-400">{formatMoney(totals.dividends, baseCurrency)}</td><td className="p-3 text-right text-red-500">{formatMoney(totals.lossPrice, baseCurrency)}</td><td className="p-3 text-right text-slate-300">{formatMoney(totals.resNoDiv, baseCurrency)}</td><td className="p-3 text-right text-white text-sm">{formatMoney(totals.resWithDiv, baseCurrency)}</td><td className="p-3 text-right text-purple-400">{formatMoney(totals.tax, baseCurrency)}</td><td className="p-3 bg-slate-950"></td><td className="p-3 bg-[#11151d]"></td><td className="p-3 text-right text-slate-500 bg-[#11151d]">{formatMoney(totals.fees, baseCurrency)}</td><td className="p-3 bg-[#11151d]"></td><td className="p-3 text-right text-blue-200 bg-[#11151d]">{formatMoney(totals.rentaBase, baseCurrency)}</td><td colSpan="5" className="bg-[#11151d]"></td></tr></tbody></table>
+                   </div>
+                   
+                   {/* INFORMACIÓN FISCAL AL PIE */}
+                   <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-6 flex flex-col md:flex-row gap-6">
+                       <div className="flex-1">
+                           <h4 className="text-sm font-bold text-orange-400 mb-3 flex items-center gap-2"><Icons.HelpCircle size={16}/> Información Fiscal: Compensación de Pérdidas (España)</h4>
+                           <div className="text-[11px] text-slate-400 space-y-2 leading-relaxed text-justify">
+                               <p>Las pérdidas patrimoniales (ventas con resultado negativo) derivadas de la transmisión de elementos patrimoniales pueden compensarse con las ganancias patrimoniales obtenidas en el mismo ejercicio.</p>
+                               <p>Si tras esta compensación el <strong>saldo es negativo</strong>, este importe se puede compensar con el saldo positivo de los rendimientos del capital mobiliario (dividendos, intereses) obtenidos en el mismo año, con el límite del <strong>25% de dicho saldo positivo</strong>.</p>
+                               <p>Si todavía quedase saldo negativo (pérdidas sin compensar), se podrá compensar en los <strong>4 ejercicios siguientes</strong> siguiendo el mismo orden.</p>
+                           </div>
+                       </div>
+                       <div className="md:w-1/3 border-l border-slate-800 md:pl-6 pt-4 md:pt-0">
+                           <h5 className="text-xs font-bold text-slate-300 mb-2">Resumen Mecánica:</h5>
+                           <ul className="text-[10px] text-slate-400 space-y-1.5 list-disc list-inside">
+                               <li>Año actual: Ganancias vs Pérdidas.</li>
+                               <li>Si hay pérdidas netas -> Compensar con Dividendos (Max 25%).</li>
+                               <li>Si sigue habiendo pérdidas -> <strong>"Resta Compensar"</strong> para el futuro.</li>
+                               <li>Años siguientes (1º a 4º): Usar "Resta Compensar" contra nuevas ganancias.</li>
+                           </ul>
+                           <a href="https://sede.agenciatributaria.gob.es/" target="_blank" className="mt-3 inline-flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300 font-bold">Referencia AEAT <Icons.ExternalLink size={10}/></a>
+                       </div>
+                   </div>
+
+                   <div className="h-[400px] shrink-0">
+                       <SimpleChart type="bar" data={chartData} title="Beneficio/Pérdida Neto Total (Precio + Divs) por Año" height={400} />
+                   </div>
+              </div>
+          );
+      };
+
+
+
+const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate }) => {
           const [filterText, setFilterText] = useState('');
           const [filterDateStart, setFilterDateStart] = useState('');
           const [filterDateEnd, setFilterDateEnd] = useState('');
           const [filterType, setFilterType] = useState('active'); 
           
-          // Estado de ordenación
           const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
 
           const [updating, setUpdating] = useState(false);
@@ -385,6 +558,9 @@
           const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
           const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', msg: '', onConfirm: null });
           const [infoModal, setInfoModal] = useState({ isOpen: false, title: '', msg: '', type: 'info' });
+
+          // NUEVO: Estado para notificación de observaciones
+          const [noteToast, setNoteToast] = useState(null);
 
           const [editingId, setEditingId] = useState(null);
           const [sellItem, setSellItem] = useState(null);
@@ -425,6 +601,14 @@
               if (t.endsWith('.L')) return 'LSE (UK)';
               return 'US/OTROS'; 
           };
+
+          // --- EFECTO PARA CERRAR TOAST ---
+          useEffect(() => {
+              if (noteToast) {
+                  const timer = setTimeout(() => setNoteToast(null), 30000); // 30 segundos
+                  return () => clearTimeout(timer);
+              }
+          }, [noteToast]);
 
           // --- MANEJADOR DE ORDENACIÓN ---
           const requestSort = (key) => {
@@ -808,7 +992,7 @@
               const roiClosed = h.closed.avgCap > 0 ? (h.closed.profit / h.closed.avgCap) * 100 : 0;
 
               return (
-                  <div className="glass-panel p-4 rounded-xl border-t-4 border-yellow-500 min-w-[320px] flex-1">
+                  <div className="glass-panel p-4 rounded-xl border-t-4 border-yellow-500 min-w-[320px] max-w-[400px]">
                       <div className="flex justify-between items-center mb-2">
                           <span className="text-[10px] font-black uppercase text-yellow-500 flex items-center gap-2"><Icons.Award size={12}/> RENTABILIDAD HISTÓRICA CARTERA</span>
                           <span className="text-[8px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 font-bold">REAL (TIME-WEIGHTED)</span>
@@ -857,6 +1041,17 @@
           return (
               <div className="w-full p-4 md:p-6 flex flex-col gap-6">
                   {analyzing && <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center fade-in"><Icons.Wand size={60} className="text-purple-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando Cartera Global...</div></div>}
+
+                  {/* NOTE TOAST */}
+                  {noteToast && (
+                      <div className="fixed top-20 right-10 z-[100] bg-yellow-900/90 border-l-4 border-yellow-500 p-4 rounded shadow-2xl max-w-sm fade-in backdrop-blur-sm">
+                          <div className="flex justify-between items-start mb-1">
+                              <h4 className="text-yellow-400 font-bold text-xs uppercase flex items-center gap-2"><Icons.MessageCircle size={14}/> Observaciones</h4>
+                              <button onClick={()=>setNoteToast(null)} className="text-yellow-200 hover:text-white"><Icons.X size={14}/></button>
+                          </div>
+                          <p className="text-sm text-yellow-100 italic leading-relaxed">{noteToast}</p>
+                      </div>
+                  )}
 
                   <div className="flex gap-4 overflow-x-auto pb-2 custom-scrollbar shrink-0">
                       <StatsBlock title="ACTIVOS FILTRADOS" data={stats.active} color="#22c55e" baseCurrency={baseCurrency} type="active" />
@@ -914,7 +1109,7 @@
                             <th className="p-3 text-center">Acciones</th>
                           </tr>
                       </thead>
-                          <tbody className="divide-y divide-slate-800">{filteredPortfolio.length === 0 ? ( <tr><td colSpan="13" className="p-10 text-center text-slate-500 italic">No hay registros que coincidan con los filtros aplicados.</td></tr> ) : ( filteredPortfolio.map(p => { const cT = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFees + p.sellAdjustments) : 0); const ds = (p.dividends || []).reduce((a,b)=>a+b.net,0); const capitalGain = vF - cT; const days = calculateDays(p.buyDate, p.sellDate || new Date()); const rs = calcReturns(cT, vF + ds, days); return ( <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''}`}><td className="p-3 text-center" onClick={() => setPortfolio(prev => prev.map(x => x.id === p.id ? {...x, isActive: !x.isActive} : x))}><input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" /></td><td className="p-3"><b>{p.ticker}</b>{isS && <span className="ml-2 px-1.5 py-0.5 bg-red-900/40 text-red-400 text-[8px] rounded uppercase font-bold border border-red-500/20">VENDIDA</span>}<br/><span className="text-[10px] text-slate-400 uppercase">{p.name}</span>{p.group && <span className="text-[10px] text-purple-300 font-bold bg-purple-900/30 px-1 rounded ml-2">Grupo: {p.group}</span>}</td><td className="p-3 text-center text-[10px] font-bold"><div className="text-blue-400">{formatDateES(p.buyDate)}</div>{p.sellDate && <div className="text-orange-400">{formatDateES(p.sellDate)}</div>}<div className="text-slate-500 text-[9px] mt-1">{formatN(days, 0)} días</div></td><td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td><td className="p-3 text-right text-xs font-mono">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td><td className="p-3 text-center text-[10px] font-mono text-slate-400">I: {formatN(p.buyFx, 4)}<br/>A: {formatN(curF, 4)}</td><td className="p-3 text-center text-[10px] font-mono text-slate-400">G: {formatN(isS?p.sellFees:p.fees)}<br/>A: {formatN(isS?p.sellAdjustments:p.adjustments)}</td><td className="p-3 text-right text-slate-400 font-mono">{formatMoney(cT, baseCurrency)}</td><td className="p-3 text-right font-mono text-white"><div className="font-bold">{formatMoney(vF, baseCurrency)}</div></td><td className="p-3 text-right font-mono"><div className={`font-bold ${capitalGain >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(capitalGain, baseCurrency)}</div>{ds > 0 && <div className="text-[10px] text-blue-300 font-bold mt-0.5">+ {formatMoney(ds, baseCurrency)} (Div)</div>}</td><td className="p-3 text-right text-xs"><div className={rs.simple>=0?'text-green-400 font-bold':'text-red-400 font-bold'}>{formatN(rs.simple)}%</div><div className="text-[9px] text-slate-500">Anual: {formatN(rs.annual)}%</div></td><td className="p-3 text-center text-xs font-mono">I: {formatN(p.buyPE, 1)}<br/>A: <span className="text-yellow-500 font-bold">{formatN(p.currentPE, 1)}</span></td><td className="p-3 text-center flex gap-2 justify-center">{!p.sellDate && <button onClick={() => { setSellItem(p); setSellForm({sharesToSell: p.shares, sellPrice: parseFloat(curP.toFixed(3)), sellDate: new Date().toISOString().slice(0,10), sellFx: p.currentFx, sellFees: 0, sellAdjustments: 0}); setIsSellModalOpen(true); }} className="bg-green-600/20 text-green-400 border border-green-500/30 px-2 py-1 rounded text-[10px] font-bold hover:bg-green-600/40">VENDER</button>}<button onClick={() => { setForm(p); setEditingId(p.id); setIsModalOpen(true); }} className="text-blue-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors"><Icons.Edit size={14}/></button><button onClick={() => setConfirmModal({isOpen:true, title:'Borrado', msg:`¿Eliminar permanentemente?`, onConfirm:()=>{setPortfolio(prev=>prev.filter(x=>x.id!==p.id)); setConfirmModal({isOpen:false})} })} className="text-red-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors"><Icons.Trash2 size={14}/></button></td></tr> ); }) )}</tbody>
+                          <tbody className="divide-y divide-slate-800">{filteredPortfolio.length === 0 ? ( <tr><td colSpan="13" className="p-10 text-center text-slate-500 italic">No hay registros que coincidan con los filtros aplicados.</td></tr> ) : ( filteredPortfolio.map(p => { const cT = (p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFees + p.sellAdjustments) : 0); const ds = (p.dividends || []).reduce((a,b)=>a+b.net,0); const capitalGain = vF - cT; const days = calculateDays(p.buyDate, p.sellDate || new Date()); const rs = calcReturns(cT, vF + ds, days); return ( <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''}`} onClick={() => p.notes && setNoteToast(p.notes)}><td className="p-3 text-center" onClick={(e) => { e.stopPropagation(); setPortfolio(prev => prev.map(x => x.id === p.id ? {...x, isActive: !x.isActive} : x)); }}><input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" /></td><td className="p-3"><b>{p.ticker}</b>{isS && <span className="ml-2 px-1.5 py-0.5 bg-red-900/40 text-red-400 text-[8px] rounded uppercase font-bold border border-red-500/20">VENDIDA</span>}<br/><span className="text-[10px] text-slate-400 uppercase">{p.name}</span>{p.group && <span className="text-[10px] text-purple-300 font-bold bg-purple-900/30 px-1 rounded ml-2">Grupo: {p.group}</span>}</td><td className="p-3 text-center text-[10px] font-bold"><div className="text-blue-400">{formatDateES(p.buyDate)}</div>{p.sellDate && <div className="text-orange-400">{formatDateES(p.sellDate)}</div>}<div className="text-slate-500 text-[9px] mt-1">{formatN(days, 0)} días</div></td><td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td><td className="p-3 text-right text-xs font-mono">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td><td className="p-3 text-center text-[10px] font-mono text-slate-400">I: {formatN(p.buyFx, 4)}<br/>A: {formatN(curF, 4)}</td><td className="p-3 text-center text-[10px] font-mono text-slate-400">G: {formatN(isS?p.sellFees:p.fees)}<br/>A: {formatN(isS?p.sellAdjustments:p.adjustments)}</td><td className="p-3 text-right text-slate-400 font-mono">{formatMoney(cT, baseCurrency)}</td><td className="p-3 text-right font-mono text-white"><div className="font-bold">{formatMoney(vF, baseCurrency)}</div></td><td className="p-3 text-right font-mono"><div className={`font-bold ${capitalGain >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(capitalGain, baseCurrency)}</div>{ds > 0 && <div className="text-[10px] text-blue-300 font-bold mt-0.5">+ {formatMoney(ds, baseCurrency)} (Div)</div>}</td><td className="p-3 text-right text-xs"><div className={rs.simple>=0?'text-green-400 font-bold':'text-red-400 font-bold'}>{formatN(rs.simple)}%</div><div className="text-[9px] text-slate-500">Anual: {formatN(rs.annual)}%</div></td><td className="p-3 text-center text-xs font-mono">I: {formatN(p.buyPE, 1)}<br/>A: <span className="text-yellow-500 font-bold">{formatN(p.currentPE, 1)}</span></td><td className="p-3 text-center flex gap-2 justify-center" onClick={e=>e.stopPropagation()}>{!p.sellDate && <button onClick={() => { setSellItem(p); setSellForm({sharesToSell: p.shares, sellPrice: parseFloat(curP.toFixed(3)), sellDate: new Date().toISOString().slice(0,10), sellFx: p.currentFx, sellFees: 0, sellAdjustments: 0}); setIsSellModalOpen(true); }} className="bg-green-600/20 text-green-400 border border-green-500/30 px-2 py-1 rounded text-[10px] font-bold hover:bg-green-600/40">VENDER</button>}<button onClick={() => { setForm(p); setEditingId(p.id); setIsModalOpen(true); }} className="text-blue-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors"><Icons.Edit size={14}/></button><button onClick={() => setConfirmModal({isOpen:true, title:'Borrado', msg:`¿Eliminar permanentemente?`, onConfirm:()=>{setPortfolio(prev=>prev.filter(x=>x.id!==p.id)); setConfirmModal({isOpen:false})} })} className="text-red-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors"><Icons.Trash2 size={14}/></button></td></tr> ); }) )}</tbody>
                       </table>
                   </div>
 
@@ -995,7 +1190,7 @@
           const [specificAnswer, setSpecificAnswer] = useState(null);
           const [suggestedQuestions, setSuggestedQuestions] = useState(["Competencia directa", "Historial de dividendos", "Nivel de deuda", "Directivos y Salarios", "Escándalos recientes", "Previsión próximos resultados"]);
 
-          const sanitizeAndParseJSON = (text) => { try { const match = text.match(/\{[\s\S]*\}/); if (match) return JSON.parse(match[0]); return JSON.parse(text); } catch (e) { throw new Error("La IA no devolvió un formato de datos válido."); } };
+          const sanitizeAndParseJSON = (text) => { try {const match = text.match(/\{[\s\S]*\}/); if (match) return JSON.parse(match[0]); return JSON.parse(text); } catch (e) { throw new Error("La IA no devolvió un formato de datos válido."); } };
 
           const rotateSuggestions = (currentQ) => {
               const base = ["Impacto en valoración", "Riesgos asociados", "Comparativa sectorial", "Proyección futura", "Movimientos Insider", "Análisis Técnico Profundo", "Catalizadores próximos"];
@@ -1176,99 +1371,7 @@
           );
       };
 
-      const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency }) => {
-          const r2 = (num) => Math.round((parseFloat(num) || 0) * 100) / 100;
-          
-          const getDisplayYears = () => {
-              const yearsSet = new Set();
-              if (portfolio.length === 0) return [new Date().getFullYear()-1, new Date().getFullYear(), new Date().getFullYear()+1];
-              portfolio.forEach(p => { if (p.buyDate) yearsSet.add(new Date(p.buyDate).getFullYear()); if (p.sellDate) yearsSet.add(new Date(p.sellDate).getFullYear()); if (p.dividends) p.dividends.forEach(d => yearsSet.add(d.year)); });
-              if (yearsSet.size === 0) return [new Date().getFullYear()-1, new Date().getFullYear(), new Date().getFullYear()+1];
-              const sorted = Array.from(yearsSet).sort((a, b) => a - b);
-              const minYear = sorted[0], maxYear = sorted[sorted.length - 1];
-              const range = []; for (let y = minYear - 1; y <= maxYear + 1; y++) range.push(y);
-              return range;
-          };
-
-          useEffect(() => {
-              const yearsNeeded = getDisplayYears();
-              const newData = { ...resultsData };
-              let changed = false;
-              yearsNeeded.forEach(y => { if (!newData[y]) { newData[y] = { locked: false, soldCount: 0, uniqueCount: 0, profitPrice: 0, dividends: 0, lossPrice: 0, fees: 0, resNoDiv: 0, resWithDiv: 0, tax: 0, accumulated: 0, rentaResNoDiv: 0, rentaFees: 0, rentaAdj: 0, rentaBase: 0 }; changed = true; } });
-              if (changed) setResultsData(newData);
-          }, [portfolio.length, portfolio]);
-
-          const handleRecalculate = () => {
-              const newData = { ...resultsData };
-              const yearsToCalc = getDisplayYears();
-              let runningAccum = 0;
-              yearsToCalc.forEach(y => {
-                  if (!newData[y]) newData[y] = { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, fees:0, resNoDiv:0, resWithDiv:0, tax:0, accumulated:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0 };
-                  if (newData[y].locked) { runningAccum = r2(runningAccum + newData[y].resWithDiv); newData[y].accumulated = runningAccum; return; }
-                  let yearProfitPrice = 0, yearLossPrice = 0, yearFees = 0, lotesTotal = 0; const uniqueTickers = new Set();
-                  const sales = portfolio.filter(p => p.sellDate && new Date(p.sellDate).getFullYear() === y && p.isActive !== false);
-                  lotesTotal = sales.length;
-                  sales.forEach(p => { uniqueTickers.add(p.ticker); const cost = r2((p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0)); const revenueNet = r2((p.sellPrice * p.shares * p.sellFx) - (p.sellFees || 0) - (p.sellAdjustments || 0)); const pl = r2(revenueNet - cost); if (pl >= 0) yearProfitPrice += pl; else yearLossPrice += Math.abs(pl); yearFees += r2((p.fees || 0) + (p.adjustments || 0) + (p.sellFees || 0) + (p.sellAdjustments || 0)); });
-                  let yearDivs = 0; portfolio.forEach(p => { if (p.isActive !== false && p.dividends) { p.dividends.forEach(d => { if (d.year === y) yearDivs += d.net; }); } });
-                  yearProfitPrice = r2(yearProfitPrice); yearLossPrice = r2(yearLossPrice); yearDivs = r2(yearDivs); yearFees = r2(yearFees);
-                  const resNoDiv = r2(yearProfitPrice - yearLossPrice); const resWithDiv = r2(resNoDiv + yearDivs); const tax = resNoDiv > 0 ? r2(resNoDiv * 0.19) : 0;
-                  runningAccum = r2(runningAccum + resWithDiv);
-                  newData[y] = { ...newData[y], soldCount: lotesTotal, uniqueCount: uniqueTickers.size, profitPrice: yearProfitPrice, dividends: yearDivs, lossPrice: yearLossPrice, fees: yearFees, resNoDiv: resNoDiv, resWithDiv: resWithDiv, tax: tax, accumulated: runningAccum, rentaResNoDiv: resNoDiv, rentaFees: yearFees, rentaAdj: newData[y].rentaAdj || 0, rentaBase: resNoDiv };
-              });
-              setResultsData(newData);
-          };
-
-          const handleEdit = (year, field, val) => { if (resultsData[year]?.locked && !field.startsWith('renta')) return; const v = parseFloat(val); setResultsData(prev => ({ ...prev, [year]: { ...prev[year], [field]: isNaN(v) ? 0 : r2(v) } })); };
-          const toggleLock = (year) => { setResultsData(prev => ({ ...prev, [year]: { ...prev[year], locked: !prev[year].locked } })); };
-          const yearsToShow = getDisplayYears();
-          const totals = yearsToShow.reduce((acc, year) => { const curr = resultsData[year] || {}; return { soldCount: acc.soldCount + (curr.soldCount || 0), profitPrice: acc.profitPrice + (curr.profitPrice || 0), dividends: acc.dividends + (curr.dividends || 0), lossPrice: acc.lossPrice + (curr.lossPrice || 0), fees: acc.fees + (curr.fees || 0), resNoDiv: acc.resNoDiv + (curr.resNoDiv || 0), resWithDiv: acc.resWithDiv + (curr.resWithDiv || 0), tax: acc.tax + (curr.tax || 0), rentaBase: acc.rentaBase + (curr.rentaBase || 0) }; }, { soldCount: 0, profitPrice: 0, dividends: 0, lossPrice: 0, fees: 0, resNoDiv: 0, resWithDiv: 0, tax: 0, rentaBase: 0 });
-
-          const chartData = useMemo(() => {
-              return yearsToShow.map(y => ({
-                  label: y.toString(),
-                  value: (resultsData[y]?.resWithDiv || 0) 
-              }));
-          }, [resultsData, yearsToShow]);
-
-          const handlePrint = () => {
-              const printWindow = window.open('', '', 'height=800,width=1200');
-              const emissionTime = new Date().toLocaleString();
-              let html = `<html><head><title>Resultados Anuales</title><style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:9px;} h1{font-size:9px;margin-bottom:2px;text-transform:uppercase;} table{width:100%;border-collapse:collapse;margin-top:15px;} th{background:#f1f5f9;text-align:center;padding:3px;border:1px solid #94a3b8;font-size:7px;text-transform:uppercase;} td{padding:3px;border:1px solid #e2e8f0;text-align:right;} .gray-bg{background:#f1f5f9;} .dark-bg{background:#e2e8f0;font-weight:bold;}</style></head><body>`;
-              html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>INFORME DE RESULTADOS ANUALES CARTERA</h1></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`;
-              html += `<table><thead><tr><th>Año</th><th>Lotes</th><th>Beneficio</th><th>Dividendos</th><th>Pérdida</th><th>Res. SIN Div</th><th>Res. CON Div</th><th>Impuestos</th><th>Acumulado</th><th style="border-left:2px solid #333;">Res. SIN Div (R)</th><th>Gtos Broker</th><th>Ajustes</th><th>Base Imp. 19%</th></tr></thead><tbody>`;
-              yearsToShow.forEach(year => {
-                  const d = resultsData[year] || { soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, resNoDiv:0, resWithDiv:0, tax:0, accumulated:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0 };
-                  html += `<tr><td style="text-align:center;"><b>${year}</b></td><td style="text-align:center;">${formatN(d.soldCount, 0)} / ${formatN(d.uniqueCount, 0)}</td><td>${formatMoney(d.profitPrice, baseCurrency)}</td><td>${formatMoney(d.dividends, baseCurrency)}</td><td style="color:#dc2626;">${formatMoney(d.lossPrice, baseCurrency)}</td><td class="gray-bg">${formatMoney(d.resNoDiv, baseCurrency)}</td><td class="gray-bg">${formatMoney(d.resWithDiv, baseCurrency)}</td><td>${formatMoney(d.tax, baseCurrency)}</td><td>${formatMoney(d.accumulated, baseCurrency)}</td><td style="border-left:2px solid #333;">${formatMoney(d.rentaResNoDiv, baseCurrency)}</td><td>${formatMoney(d.rentaFees, baseCurrency)}</td><td>${formatMoney(d.rentaAdj, baseCurrency)}</td><td class="dark-bg">${formatMoney(d.rentaBase, baseCurrency)}</td></tr>`;
-              });
-              html += `<tr style="background:#333;color:white;font-weight:bold;"><td style="text-align:center;">TOTAL</td><td style="text-align:center;">${formatN(totals.soldCount, 0)}</td><td>${formatMoney(totals.profitPrice, baseCurrency)}</td><td>${formatMoney(totals.dividends, baseCurrency)}</td><td>${formatMoney(totals.lossPrice, baseCurrency)}</td><td>${formatMoney(totals.resNoDiv, baseCurrency)}</td><td>${formatMoney(totals.resWithDiv, baseCurrency)}</td><td>${formatMoney(totals.tax, baseCurrency)}</td><td></td><td style="border-left:2px solid #fff;"></td><td>${formatMoney(totals.fees, baseCurrency)}</td><td></td><td>${formatMoney(totals.rentaBase, baseCurrency)}</td></tr>`;
-              html += `</tbody></table></body></html>`;
-              printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(()=>printWindow.print(),500);
-          };
-
-          return (
-              <div className="w-full p-4 md:p-6 flex flex-col gap-6">
-                   <div className="flex justify-between items-center bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
-                      <div><h2 className="text-xl font-display font-bold text-white">Resultados y Fiscalidad</h2><p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Consolidación Anual de Rendimiento</p></div>
-                      <div className="flex gap-2">
-                          <button onClick={handleRecalculate} className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg text-xs font-bold uppercase transition-colors shadow-lg border border-blue-400 flex items-center gap-2"><Icons.Refresh size={14}/> Recalcular Datos</button>
-                          <button onClick={handlePrint} className="bg-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button>
-                      </div>
-                   </div>
-                   
-                   <div className="w-full overflow-x-auto bg-slate-900/50 border border-slate-800 rounded-xl">
-                       <table className="w-full text-sm border-collapse min-w-[1500px]">
-                           <thead className="bg-slate-800 text-[10px] uppercase font-bold text-slate-400"><tr><th className="p-2 text-center border-b border-slate-700 w-10 bg-slate-900 sticky left-0 z-30"><Icons.CheckCircle size={12}/></th><th className="p-2 text-center border-b border-slate-700 w-16 bg-slate-900/50">Año</th><th className="p-2 text-center border-b border-slate-700 w-24">Lotes<br/><span className="text-[7px] opacity-60 font-normal">(Tot / Únicos)</span></th><th className="p-2 text-right border-b border-slate-700 border-l border-slate-700/50 text-green-400">Beneficio<br/><span className="text-[7px] opacity-60 font-normal">(Precio)</span></th><th className="p-2 text-right border-b border-slate-700 text-blue-400">Dividendos<br/><span className="text-[7px] opacity-60 font-normal">(Cobrados)</span></th><th className="p-2 text-right border-b border-slate-700 text-red-400">Pérdida<br/><span className="text-[7px] opacity-60 font-normal">(Precio)</span></th><th className="p-2 text-right border-b border-slate-700 border-l border-slate-700/50 bg-slate-800/30 font-bold text-slate-200">Res. SIN Div<br/><span className="text-[7px] opacity-60 font-normal">(Ben - Pérd)</span></th><th className="p-2 text-right border-b border-slate-700 bg-slate-800/30 font-bold text-white">Res. CON Div<br/><span className="text-[7px] opacity-60 font-normal">(+ Divs)</span></th><th className="p-2 text-right border-b border-slate-700 text-purple-400">Impuestos<br/><span className="text-[7px] opacity-60 font-normal">(19% s/ Sin Div)</span></th><th className="p-2 text-right border-b border-slate-700 font-bold text-yellow-500">Acumulado<br/><span className="text-[7px] opacity-60 font-normal">(Total)</span></th><th className="p-2 text-right border-b border-slate-700 border-l-4 border-slate-900 bg-[#1e2330] text-slate-300">Res. SIN Div<br/><span className="text-[7px] opacity-60 font-normal">(Renta)</span></th><th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-slate-400">Gtos Broker<br/><span className="text-[7px] opacity-60 font-normal">(Total)</span></th><th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-slate-300">Ajustes<br/><span className="text-[7px] opacity-60 font-normal">(Manual)</span></th><th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-blue-200 font-bold">Base Imp. 19%<br/><span className="text-[7px] opacity-60 font-normal">(Imponible)</span></th></tr></thead>
-                           <tbody className="divide-y divide-slate-800 font-mono text-xs">{yearsToShow.map(year => { const d = resultsData[year] || { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, resNoDiv:0, resWithDiv:0, tax:0, accumulated:0, fees:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0 }; return ( <tr key={year} className={`hover:bg-slate-900/40 transition-colors ${d.locked ? 'opacity-70' : ''}`}><td className="p-2 text-center bg-slate-900/50 sticky left-0 z-20 border-r border-slate-800"><input type="checkbox" checked={d.locked} onChange={()=>toggleLock(year)} className="w-3 h-3 accent-red-500 cursor-pointer" /></td><td className="p-2 text-center font-bold text-white bg-slate-900/20">{year}</td><td className="p-2 text-center text-slate-400 text-[10px]">{formatN(d.soldCount, 0)} <span className="text-slate-600">/</span> <span className="text-slate-300 font-bold">{formatN(d.uniqueCount, 0)}</span></td><td className="p-2 border-l border-slate-800/50"><input type="number" step="0.01" value={d.profitPrice} onChange={e=>handleEdit(year, 'profitPrice', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-green-500 outline-none" /></td><td className="p-2"><input type="number" step="0.01" value={d.dividends} onChange={e=>handleEdit(year, 'dividends', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-blue-400 outline-none" /></td><td className="p-2"><input type="number" step="0.01" value={d.lossPrice} onChange={e=>handleEdit(year, 'lossPrice', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-red-500 outline-none" /></td><td className="p-2 border-l border-slate-800/50 bg-slate-900/20"><input type="number" step="0.01" value={d.resNoDiv} onChange={e=>handleEdit(year, 'resNoDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resNoDiv >=0 ? 'text-slate-200':'text-red-400'}`} /></td><td className="p-2 bg-slate-900/20"><input type="number" step="0.01" value={d.resWithDiv} onChange={e=>handleEdit(year, 'resWithDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resWithDiv >=0 ? 'text-white':'text-red-400'}`} /></td><td className="p-2"><input type="number" step="0.01" value={d.tax} onChange={e=>handleEdit(year, 'tax', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-purple-400 font-bold outline-none" /></td><td className="p-2 border-r border-slate-800 bg-slate-900/10"><div className={`text-right font-bold ${d.accumulated >= 0 ? 'text-yellow-500' : 'text-red-500'}`}>{formatMoney(d.accumulated, baseCurrency)}</div></td><td className="p-2 border-l-4 border-slate-900 bg-[#161b25]"><input type="number" step="0.01" value={d.rentaResNoDiv} onChange={e=>handleEdit(year, 'rentaResNoDiv', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-300 outline-none font-bold" /></td><td className="p-2 bg-[#161b25]"><input type="number" step="0.01" value={d.rentaFees} onChange={e=>handleEdit(year, 'rentaFees', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-500 outline-none" /></td><td className="p-2 bg-[#161b25]"><input type="number" step="0.01" value={d.rentaAdj} onChange={e=>handleEdit(year, 'rentaAdj', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-300 outline-none border-b border-slate-700/50 focus:border-blue-500" /></td><td className="p-2 bg-[#161b25]"><input type="number" step="0.01" value={d.rentaBase} onChange={e=>handleEdit(year, 'rentaBase', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-blue-200 font-bold outline-none" /></td></tr> ); })}
-                           <tr className="bg-slate-900 border-t-2 border-slate-700 text-white font-bold text-xs shadow-xl"><td colSpan="3" className="p-3 text-right text-[10px] uppercase text-slate-500 tracking-widest bg-slate-900 sticky left-0">Total Global: <span className="text-white ml-2">{formatN(totals.soldCount, 0)} Op.</span></td><td className="p-3 text-right text-green-500">{formatMoney(totals.profitPrice, baseCurrency)}</td><td className="p-3 text-right text-blue-400">{formatMoney(totals.dividends, baseCurrency)}</td><td className="p-3 text-right text-red-500">{formatMoney(totals.lossPrice, baseCurrency)}</td><td className="p-3 text-right text-slate-300">{formatMoney(totals.resNoDiv, baseCurrency)}</td><td className="p-3 text-right text-white text-sm">{formatMoney(totals.resWithDiv, baseCurrency)}</td><td className="p-3 text-right text-purple-400">{formatMoney(totals.tax, baseCurrency)}</td><td className="p-3 bg-slate-950"></td><td className="p-3 bg-[#11151d]"></td><td className="p-3 text-right text-slate-500 bg-[#11151d]">{formatMoney(totals.fees, baseCurrency)}</td><td className="p-3 bg-[#11151d]"></td><td className="p-3 text-right text-blue-200 bg-[#11151d]">{formatMoney(totals.rentaBase, baseCurrency)}</td></tr></tbody></table>
-                   </div>
-                   
-                   <div className="h-[400px] shrink-0">
-                       <SimpleChart type="bar" data={chartData} title="Beneficio/Pérdida Neto Total (Precio + Divs) por Año" height={400} />
-                   </div>
-              </div>
-          );
-      };
-
+      
 
 
       const DividendTab = ({ portfolio, setPortfolio, baseCurrency }) => {
