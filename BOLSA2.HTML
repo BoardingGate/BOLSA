@@ -667,6 +667,8 @@
       };
 
 
+
+
 const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData }) => {
           const [filterText, setFilterText] = useState('');
           const [filterDateStart, setFilterDateStart] = useState('');
@@ -679,7 +681,6 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           const [analysisResult, setAnalysisResult] = useState(null);
           const [isModalOpen, setIsModalOpen] = useState(false);
           const [isSellModalOpen, setIsSellModalOpen] = useState(false);
-          const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
           const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', msg: '', onConfirm: null });
           const [infoModal, setInfoModal] = useState({ isOpen: false, title: '', msg: '', type: 'info' });
           const [noteToast, setNoteToast] = useState(null);
@@ -698,6 +699,14 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           const getSafeFx = (fx, currency) => {
               if (!currency || currency === baseCurrency || currency === 'EUR' || fx === 0) return 1;
               return parseFloat(fx) || 1;
+          };
+
+          const resetFilters = () => {
+              setFilterText('');
+              setFilterDateStart('');
+              setFilterDateEnd('');
+              setFilterType('active');
+              setSortConfig({ key: 'date', direction: 'desc' });
           };
 
           useEffect(() => { if (noteToast) { const timer = setTimeout(() => setNoteToast(null), 30000); return () => clearTimeout(timer); } }, [noteToast]);
@@ -749,14 +758,13 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
           const historicalStats = useMemo(() => {
               const allP = portfolio.filter(p => p && p.isActive !== false);
-              const activeP = allP.filter(p => !p.sellDate); const soldP = allP.filter(p => !!p.sellDate);
               const calcAvgCapital = (items) => { if (items.length === 0) return { avgCap: 0, profit: 0, first: null, last: null, diffDays: 0 }; const sortedByBuy = [...items].sort((a,b) => new Date(a.buyDate) - new Date(b.buyDate)); const firstDate = new Date(sortedByBuy[0].buyDate); let lastDate = new Date(); if (items.every(p => p.sellDate)) { const sortedBySell = [...items].sort((a,b) => new Date(b.sellDate) - new Date(a.sellDate)); lastDate = new Date(sortedBySell[0].sellDate); } const totalPeriodDays = Math.max(1, (lastDate - firstDate) / (1000 * 60 * 60 * 24)); let weightedSum = 0; let totalProfit = 0; items.forEach(p => { 
                 const cost = (p.buyPrice * p.shares * getSafeFx(p.buyFx, p.stockCurrency)) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
                 const endDate = p.sellDate ? new Date(p.sellDate) : new Date(); const daysHeld = Math.max(0, (endDate - new Date(p.buyDate)) / (1000 * 60 * 60 * 24)); weightedSum += (cost * daysHeld); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? getSafeFx(p.sellFx, p.stockCurrency) : getSafeFx(p.currentFx, p.stockCurrency); 
                 const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
                 const divs = (p.dividends || []).reduce((acc,d) => acc+d.net, 0); totalProfit += (vF - cost) + divs; }); const avgCap = weightedSum / totalPeriodDays; return { avgCap, profit: totalProfit, first: firstDate, last: lastDate, diffDays: totalPeriodDays }; };
               const allOps = []; allP.forEach(p => { if(p){ allOps.push({ d: new Date(p.buyDate).getTime(), type: 'buy' }); if(p.sellDate) allOps.push({ d: new Date(p.sellDate).getTime(), type: 'sell' }); } }); allOps.sort((a,b) => a.d - b.d); let diffSum = 0; for(let i=1; i<allOps.length; i++) { diffSum += (allOps[i].d - allOps[i-1].d); } const avgIntervalDays = allOps.length > 1 ? (diffSum / (allOps.length - 1)) / (1000 * 60 * 60 * 24) : 0; const firstEver = allOps.length > 0 ? allOps[0].d : Date.now(); const lastEver = allOps.length > 0 ? allOps[allOps.length-1].d : Date.now(); const totalTimeSpan = Math.max(1, (lastEver - firstEver)/(1000*60*60*24)); let totalDaysOpenAccum = 0; allP.forEach(p => { if(p){ const end = p.sellDate ? new Date(p.sellDate) : new Date(); totalDaysOpenAccum += Math.max(0, (end - new Date(p.buyDate))/(1000*60*60*24)); } }); const avgPositions = totalTimeSpan > 0 ? totalDaysOpenAccum / totalTimeSpan : 0;
-              return { consolidated: calcAvgCapital(allP), closed: calcAvgCapital(soldP), active: calcAvgCapital(activeP), avgIntervalDays, avgPositions };
+              return { consolidated: calcAvgCapital(allP), closed: calcAvgCapital(allP.filter(x=>x.sellDate)), active: calcAvgCapital(allP.filter(x=>!x.sellDate)), avgIntervalDays, avgPositions };
           }, [portfolio]);
 
           const activeFilteredPortfolio = useMemo(() => { return filteredPortfolio.filter(p => p && p.isActive !== false); }, [filteredPortfolio]); 
@@ -807,27 +815,21 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           const handleSave = () => { const e = { ...form, name: form.name || form.ticker }; if (editingId) setPortfolio(prev => prev.map(p => p && p.id === editingId ? { ...p, ...e } : p)); else setPortfolio(prev => [...prev, { ...e, id: Date.now(), currentPrice: form.buyPrice, currentFx: form.buyFx, isActive: true, dividends: [] }]); setIsModalOpen(false); };
           const handleSellSubmit = () => { const soldR = { ...sellItem, id: Date.now(), shares: sellForm.sharesToSell, isActive: true, sellDate: sellForm.sellDate, sellPrice: sellForm.sellPrice, sellFx: getSafeFx(sellForm.sellFx, sellItem.stockCurrency), sellFees: sellForm.sellFees, sellAdjustments: sellForm.sellAdjustments, sellFeesIncludedInPrice: sellForm.sellFeesIncludedInPrice, dividends: [...(sellItem.dividends || [])] }; const updatedP = portfolio.map(p => p && p.id === sellItem.id ? { ...p, isActive: false, dividends: [] } : p); setPortfolio([...updatedP, soldR]); setIsSellModalOpen(false); };
           const handleClone = (p) => { const clone = { ...p, id: Date.now() + Math.random(), isActive: false }; setPortfolio(prev => [...prev, clone]); setInfoModal({ isOpen: true, title: 'Clonado', msg: `Copia de ${p.ticker} creada (Desactivada).`, type: 'info' }); };
-          const confirmDelete = (id) => { 
-              setPortfolio(prev => prev.filter(x => x && x.id !== id)); 
-              setConfirmModal({ isOpen: false, title: '', msg: '', onConfirm: null }); 
-          };
+          const confirmDelete = (id) => { setPortfolio(prev => prev.filter(x => x && x.id !== id)); setConfirmModal({ isOpen: false, title: '', msg: '', onConfirm: null }); };
 
           const handlePrint = () => {
               const printWindow = window.open('', '', 'height=800,width=1200');
               const typeMap = { 'active': 'CARTERA ACTIVA', 'sold': 'HISTÓRICO VENTAS', 'all': 'INFORME GLOBAL' };
               const emissionTime = new Date().toLocaleString();
-              
               let html = `<html><head><title>Informe Cartera</title><style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:7px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th{background:#f1f5f9;text-align:left;padding:3px;border-bottom:1px solid #94a3b8;} td{padding:3px;border-bottom:1px solid #e2e8f0; vertical-align:top;} .num{text-align:right;font-family:monospace;}</style></head><body>`;
-              html += `<h1>BoardingGate - ${typeMap[filterType]}</h1><p>Emisión: ${emissionTime}</p>`;
-              html += `<table><thead><tr><th>Valor</th><th>Fechas</th><th class="num">Títulos</th><th class="num">Precios</th><th class="num">Coste Total</th><th class="num">Valor Final</th><th class="num">Resultado</th><th class="num">%</th></tr></thead><tbody>`;
-              
-              filteredPortfolio.forEach(p => {
+              html += `<h1>BoardingGate - ${typeMap[filterType]}</h1><p>Emisión: ${emissionTime}</p><table><thead><tr><th>Valor</th><th>Fechas</th><th class="num">Títulos</th><th class="num">Precios</th><th class="num">Coste Total</th><th class="num">Valor Final</th><th class="num">Resultado</th><th class="num">%</th></tr></thead><tbody>`;
+              filteredPortfolio.forEach(p => { if(!p) return;
                   const cost = (p.buyPrice * p.shares * getSafeFx(p.buyFx, p.stockCurrency)) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
                   const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice);
                   const curF = isS ? getSafeFx(p.sellFx, p.stockCurrency) : getSafeFx(p.currentFx, p.stockCurrency);
                   const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
                   const pl = vF - cost; const ds = (p.dividends || []).reduce((acc,d)=>acc+d.net,0);
-                  html += `<tr><td><b>${p.ticker}</b><br/>${p.name}</td><td>${formatDateES(p.buyDate)}${isS ? `<br/>${formatDateES(p.sellDate)}` : ''}</td><td class="num">${formatN(p.shares)}</td><td class="num">I:${formatN(p.buyPrice)}<br/>A:${formatN(curP)}</td><td class="num">${formatMoney(cost, baseCurrency)}</td><td class="num">${formatMoney(vF, baseCurrency)}</td><td class="num">${formatMoney(pl+ds, baseCurrency)}</td><td class="num">${formatN(((pl+ds)/cost)*100)}%</td></tr>`;
+                  html += `<tr><td><b>${p.ticker}</b><br/>${p.name}</td><td>${formatDateES(p.buyDate)}${isS ? `<br/>${formatDateES(p.sellDate)}` : ''}</td><td class="num">${formatN(p.shares)}</td><td class="num">I:${formatN(p.buyPrice)}<br/>A:${formatN(curP)}</td><td class="num">${formatMoney(cost, baseCurrency)}</td><td class="num">${formatMoney(vF, baseCurrency)}</td><td class="num">${formatMoney(pl+ds, baseCurrency)}</td><td class="num">${formatN(cost !== 0 ? ((pl+ds)/cost)*100 : 0)}%</td></tr>`;
               });
               html += `</tbody></table></body></html>`;
               printWindow.document.write(html); printWindow.document.close(); setTimeout(() => printWindow.print(), 500);
@@ -835,14 +837,8 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
           const toggleAllActive = () => {
               const allActive = filteredPortfolio.every(p => p && p.isActive !== false);
-              setPortfolio(prev => prev.map(p => {
-                  if(!p) return null;
-                  const isVisible = filteredPortfolio.some(fp => fp && fp.id === p.id);
-                  return isVisible ? { ...p, isActive: !allActive } : p;
-              }));
+              setPortfolio(prev => prev.map(p => { if(!p) return null; const isVisible = filteredPortfolio.some(fp => fp && fp.id === p.id); return isVisible ? { ...p, isActive: !allActive } : p; }));
           };
-
-          const yieldOnCost = form.buyPrice > 0 ? (form.annualDividend / form.buyPrice) * 100 : 0;
 
           const RenderHistoryCard = () => {
               const h = historicalStats;
@@ -851,10 +847,10 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
               return ( <div className="glass-panel p-4 rounded-xl border-t-4 border-yellow-500 min-w-[320px] max-w-[400px]"> <div className="flex justify-between items-center mb-2"> <span className="text-[10px] font-black uppercase text-yellow-500 flex items-center gap-2"><Icons.Award size={12}/> RENTABILIDAD HISTÓRICA CARTERA</span> </div> <div className="grid grid-cols-2 gap-4 mb-3 border-b border-slate-700/50 pb-2"> <div className="bg-slate-900/40 p-2 rounded-lg"> <div className="text-[8px] text-slate-400 uppercase font-bold mb-1">Consolidada (Act+Cerr)</div> <div className={`text-lg font-black ${roiCons>=0?'text-green-400':'text-red-400'}`}>{formatN(roiCons)}%</div> <div className="flex justify-between items-end mt-1"> <div className="text-[8px] text-slate-500">Cap. Medio: <span className="text-slate-300">{formatMoney(h.consolidated.avgCap, baseCurrency)}</span></div> </div> </div> <div className="bg-slate-900/40 p-2 rounded-lg"> <div className="text-[8px] text-slate-400 uppercase font-bold mb-1">Solo Cerradas</div> <div className={`text-lg font-black ${roiClosed>=0?'text-green-400':'text-red-400'}`}>{formatN(roiClosed)}%</div> <div className="flex justify-between items-end mt-1"> <div className="text-[8px] text-slate-500">Cap. Medio: <span className="text-slate-300">{formatMoney(h.closed.avgCap, baseCurrency)}</span></div> </div> </div> </div> <div className="mt-2 pt-2 border-t border-slate-800/50 flex justify-between items-center text-[9px]"> <div className="text-slate-500">Intervalo Operaciones: <span className="text-slate-300 font-bold">{formatN(h.avgIntervalDays, 1)} días</span></div> <div className="text-slate-500">Pos. Medias: <span className="text-slate-300 font-bold">{formatN(h.avgPositions, 1)}</span></div> </div> </div> );
           };
 
+          const yieldOnCost = form.buyPrice > 0 ? (form.annualDividend / form.buyPrice) * 100 : 0;
+
           return (
               <div className="w-full p-4 md:p-6 flex flex-col gap-6">
-                  {updating && <div className="fixed inset-0 z-[200] bg-black/40 backdrop-blur-sm flex items-center justify-center"><div className="bg-slate-900 p-6 rounded-2xl border border-slate-700 flex flex-col items-center gap-4 shadow-2xl"><Icons.Loader size={40} className="text-blue-500"/><div className="text-white font-bold uppercase tracking-widest text-xs">Actualizando...</div></div></div>}
-                  
                   <div className="flex gap-4 overflow-x-auto pb-2 custom-scrollbar shrink-0">
                       <StatsBlock title="ACTIVOS FILTRADOS" data={stats.active} color="#22c55e" baseCurrency={baseCurrency} type="active" />
                       <StatsBlock title="VENTAS FILTRADAS" data={stats.sold} color="#f97316" baseCurrency={baseCurrency} type="sold" />
@@ -926,7 +922,6 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                       </table>
                   </div>
 
-                  {/* GRÁFICO DINÁMICO: RESTAURADO EJE Y GRADUACIÓN */}
                   <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 flex flex-col relative" style={{ height: `${100 + (divergingData.length * 35)}px` }}>
                       <h4 className="text-[10px] uppercase font-bold text-slate-400 mb-2">Rendimiento por Posición (Solo Precio)</h4>
                       <div className="flex-1 w-full text-[9px] relative mb-6">
@@ -959,7 +954,6 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                                   </div>
                               );
                           })}
-                          {/* EJE DE GRADUACIÓN (HORIZONTAL X-AXIS) */}
                           <div className="absolute -bottom-6 left-[25%] right-0 flex justify-between px-2 text-[8px] text-slate-500 font-mono border-t border-slate-700 pt-1">
                                 <span>-{formatN(Math.max(...divergingData.map(d => Math.abs(d.value)), 1),0)}</span>
                                 <span>0</span>
@@ -971,7 +965,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                   <StatsDashboard portfolio={portfolio} baseCurrency={baseCurrency} taxTotal={taxSum} />
                   <CarouselCharts chartsData={chartsData} />
 
-                  <Modal isOpen={isModalOpen} title={editingId ? `Edición: ${form.ticker}` : "Apertura de Posición"} onClose={()=>setIsModalOpen(false)}>
+                  <Modal isOpen={isModalOpen} title={editingId ? `Ficha: ${form.ticker}` : "Apertura de Posición"} onClose={()=>setIsModalOpen(false)}>
                       <div className="space-y-6">
                           <div className="bg-slate-800/40 border border-slate-700 p-5 rounded-2xl space-y-4">
                               <div className="flex justify-between items-center border-b border-slate-700 pb-2">
@@ -987,6 +981,11 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                                   <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Precio Uni.</label><input type="number" step="0.01" value={form.buyPrice} onChange={e=>setForm({...form, buyPrice: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-white text-sm bg-slate-900 border-slate-700 text-right" /></div>
                                   <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">FX Compra</label><input type="number" step="0.0001" value={getSafeFx(form.buyFx, form.stockCurrency)} onChange={e=>setForm({...form, buyFx: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div>
                               </div>
+                              <div className="grid grid-cols-3 gap-3">
+                                  <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Gastos/Fee</label><input type="number" step="0.01" value={form.fees} onChange={e=>setForm({...form, fees: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div>
+                                  <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Ajustes</label><input type="number" step="0.01" value={form.adjustments} onChange={e=>setForm({...form, adjustments: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div>
+                                  <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">PER Entrada</label><input type="number" step="0.1" value={form.buyPE} onChange={e=>setForm({...form, buyPE: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-yellow-500 text-sm bg-slate-900 border-slate-700 text-right" /></div>
+                              </div>
                               <div className="flex items-center justify-end gap-2 bg-slate-900/30 p-2 rounded-lg border border-slate-700/50">
                                   <input type="checkbox" id="feesIncBuy" checked={form.feesIncludedInPrice} onChange={e=>setForm({...form, feesIncludedInPrice: e.target.checked})} className="custom-checkbox" />
                                   <label htmlFor="feesIncBuy" className="text-[10px] font-bold text-slate-400 uppercase">Gastos incluidos en precio</label>
@@ -994,7 +993,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                               
                               <div className="bg-green-900/10 border border-green-500/20 p-4 rounded-xl flex items-center gap-4">
                                   <div className="flex-1">
-                                      <label className="text-[10px] uppercase font-bold text-green-400 mb-1 block">Dividendos Estimados (Año)</label>
+                                      <label className="text-[10px] uppercase font-bold text-green-400 mb-1 block">Dividendo Anual Estimado</label>
                                       <input type="number" step="0.01" value={form.annualDividend} onChange={e=>setForm({...form, annualDividend: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-green-600/50 text-right text-green-400" />
                                   </div>
                                   <div className="bg-green-900/30 px-4 py-2 rounded-lg text-center"><div className="text-[8px] text-green-300 uppercase font-black">Yield on Cost</div><div className="text-base font-black text-white">{formatN(yieldOnCost)}%</div></div>
@@ -1006,7 +1005,6 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                               </div>
                           </div>
 
-                          {/* BLOQUE DE DIVIDENDOS COBRADOS ACUMULADOS (MODIFICADO) */}
                           {editingId && (() => {
                               const p = portfolio.find(x=>x && x.id===editingId);
                               if (!p) return null;
@@ -1016,15 +1014,14 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                               const cost = (p.buyPrice * p.shares * getSafeFx(p.buyFx, p.stockCurrency)) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
                               const val = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
                               const pl = val - cost;
-                              
                               const dNet = (p.dividends || []).reduce((a,b)=>a+(b.net||0),0);
                               const dOrg = (p.dividends || []).reduce((a,b)=>a+(b.taxOrigin||0),0);
                               const dDest = (p.dividends || []).reduce((a,b)=>a+(b.taxDest||0),0);
-
                               return (
                                   <div className="bg-slate-900 border-2 border-slate-700 p-5 rounded-3xl space-y-4">
-                                      <h4 className={`text-[10px] uppercase font-bold tracking-widest border-b border-slate-800 pb-2 ${isS ? 'text-orange-400' : 'text-green-400'}`}>
-                                          {isS ? '2. Liquidación Final' : '2. Valoración de Mercado'}
+                                      <h4 className={`text-[10px] uppercase font-bold tracking-widest border-b border-slate-800 pb-2 flex justify-between ${isS ? 'text-orange-400' : 'text-green-400'}`}>
+                                          <span>{isS ? '2. Liquidación Final' : '2. Valoración de Mercado'}</span>
+                                          <span className="text-slate-500 font-mono uppercase">[{p.ticker} @ {formatN(curP)} {p.stockCurrency}]</span>
                                       </h4>
                                       <div className="grid grid-cols-2 gap-4">
                                           <div className="bg-black/40 p-3 rounded-xl border border-slate-800">
@@ -1036,19 +1033,17 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                                               <div className={`text-sm font-black ${pl >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(pl, baseCurrency)}</div>
                                           </div>
                                       </div>
-
                                       <div className="bg-blue-900/10 border border-blue-500/20 p-4 rounded-xl">
-                                          <div className="text-[9px] uppercase font-bold text-blue-400 mb-3 border-b border-blue-500/10 pb-1">Dividendos Cobrados a la fecha</div>
+                                          <div className="text-[9px] uppercase font-bold text-blue-400 mb-3 border-b border-blue-500/10 pb-1 text-center">Dividendos Cobrados Acumulados</div>
                                           <div className="grid grid-cols-3 gap-2 text-center">
                                               <div><div className="text-[7px] text-slate-500 uppercase">Neto</div><div className="text-xs font-black text-green-400">{formatMoney(dNet, baseCurrency)}</div></div>
                                               <div><div className="text-[7px] text-slate-500 uppercase">Ret. Origen</div><div className="text-xs font-black text-slate-400">{formatMoney(dOrg, baseCurrency)}</div></div>
                                               <div><div className="text-[7px] text-slate-500 uppercase">Ret. Destino</div><div className="text-xs font-black text-slate-400">{formatMoney(dDest, baseCurrency)}</div></div>
                                           </div>
                                       </div>
-
                                       <div className={`p-4 rounded-xl flex justify-between items-center border-2 ${pl+dNet >= 0 ? 'bg-green-900/20 border-green-500' : 'bg-red-900/20 border-red-500'}`}>
                                           <div className="text-right w-full">
-                                              <div className="text-[8px] text-slate-400 font-black uppercase mb-1">Retorno Total (Precio + Divs)</div>
+                                              <div className="text-[8px] text-slate-400 font-black uppercase mb-1">Resultado Final Neto (Precio + Divs)</div>
                                               <div className={`text-xl font-black font-mono ${pl+dNet >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(pl + dNet, baseCurrency)}</div>
                                           </div>
                                       </div>
@@ -1064,21 +1059,25 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                       </div>
                   </Modal>
 
-                  <Modal isOpen={isSellModalOpen} title={`Liquidación: ${sellItem?.ticker}`} onClose={()=>setIsSellModalOpen(false)}>
+                  <Modal isOpen={isSellModalOpen} title={`Venta: ${sellItem?.ticker}`} onClose={()=>setIsSellModalOpen(false)}>
                       <div className="space-y-4">
                           <div className="grid grid-cols-2 gap-4">
                               <div><label className="text-[10px] uppercase font-bold text-slate-500">Fecha Venta</label><input type="date" value={sellForm.sellDate} onChange={e=>setSellForm({...sellForm, sellDate: e.target.value})} className="w-full font-bold text-sm bg-slate-900 border-slate-700 text-right text-white" /></div>
                               <div><label className="text-[10px] uppercase font-bold text-slate-500">Acciones</label><input type="number" value={sellForm.sharesToSell} readOnly className="w-full font-bold text-sm bg-slate-900 border-slate-700 text-right opacity-60 text-white" /></div>
                           </div>
                           <div className="grid grid-cols-2 gap-4">
-                              <div><label className="text-[10px] uppercase font-bold text-slate-500">Precio Venta</label><input type="number" step="0.001" value={sellForm.sellPrice} onChange={e=>setSellForm({...sellForm, sellPrice: parseFloat(e.target.value)})} className="w-full font-mono text-white text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div>
-                              <div><label className="text-[10px] uppercase font-bold text-slate-500">FX Venta</label><input type="number" step="0.0001" value={getSafeFx(sellForm.sellFx, sellItem?.stockCurrency)} onChange={e=>setSellForm({...sellForm, sellFx: parseFloat(e.target.value)})} className="w-full font-mono text-white text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div>
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500">Precio Venta ({sellItem?.stockCurrency})</label><input type="number" step="0.001" value={sellForm.sellPrice} onChange={e=>setSellForm({...sellForm, sellPrice: parseFloat(e.target.value)})} className="w-full font-mono text-white text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div>
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500">FX Venta ({baseCurrency})</label><input type="number" step="0.0001" value={getSafeFx(sellForm.sellFx, sellItem?.stockCurrency)} onChange={e=>setSellForm({...sellForm, sellFx: parseFloat(e.target.value)})} className="w-full font-mono text-white text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500">Gastos Broker</label><input type="number" step="0.01" value={sellForm.sellFees} onChange={e=>setSellForm({...sellForm, sellFees: parseFloat(e.target.value)})} className="w-full font-mono text-white text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div>
+                              <div><label className="text-[10px] uppercase font-bold text-slate-500">Ajustes Venta</label><input type="number" step="0.01" value={sellForm.sellAdjustments} onChange={e=>setSellForm({...sellForm, sellAdjustments: parseFloat(e.target.value)})} className="w-full font-mono text-white text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div>
                           </div>
                           <div className="flex items-center justify-end gap-2 bg-slate-900/30 p-2 rounded-lg border border-slate-700/50">
                               <input type="checkbox" id="feesIncSellFast" checked={sellForm.sellFeesIncludedInPrice} onChange={e=>setSellForm({...sellForm, sellFeesIncludedInPrice: e.target.checked})} className="custom-checkbox" />
                               <label htmlFor="feesIncSellFast" className="text-[10px] font-bold text-slate-400 uppercase">Gastos incluidos en precio</label>
                           </div>
-                          <button onClick={handleSellSubmit} className="w-full bg-green-600 py-4 rounded-xl font-black uppercase shadow-lg text-xs tracking-widest border-t-2 border-white/10">Ejecutar Cierre</button>
+                          <button onClick={handleSellSubmit} className="w-full bg-green-600 py-4 rounded-xl font-black uppercase shadow-lg text-xs tracking-widest border-t-2 border-white/10">Cerrar Posición</button>
                       </div>
                   </Modal>
 
@@ -1088,14 +1087,13 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                           <p className="text-slate-300 text-sm font-bold">{confirmModal.msg}</p>
                           <div className="flex gap-2">
                               <button onClick={()=>setConfirmModal({isOpen:false})} className="flex-1 bg-slate-700 py-3 rounded-xl font-bold uppercase text-[10px]">Cancelar</button>
-                              <button onClick={confirmModal.onConfirm} className="flex-1 bg-red-600 py-3 rounded-xl font-bold text-white uppercase text-[10px]">Confirmar Borrado</button>
+                              <button onClick={confirmModal.onConfirm} className="flex-1 bg-red-600 py-3 rounded-xl font-bold text-white uppercase text-[10px]">Confirmar</button>
                           </div>
                       </div>
                   </Modal>
               </div>
           );
       };
-
    
 
  const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
