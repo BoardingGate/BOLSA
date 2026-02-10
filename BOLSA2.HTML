@@ -836,14 +836,33 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           );
       };
 
+
+
       const SettingsTab = ({ apiKey, setApiKey, isAuth, onActivate, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio }) => {
-          const [localLic, setLocalLic] = useState(''); const [showKey, setShowKey] = useState(false); const [testStatus, setTestStatus] = useState(null); const [errorDetail, setErrorDetail] = useState(''); const [ioStatus, setIoStatus] = useState('idle');
-          const [gAccessToken, setGAccessToken] = usePersistentState('bg_g_token', ''); const [showGToken, setShowGToken] = useState(false);
-          const [pdfFile, setPdfFile] = useState(null); const [pdfPrompt, setPdfPrompt] = useState('Añade a la cartera las posiciones indicadas en el PDF.'); const [importingPdf, setImportingPdf] = useState(false); const [importResult, setImportResult] = useState(null);
+          const [localLic, setLocalLic] = useState(''); 
+          const [showKey, setShowKey] = useState(false); 
+          const [testStatus, setTestStatus] = useState(null); 
+          const [errorDetail, setErrorDetail] = useState(''); 
+          const [ioStatus, setIoStatus] = useState('idle');
+          
+          // Google Drive States
+          const [gAccessToken, setGAccessToken] = usePersistentState('bg_g_token', ''); 
+          const [showGToken, setShowGToken] = useState(false);
+          
+          // PDF States
+          const [pdfFile, setPdfFile] = useState(null); 
+          const [pdfPrompt, setPdfPrompt] = useState('Añade a la cartera las posiciones indicadas en el PDF.'); 
+          const [importingPdf, setImportingPdf] = useState(false); 
+          const [importResult, setImportResult] = useState(null);
+
           const sanitizeAndParseJSON = (text) => { try {const match = text.match(/\{[\s\S]*\}/); if (match) return JSON.parse(match[0]); return JSON.parse(text); } catch (e) { throw new Error("La IA no devolvió un formato de datos válido."); } };
+          
           const testConnection = async () => { if(!apiKey) return alert("Introduce una clave primero."); setTestStatus('loading'); setErrorDetail(''); try { await askGemini(apiKey, "Test conexión"); setTestStatus('success'); } catch(e) { setTestStatus('error'); setErrorDetail(e.message); } };
+          
           const handleRunExport = () => { setIoStatus('processing'); try { const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 2 }; const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `BoardingGate_Backup_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); setIoStatus('success'); setTimeout(() => setIoStatus('idle'), 2000); } catch (e) { alert("Error: " + e.message); setIoStatus('error'); } };
+          
           const handleRunImport = (e) => { const file = e.target.files[0]; if (!file) return; if(!confirm("⚠️ IMPORTANTE:\n\nEsta acción reemplazará TODA tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) { e.target.value = null; return; } setIoStatus('processing'); const reader = new FileReader(); reader.onload = (ev) => { try { const d = JSON.parse(ev.target.result); if (d.portfolio) setPortfolio(d.portfolio); if (d.apiKey) setApiKey(d.apiKey); if (d.baseCurrency) setBaseCurrency(d.baseCurrency); if (d.refreshInterval) setRefreshInterval(d.refreshInterval); setIoStatus('success'); alert("✅ Restauración completada correctamente."); window.location.reload(); } catch (err) { alert("Archivo inválido o corrupto."); setIoStatus('error'); } }; reader.readAsText(file); };
+          
           const handlePdfImport = async () => { if (!apiKey) return alert("Falta API Key"); if (!pdfFile) return alert("Selecciona un archivo PDF"); setImportingPdf(true); setImportResult(null); try { const pdfText = await readPdfText(pdfFile); const truncatedText = pdfText.substring(0, 30000); const prompt = `CRITICAL: Role=DataEntryBot. Output=JSON Array Only. Task: Extract stock portfolio data from this text based on instructions: "${pdfPrompt}". Text: "${truncatedText}" Expected JSON Object Format for each item: { "ticker": "SYMBOL", "name": "Company Name", "shares": number, "buyPrice": number, "buyDate": "YYYY-MM-DD", "stockCurrency": "USD/EUR/etc", "buyFx": number (1 if same currency), "fees": number (0 if unknown), "sellDate": "YYYY-MM-DD" (if closed, else null), "sellPrice": number (if closed, else 0), "sellFx": number (1 if same currency), "sellFees": number } If data is missing, estimate reasonable defaults or 0. Return ONLY the JSON array.`; const res = await askGemini(apiKey, prompt); const extractedData = sanitizeAndParseJSON(res); if (Array.isArray(extractedData)) { setPortfolio(prev => { const newItems = extractedData.map(item => ({ ...item, id: Date.now() + Math.random(), group: 'Importado PDF', isActive: true, dividends: [], adjustments: 0, buyPE: 0, currentPE: 0, annualDividend: 0, currentPrice: item.sellDate ? 0 : item.buyPrice, currentFx: item.buyFx })); return [...prev, ...newItems]; }); setImportResult({ success: true, count: extractedData.length, data: extractedData }); } else { throw new Error("Formato respuesta incorrecto"); } } catch (e) { setImportResult({ success: false, error: e.message }); } finally { setImportingPdf(false); setPdfFile(null); } };
 
           return (
@@ -872,7 +891,37 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                       <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4"><div className="p-3 bg-cyan-500/20 rounded-xl text-cyan-400"><Icons.Upload size={32} className="rotate-180" /></div><div><h2 className="text-2xl font-bold text-white">Copia de Seguridad y Cloud</h2><p className="text-slate-400 text-sm">Exporta tu configuración y conecta Google Drive</p></div></div>
                       <div className="bg-yellow-900/20 border border-yellow-600/30 rounded-xl p-4 mb-6"><h4 className="text-yellow-500 font-bold text-sm mb-2 flex items-center gap-2"><Icons.AlertCircle size={16}/> Información Importante</h4><p className="text-sm text-slate-300 leading-relaxed">El archivo de exportación contiene <strong>toda tu configuración, claves, y cartera de inversiones</strong>. Guárdalo en un lugar seguro.</p></div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4"><button onClick={handleRunExport} disabled={ioStatus === 'processing'} className={`flex items-center justify-center gap-2 py-4 px-6 rounded-xl border transition-all font-bold ${ioStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : 'bg-slate-800 border-slate-600 hover:bg-slate-700 text-white'}`}>{ioStatus === 'processing' ? <Icons.Loader size={20}/> : <Icons.Upload size={20} className="rotate-180" />} EXPORTAR DATOS</button><label className={`cursor-pointer flex items-center justify-center gap-2 py-4 px-6 rounded-xl border transition-all font-bold ${ioStatus === 'processing' ? 'bg-slate-800 opacity-50 cursor-not-allowed' : 'bg-blue-600 border-blue-500 hover:bg-blue-500 text-white'}`}><input type="file" accept=".json" className="hidden" onChange={handleRunImport} disabled={ioStatus === 'processing'} /><Icons.Upload size={20} /> RESTAURAR DATOS</label></div>
-                      <div className="mt-8 border-t border-slate-700 pt-6"><h4 className="text-sm font-bold text-blue-400 mb-4 uppercase tracking-widest flex items-center gap-2"><Icons.Globe size={16}/> Copia Automática Google Drive</h4><div><label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">Google Access Token (Oauth2)</label><div className="relative mb-2"><input type={showGToken ? "text" : "password"} value={simpleDecrypt(gAccessToken)} onChange={(e) => setGAccessToken(simpleEncrypt(e.target.value))} placeholder="ya29.a0..." className="w-full bg-black/50 border border-slate-600 rounded-xl p-3 pr-12 text-white focus:border-blue-500 focus:outline-none font-mono text-xs"/><button onClick={() => setShowGToken(!showGToken)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showGToken ? <Icons.EyeOff size={16}/> : <Icons.Eye size={16}/>}</button></div><p className="text-[10px] text-slate-500 italic mb-4">Introduce un Token de Acceso válido para permitir que la aplicación suba automáticamente un backup cada 24h. <a href="https://developers.google.com/oauthplayground" target="_blank" className="text-blue-400 underline">Obtener Token Temporal</a>.</p></div></div>
+                      
+                      <div className="mt-8 border-t border-slate-700 pt-6">
+                        <h4 className="text-sm font-bold text-blue-400 mb-4 uppercase tracking-widest flex items-center gap-2"><Icons.Globe size={16}/> Copia Automática Google Drive (24h)</h4>
+                        
+                        <div>
+                            <label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">Google Access Token (Oauth2)</label>
+                            <div className="relative mb-4">
+                                <input type={showGToken ? "text" : "password"} value={simpleDecrypt(gAccessToken)} onChange={(e) => setGAccessToken(simpleEncrypt(e.target.value))} placeholder="ya29.a0..." className="w-full bg-black/50 border border-slate-600 rounded-xl p-3 pr-12 text-white focus:border-blue-500 focus:outline-none font-mono text-xs"/>
+                                <button onClick={() => setShowGToken(!showGToken)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showGToken ? <Icons.EyeOff size={16}/> : <Icons.Eye size={16}/>}</button>
+                            </div>
+                        </div>
+
+                        {/* GUÍA PASO A PASO PARA OBTENER EL TOKEN */}
+                        <div className="bg-slate-950/50 border border-slate-700 rounded-xl p-4">
+                             <h5 className="text-xs font-bold text-white mb-3 flex items-center gap-2"><Icons.HelpCircle size={14}/> Guía de Configuración (Paso a Paso)</h5>
+                             <ol className="list-decimal list-inside text-[10px] text-slate-300 space-y-2 leading-relaxed font-sans">
+                                <li>Abre <a href="https://developers.google.com/oauthplayground" target="_blank" className="text-blue-400 font-bold hover:underline">Google OAuth 2.0 Playground</a>.</li>
+                                <li>En el <strong>Step 1</strong> (izquierda), busca en la lista: <span className="text-white font-bold">Drive API v3</span>.</li>
+                                <li>Despliégalo y marca <u>exclusivamente</u> esta casilla:<br/>
+                                    <code className="block bg-slate-900 text-green-400 p-1.5 rounded mt-1 mb-1 border border-slate-700 select-all font-mono">https://www.googleapis.com/auth/drive.file</code>
+                                </li>
+                                <li>Pulsa el botón azul <strong>Authorize APIs</strong> y acepta los permisos con tu cuenta de Google.</li>
+                                <li>En el <strong>Step 2</strong>, pulsa el botón azul <strong>Exchange authorization code for tokens</strong>.</li>
+                                <li>Copia el código largo que aparece en <strong>Access Token</strong> (empieza por <em>ya29...</em>) y pégalo en el campo de arriba.</li>
+                             </ol>
+                             <div className="mt-3 pt-3 border-t border-slate-800 text-[9px] text-slate-500 italic flex gap-2 items-start">
+                                <Icons.AlertCircle size={12} className="shrink-0 mt-0.5"/>
+                                <span>Este token autoriza a la aplicación a subir <strong>solo archivos creados por ella misma</strong> (Backups) a tu Drive. Al ser un token temporal de desarrollo, puede requerir renovación manual periódica si la sesión caduca.</span>
+                             </div>
+                        </div>
+                      </div>
                   </div>
 
 
@@ -924,6 +973,8 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
               </div>
           );
       };
+
+
 
  const DividendTab = ({ portfolio, setPortfolio, baseCurrency }) => {
           const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
