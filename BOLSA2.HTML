@@ -1231,26 +1231,50 @@ const DividendTab = ({ portfolio, setPortfolio, baseCurrency, syncStatus, onManu
       };
 
  
-const SettingsTab = ({ apiKey, setApiKey, isAuth, onActivate, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio, onForceBackup, gScriptUrl, setGScriptUrl, resultsData }) => { // AÑADIDO resultsData a props
+const SettingsTab = ({ apiKey, setApiKey, isAuth, onActivate, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio, onForceBackup, gScriptUrl, setGScriptUrl, resultsData }) => {
           const [localLic, setLocalLic] = useState(''); 
           const [showKey, setShowKey] = useState(false); 
           const [testStatus, setTestStatus] = useState(null); 
           const [errorDetail, setErrorDetail] = useState(''); 
           const [ioStatus, setIoStatus] = useState('idle');
           const [showUrl, setShowUrl] = useState(false); 
+          
+          // ESTADOS PARA IMPORTACIÓN
+          const [importMethod, setImportMethod] = useState('pdf'); // 'pdf' o 'text'
           const [pdfFile, setPdfFile] = useState(null); 
-          const [pdfPrompt, setPdfPrompt] = useState('Añade a la cartera las posiciones indicadas en el PDF.'); 
-          const [importingPdf, setImportingPdf] = useState(false); 
+          const [rawTextData, setRawTextData] = useState('');
+          const [pdfPrompt, setPdfPrompt] = useState('Analiza este listado y extrae las operaciones de compra/venta.'); 
+          const [importing, setImporting] = useState(false); 
           const [importResult, setImportResult] = useState(null);
 
-          const sanitizeAndParseJSON = (text) => { try {const match = text.match(/\{[\s\S]*\}/); if (match) return JSON.parse(match[0]); return JSON.parse(text); } catch (e) { throw new Error("La IA no devolvió un formato de datos válido."); } };
+          // MEJORA: Parser más agresivo para encontrar el Array JSON
+          const sanitizeAndParseJSON = (text) => { 
+              try {
+                  // 1. Intentar encontrar un bloque de código markdown
+                  let clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
+                  // 2. Buscar el primer corchete de apertura '[' y el último de cierre ']'
+                  const firstBracket = clean.indexOf('[');
+                  const lastBracket = clean.lastIndexOf(']');
+                  
+                  if (firstBracket !== -1 && lastBracket !== -1) {
+                      clean = clean.substring(firstBracket, lastBracket + 1);
+                      return JSON.parse(clean);
+                  }
+                  
+                  // 3. Fallback: intentar parsear todo
+                  return JSON.parse(clean);
+              } catch (e) { 
+                  console.error("Raw AI Response:", text);
+                  throw new Error("La IA no devolvió un JSON válido. Ver detalles en consola."); 
+              } 
+          };
+
           const testConnection = async () => { if(!apiKey) return alert("Introduce una clave primero."); setTestStatus('loading'); setErrorDetail(''); try { await askGemini(apiKey, "Test conexión"); setTestStatus('success'); } catch(e) { setTestStatus('error'); setErrorDetail(e.message); } };
           
           const handleRunExport = () => { 
               setIoStatus('processing'); 
               try { 
-                  // AHORA SI INCLUYE resultsData
-                  const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 2, resultsData }; 
+                  const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 3, resultsData }; 
                   const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"}); 
                   const url = URL.createObjectURL(blob); 
                   const a = document.createElement('a'); a.href = url; a.download = `BoardingGate_Backup_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); setIoStatus('success'); setTimeout(() => setIoStatus('idle'), 2000); 
@@ -1259,13 +1283,118 @@ const SettingsTab = ({ apiKey, setApiKey, isAuth, onActivate, baseCurrency, setB
           
           const handleRunImport = (e) => { const file = e.target.files[0]; if (!file) return; if(!confirm("⚠️ IMPORTANTE:\n\nEsta acción reemplazará TODA tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) { e.target.value = null; return; } setIoStatus('processing'); const reader = new FileReader(); reader.onload = (ev) => { try { const d = JSON.parse(ev.target.result); if (d.portfolio) setPortfolio(d.portfolio); if (d.apiKey) setApiKey(d.apiKey); if (d.baseCurrency) setBaseCurrency(d.baseCurrency); if (d.refreshInterval) setRefreshInterval(d.refreshInterval); setIoStatus('success'); alert("✅ Restauración completada correctamente."); window.location.reload(); } catch (err) { alert("Archivo inválido o corrupto."); setIoStatus('error'); } }; reader.readAsText(file); };
           
-          
-          const handlePdfImport = async () => { if (!apiKey) return alert("Falta API Key"); if (!pdfFile) return alert("Selecciona un archivo PDF"); setImportingPdf(true); setImportResult(null); try { const pdfText = await readPdfText(pdfFile); const truncatedText = pdfText.substring(0, 30000); const prompt = `CRITICAL: Role=DataEntryBot. Output=JSON Array Only. Task: Extract stock portfolio data from this text based on instructions: "${pdfPrompt}". Text: "${truncatedText}" Expected JSON Object Format for each item: { "ticker": "SYMBOL", "name": "Company Name", "shares": number, "buyPrice": number, "buyDate": "YYYY-MM-DD", "stockCurrency": "USD/EUR/etc", "buyFx": number (1 if same currency), "fees": number (0 if unknown), "sellDate": "YYYY-MM-DD" (if closed, else null), "sellPrice": number (if closed, else 0), "sellFx": number (1 if same currency), "sellFees": number } If data is missing, estimate reasonable defaults or 0. Return ONLY the JSON array.`; const res = await askGemini(apiKey, prompt); const extractedData = sanitizeAndParseJSON(res); if (Array.isArray(extractedData)) { setPortfolio(prev => { const newItems = extractedData.map(item => ({ ...item, id: Date.now() + Math.random(), group: 'Importado PDF', isActive: true, dividends: [], adjustments: 0, buyPE: 0, currentPE: 0, annualDividend: 0, currentPrice: item.sellDate ? 0 : item.buyPrice, currentFx: item.buyFx })); return [...prev, ...newItems]; }); setImportResult({ success: true, count: extractedData.length, data: extractedData }); } else { throw new Error("Formato respuesta incorrecto"); } } catch (e) { setImportResult({ success: false, error: e.message }); } finally { setImportingPdf(false); setPdfFile(null); } };
+          // LÓGICA DE IMPORTACIÓN IA (PDF O TEXTO)
+          const handleAiImport = async () => { 
+              if (!apiKey) return alert("Falta API Key"); 
+              if (importMethod === 'pdf' && !pdfFile) return alert("Selecciona un PDF");
+              if (importMethod === 'text' && !rawTextData.trim()) return alert("Pega el texto de tus acciones");
+
+              setImporting(true); 
+              setImportResult(null); 
+
+              try { 
+                  let dataToAnalyze = "";
+                  
+                  if (importMethod === 'pdf') {
+                      try {
+                          dataToAnalyze = await readPdfText(pdfFile);
+                      } catch (pdfErr) {
+                          throw new Error("No se pudo leer el PDF. Es posible que sea una imagen escaneada o esté protegido.");
+                      }
+                  } else {
+                      dataToAnalyze = rawTextData;
+                  }
+
+                  // Recortar para no exceder límites locos, aunque Gemini 2.0 aguanta mucho
+                  const truncatedText = dataToAnalyze.substring(0, 50000); 
+                  
+                  const prompt = `
+                    ROLE: Data Extraction Expert.
+                    GOAL: Convert the following unstructured financial text into a Strict JSON Array.
+                    INSTRUCTIONS: "${pdfPrompt}"
+                    
+                    INPUT DATA:
+                    """
+                    ${truncatedText}
+                    """
+                    
+                    OUTPUT REQUIREMENTS:
+                    1. Return ONLY a JSON Array. No markdown formatting, no intro text.
+                    2. Use this schema for each item:
+                    [{
+                        "ticker": "SYMBOL (e.g., AAPL, SAN.MC)",
+                        "name": "Company Name",
+                        "shares": number (positive integer),
+                        "buyPrice": number (price per share),
+                        "buyDate": "YYYY-MM-DD" (guess if missing, default to 2024-01-01),
+                        "stockCurrency": "USD/EUR/GBP",
+                        "buyFx": number (exchange rate to base currency, default 1),
+                        "fees": number (total transaction fees),
+                        "sellDate": "YYYY-MM-DD" (ONLY if it's a SELL operation, else null),
+                        "sellPrice": number (price per share if sold, else 0),
+                        "sellFx": number (default 1),
+                        "sellFees": number
+                    }]
+                    3. If a row represents a SELL, populate 'sellDate' and 'sellPrice'. If it's a BUY or currently held, keep sellDate null.
+                    4. Ignore headers, totals, or footer text.
+                  `;
+
+                  const res = await askGemini(apiKey, prompt); 
+                  const extractedData = sanitizeAndParseJSON(res); 
+
+                  if (Array.isArray(extractedData)) { 
+                      setPortfolio(prev => { 
+                          const newItems = extractedData.map(item => ({ 
+                              ...item, 
+                              id: Date.now() + Math.random(), 
+                              group: 'Importado IA', 
+                              isActive: true, 
+                              dividends: [], 
+                              adjustments: 0, 
+                              buyPE: 0, 
+                              currentPE: 0, 
+                              annualDividend: 0, 
+                              currentPrice: item.sellDate ? 0 : item.buyPrice, 
+                              currentFx: item.buyFx 
+                          })); 
+                          return [...prev, ...newItems]; 
+                      }); 
+                      setImportResult({ success: true, count: extractedData.length, rawResponse: null }); 
+                  } else { 
+                      throw new Error("La IA respondió, pero no devolvió una lista (Array)."); 
+                  } 
+              } catch (e) { 
+                  setImportResult({ success: false, error: e.message, rawResponse: e.toString() }); 
+              } finally { 
+                  setImporting(false); 
+                  setPdfFile(null); 
+              } 
+          };
 
           return (
               <div className="h-full p-6 flex flex-col items-center justify-start fade-in overflow-y-auto custom-scrollbar">
-                  {importingPdf && <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center fade-in"><Icons.Loader size={60} className="text-purple-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Procesando Documento PDF...</div><div className="text-xs text-slate-400 mt-2">Extrayendo datos y estructurando cartera</div></div>}
-                  {importResult && ( <div className="absolute inset-0 z-[60] bg-black/90 flex items-center justify-center p-4 fade-in"> <div className="bg-slate-900 border border-slate-700 p-6 rounded-xl max-w-md w-full text-center"> {importResult.success ? ( <> <div className="text-green-500 mb-4 mx-auto"><Icons.CheckCircle size={50}/></div> <h3 className="text-xl font-bold text-white mb-2">Importación Completada</h3> <p className="text-slate-400 text-sm mb-6">Se han añadido <strong>{importResult.count}</strong> registros a tu cartera basándose en el análisis del PDF.</p> </> ) : ( <> <div className="text-red-500 mb-4 mx-auto"><Icons.AlertCircle size={50}/></div> <h3 className="text-xl font-bold text-white mb-2">Error de Importación</h3> <p className="text-red-300 text-sm mb-6">{importResult.error}</p> </> )} <button onClick={()=>setImportResult(null)} className="bg-slate-700 px-6 py-2 rounded-lg font-bold text-white hover:bg-slate-600">Cerrar</button> </div> </div> )}
+                  {importing && <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center fade-in"><Icons.Loader size={60} className="text-purple-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando Datos...</div><div className="text-xs text-slate-400 mt-2">La IA está leyendo tu documento</div></div>}
+                  
+                  {importResult && ( 
+                      <div className="absolute inset-0 z-[60] bg-black/90 flex items-center justify-center p-4 fade-in"> 
+                          <div className="bg-slate-900 border border-slate-700 p-6 rounded-xl max-w-lg w-full text-center shadow-2xl"> 
+                              {importResult.success ? ( 
+                                  <> <div className="text-green-500 mb-4 mx-auto"><Icons.CheckCircle size={50}/></div> <h3 className="text-xl font-bold text-white mb-2">Importación Completada</h3> <p className="text-slate-400 text-sm mb-6">Se han añadido <strong>{importResult.count}</strong> registros a tu cartera.</p> </> 
+                              ) : ( 
+                                  <> 
+                                    <div className="text-red-500 mb-4 mx-auto"><Icons.AlertCircle size={50}/></div> 
+                                    <h3 className="text-xl font-bold text-white mb-2">Error de Importación</h3> 
+                                    <p className="text-red-300 text-sm mb-4 font-bold">{importResult.error}</p>
+                                    <div className="text-left bg-black p-2 rounded border border-slate-800 text-[10px] font-mono text-slate-400 max-h-32 overflow-y-auto mb-4">
+                                        {importResult.rawResponse || "Sin detalles adicionales."}
+                                    </div>
+                                    <p className="text-slate-500 text-xs italic">Consejo: Si el PDF falla, prueba a copiar el texto del PDF y usar la opción "Pegar Texto".</p>
+                                  </> 
+                              )} 
+                              <button onClick={()=>setImportResult(null)} className="bg-slate-700 px-6 py-2 rounded-lg font-bold text-white hover:bg-slate-600 border border-slate-600">Cerrar</button> 
+                          </div> 
+                      </div> 
+                  )}
                   
                   {/* PREFERENCIAS GENERALE */}
                   <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
@@ -1315,26 +1444,48 @@ function doGet(e) {
                       </div>
                   </div>
 
-                  {/* IMPORTACIÓN PDF */}
+                  {/* IMPORTACIÓN MASIVA IA (MEJORADO CON PEGAR TEXTO) */}
                   <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
                        <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
                           <div className="p-3 bg-pink-500/20 rounded-xl text-pink-400"><Icons.Upload size={32} /></div>
-                          <div><h2 className="text-2xl font-bold text-white">Importación Masiva IA</h2><p className="text-slate-400 text-sm">Carga de datos desde documentos PDF</p></div>
+                          <div><h2 className="text-2xl font-bold text-white">Importación Masiva IA</h2><p className="text-slate-400 text-sm">Carga de datos inteligente (PDF o Texto)</p></div>
                        </div>
+                       
+                       {/* Selector de Método */}
+                       <div className="flex bg-slate-950 p-1 rounded-xl mb-4 border border-slate-700">
+                           <button onClick={() => setImportMethod('pdf')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2 ${importMethod === 'pdf' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-white'}`}>
+                               <Icons.Upload size={14}/> SUBIR PDF
+                           </button>
+                           <button onClick={() => setImportMethod('text')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2 ${importMethod === 'text' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-white'}`}>
+                               <Icons.Copy size={14}/> PEGAR TEXTO / CSV
+                           </button>
+                       </div>
+
                        <div className="flex flex-col gap-4">
                            <div className="w-full">
                                <label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">Instrucciones para la IA</label>
-                               <input type="text" value={pdfPrompt} onChange={e=>setPdfPrompt(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-300 mb-2" placeholder="Ej: Importar solo operaciones de venta del año 2024..." />
+                               <input type="text" value={pdfPrompt} onChange={e=>setPdfPrompt(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-300 mb-2" placeholder="Ej: Las ventas tienen precio negativo en la columna Importe..." />
                            </div>
-                           <div className="flex gap-4 items-center">
-                               <label className="flex-1 cursor-pointer bg-slate-800 border border-slate-600 hover:bg-slate-700 text-white px-4 py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-colors">
+                           
+                           {/* ZONA DE ENTRADA SEGUN METODO */}
+                           {importMethod === 'pdf' ? (
+                               <label className="w-full cursor-pointer bg-slate-800 border border-slate-600 hover:bg-slate-700 text-white px-4 py-8 rounded-xl text-sm font-bold flex flex-col items-center justify-center gap-2 transition-colors border-dashed border-2">
                                    <input type="file" accept="application/pdf" className="hidden" onChange={e => setPdfFile(e.target.files[0])} />
-                                   {pdfFile ? <span className="text-green-400 truncate">{pdfFile.name}</span> : <span><Icons.Plus size={16} className="inline mr-1"/> Seleccionar PDF</span>}
+                                   <Icons.Upload size={32} className="text-slate-500"/>
+                                   {pdfFile ? <span className="text-green-400 truncate">{pdfFile.name}</span> : <span className="text-slate-400">Haz clic para seleccionar tu PDF</span>}
                                </label>
-                               <button onClick={handlePdfImport} disabled={!pdfFile || importingPdf} className="flex-1 bg-pink-600 hover:bg-pink-500 disabled:opacity-50 text-white px-4 py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-lg shadow-pink-900/20 transition-colors">
-                                   <Icons.Wand size={16}/> PROCESAR DOCUMENTO
-                               </button>
-                           </div>
+                           ) : (
+                               <textarea 
+                                   value={rawTextData} 
+                                   onChange={e => setRawTextData(e.target.value)} 
+                                   className="w-full h-40 bg-slate-950 border border-slate-700 rounded-xl p-4 text-xs font-mono text-slate-300 focus:border-pink-500 focus:outline-none custom-scrollbar"
+                                   placeholder="Pega aquí el contenido de tu tabla (Excel, CSV, o texto copiado del PDF)..."
+                               />
+                           )}
+
+                           <button onClick={handleAiImport} disabled={importing || (importMethod==='pdf' && !pdfFile) || (importMethod==='text' && !rawTextData)} className="w-full bg-pink-600 hover:bg-pink-500 disabled:opacity-50 text-white px-4 py-4 rounded-xl text-sm font-black flex items-center justify-center gap-2 shadow-lg shadow-pink-900/20 transition-colors uppercase tracking-wider">
+                               <Icons.Wand size={18}/> {importing ? 'Analizando...' : 'Procesar Datos con IA'}
+                           </button>
                        </div>
                   </div>
 
