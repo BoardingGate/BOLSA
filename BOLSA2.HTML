@@ -544,7 +544,7 @@ const SimpleChart = ({ type, data, title, height = 400, color = "#3b82f6" }) => 
 
 
 
-    const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData }) => {
+    const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync }) => {
           const [filterText, setFilterText] = useState('');
           const [filterDateStart, setFilterDateStart] = useState('');
           const [filterDateEnd, setFilterDateEnd] = useState('');
@@ -679,7 +679,7 @@ const SimpleChart = ({ type, data, title, height = 400, color = "#3b82f6" }) => 
                       <StatsBlock title="TOTAL FILTRADO" data={stats.total} color="#a855f7" baseCurrency={baseCurrency} type="total" />
                       <RenderHistoryCard />
                   </div>
-                  
+
                   <div className="flex flex-col gap-3 shrink-0 bg-slate-900/50 p-3 rounded-xl border border-slate-800">
                       <div className="flex justify-between items-center"><div className="flex gap-2 items-start"><div className="flex flex-col"><button onClick={() => updatePrices(false)} disabled={updating} className="bg-slate-800 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-700 hover:bg-slate-700 transition-colors flex items-center gap-2">{updating ? <Icons.Loader/> : <Icons.Refresh/>} ACTUALIZAR</button><span className="text-[9px] text-slate-500 mt-1 uppercase font-bold text-center tracking-wider">Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}</span></div><button onClick={analyzePortfolio} className="bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 transition-colors flex items-center gap-2"><Icons.Wand/> INFORME iA</button><button onClick={handlePrint} className="bg-slate-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button></div><button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', group: '', notes: '', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, feesIncludedInPrice: false, buyPE:0, annualDividend:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, sellFeesIncludedInPrice: false, currentPE:0, dividends: [] }); setIsModalOpen(true); }} className="bg-blue-600 px-4 h-9 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg hover:bg-blue-500"><Icons.Plus size={14}/> NUEVA POSICIÓN</button></div>
                       <div className="flex flex-wrap gap-2 items-center bg-slate-950/50 p-2 rounded-lg border border-slate-800/50"><div className="flex-1 min-w-[150px] relative"><Icons.Search className="absolute left-2 top-2 text-slate-500" size={14}/><input type="text" value={filterText} onChange={e => setFilterText(e.target.value)} placeholder="Filtrar por ticker, nombre o grupo..." className="w-full bg-slate-900 border border-slate-700 h-8 pl-8 pr-2 text-xs rounded focus:border-blue-500 font-bold" /></div><div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-2 h-8"><span className="text-[9px] font-bold text-slate-500 uppercase">Desde</span><input type="date" value={filterDateStart} onChange={e => setFilterDateStart(e.target.value)} className="bg-transparent border-none text-xs text-white p-0 w-[95px] focus:ring-0 font-bold" /></div><div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-2 h-8"><span className="text-[9px] font-bold text-slate-500 uppercase">Hasta</span><input type="date" value={filterDateEnd} onChange={e => setFilterDateEnd(e.target.value)} className="bg-transparent border-none text-xs text-white p-0 w-[95px] focus:ring-0 font-bold" /></div><div className="flex bg-slate-900 rounded border border-slate-700 h-8 p-0.5"><button onClick={() => setFilterType('all')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'all' ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white'}`}>TODO</button><button onClick={() => setFilterType('active')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'active' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>ACTIVAS</button><button onClick={() => setFilterType('sold')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'sold' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>VENTAS</button></div><button onClick={resetFilters} title="Limpiar Filtros" className="h-8 px-3 bg-red-900/30 text-red-400 border border-red-500/30 rounded text-[10px] font-bold hover:bg-red-900/50 flex items-center justify-center"><Icons.Trash2 size={16}/></button></div>
@@ -1317,67 +1317,156 @@ const SettingsTab = ({ apiKey, setApiKey, isAuth, onActivate, baseCurrency, setB
 
 
 
-      const App = () => {
+     const App = () => {
           const [activeTab, setActiveTab] = useState('portfolio');
+          
+          // Estados persistentes
           const [apiKey, setApiKey] = usePersistentState('bg_api_key', '');
           const [baseCurrency, setBaseCurrency] = usePersistentState('bg_base_currency', 'EUR');
           const [refreshInterval, setRefreshInterval] = usePersistentState('bg_refresh_interval', 10);
           const [portfolio, setPortfolio] = usePersistentState('bg_portfolio', []);
           const [resultsData, setResultsData] = usePersistentState('bg_results_data', {});
           const [lastUpdate, setLastUpdate] = usePersistentState('bg_last_update', null);
+          const [gScriptUrl, setGScriptUrl] = usePersistentState('bg_g_script_url', '');
+          
+          // Control de seguridad local
           const [rk, setRk] = usePersistentState('bg_app_rk_st', '');
           
-          const [gScriptUrl, setGScriptUrl] = usePersistentState('bg_g_script_url', '');
-          const [lastBackupTime, setLastBackupTime] = usePersistentState('bg_last_backup_ts', 0);
-          const [backupToast, setBackupToast] = useState(false);
+          // ESTADO DE SINCRONIZACIÓN
+          // localTimestamp: Cuándo modifiqué los datos yo en este navegador
+          const [localTimestamp, setLocalTimestamp] = usePersistentState('bg_local_ts', 0);
+          // cloudTimestamp: Última fecha conocida de la nube (para saber si estamos desfasados visualmente)
+          const [lastCloudSync, setLastCloudSync] = usePersistentState('bg_last_cloud_sync', 0);
+          
+          const [syncStatus, setSyncStatus] = useState('idle'); // idle, checking, downloading, uploading, synced, error
+          const [syncMessage, setSyncMessage] = useState('');
 
           const isAuth = _0x7a2(rk);
           const handleActivate = v => { if(_0x7a2(v)){ setRk(v); alert("¡Sistema Activado!"); } else alert("Código No Válido."); };
 
-          const handleDriveUpload = async (isManual = false) => {
-              const now = Date.now();
-              const hoursSinceLast = (now - lastBackupTime) / (1000 * 60 * 60);
-              const scriptUrl = simpleDecrypt(gScriptUrl);
-              
-              if (!scriptUrl) {
-                  if (isManual) alert("❌ Configura primero la URL del Script en Ajustes.");
+          // --- WRAPPERS PARA SETTERS (Detectar cambios y actualizar timestamp local) ---
+          // Usaremos estos en lugar de los setX directos en las pestañas para marcar "sucio"
+          const updatePortfolio = (newVal) => {
+              setPortfolio(newVal);
+              setLocalTimestamp(Date.now());
+              setSyncStatus('unsaved');
+          };
+          const updateResultsData = (newVal) => {
+              setResultsData(newVal);
+              setLocalTimestamp(Date.now());
+              setSyncStatus('unsaved');
+          };
+
+          // --- LÓGICA DE SINCRONIZACIÓN INTELIGENTE ---
+          const performSync = async (forceUpload = false) => {
+              const url = simpleDecrypt(gScriptUrl);
+              if (!url) {
+                  if(forceUpload) alert("Configura la URL de Google Script en Ajustes.");
                   return;
               }
 
-              if (!isManual && hoursSinceLast < 24) return;
-
+              setSyncStatus(prev => prev === 'unsaved' ? 'uploading' : 'checking');
+              
               try {
-                  // AHORA INCLUYE resultsData
-                  const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 2, timestamp: new Date().toISOString(), resultsData }; 
+                  // 1. OBTENER DATOS DE LA NUBE (GET)
+                  // Nota: Apps Script debe estar desplegado como "Cualquier usuario" para evitar CORS con fetch simple
+                  const response = await fetch(url);
+                  const cloudData = await response.json();
                   
-                  await fetch(scriptUrl, {
-                      method: 'POST',
-                      mode: 'no-cors', 
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(data)
-                  });
+                  const cloudTS = cloudData.timestamp || 0;
+                  const localTS = localTimestamp || 0;
 
-                  setLastBackupTime(now);
-                  setBackupToast(true);
-                  setTimeout(() => setBackupToast(false), 3000);
-                  if (isManual) alert("✅ Copia enviada a Google Drive correctamente.");
-                  
-              } catch (e) { 
-                  console.error("Backup Error", e);
-                  if (isManual) alert("❌ Error de red al contactar con el Script.");
+                  console.log(`Sync Check: LocalTS=${localTS} vs CloudTS=${cloudTS}`);
+
+                  // CASO A: Nube es más reciente que Local -> DESCARGAR Y SUSTITUIR
+                  // Se aplica margen de 2 segundos para evitar bucles por latencia
+                  if (cloudTS > (localTS + 2000) && !forceUpload) {
+                      setSyncStatus('downloading');
+                      setSyncMessage('⬇️ Datos de nube más recientes. Actualizando...');
+                      
+                      if (cloudData.portfolio) setPortfolio(cloudData.portfolio);
+                      if (cloudData.resultsData) setResultsData(cloudData.resultsData);
+                      if (cloudData.apiKey) setApiKey(cloudData.apiKey);
+                      if (cloudData.baseCurrency) setBaseCurrency(cloudData.baseCurrency);
+                      
+                      // Actualizamos el timestamp local para coincidir con la nube y evitar resubida inmediata
+                      setLocalTimestamp(cloudTS); 
+                      setLastCloudSync(cloudTS);
+                      
+                      setSyncStatus('synced');
+                      setTimeout(() => setSyncMessage(''), 3000);
+                      return;
+                  }
+
+                  // CASO B: Local es más reciente (o forzado) -> SUBIR
+                  if (localTS > cloudTS || forceUpload) {
+                      setSyncStatus('uploading');
+                      setSyncMessage('⬆️ Subiendo cambios a Drive...');
+                      
+                      const payload = {
+                          timestamp: localTS, // Usamos la fecha de modificación local
+                          portfolio,
+                          resultsData,
+                          apiKey,
+                          baseCurrency,
+                          refreshInterval,
+                          version: 3
+                      };
+
+                      await fetch(url, {
+                          method: 'POST',
+                          mode: 'no-cors', // Apps Script doPost a veces requiere no-cors si no devuelve headers perfectos
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify(payload)
+                      });
+
+                      setLastCloudSync(localTS);
+                      setSyncStatus('synced');
+                      setTimeout(() => setSyncMessage(''), 3000);
+                      return;
+                  }
+
+                  // CASO C: Están sincronizados
+                  setSyncStatus('synced');
+                  setLastCloudSync(cloudTS);
+
+              } catch (e) {
+                  console.error("Sync Error", e);
+                  setSyncStatus('error');
+                  setSyncMessage('❌ Error de conexión');
               }
           };
 
+          // 1. Sync al inicio (Mount)
           useEffect(() => {
-              if(portfolio.length > 0) handleDriveUpload(false); 
-          }, [portfolio, gScriptUrl, lastBackupTime]);
+              if (gScriptUrl && portfolio.length > 0) {
+                  performSync(false);
+              }
+          }, []);
+
+          // 2. Auto-Sync por intervalo (Refresh Interval + 1 minuto)
+          useEffect(() => {
+              if (!gScriptUrl || refreshInterval < 1) return;
+              const syncIntervalMs = (refreshInterval + 1) * 60 * 1000;
+              
+              const interval = setInterval(() => {
+                  // Solo sube si hay cambios locales no guardados o si local > nube
+                  if (localTimestamp > lastCloudSync) {
+                      performSync(false);
+                  }
+              }, syncIntervalMs);
+              return () => clearInterval(interval);
+          }, [refreshInterval, gScriptUrl, localTimestamp, lastCloudSync]);
 
           return (
               <div className="h-full flex flex-col bg-[#0a0a0a] text-white overflow-hidden relative">
-                  {/* BACKUP TOAST */}
-                  {backupToast && (
-                      <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[200] bg-green-600/90 text-white px-6 py-3 rounded-full shadow-2xl font-bold text-sm flex items-center gap-2 fade-in backdrop-blur-md">
-                          <Icons.CheckCircle size={18}/> Backup Enviado a Google Drive
+                  {/* TOAST DE SINCRONIZACIÓN */}
+                  {syncMessage && (
+                      <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[200] bg-blue-600/90 text-white px-6 py-3 rounded-full shadow-2xl font-bold text-xs flex items-center gap-2 fade-in backdrop-blur-md border border-white/10">
+                          {syncStatus === 'downloading' ? <Icons.Upload className="rotate-180 animate-bounce"/> : 
+                           syncStatus === 'uploading' ? <Icons.Upload className="animate-bounce"/> : 
+                           syncStatus === 'error' ? <Icons.AlertCircle/> : <Icons.CheckCircle/>}
+                          {syncMessage}
                       </div>
                   )}
 
@@ -1392,14 +1481,19 @@ const SettingsTab = ({ apiKey, setApiKey, isAuth, onActivate, baseCurrency, setB
                       </nav>
                   </header>
                   <main className="flex-1 overflow-y-auto bg-[#0a0a0a] relative custom-scrollbar">
-                      {activeTab === 'portfolio' && <PortfolioTab portfolio={portfolio} setPortfolio={setPortfolio} apiKey={apiKey} baseCurrency={baseCurrency} refreshInterval={refreshInterval} lastUpdate={lastUpdate} setLastUpdate={setLastUpdate} resultsData={resultsData} />}
-                      {activeTab === 'dividends' && <DividendTab portfolio={portfolio} setPortfolio={setPortfolio} baseCurrency={baseCurrency} />}
-                      {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={setResultsData} baseCurrency={baseCurrency} />}
-                      {activeTab === 'analysis' && <AnalysisTab apiKey={apiKey} baseCurrency={baseCurrency} setPortfolio={setPortfolio} />}
-                      {activeTab === 'settings' && <SettingsTab apiKey={apiKey} setApiKey={setApiKey} isAuth={isAuth} onActivate={handleActivate} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={setPortfolio} onForceBackup={() => handleDriveUpload(true)} gScriptUrl={gScriptUrl} setGScriptUrl={setGScriptUrl} />}
+                      {/* Pasamos syncStatus y performSync a las pestañas que lo necesitan */}
+                      {activeTab === 'portfolio' && <PortfolioTab portfolio={portfolio} setPortfolio={updatePortfolio} apiKey={apiKey} baseCurrency={baseCurrency} refreshInterval={refreshInterval} lastUpdate={lastUpdate} setLastUpdate={setLastUpdate} resultsData={resultsData} syncStatus={syncStatus} onManualSync={() => performSync(true)} />}
+                      {activeTab === 'dividends' && <DividendTab portfolio={portfolio} setPortfolio={updatePortfolio} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={() => performSync(true)} />}
+                      {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={updateResultsData} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={() => performSync(true)} />}
+                      {activeTab === 'analysis' && <AnalysisTab apiKey={apiKey} baseCurrency={baseCurrency} setPortfolio={updatePortfolio} />}
+                      {activeTab === 'settings' && <SettingsTab apiKey={apiKey} setApiKey={setApiKey} isAuth={isAuth} onActivate={handleActivate} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={updatePortfolio} onForceBackup={() => performSync(true)} gScriptUrl={gScriptUrl} setGScriptUrl={setGScriptUrl} resultsData={resultsData} />}
                   </main>
                   <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase">
-                      <div>BoardingGate 3.2</div><div>Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleString() : '--'}</div>
+                      <div>BoardingGate 3.2 (Intelligent Sync)</div>
+                      <div className="flex gap-4">
+                          <span>Sinc Nube: {lastCloudSync > 0 ? new Date(lastCloudSync).toLocaleTimeString() : 'Pendiente'}</span>
+                          <span>Cotiz: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}</span>
+                      </div>
                   </footer>
               </div>
           );
