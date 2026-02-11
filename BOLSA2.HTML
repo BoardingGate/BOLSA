@@ -800,12 +800,16 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
       }; 
 
 
+
+
 const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady }) => {
-          const [filterText, setFilterText] = useState('');
-          const [filterDateStart, setFilterDateStart] = useState('');
-          const [filterDateEnd, setFilterDateEnd] = useState('');
-          const [filterType, setFilterType] = useState('active'); 
-          const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
+          // --- ESTADOS PERSISTENTES PARA FILTROS ---
+          const [filterText, setFilterText] = usePersistentState('bg_port_filter_text', '');
+          const [filterDateStart, setFilterDateStart] = usePersistentState('bg_port_filter_start', '');
+          const [filterDateEnd, setFilterDateEnd] = usePersistentState('bg_port_filter_end', '');
+          const [filterType, setFilterType] = usePersistentState('bg_port_filter_type', 'active'); 
+          const [sortConfig, setSortConfig] = usePersistentState('bg_port_sort_config', { key: 'date', direction: 'desc' });
+
           const [updating, setUpdating] = useState(false);
           const [analyzing, setAnalyzing] = useState(false);
           const [fetchingSingle, setFetchingSingle] = useState(false);
@@ -829,6 +833,26 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
           useEffect(() => { if (noteToast) { const timer = setTimeout(() => setNoteToast(null), 30000); return () => clearTimeout(timer); } }, [noteToast]);
           const requestSort = (key) => { let direction = 'desc'; if (sortConfig.key === key && sortConfig.direction === 'desc') { direction = 'asc'; } setSortConfig({ key, direction }); };
+
+          // --- LÓGICA SALTO DE AÑO ---
+          const handleYearJump = (direction) => {
+              let targetYear;
+              const currentYear = new Date().getFullYear();
+
+              if (direction === -1) {
+                  // Ir hacia atrás: Usamos la fecha de inicio como referencia
+                  const refYear = filterDateStart ? parseInt(filterDateStart.split('-')[0]) : currentYear;
+                  targetYear = refYear - 1;
+              } else {
+                  // Ir hacia adelante: Usamos la fecha de FIN como referencia (para saltar rangos)
+                  // Si no hay fin, usamos inicio, si no, actual.
+                  const refYear = filterDateEnd ? parseInt(filterDateEnd.split('-')[0]) : (filterDateStart ? parseInt(filterDateStart.split('-')[0]) : currentYear);
+                  targetYear = refYear + 1;
+              }
+
+              setFilterDateStart(`${targetYear}-01-01`);
+              setFilterDateEnd(`${targetYear}-12-31`);
+          };
 
           const filteredPortfolio = useMemo(() => {
               let list = portfolio.filter(p => { if (filterType === 'active' && p.sellDate) return false; if (filterType === 'sold' && !p.sellDate) return false; if (filterText) { const txt = filterText.toUpperCase(); const matchTicker = p.ticker.toUpperCase().includes(txt); const matchName = (p.name || '').toUpperCase().includes(txt); const matchGroup = (p.group || '').toUpperCase().includes(txt); if (!matchTicker && !matchName && !matchGroup) return false; } if (filterDateStart || filterDateEnd) { let dateToCheck = p.buyDate; if (filterType === 'sold') dateToCheck = p.sellDate; else if (filterType === 'all') dateToCheck = p.sellDate || p.buyDate; if (filterDateStart && dateToCheck < filterDateStart) return false; if (filterDateEnd && dateToCheck > filterDateEnd) return false; } return true; });
@@ -958,7 +982,27 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                         </button>
                         <button onClick={analyzePortfolio} className="bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 transition-colors flex items-center gap-2"><Icons.Wand/> INFORME iA</button>
                         <button onClick={handlePrint} className="bg-slate-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button></div><button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', group: '', notes: '', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, feesIncludedInPrice: false, buyPE:0, annualDividend:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, sellFeesIncludedInPrice: false, currentPE:0, dividends: [] }); setIsModalOpen(true); }} className="bg-blue-600 px-4 h-9 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg hover:bg-blue-500"><Icons.Plus size={14}/> NUEVA POSICIÓN</button></div>
-                      <div className="flex flex-wrap gap-2 items-center bg-slate-950/50 p-2 rounded-lg border border-slate-800/50"><div className="flex-1 min-w-[150px] relative"><Icons.Search className="absolute left-2 top-2 text-slate-500" size={14}/><input type="text" value={filterText} onChange={e => setFilterText(e.target.value)} placeholder="Filtrar por ticker, nombre o grupo..." className="w-full bg-slate-900 border border-slate-700 h-8 pl-8 pr-2 text-xs rounded focus:border-blue-500 font-bold" /></div><div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-2 h-8"><span className="text-[9px] font-bold text-slate-500 uppercase">Desde</span><input type="date" value={filterDateStart} onChange={e => setFilterDateStart(e.target.value)} className="bg-transparent border-none text-xs text-white p-0 w-[95px] focus:ring-0 font-bold" /></div><div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-2 h-8"><span className="text-[9px] font-bold text-slate-500 uppercase">Hasta</span><input type="date" value={filterDateEnd} onChange={e => setFilterDateEnd(e.target.value)} className="bg-transparent border-none text-xs text-white p-0 w-[95px] focus:ring-0 font-bold" /></div><div className="flex bg-slate-900 rounded border border-slate-700 h-8 p-0.5"><button onClick={() => setFilterType('all')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'all' ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white'}`}>TODO</button><button onClick={() => setFilterType('active')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'active' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>ACTIVAS</button><button onClick={() => setFilterType('sold')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'sold' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>VENTAS</button></div><button onClick={resetFilters} title="Limpiar Filtros" className="h-8 px-3 bg-red-900/30 text-red-400 border border-red-500/30 rounded text-[10px] font-bold hover:bg-red-900/50 flex items-center justify-center"><Icons.Trash2 size={16}/></button></div>
+                      
+                      {/* BARRA DE FILTROS ACTUALIZADA */}
+                      <div className="flex flex-wrap gap-2 items-center bg-slate-950/50 p-2 rounded-lg border border-slate-800/50">
+                          {/* Filtro Texto */}
+                          <div className="flex-1 min-w-[150px] relative"><Icons.Search className="absolute left-2 top-2 text-slate-500" size={14}/><input type="text" value={filterText} onChange={e => setFilterText(e.target.value)} placeholder="Filtrar por ticker, nombre o grupo..." className="w-full bg-slate-900 border border-slate-700 h-8 pl-8 pr-2 text-xs rounded focus:border-blue-500 font-bold" /></div>
+                          
+                          {/* Filtro Fechas con Botones +/- */}
+                          <div className="flex items-center gap-1">
+                              <button onClick={() => handleYearJump(-1)} className="h-8 w-8 bg-slate-800 border border-slate-700 rounded text-slate-400 hover:text-white hover:bg-slate-700 font-bold flex items-center justify-center text-lg">-</button>
+                              
+                              <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-2 h-8"><span className="text-[9px] font-bold text-slate-500 uppercase">Desde</span><input type="date" value={filterDateStart} onChange={e => setFilterDateStart(e.target.value)} className="bg-transparent border-none text-xs text-white p-0 w-[95px] focus:ring-0 font-bold" /></div>
+                              <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-2 h-8"><span className="text-[9px] font-bold text-slate-500 uppercase">Hasta</span><input type="date" value={filterDateEnd} onChange={e => setFilterDateEnd(e.target.value)} className="bg-transparent border-none text-xs text-white p-0 w-[95px] focus:ring-0 font-bold" /></div>
+                              
+                              <button onClick={() => handleYearJump(1)} className="h-8 w-8 bg-slate-800 border border-slate-700 rounded text-slate-400 hover:text-white hover:bg-slate-700 font-bold flex items-center justify-center text-lg">+</button>
+                          </div>
+
+                          {/* Tipo de Operación */}
+                          <div className="flex bg-slate-900 rounded border border-slate-700 h-8 p-0.5"><button onClick={() => setFilterType('all')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'all' ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white'}`}>TODO</button><button onClick={() => setFilterType('active')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'active' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>ACTIVAS</button><button onClick={() => setFilterType('sold')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'sold' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>VENTAS</button></div>
+                          
+                          <button onClick={resetFilters} title="Limpiar Filtros" className="h-8 px-3 bg-red-900/30 text-red-400 border border-red-500/30 rounded text-[10px] font-bold hover:bg-red-900/50 flex items-center justify-center"><Icons.Trash2 size={16}/></button>
+                      </div>
                   </div>
                   
                   <div className="w-full overflow-x-auto bg-slate-900/50 border border-slate-800 rounded-xl">
@@ -1186,7 +1230,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
               </div>
           );
       };
-    
+
 
 
 const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
