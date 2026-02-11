@@ -1350,8 +1350,7 @@ function doGet(e) {
       };
 
 
-
-     const App = () => {
+const App = () => {
           const [activeTab, setActiveTab] = useState('portfolio');
           
           // Estados persistentes
@@ -1363,142 +1362,209 @@ function doGet(e) {
           const [lastUpdate, setLastUpdate] = usePersistentState('bg_last_update', null);
           const [gScriptUrl, setGScriptUrl] = usePersistentState('bg_g_script_url', '');
           
-          // Control de seguridad local
+          // Seguridad local
           const [rk, setRk] = usePersistentState('bg_app_rk_st', '');
           
-          // ESTADO DE SINCRONIZACIÓN
-          // localTimestamp: Cuándo modifiqué los datos yo en este navegador
+          // SINCRONIZACIÓN
+          // timestamp: Fecha de modificación de los datos (Epoch ms)
           const [localTimestamp, setLocalTimestamp] = usePersistentState('bg_local_ts', 0);
-          // cloudTimestamp: Última fecha conocida de la nube (para saber si estamos desfasados visualmente)
-          const [lastCloudSync, setLastCloudSync] = usePersistentState('bg_last_cloud_sync', 0);
           
-          const [syncStatus, setSyncStatus] = useState('idle'); // idle, checking, downloading, uploading, synced, error
+          // Estados visuales de Sync
+          const [syncStatus, setSyncStatus] = useState('idle'); // idle, checking, uploading, synced, error
           const [syncMessage, setSyncMessage] = useState('');
+          
+          // Modal de Conflicto (Cuando Nube > Local)
+          const [conflictModal, setConflictModal] = useState({ isOpen: false, cloudData: null });
 
           const isAuth = _0x7a2(rk);
           const handleActivate = v => { if(_0x7a2(v)){ setRk(v); alert("¡Sistema Activado!"); } else alert("Código No Válido."); };
 
-          // --- WRAPPERS PARA SETTERS (Detectar cambios y actualizar timestamp local) ---
-          // Usaremos estos en lugar de los setX directos en las pestañas para marcar "sucio"
+          // --- WRAPPERS: Marcar timestamp local al editar ---
           const updatePortfolio = (newVal) => {
               setPortfolio(newVal);
-              setLocalTimestamp(Date.now());
+              setLocalTimestamp(Date.now()); // Actualiza fecha modificación local
               setSyncStatus('unsaved');
           };
           const updateResultsData = (newVal) => {
               setResultsData(newVal);
-              setLocalTimestamp(Date.now());
+              setLocalTimestamp(Date.now()); // Actualiza fecha modificación local
               setSyncStatus('unsaved');
           };
 
-          // --- LÓGICA DE SINCRONIZACIÓN INTELIGENTE ---
-          const performSync = async (forceUpload = false) => {
-              const url = simpleDecrypt(gScriptUrl);
-              if (!url) {
-                  if(forceUpload) alert("Configura la URL de Google Script en Ajustes.");
-                  return;
-              }
+          // --- LÓGICA DE SINCRONIZACIÓN ---
 
-              setSyncStatus(prev => prev === 'unsaved' ? 'uploading' : 'checking');
+          // 1. Función para SUBIR datos (Manual o Automática)
+          const uploadToCloud = async () => {
+              const url = simpleDecrypt(gScriptUrl);
+              if (!url) return alert("Configura la URL de Google Script en Ajustes.");
+
+              setSyncStatus('uploading');
+              setSyncMessage('Subiendo datos...');
               
               try {
-                  // 1. OBTENER DATOS DE LA NUBE (GET)
-                  // Nota: Apps Script debe estar desplegado como "Cualquier usuario" para evitar CORS con fetch simple
+                  const now = Date.now();
+                  const payload = {
+                      timestamp: now, // Marcamos el envío con la hora actual
+                      portfolio,
+                      resultsData,
+                      apiKey,
+                      baseCurrency,
+                      refreshInterval,
+                      version: 3
+                  };
+
+                  await fetch(url, {
+                      method: 'POST',
+                      mode: 'no-cors',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(payload)
+                  });
+
+                  // Al subir con éxito, actualizamos el localTimestamp para que coincidan
+                  setLocalTimestamp(now);
+                  setSyncStatus('synced');
+                  setSyncMessage('✅ Sincronizado');
+                  setTimeout(() => setSyncMessage(''), 3000);
+                  
+              } catch (e) {
+                  console.error(e);
+                  setSyncStatus('error');
+                  setSyncMessage('❌ Error al subir');
+              }
+          };
+
+          // 2. Función para COMPROBAR datos al inicio (Check for Updates)
+          const checkForCloudUpdates = async () => {
+              const url = simpleDecrypt(gScriptUrl);
+              if (!url) return;
+
+              setSyncStatus('checking');
+              try {
                   const response = await fetch(url);
                   const cloudData = await response.json();
                   
                   const cloudTS = cloudData.timestamp || 0;
                   const localTS = localTimestamp || 0;
-
-                  console.log(`Sync Check: LocalTS=${localTS} vs CloudTS=${cloudTS}`);
-
-                  // CASO A: Nube es más reciente que Local -> DESCARGAR Y SUSTITUIR
-                  // Se aplica margen de 2 segundos para evitar bucles por latencia
-                  if (cloudTS > (localTS + 2000) && !forceUpload) {
-                      setSyncStatus('downloading');
-                      setSyncMessage('⬇️ Datos de nube más recientes. Actualizando...');
-                      
-                      if (cloudData.portfolio) setPortfolio(cloudData.portfolio);
-                      if (cloudData.resultsData) setResultsData(cloudData.resultsData);
-                      if (cloudData.apiKey) setApiKey(cloudData.apiKey);
-                      if (cloudData.baseCurrency) setBaseCurrency(cloudData.baseCurrency);
-                      
-                      // Actualizamos el timestamp local para coincidir con la nube y evitar resubida inmediata
-                      setLocalTimestamp(cloudTS); 
-                      setLastCloudSync(cloudTS);
-                      
-                      setSyncStatus('synced');
-                      setTimeout(() => setSyncMessage(''), 3000);
-                      return;
+                  
+                  // LOGICA CRÍTICA: Si Nube es visiblemente más reciente (> 10 seg diferencia)
+                  if (cloudTS > (localTS + 10000)) {
+                      // Conflicto detectado: Abrir Modal
+                      setConflictModal({ isOpen: true, cloudData });
+                      setSyncStatus('idle');
+                  } else {
+                      // Estamos al día o Local es más nuevo (no hacemos nada, prevalece local)
+                      setSyncStatus(localTS > cloudTS ? 'unsaved' : 'synced');
                   }
-
-                  // CASO B: Local es más reciente (o forzado) -> SUBIR
-                  if (localTS > cloudTS || forceUpload) {
-                      setSyncStatus('uploading');
-                      setSyncMessage('⬆️ Subiendo cambios a Drive...');
-                      
-                      const payload = {
-                          timestamp: localTS, // Usamos la fecha de modificación local
-                          portfolio,
-                          resultsData,
-                          apiKey,
-                          baseCurrency,
-                          refreshInterval,
-                          version: 3
-                      };
-
-                      await fetch(url, {
-                          method: 'POST',
-                          mode: 'no-cors', // Apps Script doPost a veces requiere no-cors si no devuelve headers perfectos
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify(payload)
-                      });
-
-                      setLastCloudSync(localTS);
-                      setSyncStatus('synced');
-                      setTimeout(() => setSyncMessage(''), 3000);
-                      return;
-                  }
-
-                  // CASO C: Están sincronizados
-                  setSyncStatus('synced');
-                  setLastCloudSync(cloudTS);
-
               } catch (e) {
-                  console.error("Sync Error", e);
+                  console.error("Error comprobando nube:", e);
                   setSyncStatus('error');
-                  setSyncMessage('❌ Error de conexión');
               }
           };
 
-          // 1. Sync al inicio (Mount)
+          // 3. Resolución del Conflicto: Descargar Nube
+          const handleApplyCloudData = () => {
+              const data = conflictModal.cloudData;
+              if (!data) return;
+
+              if (data.portfolio) setPortfolio(data.portfolio);
+              if (data.resultsData) setResultsData(data.resultsData);
+              if (data.apiKey) setApiKey(data.apiKey);
+              if (data.baseCurrency) setBaseCurrency(data.baseCurrency);
+              
+              setLocalTimestamp(data.timestamp); // Igualamos fechas
+              setConflictModal({ isOpen: false, cloudData: null });
+              setSyncStatus('synced');
+              setSyncMessage('✅ Datos descargados');
+              setTimeout(() => setSyncMessage(''), 3000);
+          };
+
+          // 4. Resolución del Conflicto: Mantener Local
+          const handleKeepLocalData = () => {
+              // Simplemente cerramos el modal. 
+              // Al estar localTimestamp "viejo" pero contenido "nuevo" para el usuario, 
+              // forzamos actualizar la fecha local AHORA para que sea mayor que la nube y pida subir a la próxima.
+              setLocalTimestamp(Date.now());
+              setConflictModal({ isOpen: false, cloudData: null });
+              setSyncStatus('unsaved'); // Queda marcado para subir
+          };
+
+          // EFECTO: Comprobar al iniciar la app
           useEffect(() => {
               if (gScriptUrl && portfolio.length > 0) {
-                  performSync(false);
+                  checkForCloudUpdates();
               }
           }, []);
 
-          // 2. Auto-Sync por intervalo (Refresh Interval + 1 minuto)
+          // EFECTO: Auto-Subida (Intervalo de refresco + 1 min)
           useEffect(() => {
               if (!gScriptUrl || refreshInterval < 1) return;
-              const syncIntervalMs = (refreshInterval + 1) * 60 * 1000;
-              
-              const interval = setInterval(() => {
-                  // Solo sube si hay cambios locales no guardados o si local > nube
-                  if (localTimestamp > lastCloudSync) {
-                      performSync(false);
+              const intervalMs = (refreshInterval + 1) * 60 * 1000;
+              const timer = setInterval(() => {
+                  if (syncStatus === 'unsaved') {
+                      uploadToCloud();
                   }
-              }, syncIntervalMs);
-              return () => clearInterval(interval);
-          }, [refreshInterval, gScriptUrl, localTimestamp, lastCloudSync]);
+              }, intervalMs);
+              return () => clearInterval(timer);
+          }, [refreshInterval, gScriptUrl, syncStatus]);
+
+
+          // RENDERIZADO DEL MODAL DE CONFLICTO
+          const renderConflictModal = () => {
+              if (!conflictModal.isOpen) return null;
+              
+              const localDate = new Date(localTimestamp).toLocaleString();
+              const cloudDate = new Date(conflictModal.cloudData?.timestamp || 0).toLocaleString();
+              const cloudDevice = conflictModal.cloudData?.portfolio?.length || 0;
+              const localDevice = portfolio.length || 0;
+
+              return (
+                  <div className="fixed inset-0 bg-black/90 z-[300] flex items-center justify-center p-4 backdrop-blur-sm fade-in">
+                      <div className="bg-slate-900 border-2 border-orange-500 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">
+                          <div className="text-center mb-6">
+                              <div className="mx-auto w-16 h-16 bg-orange-500/20 text-orange-500 rounded-full flex items-center justify-center mb-4 animate-pulse">
+                                  <Icons.AlertCircle size={40}/>
+                              </div>
+                              <h3 className="text-xl font-bold text-white mb-2">¡Datos Desactualizados!</h3>
+                              <p className="text-sm text-slate-300">Hemos detectado una copia más reciente en Google Drive.</p>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4 mb-8">
+                              <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 opacity-60">
+                                  <div className="text-[10px] text-slate-400 uppercase font-bold mb-1">Este Dispositivo (Local)</div>
+                                  <div className="text-sm font-mono text-white font-bold mb-2">{localTimestamp === 0 ? 'Nunca' : localDate}</div>
+                                  <div className="text-[10px] text-slate-500">{localDevice} Posiciones</div>
+                              </div>
+                              <div className="bg-blue-900/20 p-4 rounded-xl border-2 border-blue-500 relative overflow-hidden">
+                                  <div className="absolute top-0 right-0 bg-blue-600 text-white text-[9px] px-2 py-0.5 font-bold uppercase">Más Reciente</div>
+                                  <div className="text-[10px] text-blue-300 uppercase font-bold mb-1">Google Drive (Nube)</div>
+                                  <div className="text-sm font-mono text-white font-bold mb-2">{cloudDate}</div>
+                                  <div className="text-[10px] text-blue-200">{cloudDevice} Posiciones</div>
+                              </div>
+                          </div>
+
+                          <div className="space-y-3">
+                              <button onClick={handleApplyCloudData} className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold uppercase shadow-lg shadow-blue-900/20 transition-all flex items-center justify-center gap-2">
+                                  <Icons.Upload className="rotate-180" size={18}/> Descargar versión de la Nube
+                              </button>
+                              <button onClick={handleKeepLocalData} className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold uppercase text-xs transition-all">
+                                  Ignorar y Mantener mi versión local
+                              </button>
+                          </div>
+                          <p className="text-[9px] text-center text-slate-500 mt-4">Si mantienes tu versión, sobrescribirá la nube en el próximo guardado.</p>
+                      </div>
+                  </div>
+              );
+          };
 
           return (
               <div className="h-full flex flex-col bg-[#0a0a0a] text-white overflow-hidden relative">
+                  {/* MODAL DE CONFLICTO (PRIORIDAD ALTA) */}
+                  {renderConflictModal()}
+
                   {/* TOAST DE SINCRONIZACIÓN */}
                   {syncMessage && (
                       <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[200] bg-blue-600/90 text-white px-6 py-3 rounded-full shadow-2xl font-bold text-xs flex items-center gap-2 fade-in backdrop-blur-md border border-white/10">
-                          {syncStatus === 'downloading' ? <Icons.Upload className="rotate-180 animate-bounce"/> : 
-                           syncStatus === 'uploading' ? <Icons.Upload className="animate-bounce"/> : 
+                          {syncStatus === 'uploading' ? <Icons.Upload className="animate-bounce"/> : 
                            syncStatus === 'error' ? <Icons.AlertCircle/> : <Icons.CheckCircle/>}
                           {syncMessage}
                       </div>
@@ -1515,23 +1581,24 @@ function doGet(e) {
                       </nav>
                   </header>
                   <main className="flex-1 overflow-y-auto bg-[#0a0a0a] relative custom-scrollbar">
-                      {/* Pasamos syncStatus y performSync a las pestañas que lo necesitan */}
-                      {activeTab === 'portfolio' && <PortfolioTab portfolio={portfolio} setPortfolio={updatePortfolio} apiKey={apiKey} baseCurrency={baseCurrency} refreshInterval={refreshInterval} lastUpdate={lastUpdate} setLastUpdate={setLastUpdate} resultsData={resultsData} syncStatus={syncStatus} onManualSync={() => performSync(true)} />}
-                      {activeTab === 'dividends' && <DividendTab portfolio={portfolio} setPortfolio={updatePortfolio} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={() => performSync(true)} />}
-                      {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={updateResultsData} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={() => performSync(true)} />}
+                      {activeTab === 'portfolio' && <PortfolioTab portfolio={portfolio} setPortfolio={updatePortfolio} apiKey={apiKey} baseCurrency={baseCurrency} refreshInterval={refreshInterval} lastUpdate={lastUpdate} setLastUpdate={setLastUpdate} resultsData={resultsData} syncStatus={syncStatus} onManualSync={uploadToCloud} />}
+                      {activeTab === 'dividends' && <DividendTab portfolio={portfolio} setPortfolio={updatePortfolio} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} />}
+                      {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={updateResultsData} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} />}
                       {activeTab === 'analysis' && <AnalysisTab apiKey={apiKey} baseCurrency={baseCurrency} setPortfolio={updatePortfolio} />}
-                      {activeTab === 'settings' && <SettingsTab apiKey={apiKey} setApiKey={setApiKey} isAuth={isAuth} onActivate={handleActivate} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={updatePortfolio} onForceBackup={() => performSync(true)} gScriptUrl={gScriptUrl} setGScriptUrl={setGScriptUrl} resultsData={resultsData} />}
+                      {activeTab === 'settings' && <SettingsTab apiKey={apiKey} setApiKey={setApiKey} isAuth={isAuth} onActivate={handleActivate} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={updatePortfolio} onForceBackup={uploadToCloud} gScriptUrl={gScriptUrl} setGScriptUrl={setGScriptUrl} resultsData={resultsData} />}
                   </main>
                   <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase">
-                      <div>BoardingGate 3.2 (Intelligent Sync)</div>
+                      <div>BoardingGate 3.2 (Sync Activo)</div>
                       <div className="flex gap-4">
-                          <span>Sinc Nube: {lastCloudSync > 0 ? new Date(lastCloudSync).toLocaleTimeString() : 'Pendiente'}</span>
-                          <span>Cotiz: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}</span>
+                          <span>Estado: {syncStatus === 'synced' ? 'Sincronizado' : syncStatus === 'unsaved' ? 'Cambios sin guardar' : 'Comprobando...'}</span>
+                          <span>Ult. Mod: {localTimestamp > 0 ? new Date(localTimestamp).toLocaleTimeString() : 'N/A'}</span>
                       </div>
                   </footer>
               </div>
           );
       };
+
+    
 
       createRoot(document.getElementById('root')).render(<App />);
     </script>
