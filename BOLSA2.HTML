@@ -372,7 +372,8 @@ const SimpleChart = ({ type, data, title, height = 400, color = "#3b82f6" }) => 
           );
       };
 
-      const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency }) => {
+
+const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, syncStatus, onManualSync }) => {
           const r2 = (num) => Math.round((parseFloat(num) || 0) * 100) / 100;
           const getDisplayYears = () => { const yearsSet = new Set(); if (portfolio.length === 0) return [new Date().getFullYear()-1, new Date().getFullYear(), new Date().getFullYear()+1]; portfolio.forEach(p => { if (p.buyDate) yearsSet.add(new Date(p.buyDate).getFullYear()); if (p.sellDate) yearsSet.add(new Date(p.sellDate).getFullYear()); if (p.dividends) p.dividends.forEach(d => yearsSet.add(d.year)); }); if (yearsSet.size === 0) return [new Date().getFullYear()-1, new Date().getFullYear(), new Date().getFullYear()+1]; const sorted = Array.from(yearsSet).sort((a, b) => a - b); const minYear = sorted[0], maxYear = sorted[sorted.length - 1]; const range = []; for (let y = minYear - 1; y <= maxYear + 1; y++) range.push(y); return range; };
           const handleRecalculate = () => { const newData = { ...resultsData }; const yearsToCalc = getDisplayYears(); let runningAccum = 0; yearsToCalc.forEach(y => { const existingComp = newData[y] || {}; if (!newData[y]) newData[y] = { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, fees:0, resNoDiv:0, resWithDiv:0, tax:0, accumulated:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0, comp1: 0, comp2: 0, comp3: 0, comp4: 0, compRest: 0 }; if (newData[y].locked) { runningAccum = r2(runningAccum + newData[y].resWithDiv); newData[y].accumulated = runningAccum; return; } let yearProfitPrice = 0, yearLossPrice = 0, yearFees = 0, lotesTotal = 0; const uniqueTickers = new Set(); const sales = portfolio.filter(p => p.sellDate && new Date(p.sellDate).getFullYear() === y && p.isActive !== false); lotesTotal = sales.length; sales.forEach(p => { uniqueTickers.add(p.ticker); const cost = r2((p.buyPrice * p.shares * p.buyFx) + (p.fees || 0) + (p.adjustments || 0)); const revenueNet = r2((p.sellPrice * p.shares * p.sellFx) - (p.sellFees || 0) - (p.sellAdjustments || 0)); const pl = r2(revenueNet - cost); if (pl >= 0) yearProfitPrice += pl; else yearLossPrice += Math.abs(pl); yearFees += r2((p.fees || 0) + (p.adjustments || 0) + (p.sellFees || 0) + (p.sellAdjustments || 0)); }); let yearDivs = 0; portfolio.forEach(p => { if (p.isActive !== false && p.dividends) { p.dividends.forEach(d => { if (d.year === y) yearDivs += d.net; }); } }); yearProfitPrice = r2(yearProfitPrice); yearLossPrice = r2(yearLossPrice); yearDivs = r2(yearDivs); yearFees = r2(yearFees); const resNoDiv = r2(yearProfitPrice - yearLossPrice); const resWithDiv = r2(resNoDiv + yearDivs); const tax = resNoDiv > 0 ? r2(resNoDiv * 0.19) : 0; runningAccum = r2(runningAccum + resWithDiv); const rentaBaseCalc = resNoDiv; let finalCompRest = existingComp.compRest || 0; if (rentaBaseCalc < 0) { const c1 = parseFloat(existingComp.comp1) || 0; const c2 = parseFloat(existingComp.comp2) || 0; const c3 = parseFloat(existingComp.comp3) || 0; const c4 = parseFloat(existingComp.comp4) || 0; finalCompRest = r2(rentaBaseCalc + c1 + c2 + c3 + c4); } newData[y] = { ...newData[y], soldCount: lotesTotal, uniqueCount: uniqueTickers.size, profitPrice: yearProfitPrice, dividends: yearDivs, lossPrice: yearLossPrice, fees: yearFees, resNoDiv: resNoDiv, resWithDiv: resWithDiv, tax: tax, accumulated: runningAccum, rentaResNoDiv: resNoDiv, rentaFees: yearFees, rentaAdj: existingComp.rentaAdj || 0, rentaBase: rentaBaseCalc, comp1: existingComp.comp1 || 0, comp2: existingComp.comp2 || 0, comp3: existingComp.comp3 || 0, comp4: existingComp.comp4 || 0, compRest: finalCompRest }; }); setResultsData(newData); };
@@ -390,6 +391,9 @@ const SimpleChart = ({ type, data, title, height = 400, color = "#3b82f6" }) => 
                    <div className="flex justify-between items-center bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
                       <div><h2 className="text-xl font-display font-bold text-white">Resultados y Fiscalidad</h2><p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Consolidación Anual de Rendimiento</p></div>
                       <div className="flex gap-2">
+                          <button onClick={onManualSync} className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-colors shadow-lg border flex items-center gap-2 ${syncStatus === 'unsaved' ? 'bg-orange-600 border-orange-500 text-white' : 'bg-slate-800 border-slate-600 text-green-400'}`}>
+                              <Icons.Upload size={14}/> {syncStatus === 'unsaved' ? 'SINCRONIZAR' : 'SYNC OK'}
+                          </button>
                           <button onClick={handleRecalculate} className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg text-xs font-bold uppercase transition-colors shadow-lg border border-blue-400 flex items-center gap-2"><Icons.Refresh size={14}/> Recalcular Datos</button>
                           <button onClick={handlePrint} className="bg-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button>
                       </div>
@@ -411,6 +415,7 @@ const SimpleChart = ({ type, data, title, height = 400, color = "#3b82f6" }) => 
               </div>
           );
       };
+      
 
       // --- COMPONENTE: GRÁFICO BARRAS DIVERGENTES (DINÁMICO) ---
      const DivergingBarChart = ({ data, baseCurrency }) => {
@@ -543,8 +548,7 @@ const SimpleChart = ({ type, data, title, height = 400, color = "#3b82f6" }) => 
       }; 
 
 
-
-    const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync }) => {
+const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync }) => {
           const [filterText, setFilterText] = useState('');
           const [filterDateStart, setFilterDateStart] = useState('');
           const [filterDateEnd, setFilterDateEnd] = useState('');
@@ -679,9 +683,20 @@ const SimpleChart = ({ type, data, title, height = 400, color = "#3b82f6" }) => 
                       <StatsBlock title="TOTAL FILTRADO" data={stats.total} color="#a855f7" baseCurrency={baseCurrency} type="total" />
                       <RenderHistoryCard />
                   </div>
-
+                  
                   <div className="flex flex-col gap-3 shrink-0 bg-slate-900/50 p-3 rounded-xl border border-slate-800">
-                      <div className="flex justify-between items-center"><div className="flex gap-2 items-start"><div className="flex flex-col"><button onClick={() => updatePrices(false)} disabled={updating} className="bg-slate-800 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-700 hover:bg-slate-700 transition-colors flex items-center gap-2">{updating ? <Icons.Loader/> : <Icons.Refresh/>} ACTUALIZAR</button><span className="text-[9px] text-slate-500 mt-1 uppercase font-bold text-center tracking-wider">Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}</span></div><button onClick={analyzePortfolio} className="bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 transition-colors flex items-center gap-2"><Icons.Wand/> INFORME iA</button><button onClick={handlePrint} className="bg-slate-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button></div><button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', group: '', notes: '', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, feesIncludedInPrice: false, buyPE:0, annualDividend:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, sellFeesIncludedInPrice: false, currentPE:0, dividends: [] }); setIsModalOpen(true); }} className="bg-blue-600 px-4 h-9 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg hover:bg-blue-500"><Icons.Plus size={14}/> NUEVA POSICIÓN</button></div>
+                      <div className="flex justify-between items-center"><div className="flex gap-2 items-start">
+                        <div className="flex flex-col">
+                            <button onClick={() => updatePrices(false)} disabled={updating} className="bg-slate-800 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-700 hover:bg-slate-700 transition-colors flex items-center gap-2">{updating ? <Icons.Loader/> : <Icons.Refresh/>} ACTUALIZAR</button>
+                            <span className="text-[9px] text-slate-500 mt-1 uppercase font-bold text-center tracking-wider">Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}</span>
+                        </div>
+                        {/* BOTÓN NUEVO SINCRONIZAR */}
+                        <button onClick={onManualSync} className={`px-3 h-9 rounded-lg text-[10px] font-bold border flex items-center gap-2 transition-all ${syncStatus === 'unsaved' ? 'bg-orange-600 border-orange-500 text-white animate-pulse' : syncStatus === 'uploading' || syncStatus === 'downloading' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-green-400'}`}>
+                            {syncStatus === 'uploading' || syncStatus === 'downloading' ? <Icons.Loader/> : <Icons.Upload size={14} className={syncStatus==='unsaved' ? '' : 'text-green-500'}/>} 
+                            {syncStatus === 'unsaved' ? 'GUARDAR' : syncStatus === 'uploading' ? 'SUBIENDO...' : syncStatus === 'downloading' ? 'BAJANDO...' : 'SYNC OK'}
+                        </button>
+                        <button onClick={analyzePortfolio} className="bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 transition-colors flex items-center gap-2"><Icons.Wand/> INFORME iA</button>
+                        <button onClick={handlePrint} className="bg-slate-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button></div><button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', group: '', notes: '', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, feesIncludedInPrice: false, buyPE:0, annualDividend:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, sellFeesIncludedInPrice: false, currentPE:0, dividends: [] }); setIsModalOpen(true); }} className="bg-blue-600 px-4 h-9 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg hover:bg-blue-500"><Icons.Plus size={14}/> NUEVA POSICIÓN</button></div>
                       <div className="flex flex-wrap gap-2 items-center bg-slate-950/50 p-2 rounded-lg border border-slate-800/50"><div className="flex-1 min-w-[150px] relative"><Icons.Search className="absolute left-2 top-2 text-slate-500" size={14}/><input type="text" value={filterText} onChange={e => setFilterText(e.target.value)} placeholder="Filtrar por ticker, nombre o grupo..." className="w-full bg-slate-900 border border-slate-700 h-8 pl-8 pr-2 text-xs rounded focus:border-blue-500 font-bold" /></div><div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-2 h-8"><span className="text-[9px] font-bold text-slate-500 uppercase">Desde</span><input type="date" value={filterDateStart} onChange={e => setFilterDateStart(e.target.value)} className="bg-transparent border-none text-xs text-white p-0 w-[95px] focus:ring-0 font-bold" /></div><div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-2 h-8"><span className="text-[9px] font-bold text-slate-500 uppercase">Hasta</span><input type="date" value={filterDateEnd} onChange={e => setFilterDateEnd(e.target.value)} className="bg-transparent border-none text-xs text-white p-0 w-[95px] focus:ring-0 font-bold" /></div><div className="flex bg-slate-900 rounded border border-slate-700 h-8 p-0.5"><button onClick={() => setFilterType('all')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'all' ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white'}`}>TODO</button><button onClick={() => setFilterType('active')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'active' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>ACTIVAS</button><button onClick={() => setFilterType('sold')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'sold' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>VENTAS</button></div><button onClick={resetFilters} title="Limpiar Filtros" className="h-8 px-3 bg-red-900/30 text-red-400 border border-red-500/30 rounded text-[10px] font-bold hover:bg-red-900/50 flex items-center justify-center"><Icons.Trash2 size={16}/></button></div>
                   </div>
                   
@@ -904,6 +919,7 @@ const SimpleChart = ({ type, data, title, height = 400, color = "#3b82f6" }) => 
               </div>
           );
       };
+    
 
 
 const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
@@ -1019,9 +1035,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
           );
       };
       
-
-
- const DividendTab = ({ portfolio, setPortfolio, baseCurrency }) => {
+const DividendTab = ({ portfolio, setPortfolio, baseCurrency, syncStatus, onManualSync }) => {
           const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
           
           // --- FUNCION AUXILIAR FECHA ---
@@ -1147,6 +1161,9 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
                   <div className="flex justify-between items-center mb-4 bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
                       <div className="flex items-center gap-4"><button onClick={() => setSelectedYear(y => y - 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">←</button><span className="text-2xl font-bold font-display text-blue-400">{selectedYear}</span><button onClick={() => setSelectedYear(y => y + 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">→</button></div>
                       <div className="flex gap-4 items-center">
+                           <button onClick={onManualSync} className={`px-3 py-2 rounded-lg text-[10px] font-bold border flex items-center gap-2 transition-all ${syncStatus === 'unsaved' ? 'bg-orange-600 border-orange-500 text-white' : 'bg-slate-800 border-slate-600 text-green-400'}`}>
+                              <Icons.Upload size={14}/> {syncStatus === 'unsaved' ? 'GUARDAR CAMBIOS' : 'SYNC OK'}
+                          </button>
                           <div className="flex gap-8 mr-4">
                               <div className="text-right"><div className="text-[10px] text-slate-500 uppercase font-bold">Total Bruto</div><div className="text-xl font-bold text-white">{formatMoney(stats.tBruto, baseCurrency)}</div></div>
                               <div className="text-right border-l border-slate-700 pl-8">
@@ -1198,6 +1215,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
           );
       };
 
+ 
 const SettingsTab = ({ apiKey, setApiKey, isAuth, onActivate, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio, onForceBackup, gScriptUrl, setGScriptUrl, resultsData }) => { // AÑADIDO resultsData a props
           const [localLic, setLocalLic] = useState(''); 
           const [showKey, setShowKey] = useState(false); 
@@ -1226,8 +1244,6 @@ const SettingsTab = ({ apiKey, setApiKey, isAuth, onActivate, baseCurrency, setB
           
           const handleRunImport = (e) => { const file = e.target.files[0]; if (!file) return; if(!confirm("⚠️ IMPORTANTE:\n\nEsta acción reemplazará TODA tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) { e.target.value = null; return; } setIoStatus('processing'); const reader = new FileReader(); reader.onload = (ev) => { try { const d = JSON.parse(ev.target.result); if (d.portfolio) setPortfolio(d.portfolio); if (d.apiKey) setApiKey(d.apiKey); if (d.baseCurrency) setBaseCurrency(d.baseCurrency); if (d.refreshInterval) setRefreshInterval(d.refreshInterval); setIoStatus('success'); alert("✅ Restauración completada correctamente."); window.location.reload(); } catch (err) { alert("Archivo inválido o corrupto."); setIoStatus('error'); } }; reader.readAsText(file); };
           
-          // ... (Resto del componente handlePdfImport y return sin cambios significativos más allá de recibir la prop) ...
-          // He omitido el resto del cuerpo para abreviar, asegurate de usar el mismo return que tenias, el cambio clave esta en handleRunExport y la firma del componente
           
           const handlePdfImport = async () => { if (!apiKey) return alert("Falta API Key"); if (!pdfFile) return alert("Selecciona un archivo PDF"); setImportingPdf(true); setImportResult(null); try { const pdfText = await readPdfText(pdfFile); const truncatedText = pdfText.substring(0, 30000); const prompt = `CRITICAL: Role=DataEntryBot. Output=JSON Array Only. Task: Extract stock portfolio data from this text based on instructions: "${pdfPrompt}". Text: "${truncatedText}" Expected JSON Object Format for each item: { "ticker": "SYMBOL", "name": "Company Name", "shares": number, "buyPrice": number, "buyDate": "YYYY-MM-DD", "stockCurrency": "USD/EUR/etc", "buyFx": number (1 if same currency), "fees": number (0 if unknown), "sellDate": "YYYY-MM-DD" (if closed, else null), "sellPrice": number (if closed, else 0), "sellFx": number (1 if same currency), "sellFees": number } If data is missing, estimate reasonable defaults or 0. Return ONLY the JSON array.`; const res = await askGemini(apiKey, prompt); const extractedData = sanitizeAndParseJSON(res); if (Array.isArray(extractedData)) { setPortfolio(prev => { const newItems = extractedData.map(item => ({ ...item, id: Date.now() + Math.random(), group: 'Importado PDF', isActive: true, dividends: [], adjustments: 0, buyPE: 0, currentPE: 0, annualDividend: 0, currentPrice: item.sellDate ? 0 : item.buyPrice, currentFx: item.buyFx })); return [...prev, ...newItems]; }); setImportResult({ success: true, count: extractedData.length, data: extractedData }); } else { throw new Error("Formato respuesta incorrecto"); } } catch (e) { setImportResult({ success: false, error: e.message }); } finally { setImportingPdf(false); setPdfFile(null); } };
 
@@ -1262,7 +1278,25 @@ const SettingsTab = ({ apiKey, setApiKey, isAuth, onActivate, baseCurrency, setB
                       <div className="mt-8 border-t border-slate-700 pt-6">
                           <h4 className="text-sm font-bold text-blue-400 mb-4 uppercase tracking-widest flex items-center gap-2"><Icons.Globe size={16}/> Copia Automática (Google Apps Script)</h4>
                           <div><label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">URL de la Aplicación Web (Script)</label><div className="flex items-end gap-2 mb-4"><div className="relative flex-1"><input type={showUrl ? "text" : "password"} value={simpleDecrypt(gScriptUrl)} onChange={(e) => setGScriptUrl(simpleEncrypt(e.target.value))} placeholder="https://script.google.com/macros/s/..." className="w-full bg-black/50 border border-slate-600 rounded-xl p-3 pr-12 text-white focus:border-green-500 focus:outline-none font-mono text-xs"/><button onClick={() => setShowUrl(!showUrl)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showUrl ? <Icons.EyeOff size={16}/> : <Icons.Eye size={16}/>}</button></div><button onClick={onForceBackup} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-3 rounded-xl font-bold text-xs flex items-center gap-2 transition-colors shadow-lg whitespace-nowrap"><Icons.Refresh size={16} className="shrink-0"/> FORZAR COPIA</button></div></div>
-                          <div className="bg-slate-950/50 border border-slate-700 rounded-xl p-4"><h5 className="text-xs font-bold text-white mb-3 flex items-center gap-2"><Icons.HelpCircle size={14}/> Guía de Configuración (Script de Google)</h5><ol className="list-decimal list-inside text-[10px] text-slate-300 space-y-2 leading-relaxed font-sans"><li>Ve a <a href="https://script.google.com/home/start" target="_blank" className="text-blue-400 font-bold hover:underline">Google Apps Script</a> y haz clic en <strong>"Nuevo Proyecto"</strong>.</li><li>Borra todo el código del editor y pega este bloque tal cual:<pre className="bg-black text-green-400 p-2 rounded mt-1 mb-1 border border-slate-800 overflow-x-auto text-[9px] font-mono select-all">{`function doPost(e) {\n  var data = JSON.parse(e.postData.contents);\n  var fileName = "BACKUP_BG_" + new Date().toISOString().slice(0,10) + ".json";\n  DriveApp.createFile(fileName, JSON.stringify(data), MimeType.PLAIN_TEXT);\n  return ContentService.createTextOutput("OK");\n}`}</pre></li><li>Pulsa el botón azul <strong>"Implementar"</strong> (arriba dcha) {'>'} <strong>"Nueva implementación"</strong>.</li><li>En la rueda dentada (tipo), selecciona <strong>"Aplicación web"</strong>.</li><li>En "Quién tiene acceso", selecciona <strong>"Cualquier usuario"</strong> (Esto permite que la app guarde sin pedir login cada vez).</li><li>Pulsa "Implementar", autoriza el acceso a Drive, copia la URL que te dan ("Aplicación web") y pégala arriba.</li></ol></div>
+                          <div className="bg-slate-950/50 border border-slate-700 rounded-xl p-4"><h5 className="text-xs font-bold text-white mb-3 flex items-center gap-2"><Icons.HelpCircle size={14}/> Guía de Configuración (Script de Google)</h5><ol className="list-decimal list-inside text-[10px] text-slate-300 space-y-2 leading-relaxed font-sans"><li>Ve a <a href="https://script.google.com/home/start" target="_blank" className="text-blue-400 font-bold hover:underline">Google Apps Script</a> y haz clic en <strong>"Nuevo Proyecto"</strong>.</li><li>Borra todo el código del editor y pega este bloque tal cual:<pre className="bg-black text-green-400 p-2 rounded mt-1 mb-1 border border-slate-800 overflow-x-auto text-[9px] font-mono select-all">{`function doPost(e) {
+  var lock = LockService.getScriptLock(); lock.tryLock(10000);
+  try {
+    var data = JSON.parse(e.postData.contents);
+    var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
+    var file = files.hasNext() ? files.next() : DriveApp.createFile("BOARDINGGATE_DB.json", "", MimeType.PLAIN_TEXT);
+    file.setContent(JSON.stringify(data));
+    return ContentService.createTextOutput(JSON.stringify({ status: "success", timestamp: data.timestamp })).setMimeType(ContentService.MimeType.JSON);
+  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
+  finally { lock.releaseLock(); }
+}
+
+function doGet(e) {
+  try {
+    var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
+    if (files.hasNext()) return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
+  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
+}`}</pre></li><li>Pulsa el botón azul <strong>"Implementar"</strong> (arriba dcha) {'>'} <strong>"Nueva implementación"</strong>.</li><li>En la rueda dentada (tipo), selecciona <strong>"Aplicación web"</strong>.</li><li>En "Quién tiene acceso", selecciona <strong>"Cualquier usuario"</strong> (Esto permite que la app guarde sin pedir login cada vez).</li><li>Pulsa "Implementar", autoriza el acceso a Drive, copia la URL que te dan ("Aplicación web") y pégala arriba.</li></ol></div>
                       </div>
                   </div>
 
