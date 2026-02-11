@@ -548,7 +548,7 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
       }; 
 
 
-const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync }) => {
+const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady }) => {
           const [filterText, setFilterText] = useState('');
           const [filterDateStart, setFilterDateStart] = useState('');
           const [filterDateEnd, setFilterDateEnd] = useState('');
@@ -648,7 +648,16 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             const pl = val - cost; const pct = cost !== 0 ? (pl/cost)*100 : 0; return { ticker: p.ticker, shares: p.shares, dates: `${formatDateES(p.buyDate)}${isS ? ' → '+formatDateES(p.sellDate) : ''}`, value: pl, pct: pct }; }).sort((a,b) => b.value - a.value); }, [activeFilteredPortfolio]);
           const taxSum = useMemo(() => { if(!resultsData) return 0; return Object.values(resultsData).reduce((acc, y) => acc + (y.tax || 0), 0); }, [resultsData]);
 
-          useEffect(() => { if (apiKey && portfolio.length > 0) updatePrices(true); if (!refreshInterval || refreshInterval < 1) return; const interval = setInterval(() => updatePrices(true), refreshInterval * 60 * 1000); return () => clearInterval(interval); }, [apiKey, refreshInterval]);
+          useEffect(() => { 
+              // MODIFICACIÓN CRÍTICA: Bloquear actualización automática si la app no ha terminado de sincronizar
+              if (!isAppReady) return;
+
+              if (apiKey && portfolio.length > 0) updatePrices(true); 
+              if (!refreshInterval || refreshInterval < 1) return; 
+              const interval = setInterval(() => updatePrices(true), refreshInterval * 60 * 1000); 
+              return () => clearInterval(interval); 
+          }, [apiKey, refreshInterval, isAppReady]); // AÑADIDO isAppReady
+
           const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
           const updatePrices = async (isAuto = false) => { const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); if (!isAuto && active.length === 0) return; setUpdating(true); let log = { success: [], fail: [] }, newUpdates = []; try { for (const item of active) { const prompt = `IMPORTANTE: Responde SOLO JSON con PUNTO decimal. Sin símbolos de moneda ni comas. Datos de "${item.ticker}" (${item.stockCurrency}) a ${baseCurrency}. JSON: {"p":precio,"fx":cambio,"pe":per,"n":"nombre"}`; try { const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json && (json.p || json.p === 0)) { newUpdates.push({ id: item.id, n: json.n, p: cleanVal(json.p), fx: cleanVal(json.fx), pe: cleanVal(json.pe) }); log.success.push(item.ticker); } else { log.fail.push(item.ticker); } } catch (e) { log.fail.push(item.ticker); } } if (newUpdates.length > 0) { setPortfolio(prev => prev.map(p => { const u = newUpdates.find(x => x.id === p.id); return u ? { ...p, name: u.n || p.name, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe } : p; })); setLastUpdate(new Date().toISOString()); } if (!isAuto && log.fail.length > 0) setInfoModal({ isOpen: true, title: 'Sincronización con Errores', msg: `Fallos en: ${log.fail.join(', ')}.`, type: 'warning' }); } catch (e) { if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); } finally { setUpdating(false); } };
           const analyzePortfolio = async () => { const dataToAnalyze = filteredPortfolio.filter(p => p.isActive !== false); if (dataToAnalyze.length === 0) return; setAnalyzing(true); try { const summary = dataToAnalyze.map(p => ({ t: p.ticker, perf: ((p.sellDate ? p.sellPrice : p.currentPrice) * p.shares * (p.sellDate ? p.sellFx : p.currentFx)) - (p.buyPrice * p.shares * p.buyFx) })); const prompt = `CRITICAL INSTRUCTION: Output ONLY HTML. No intro. No chatter. Task: Analyze this portfolio: ${JSON.stringify(summary)}. Structure: Use <h3> for headers, <p> for text, <ul>/<li> for lists. Headers: Resumen, Rentabilidad, Riesgos, Conclusión.`; const res = await askGemini(apiKey, prompt); setAnalysisResult(res.replace(/```html/g, '').replace(/```/g, '').trim()); setIsAnalysisModalOpen(true); } catch (e) { alert(e.message); } finally { setAnalyzing(false); } };
@@ -1349,7 +1358,6 @@ function doGet(e) {
           );
       };
 
-
 const App = () => {
           const [activeTab, setActiveTab] = useState('portfolio');
           
@@ -1366,34 +1374,31 @@ const App = () => {
           const [rk, setRk] = usePersistentState('bg_app_rk_st', '');
           
           // SINCRONIZACIÓN
-          // timestamp: Fecha de modificación de los datos (Epoch ms)
           const [localTimestamp, setLocalTimestamp] = usePersistentState('bg_local_ts', 0);
-          
-          // Estados visuales de Sync
-          const [syncStatus, setSyncStatus] = useState('idle'); // idle, checking, uploading, synced, error
+          const [syncStatus, setSyncStatus] = useState('idle'); 
           const [syncMessage, setSyncMessage] = useState('');
-          
-          // Modal de Conflicto (Cuando Nube > Local)
           const [conflictModal, setConflictModal] = useState({ isOpen: false, cloudData: null });
+          
+          // SEMÁFORO DE INICIO: Bloquea actualizaciones automáticas hasta verificar la nube
+          const [isAppReady, setIsAppReady] = useState(false);
 
           const isAuth = _0x7a2(rk);
           const handleActivate = v => { if(_0x7a2(v)){ setRk(v); alert("¡Sistema Activado!"); } else alert("Código No Válido."); };
 
-          // --- WRAPPERS: Marcar timestamp local al editar ---
+          // --- WRAPPERS ---
           const updatePortfolio = (newVal) => {
               setPortfolio(newVal);
-              setLocalTimestamp(Date.now()); // Actualiza fecha modificación local
+              setLocalTimestamp(Date.now());
               setSyncStatus('unsaved');
           };
           const updateResultsData = (newVal) => {
               setResultsData(newVal);
-              setLocalTimestamp(Date.now()); // Actualiza fecha modificación local
+              setLocalTimestamp(Date.now());
               setSyncStatus('unsaved');
           };
 
           // --- LÓGICA DE SINCRONIZACIÓN ---
 
-          // 1. Función para SUBIR datos (Manual o Automática)
           const uploadToCloud = async () => {
               const url = simpleDecrypt(gScriptUrl);
               if (!url) return alert("Configura la URL de Google Script en Ajustes.");
@@ -1404,7 +1409,7 @@ const App = () => {
               try {
                   const now = Date.now();
                   const payload = {
-                      timestamp: now, // Marcamos el envío con la hora actual
+                      timestamp: now,
                       portfolio,
                       resultsData,
                       apiKey,
@@ -1420,7 +1425,6 @@ const App = () => {
                       body: JSON.stringify(payload)
                   });
 
-                  // Al subir con éxito, actualizamos el localTimestamp para que coincidan
                   setLocalTimestamp(now);
                   setSyncStatus('synced');
                   setSyncMessage('✅ Sincronizado');
@@ -1433,10 +1437,14 @@ const App = () => {
               }
           };
 
-          // 2. Función para COMPROBAR datos al inicio (Check for Updates)
           const checkForCloudUpdates = async () => {
               const url = simpleDecrypt(gScriptUrl);
-              if (!url) return;
+              
+              // Si no hay URL configurada, la app está lista inmediatamente
+              if (!url) {
+                  setIsAppReady(true);
+                  return;
+              }
 
               setSyncStatus('checking');
               try {
@@ -1446,22 +1454,23 @@ const App = () => {
                   const cloudTS = cloudData.timestamp || 0;
                   const localTS = localTimestamp || 0;
                   
-                  // LOGICA CRÍTICA: Si Nube es visiblemente más reciente (> 10 seg diferencia)
+                  // Diferencia de 10 segundos para considerar conflicto
                   if (cloudTS > (localTS + 10000)) {
-                      // Conflicto detectado: Abrir Modal
                       setConflictModal({ isOpen: true, cloudData });
                       setSyncStatus('idle');
+                      // NO ponemos isAppReady(true) aquí. Esperamos a que el usuario decida.
                   } else {
-                      // Estamos al día o Local es más nuevo (no hacemos nada, prevalece local)
                       setSyncStatus(localTS > cloudTS ? 'unsaved' : 'synced');
+                      setIsAppReady(true); // No hay conflicto, arrancamos motores
                   }
               } catch (e) {
                   console.error("Error comprobando nube:", e);
                   setSyncStatus('error');
+                  setIsAppReady(true); // Ante error de red, dejamos usar la app local
               }
           };
 
-          // 3. Resolución del Conflicto: Descargar Nube
+          // Resolución: Descargar Nube
           const handleApplyCloudData = () => {
               const data = conflictModal.cloudData;
               if (!data) return;
@@ -1471,33 +1480,35 @@ const App = () => {
               if (data.apiKey) setApiKey(data.apiKey);
               if (data.baseCurrency) setBaseCurrency(data.baseCurrency);
               
-              setLocalTimestamp(data.timestamp); // Igualamos fechas
+              setLocalTimestamp(data.timestamp);
               setConflictModal({ isOpen: false, cloudData: null });
               setSyncStatus('synced');
               setSyncMessage('✅ Datos descargados');
+              setIsAppReady(true); // Ya tenemos datos frescos, arrancamos
               setTimeout(() => setSyncMessage(''), 3000);
           };
 
-          // 4. Resolución del Conflicto: Mantener Local
+          // Resolución: Mantener Local
           const handleKeepLocalData = () => {
-              // Simplemente cerramos el modal. 
-              // Al estar localTimestamp "viejo" pero contenido "nuevo" para el usuario, 
-              // forzamos actualizar la fecha local AHORA para que sea mayor que la nube y pida subir a la próxima.
-              setLocalTimestamp(Date.now());
+              setLocalTimestamp(Date.now()); // Forzamos fecha actual para ganar a la nube
               setConflictModal({ isOpen: false, cloudData: null });
-              setSyncStatus('unsaved'); // Queda marcado para subir
+              setSyncStatus('unsaved');
+              setIsAppReady(true); // Usuario decide usar local, arrancamos
           };
 
-          // EFECTO: Comprobar al iniciar la app
+          // EFECTO DE INICIO
           useEffect(() => {
-              if (gScriptUrl && portfolio.length > 0) {
+              // Solo comprobamos si hay URL. Si no hay cartera siquiera, no comprobamos nada.
+              if (gScriptUrl) {
                   checkForCloudUpdates();
+              } else {
+                  setIsAppReady(true);
               }
           }, []);
 
-          // EFECTO: Auto-Subida (Intervalo de refresco + 1 min)
+          // EFECTO AUTO-SUBIDA
           useEffect(() => {
-              if (!gScriptUrl || refreshInterval < 1) return;
+              if (!gScriptUrl || refreshInterval < 1 || !isAppReady) return;
               const intervalMs = (refreshInterval + 1) * 60 * 1000;
               const timer = setInterval(() => {
                   if (syncStatus === 'unsaved') {
@@ -1505,13 +1516,11 @@ const App = () => {
                   }
               }, intervalMs);
               return () => clearInterval(timer);
-          }, [refreshInterval, gScriptUrl, syncStatus]);
+          }, [refreshInterval, gScriptUrl, syncStatus, isAppReady]);
 
 
-          // RENDERIZADO DEL MODAL DE CONFLICTO
           const renderConflictModal = () => {
               if (!conflictModal.isOpen) return null;
-              
               const localDate = new Date(localTimestamp).toLocaleString();
               const cloudDate = new Date(conflictModal.cloudData?.timestamp || 0).toLocaleString();
               const cloudDevice = conflictModal.cloudData?.portfolio?.length || 0;
@@ -1521,16 +1530,13 @@ const App = () => {
                   <div className="fixed inset-0 bg-black/90 z-[300] flex items-center justify-center p-4 backdrop-blur-sm fade-in">
                       <div className="bg-slate-900 border-2 border-orange-500 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">
                           <div className="text-center mb-6">
-                              <div className="mx-auto w-16 h-16 bg-orange-500/20 text-orange-500 rounded-full flex items-center justify-center mb-4 animate-pulse">
-                                  <Icons.AlertCircle size={40}/>
-                              </div>
+                              <div className="mx-auto w-16 h-16 bg-orange-500/20 text-orange-500 rounded-full flex items-center justify-center mb-4 animate-pulse"><Icons.AlertCircle size={40}/></div>
                               <h3 className="text-xl font-bold text-white mb-2">¡Datos Desactualizados!</h3>
                               <p className="text-sm text-slate-300">Hemos detectado una copia más reciente en Google Drive.</p>
                           </div>
-
                           <div className="grid grid-cols-2 gap-4 mb-8">
                               <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 opacity-60">
-                                  <div className="text-[10px] text-slate-400 uppercase font-bold mb-1">Este Dispositivo (Local)</div>
+                                  <div className="text-[10px] text-slate-400 uppercase font-bold mb-1">Este Dispositivo</div>
                                   <div className="text-sm font-mono text-white font-bold mb-2">{localTimestamp === 0 ? 'Nunca' : localDate}</div>
                                   <div className="text-[10px] text-slate-500">{localDevice} Posiciones</div>
                               </div>
@@ -1541,16 +1547,10 @@ const App = () => {
                                   <div className="text-[10px] text-blue-200">{cloudDevice} Posiciones</div>
                               </div>
                           </div>
-
                           <div className="space-y-3">
-                              <button onClick={handleApplyCloudData} className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold uppercase shadow-lg shadow-blue-900/20 transition-all flex items-center justify-center gap-2">
-                                  <Icons.Upload className="rotate-180" size={18}/> Descargar versión de la Nube
-                              </button>
-                              <button onClick={handleKeepLocalData} className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold uppercase text-xs transition-all">
-                                  Ignorar y Mantener mi versión local
-                              </button>
+                              <button onClick={handleApplyCloudData} className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold uppercase shadow-lg shadow-blue-900/20 transition-all flex items-center justify-center gap-2"><Icons.Upload className="rotate-180" size={18}/> Descargar versión de la Nube</button>
+                              <button onClick={handleKeepLocalData} className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold uppercase text-xs transition-all">Ignorar y Mantener mi versión local</button>
                           </div>
-                          <p className="text-[9px] text-center text-slate-500 mt-4">Si mantienes tu versión, sobrescribirá la nube en el próximo guardado.</p>
                       </div>
                   </div>
               );
@@ -1558,15 +1558,17 @@ const App = () => {
 
           return (
               <div className="h-full flex flex-col bg-[#0a0a0a] text-white overflow-hidden relative">
-                  {/* MODAL DE CONFLICTO (PRIORIDAD ALTA) */}
                   {renderConflictModal()}
-
-                  {/* TOAST DE SINCRONIZACIÓN */}
                   {syncMessage && (
                       <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[200] bg-blue-600/90 text-white px-6 py-3 rounded-full shadow-2xl font-bold text-xs flex items-center gap-2 fade-in backdrop-blur-md border border-white/10">
-                          {syncStatus === 'uploading' ? <Icons.Upload className="animate-bounce"/> : 
-                           syncStatus === 'error' ? <Icons.AlertCircle/> : <Icons.CheckCircle/>}
-                          {syncMessage}
+                          {syncStatus === 'uploading' ? <Icons.Upload className="animate-bounce"/> : syncStatus === 'error' ? <Icons.AlertCircle/> : <Icons.CheckCircle/>} {syncMessage}
+                      </div>
+                  )}
+                  {/* PANTALLA DE CARGA INICIAL PARA EVITAR PARPADEO */}
+                  {!isAppReady && !conflictModal.isOpen && (
+                      <div className="fixed inset-0 z-[250] bg-black flex flex-col items-center justify-center">
+                          <Icons.Loader size={40} className="text-blue-500 animate-spin mb-4"/>
+                          <div className="text-slate-400 text-xs uppercase font-bold tracking-widest animate-pulse">Sincronizando con la Nube...</div>
                       </div>
                   )}
 
@@ -1581,14 +1583,15 @@ const App = () => {
                       </nav>
                   </header>
                   <main className="flex-1 overflow-y-auto bg-[#0a0a0a] relative custom-scrollbar">
-                      {activeTab === 'portfolio' && <PortfolioTab portfolio={portfolio} setPortfolio={updatePortfolio} apiKey={apiKey} baseCurrency={baseCurrency} refreshInterval={refreshInterval} lastUpdate={lastUpdate} setLastUpdate={setLastUpdate} resultsData={resultsData} syncStatus={syncStatus} onManualSync={uploadToCloud} />}
+                      {/* Pasamos isAppReady a PortfolioTab */}
+                      {activeTab === 'portfolio' && <PortfolioTab portfolio={portfolio} setPortfolio={updatePortfolio} apiKey={apiKey} baseCurrency={baseCurrency} refreshInterval={refreshInterval} lastUpdate={lastUpdate} setLastUpdate={setLastUpdate} resultsData={resultsData} syncStatus={syncStatus} onManualSync={uploadToCloud} isAppReady={isAppReady} />}
                       {activeTab === 'dividends' && <DividendTab portfolio={portfolio} setPortfolio={updatePortfolio} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} />}
                       {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={updateResultsData} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} />}
                       {activeTab === 'analysis' && <AnalysisTab apiKey={apiKey} baseCurrency={baseCurrency} setPortfolio={updatePortfolio} />}
                       {activeTab === 'settings' && <SettingsTab apiKey={apiKey} setApiKey={setApiKey} isAuth={isAuth} onActivate={handleActivate} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={updatePortfolio} onForceBackup={uploadToCloud} gScriptUrl={gScriptUrl} setGScriptUrl={setGScriptUrl} resultsData={resultsData} />}
                   </main>
                   <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase">
-                      <div>BoardingGate 3.2 (Sync Activo)</div>
+                      <div>BoardingGate 3.2 (Intelligent Sync)</div>
                       <div className="flex gap-4">
                           <span>Estado: {syncStatus === 'synced' ? 'Sincronizado' : syncStatus === 'unsaved' ? 'Cambios sin guardar' : 'Comprobando...'}</span>
                           <span>Ult. Mod: {localTimestamp > 0 ? new Date(localTimestamp).toLocaleTimeString() : 'N/A'}</span>
@@ -1597,7 +1600,6 @@ const App = () => {
               </div>
           );
       };
-
     
 
       createRoot(document.getElementById('root')).render(<App />);
