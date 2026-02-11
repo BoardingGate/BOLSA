@@ -801,7 +801,6 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
 
 
 
-
 const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady }) => {
           // --- ESTADOS PERSISTENTES PARA FILTROS ---
           const [filterText, setFilterText] = usePersistentState('bg_port_filter_text', '');
@@ -838,18 +837,13 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           const handleYearJump = (direction) => {
               let targetYear;
               const currentYear = new Date().getFullYear();
-
               if (direction === -1) {
-                  // Ir hacia atrás: Usamos la fecha de inicio como referencia
                   const refYear = filterDateStart ? parseInt(filterDateStart.split('-')[0]) : currentYear;
                   targetYear = refYear - 1;
               } else {
-                  // Ir hacia adelante: Usamos la fecha de FIN como referencia (para saltar rangos)
-                  // Si no hay fin, usamos inicio, si no, actual.
                   const refYear = filterDateEnd ? parseInt(filterDateEnd.split('-')[0]) : (filterDateStart ? parseInt(filterDateStart.split('-')[0]) : currentYear);
                   targetYear = refYear + 1;
               }
-
               setFilterDateStart(`${targetYear}-01-01`);
               setFilterDateEnd(`${targetYear}-12-31`);
           };
@@ -866,6 +860,30 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                 const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
                 const ds = (p.dividends || []).reduce((acc,d)=>acc+d.net,0); const days = calculateDays(p.buyDate, p.sellDate || new Date()); return calcReturns(cost, vF + ds, days).simple; }; return (getPct(a) - getPct(b)) * dir; } if (sortConfig.key === 'value') { return a.ticker.localeCompare(b.ticker) * dir; } if (filterType === 'all') { const aSold = !!a.sellDate; const bSold = !!b.sellDate; if (aSold !== bSold) return (aSold ? 1 : -1) * dir; if (!aSold) return (new Date(b.buyDate) - new Date(a.buyDate)) * dir; else return (new Date(b.sellDate) - new Date(a.sellDate)) * dir; } if (filterType === 'active') return (new Date(b.buyDate) - new Date(a.buyDate)) * dir; if (filterType === 'sold') return (new Date(b.sellDate) - new Date(a.sellDate)) * dir; return 0; });
           }, [portfolio, filterText, filterDateStart, filterDateEnd, filterType, sortConfig]);
+
+          // --- CÁLCULO DE TOTALES DE LA REJILLA ---
+          const gridTotals = useMemo(() => {
+              let tFx = 0, tCost = 0, tVal = 0, tRes = 0;
+              filteredPortfolio.forEach(p => {
+                  const isS = !!p.sellDate;
+                  const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
+                  const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
+                  
+                  const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+                  const val = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+                  
+                  const fxVal = (p.isIndex ? 0 : (p.shares * (isS ? p.sellPrice : p.currentPrice) * (curF - p.buyFx)));
+                  const divs = (p.dividends || []).reduce((a,b)=>a+b.net,0);
+                  
+                  tFx += fxVal;
+                  tCost += cost;
+                  tVal += val;
+                  tRes += (val - cost) + divs; // Beneficio/Pérdida Total (Precio + Divs)
+              });
+              
+              const tPct = tCost > 0 ? (tRes / tCost) * 100 : 0;
+              return { tFx, tCost, tVal, tRes, tPct };
+          }, [filteredPortfolio]);
 
           const stats = useMemo(() => {
               const hasDeepFilters = filterText || filterDateStart || filterDateEnd;
@@ -896,7 +914,6 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
               const geoMap = {}; 
               activeFilteredPortfolio.filter(p => !p.sellDate).forEach(p => { 
                   const region = getRegion(p.ticker); 
-                  // Usar divisor e ignorar FX fluctuación para índices en valoración gráfica si así se desea
                   const val = ((p.currentPrice / (p.isIndex ? p.indexDivisor||1 : 1)) * p.shares * (p.isIndex ? p.buyFx : p.currentFx)); 
                   geoMap[region] = (geoMap[region] || 0) + val; 
               }); 
@@ -925,14 +942,12 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           const taxSum = useMemo(() => { if(!resultsData) return 0; return Object.values(resultsData).reduce((acc, y) => acc + (y.tax || 0), 0); }, [resultsData]);
 
           useEffect(() => { 
-              // MODIFICACIÓN CRÍTICA: Bloquear actualización automática si la app no ha terminado de sincronizar
               if (!isAppReady) return;
-
               if (apiKey && portfolio.length > 0) updatePrices(true); 
               if (!refreshInterval || refreshInterval < 1) return; 
               const interval = setInterval(() => updatePrices(true), refreshInterval * 60 * 1000); 
               return () => clearInterval(interval); 
-          }, [apiKey, refreshInterval, isAppReady]); // AÑADIDO isAppReady
+          }, [apiKey, refreshInterval, isAppReady]);
 
           const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
           const updatePrices = async (isAuto = false) => { const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); if (!isAuto && active.length === 0) return; setUpdating(true); let log = { success: [], fail: [] }, newUpdates = []; try { for (const item of active) { const prompt = `IMPORTANTE: Responde SOLO JSON con PUNTO decimal. Sin símbolos de moneda ni comas. Datos de "${item.ticker}" (${item.stockCurrency}) a ${baseCurrency}. JSON: {"p":precio,"fx":cambio,"pe":per,"n":"nombre"}`; try { const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json && (json.p || json.p === 0)) { newUpdates.push({ id: item.id, n: json.n, p: cleanVal(json.p), fx: cleanVal(json.fx), pe: cleanVal(json.pe) }); log.success.push(item.ticker); } else { log.fail.push(item.ticker); } } catch (e) { log.fail.push(item.ticker); } } if (newUpdates.length > 0) { setPortfolio(prev => prev.map(p => { const u = newUpdates.find(x => x.id === p.id); return u ? { ...p, name: u.n || p.name, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe } : p; })); setLastUpdate(new Date().toISOString()); } if (!isAuto && log.fail.length > 0) setInfoModal({ isOpen: true, title: 'Sincronización con Errores', msg: `Fallos en: ${log.fail.join(', ')}.`, type: 'warning' }); } catch (e) { if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); } finally { setUpdating(false); } };
@@ -942,11 +957,56 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           const handleClone = (p) => { const clone = { ...p, id: Date.now(), isActive: false }; setPortfolio(prev => [...prev, clone]); setInfoModal({ isOpen: true, title: 'Éxito', msg: `Se ha creado una copia de ${p.ticker} (Desactivada).`, type: 'info' }); };
           const resetFilters = () => { setFilterText(''); setFilterDateStart(''); setFilterDateEnd(''); setFilterType('active'); setSortConfig({ key: 'date', direction: 'desc' }); };
           const handlePrintAI = () => { const printWindow = window.open('', '', 'height=800,width=800'); const time = new Date().toLocaleString(); let html = `<html><head><title>Informe IA</title><style>body{font-family:sans-serif;padding:20px;} h1{border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:20px;} h3{color:#2563eb; border-bottom:1px solid #ccc; padding-bottom:5px; margin-top:20px; text-transform:uppercase;} ul{padding-left:20px;} li{margin-bottom:5px;}</style></head><body>`; html += `<h1>INFORME iA de SITUACIÓN CARTERA</h1><div style="margin-bottom:20px;font-size:12px;color:#666;"><strong>TIPO:</strong> ${filterType.toUpperCase() === 'ACTIVE' ? 'CARTERA ACTIVA' : filterType.toUpperCase() === 'SOLD' ? 'POSICIONES CERRADAS' : 'CARTERA GLOBAL'}<br/><strong>FECHA:</strong> ${time}</div>`; html += `<div style="font-size:14px;line-height:1.6;">${analysisResult}</div></body></html>`; printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(()=>printWindow.print(),500); };
-          const handlePrint = () => { const printWindow = window.open('', '', 'height=800,width=1200'); const typeMap = { 'active': 'CARTERA ACTIVA', 'sold': 'HISTÓRICO VENTAS', 'all': 'INFORME GLOBAL' }; const filterLabel = typeMap[filterType]; const emissionTime = new Date().toLocaleString(); const genStatsBlock = (t, d, c) => { const yieldPct = d.inv > 0 ? (d.divN / d.inv) * 100 : 0; return ` <div style="border:1px solid #ccc; padding:5px; width:32%; border-top: 3px solid ${c}; background:#f9f9f9; font-size: 8px;"> <div style="font-weight:bold; color:#555; text-transform:uppercase; margin-bottom:2px;">${t} (${formatN(d.num, 0)} Val)</div> <table style="width:100%; border:none; margin:0;"> <tr><td>Invertido:</td><td style="text-align:right;"><b>${formatMoney(d.inv, baseCurrency)}</b></td></tr> <tr><td>Valor Act:</td><td style="text-align:right;"><b style="color:${c}">${formatMoney(d.cur, baseCurrency)}</b></td></tr> <tr><td colspan="2" style="text-align:center; padding-top:5px; border-top:1px solid #ddd;"><b>BALANCE: ${formatMoney(d.plPrice, baseCurrency)}</b></td></tr> <tr><td style="color:#666;">Rent. Simple/Anual:</td><td style="text-align:right;">${formatN(d.plP_S)}% / ${formatN(d.plP_A)}%</td></tr> <tr><td>Dividendos:</td><td style="text-align:right; color:#2563eb;">${formatMoney(d.divN, baseCurrency)} [${formatN(yieldPct)}%]</td></tr> <tr><td>FX Total:</td><td style="text-align:right;">${formatMoney(d.fX, baseCurrency)}</td></tr> <tr><td><b>Rdto Total:</b></td><td style="text-align:right;"><b>${formatMoney(d.plTotal, baseCurrency)}</b></td></tr> </table> </div>`; }; const h = historicalStats; const roiCons = h.consolidated.avgCap > 0 ? (h.consolidated.profit / h.consolidated.avgCap) * 100 : 0; const roiClosed = h.closed.avgCap > 0 ? (h.closed.profit / h.closed.avgCap) * 100 : 0; const historyCardHTML = ` <div style="width: 250px; border: 2px solid #eab308; padding: 8px; background: #fffbeb; font-family:sans-serif;"> <div style="font-size:9px; font-weight:bold; color:#ca8a04; border-bottom:1px solid #eab308; padding-bottom:2px; margin-bottom:5px;">RENTABILIDAD HISTÓRICA (REAL)</div> <table style="width:100%; font-size:8px;"> <tr><td colspan="2" style="font-weight:bold; background:#eab30833;">CONSOLIDADA</td></tr> <tr><td>ROI:</td><td style="text-align:right; font-weight:bold;">${formatN(roiCons)}%</td></tr> <tr><td>Cap. Med:</td><td style="text-align:right;">${formatMoney(h.consolidated.avgCap, baseCurrency)}</td></tr> <tr><td>Beneficio:</td><td style="text-align:right;">${formatMoney(h.consolidated.profit, baseCurrency)}</td></tr> <tr><td colspan="2" style="font-weight:bold; background:#eab30833; padding-top:4px;">CERRADAS</td></tr> <tr><td>ROI:</td><td style="text-align:right; font-weight:bold;">${formatN(roiClosed)}%</td></tr> <tr><td>Cap. Med:</td><td style="text-align:right;">${formatMoney(h.closed.avgCap, baseCurrency)}</td></tr> </table> <div style="font-size:7px; color:#666; margin-top:5px; border-top:1px solid #ccc; padding-top:2px;">Intervalo Op: ${formatN(h.avgIntervalDays, 1)}d | Pos. Media: ${formatN(h.avgPositions, 1)}</div> </div> `; let html = `<html><head><title>Informe Cartera</title>`; html += `<style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:7px;} h1{font-size:14px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th{background:#f1f5f9;text-align:left;padding:3px;border-bottom:1px solid #94a3b8;font-size:6px;text-transform:uppercase;} td{padding:3px;border-bottom:1px solid #e2e8f0;vertical-align:top;font-size:7px;} .num{text-align:right;font-family:monospace;white-space:nowrap;} .center{text-align:center;} .profit{color:#16a34a;font-weight:bold;} .loss{color:#dc2626;font-weight:bold;} .blue{color:#3b82f6;} .orange{color:#f97316;}</style></head><body>`; html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>INFORME DE CARTERA - BoardingGate</h1><div style="font-size:8px;color:#666;">(FILTRO: ${filterLabel})</div></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`; html += `<div style="display:flex; gap:5px; margin-top:5px;">`; if (filterType === 'all') { html += genStatsBlock("Cartera Activa", stats.active, "#3b82f6") + genStatsBlock("Posiciones Cerradas", stats.sold, "#f97316") + genStatsBlock("Cartera Global", stats.total, "#a855f7"); } else if (filterType === 'active') { html += genStatsBlock("Cartera Activa (Filtrada)", stats.active, "#3b82f6"); } else { html += genStatsBlock("Ventas (Filtradas)", stats.sold, "#f97316"); } html += `</div>`; html += `<table><thead><tr><th>Valor</th><th class="center">Fechas / Días</th><th class="num">Títulos</th><th class="num">Precios (I/A)</th><th class="center">FX</th><th class="center">Gtos/Adj</th><th class="num">Coste Total</th><th class="num">Valor Final</th><th class="num">Rendimiento</th><th class="num">% Simple</th><th class="num">% Anual</th><th class="center">PER (I/A)</th></tr></thead><tbody>`; filteredPortfolio.forEach(p => { 
-            const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
-            const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; 
-            const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
-            const pl = vF - cost; const days = calculateDays(p.buyDate, p.sellDate || new Date()); const rs = calcReturns(cost, vF, days); html += `<tr><td><b>${p.ticker}</b>${p.group ? `<br/>[${p.group}]` : ''}<br/>${p.name.substring(0,25)}</td><td class="center"><span class="blue">${formatDateES(p.buyDate)}</span>${p.sellDate ? `<br/><span class="orange">${formatDateES(p.sellDate)}</span>` : ''}<br/><b>${formatN(days, 0)}d</b></td><td class="num"><b>${formatN(p.shares)}</b></td><td class="num"><b>I:${formatN(p.buyPrice)}</b><br/><b>${isS?'V':'A'}:${formatN(curP)}</b></td><td class="center">${formatN(p.buyFx,4)}<br/>${formatN(curF,4)}</td><td class="center">${formatN(isS?p.sellFees:p.fees)}<br/>${formatN(isS?p.sellAdjustments:p.adjustments)}</td><td class="num"><b>${formatMoney(cost, baseCurrency)}</b></td><td class="num"><b>${formatMoney(vF, baseCurrency)}</b></td><td class="num"><span class="${pl>=0?'profit':'loss'}">${formatMoney(pl, baseCurrency)}</span></td><td class="num"><span class="${pl>=0?'profit':'loss'}">${formatN(rs.simple)}%</span></td><td class="num">${formatN(rs.annual)}%</td><td class="center">${formatN(p.buyPE, 1)} / ${formatN(p.currentPE, 1)}</td></tr>`; }); html += `</tbody></table>`; html += `<div style="display:flex; justify-content:flex-end; margin-top:20px;">${historyCardHTML}</div>`; html += `</body></html>`; printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(() => printWindow.print(), 500); };
+          const handlePrint = () => { 
+              const printWindow = window.open('', '', 'height=800,width=1200'); 
+              const typeMap = { 'active': 'CARTERA ACTIVA', 'sold': 'HISTÓRICO VENTAS', 'all': 'INFORME GLOBAL' }; 
+              const filterLabel = typeMap[filterType]; 
+              const emissionTime = new Date().toLocaleString(); 
+              
+              const genStatsBlock = (t, d, c) => { 
+                  const yieldPct = d.inv > 0 ? (d.divN / d.inv) * 100 : 0; 
+                  return ` <div style="border:1px solid #ccc; padding:5px; width:32%; border-top: 3px solid ${c}; background:#f9f9f9; font-size: 8px;"> <div style="font-weight:bold; color:#555; text-transform:uppercase; margin-bottom:2px;">${t} (${formatN(d.num, 0)} Val)</div> <table style="width:100%; border:none; margin:0;"> <tr><td>Invertido:</td><td style="text-align:right;"><b>${formatMoney(d.inv, baseCurrency)}</b></td></tr> <tr><td>Valor Act:</td><td style="text-align:right;"><b style="color:${c}">${formatMoney(d.cur, baseCurrency)}</b></td></tr> <tr><td colspan="2" style="text-align:center; padding-top:5px; border-top:1px solid #ddd;"><b>BALANCE: ${formatMoney(d.plPrice, baseCurrency)}</b></td></tr> <tr><td style="color:#666;">Rent. Simple/Anual:</td><td style="text-align:right;">${formatN(d.plP_S)}% / ${formatN(d.plP_A)}%</td></tr> <tr><td>Dividendos:</td><td style="text-align:right; color:#2563eb;">${formatMoney(d.divN, baseCurrency)} [${formatN(yieldPct)}%]</td></tr> <tr><td>FX Total:</td><td style="text-align:right;">${formatMoney(d.fX, baseCurrency)}</td></tr> <tr><td><b>Rdto Total:</b></td><td style="text-align:right;"><b>${formatMoney(d.plTotal, baseCurrency)}</b></td></tr> </table> </div>`; 
+              }; 
+              
+              const h = historicalStats; 
+              const roiCons = h.consolidated.avgCap > 0 ? (h.consolidated.profit / h.consolidated.avgCap) * 100 : 0; 
+              const roiClosed = h.closed.avgCap > 0 ? (h.closed.profit / h.closed.avgCap) * 100 : 0; 
+              
+              const historyCardHTML = ` <div style="width: 250px; border: 2px solid #eab308; padding: 8px; background: #fffbeb; font-family:sans-serif;"> <div style="font-size:9px; font-weight:bold; color:#ca8a04; border-bottom:1px solid #eab308; padding-bottom:2px; margin-bottom:5px;">RENTABILIDAD HISTÓRICA (REAL)</div> <table style="width:100%; font-size:8px;"> <tr><td colspan="2" style="font-weight:bold; background:#eab30833;">CONSOLIDADA</td></tr> <tr><td>ROI:</td><td style="text-align:right; font-weight:bold;">${formatN(roiCons)}%</td></tr> <tr><td>Cap. Med:</td><td style="text-align:right;">${formatMoney(h.consolidated.avgCap, baseCurrency)}</td></tr> <tr><td>Beneficio:</td><td style="text-align:right;">${formatMoney(h.consolidated.profit, baseCurrency)}</td></tr> <tr><td colspan="2" style="font-weight:bold; background:#eab30833; padding-top:4px;">CERRADAS</td></tr> <tr><td>ROI:</td><td style="text-align:right; font-weight:bold;">${formatN(roiClosed)}%</td></tr> <tr><td>Cap. Med:</td><td style="text-align:right;">${formatMoney(h.closed.avgCap, baseCurrency)}</td></tr> </table> <div style="font-size:7px; color:#666; margin-top:5px; border-top:1px solid #ccc; padding-top:2px;">Intervalo Op: ${formatN(h.avgIntervalDays, 1)}d | Pos. Media: ${formatN(h.avgPositions, 1)}</div> </div> `; 
+              
+              let html = `<html><head><title>Informe Cartera</title>`; html += `<style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:7px;} h1{font-size:14px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th{background:#f1f5f9;text-align:left;padding:3px;border-bottom:1px solid #94a3b8;font-size:6px;text-transform:uppercase;} td{padding:3px;border-bottom:1px solid #e2e8f0;vertical-align:top;font-size:7px;} .num{text-align:right;font-family:monospace;white-space:nowrap;} .center{text-align:center;} .profit{color:#16a34a;font-weight:bold;} .loss{color:#dc2626;font-weight:bold;} .blue{color:#3b82f6;} .orange{color:#f97316;} .total-row td { background: #1e293b; color: white; font-weight: bold; border-top: 2px solid #475569; }</style></head><body>`; html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>INFORME DE CARTERA - BoardingGate</h1><div style="font-size:8px;color:#666;">(FILTRO: ${filterLabel})</div></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`; html += `<div style="display:flex; gap:5px; margin-top:5px;">`; 
+              
+              if (filterType === 'all') { 
+                  html += genStatsBlock("Cartera Activa", stats.active, "#3b82f6") + genStatsBlock("Posiciones Cerradas", stats.sold, "#f97316") + genStatsBlock("Cartera Global", stats.total, "#a855f7"); 
+              } else if (filterType === 'active') { 
+                  html += genStatsBlock("Cartera Activa (Filtrada)", stats.active, "#3b82f6"); 
+              } else { 
+                  html += genStatsBlock("Ventas (Filtradas)", stats.sold, "#f97316"); 
+              } 
+              
+              html += `</div>`; html += `<table><thead><tr><th>Valor</th><th class="center">Fechas / Días</th><th class="num">Títulos</th><th class="num">Precios (I/A)</th><th class="center">FX</th><th class="center">Gtos/Adj</th><th class="num">Coste Total</th><th class="num">Valor Final</th><th class="num">Rendimiento</th><th class="num">% Simple</th><th class="num">% Anual</th><th class="center">PER (I/A)</th></tr></thead><tbody>`; 
+              
+              filteredPortfolio.forEach(p => { 
+                  const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+                  const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; 
+                  const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+                  const pl = vF - cost; const days = calculateDays(p.buyDate, p.sellDate || new Date()); const rs = calcReturns(cost, vF, days); 
+                  html += `<tr><td><b>${p.ticker}</b>${p.group ? `<br/>[${p.group}]` : ''}<br/>${p.name.substring(0,25)}</td><td class="center"><span class="blue">${formatDateES(p.buyDate)}</span>${p.sellDate ? `<br/><span class="orange">${formatDateES(p.sellDate)}</span>` : ''}<br/><b>${formatN(days, 0)}d</b></td><td class="num"><b>${formatN(p.shares)}</b></td><td class="num"><b>I:${formatN(p.buyPrice)}</b><br/><b>${isS?'V':'A'}:${formatN(curP)}</b></td><td class="center">${formatN(p.buyFx,4)}<br/>${formatN(curF,4)}</td><td class="center">${formatN(isS?p.sellFees:p.fees)}<br/>${formatN(isS?p.sellAdjustments:p.adjustments)}</td><td class="num"><b>${formatMoney(cost, baseCurrency)}</b></td><td class="num"><b>${formatMoney(vF, baseCurrency)}</b></td><td class="num"><span class="${pl>=0?'profit':'loss'}">${formatMoney(pl, baseCurrency)}</span></td><td class="num"><span class="${pl>=0?'profit':'loss'}">${formatN(rs.simple)}%</span></td><td class="num">${formatN(rs.annual)}%</td><td class="center">${formatN(p.buyPE, 1)} / ${formatN(p.currentPE, 1)}</td></tr>`; 
+              }); 
+              
+              // AÑADIR FILA TOTALES AL IMPRIMIR
+              html += `<tr class="total-row">
+                  <td colspan="6" style="text-align:right; text-transform:uppercase;">TOTALES ACUMULADOS: <b>FX: ${formatMoney(gridTotals.tFx, baseCurrency)}</b></td>
+                  <td class="num">${formatMoney(gridTotals.tCost, baseCurrency)}</td>
+                  <td class="num">${formatMoney(gridTotals.tVal, baseCurrency)}</td>
+                  <td class="num">${formatMoney(gridTotals.tRes, baseCurrency)}</td>
+                  <td class="num">${formatN(gridTotals.tPct)}%</td>
+                  <td colspan="2"></td>
+              </tr>`;
+
+              html += `</tbody></table>`; html += `<div style="display:flex; justify-content:flex-end; margin-top:20px;">${historyCardHTML}</div>`; html += `</body></html>`; printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(() => printWindow.print(), 500); 
+          };
+          
           const toggleAllActive = () => { const allActive = filteredPortfolio.every(p => p.isActive !== false); setPortfolio(prev => prev.map(p => { const isVisible = filteredPortfolio.some(fp => fp.id === p.id); return isVisible ? { ...p, isActive: !allActive } : p; })); };
           const yieldOnCost = form.buyPrice > 0 ? (form.annualDividend / form.buyPrice) * 100 : 0;
     
@@ -1070,6 +1130,26 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             </tr> 
         ); 
     }) )}
+    
+    {/* FILA DE TOTALES ACUMULADOS (STICKY BOTTOM) */}
+    {filteredPortfolio.length > 0 && (
+        <tr className="bg-slate-900 border-t-2 border-slate-600 font-bold text-white text-[9px] sticky bottom-0 z-30 shadow-2xl">
+            <td className="p-2 sticky left-0 z-40 bg-slate-900 border-r border-slate-800"></td>
+            <td className="p-2 sticky left-10 z-40 bg-slate-900 border-r border-slate-800 text-right uppercase tracking-wider text-slate-400">TOTALES:</td>
+            <td colSpan="4"></td>
+            <td className="p-2 text-center text-slate-300 font-mono">{formatMoney(gridTotals.tFx, baseCurrency)}</td>
+            <td></td>
+            <td className="p-2 text-right font-mono text-slate-300">{formatMoney(gridTotals.tCost, baseCurrency)}</td>
+            <td className="p-2 text-right font-mono bg-[#0f121a] border-l border-slate-800 text-white">{formatMoney(gridTotals.tVal, baseCurrency)}</td>
+            <td className="p-2 text-right font-mono bg-[#0f121a] border-r border-slate-800">
+                <span className={gridTotals.tRes >= 0 ? 'text-green-400' : 'text-red-400'}>{formatMoney(gridTotals.tRes, baseCurrency)}</span>
+            </td>
+            <td className="p-2 text-right font-mono">
+                <span className={gridTotals.tPct >= 0 ? 'text-green-400' : 'text-red-400'}>{formatN(gridTotals.tPct)}%</span>
+            </td>
+            <td colSpan="2"></td>
+        </tr>
+    )}
 </tbody>
                       </table>
                   </div>
@@ -1230,6 +1310,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
               </div>
           );
       };
+
 
 
 
