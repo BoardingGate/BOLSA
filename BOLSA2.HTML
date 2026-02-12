@@ -942,8 +942,12 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     const visiblePortfolio = useMemo(() => filteredPortfolio.filter(p => p.isActive !== false), [filteredPortfolio]);
 
+    
     const gridTotals = useMemo(() => {
         let tFx = 0, tCost = 0, tVal = 0, tRes = 0;
+        let sumBuyPE = 0, countBuyPE = 0;
+        let sumCurPE = 0, countCurPE = 0;
+
         visiblePortfolio.forEach(p => {
             const isS = !!p.sellDate;
             const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
@@ -952,10 +956,17 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             const val = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
             const fxVal = (p.isIndex ? 0 : (p.shares * (isS ? p.sellPrice : p.currentPrice) * (curF - p.buyFx)));
             const divs = (p.dividends || []).reduce((a,b)=>a+b.net,0);
-            tFx += fxVal; tCost += cost; tVal += val; tRes += (val - cost) + divs; 
+            tFx += fxVal; tCost += cost; tVal += val; tRes += (val - cost) + divs;
+            
+            // Cálculo de medias de PER excluyendo ceros
+            if (p.buyPE > 0) { sumBuyPE += p.buyPE; countBuyPE++; }
+            if (p.currentPE > 0) { sumCurPE += p.currentPE; countCurPE++; }
         });
         const tPct = tCost > 0 ? (tRes / tCost) * 100 : 0;
-        return { tFx, tCost, tVal, tRes, tPct };
+        const avgBuyPE = countBuyPE > 0 ? sumBuyPE / countBuyPE : 0;
+        const avgCurPE = countCurPE > 0 ? sumCurPE / countCurPE : 0;
+
+        return { tFx, tCost, tVal, tRes, tPct, avgBuyPE, avgCurPE };
     }, [visiblePortfolio]);
 
     const stats = useMemo(() => {
@@ -1047,8 +1058,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     }, [apiKey, refreshInterval, isAppReady]);
 
     const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
- //   const updatePrices = async (isAuto = false) => { const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); if (!isAuto && active.length === 0) return; setUpdating(true); let log = { success: [], fail: [] }, newUpdates = []; try { for (const item of active) { const prompt = `IMPORTANTE: Responde SOLO JSON con PUNTO decimal. Sin símbolos de moneda ni comas. Datos de "${item.ticker}" (${item.stockCurrency}) a ${baseCurrency}. JSON: {"p":precio,"fx":cambio,"pe":per,"n":"nombre"}`; try { const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json && (json.p || json.p === 0)) { newUpdates.push({ id: item.id, n: json.n, p: cleanVal(json.p), fx: cleanVal(json.fx), pe: cleanVal(json.pe) }); log.success.push(item.ticker); } else { log.fail.push(item.ticker); } } catch (e) { log.fail.push(item.ticker); } } if (newUpdates.length > 0) { setPortfolio(prev => prev.map(p => { const u = newUpdates.find(x => x.id === p.id); return u ? { ...p, name: u.n || p.name, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe } : p; })); setLastUpdate(new Date().toISOString()); } if (!isAuto && log.fail.length > 0) setInfoModal({ isOpen: true, title: 'Sincronización con Errores', msg: `Fallos en: ${log.fail.join(', ')}.`, type: 'warning' }); } catch (e) { if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); } finally { setUpdating(false); } };
-
+ 
      const updatePrices = async (isAuto = false) => { 
         const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); 
         if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); 
@@ -1231,7 +1241,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             // AQUI ESTA EL CAMBIO PARA IMPRESIÓN:
             html += `<tr><td><b class="${plPrice>=0?'profit':'loss'}">${p.name}</b><br/>${p.ticker}${p.group ? `<br/>[${p.group}]` : ''}</td><td class="center"><span class="blue">${formatDateES(p.buyDate)}</span>${p.sellDate ? `<br/><span class="orange">${formatDateES(p.sellDate)}</span>` : ''}<br/><b>${formatN(days, 0)}d</b></td><td class="num"><b>${formatN(p.shares)}</b></td><td class="num"><b>I:${formatN(p.buyPrice)}</b><br/><b>${isS?'V':'A'}:${formatN(curP)}</b></td><td class="center">${formatN(p.buyFx,4)}<br/>${formatN(curF,4)}</td><td class="center">${formatN(isS?p.sellFees:p.fees)}<br/>${formatN(isS?p.sellAdjustments:p.adjustments)}</td><td class="num"><b>${formatMoney(cost, baseCurrency)}</b></td><td class="num"><b>${formatMoney(vF, baseCurrency)}</b></td><td class="num"><span class="${plPrice>=0?'profit':'loss'}">${formatMoney(plPrice, baseCurrency)}</span></td><td class="num"><span class="blue">${formatMoney(ds, baseCurrency)}</span></td><td class="num"><span class="${plTotal>=0?'profit':'loss'}">${formatMoney(plTotal, baseCurrency)}</span></td><td class="num"><span class="${plTotal>=0?'profit':'loss'}">${formatN(rs.simple)}%</span></td><td class="num">${formatN(rs.annual)}%</td></tr>`; 
         }); 
-        
+
         html += `<tr class="total-row">
             <td colspan="6" style="text-align:right; text-transform:uppercase;">TOTALES ACUMULADOS: <b>FX: ${formatMoney(gridTotals.tFx, baseCurrency)}</b></td>
             <td class="num">${formatMoney(gridTotals.tCost, baseCurrency)}</td>
@@ -1240,6 +1250,10 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             <td class="num"><span class="blue">${formatMoney(tDivs, baseCurrency)}</span></td>
             <td class="num"><span class="${gridTotals.tRes>=0?'profit':'loss'}">${formatMoney(gridTotals.tRes, baseCurrency)}</span></td>
             <td class="num"><span class="${gridTotals.tRes>=0?'profit':'loss'}">${formatN(gridTotals.tPct)}%</span></td>
+            <td class="center" style="font-size:6px; font-family:monospace;">
+                I: ${formatN(gridTotals.avgBuyPE, 1)}<br/>
+                A: ${formatN(gridTotals.avgCurPE, 1)}
+            </td>
             <td></td>
         </tr>`;
 
@@ -1390,7 +1404,11 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                         <td className="p-2 text-right font-mono bg-[#0f121a] border-l border-slate-800 text-white">{formatMoney(gridTotals.tVal, baseCurrency)}</td>
                         <td className="p-2 text-right font-mono bg-[#0f121a] border-r border-slate-800"><span className={gridTotals.tRes >= 0 ? 'text-green-400' : 'text-red-400'}>{formatMoney(gridTotals.tRes, baseCurrency)}</span></td>
                         <td className="p-2 text-right font-mono"><span className={gridTotals.tPct >= 0 ? 'text-green-400' : 'text-red-400'}>{formatN(gridTotals.tPct)}%</span></td>
-                        <td colSpan="2"></td>
+                        <td className="p-2 text-center font-mono text-[8px]">
+                            <div className="text-slate-400">I: {formatN(gridTotals.avgBuyPE, 1)}</div>
+                            <div className="text-yellow-500">A: {formatN(gridTotals.avgCurPE, 1)}</div>
+                        </td>
+                        <td className="p-2"></td>
                     </tr>
                     )}
                     </tbody>
