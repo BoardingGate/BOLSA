@@ -1053,53 +1053,34 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const analyzePortfolio = async () => {
           const dataToAnalyze = visiblePortfolio;
           if (dataToAnalyze.length === 0) return;
-          if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' });
           setAnalyzing(true);
           try {
-            const summary = dataToAnalyze.map(p => {
-              const inv = ((p.buyPrice||0) * (p.shares||0) * (p.buyFx||1)).toFixed(2);
-              const cur = ((p.currentPrice||0) * (p.shares||0) * (p.currentFx||1)).toFixed(2);
-              const plPct = p.buyPrice > 0 ? (((p.currentPrice - p.buyPrice) / p.buyPrice) * 100).toFixed(1) : '0';
-              const divTotal = (p.dividends||[]).reduce((a,b) => a+(b.net||0), 0).toFixed(2);
-              return `T:${p.ticker},S:${p.shares},B:${p.buyPrice},C:${p.currentPrice},G:${p.group},INV:${inv},VAL:${cur},GP%:${plPct},DIV:${divTotal},PER_B:${p.buyPE||0},PER_C:${p.currentPE||0}`;
-            }).join('|');
-        
-            const prompt = `INSTRUCCIÓN CRÍTICA: Responde ÚNICAMENTE HTML. La primera letra de tu respuesta DEBE ser "<". PROHIBIDO cualquier saludo, presentación, introducción, despedida o frase de cortesía. NO escribas "Claro", "Por supuesto", "Aquí tienes", "Espero", ni nada similar antes o después del HTML.
-        
-        Eres un analista financiero senior. Analiza esta cartera (${dataToAnalyze.length} posiciones visibles con filtro aplicado): ${summary.substring(0,28000)}
-        
-        Responde en ESPAÑOL, de forma CONCISA y directa. Usa SOLO etiquetas <h3>, <p>, <ul>, <li>, <strong>. Secciones OBLIGATORIAS en este orden:
-        
+            const summary = dataToAnalyze.map(p => `T:${p.ticker},S:${p.shares},B:${p.buyPrice},C:${p.currentPrice},G:${p.group}`).join('|');
+            const tickers = dataToAnalyze.map(p => p.ticker).join(', ');
+            const prompt = `CRITICAL INSTRUCTION: Output ONLY HTML. Absolutely NO greeting, intro, farewell or courtesy phrase. First character MUST be "<". NEVER write "Claro", "Por supuesto", "Aquí tienes", "Espero" or similar before or after the HTML.
+        Task: Analyze this portfolio list in SPANISH, concise: ${summary.substring(0,28000)}.
+        Structure ONLY with <h3 style="color:#2563eb;border-bottom:1px solid #ccc;padding-bottom:4px;text-transform:uppercase;">, <p style="color:#111;font-size:14px;line-height:1.6;">, <ul>, <li style="color:#111;font-size:14px;margin-bottom:4px;">, <strong>.
+        Mandatory sections in this exact order:
         <h3>Resumen</h3>
-        Visión global de la cartera: diversificación sectorial/geográfica, perfil riesgo/retorno.
-        
         <h3>Rentabilidad</h3>
-        Análisis por posición: G/P actual (%), aportación dividendos, PER entrada vs. actual. Mejores y peores posiciones.
-        
-        <h3>Situación de Mercado</h3>
-        Para cada ticker, usando búsqueda web: tendencia reciente, noticias clave, consenso de analistas y eventos próximos relevantes (resultados, dividendos, splits). Complementa los datos del inversor con la opinión actual del mercado.
-        
         <h3>Riesgos</h3>
-        Concentración, exposición divisa (FX), sectores en presión, posiciones con deterioro fundamental.
-        
-        <h3>Conclusión</h3>
-        Veredicto final conciso y acción sugerida por posición: mantener / revisar / reforzar / reducir.`;
+        <h3>Situación de Mercado</h3> — Use web search. For each ticker (${tickers}): recent trend, key news, analyst consensus, upcoming events (earnings, dividends, splits). Concise bullet per ticker.
+        <h3>Conclusión</h3>`;
         
             const res = await askGemini(apiKey, prompt);
             const cleaned = res
               .replace(/```html[\s\S]*?```/gi, s => s.replace(/```html/i,'').replace(/```/,''))
               .replace(/```/g, '')
               .replace(/^[\s\S]*?(<h[1-6])/i, '$1')
-              .replace(/^(Claro|Por supuesto|Aquí tienes|Sin problema)[^<]*/i, '')
               .trim();
             setAnalysisResult(cleaned);
             setIsAnalysisModalOpen(true);
           } catch (e) {
-            setInfoModal({ isOpen: true, title: 'Error Análisis', msg: e.message, type: 'error' });
+            alert(e.message);
           } finally {
             setAnalyzing(false);
           }
-    };
+     };
 
     const handleSave = () => { const e = { ...form, name: form.name || form.ticker }; if (editingId) setPortfolio(prev => prev.map(p => p.id === editingId ? { ...p, ...e } : p)); else setPortfolio(prev => [...prev, { ...e, id: Date.now(), currentPrice: form.buyPrice, currentFx: form.buyFx, isActive: true, dividends: [] }]); setIsModalOpen(false); };
     const handleSellSubmit = () => { const soldR = { ...sellItem, id: Date.now(), shares: sellForm.sharesToSell, isActive: true, sellDate: sellForm.sellDate, sellPrice: sellForm.sellPrice, sellFx: sellForm.sellFx, sellFees: sellForm.sellFees, sellAdjustments: sellForm.sellAdjustments, sellFeesIncludedInPrice: sellForm.sellFeesIncludedInPrice, dividends: [...(sellItem.dividends || [])] }; const updatedP = portfolio.map(p => p.id === sellItem.id ? { ...p, isActive: false, dividends: [] } : p); setPortfolio([...updatedP, soldR]); setIsSellModalOpen(false); };
