@@ -1050,66 +1050,55 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const updatePrices = async (isAuto = false) => { const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); if (!isAuto && active.length === 0) return; setUpdating(true); let log = { success: [], fail: [] }, newUpdates = []; try { for (const item of active) { const prompt = `IMPORTANTE: Responde SOLO JSON con PUNTO decimal. Sin símbolos de moneda ni comas. Datos de "${item.ticker}" (${item.stockCurrency}) a ${baseCurrency}. JSON: {"p":precio,"fx":cambio,"pe":per,"n":"nombre"}`; try { const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json && (json.p || json.p === 0)) { newUpdates.push({ id: item.id, n: json.n, p: cleanVal(json.p), fx: cleanVal(json.fx), pe: cleanVal(json.pe) }); log.success.push(item.ticker); } else { log.fail.push(item.ticker); } } catch (e) { log.fail.push(item.ticker); } } if (newUpdates.length > 0) { setPortfolio(prev => prev.map(p => { const u = newUpdates.find(x => x.id === p.id); return u ? { ...p, name: u.n || p.name, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe } : p; })); setLastUpdate(new Date().toISOString()); } if (!isAuto && log.fail.length > 0) setInfoModal({ isOpen: true, title: 'Sincronización con Errores', msg: `Fallos en: ${log.fail.join(', ')}.`, type: 'warning' }); } catch (e) { if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); } finally { setUpdating(false); } };
     
     // ANALISIS IA MEJORADO Y CORREGIDO
-    const analyzePortfolio = async () => { 
-        const dataToAnalyze = visiblePortfolio; 
-        if (dataToAnalyze.length === 0) return setInfoModal({ isOpen: true, title: 'Info', msg: 'No hay datos visibles para analizar.', type: 'info' }); 
-        setAnalyzing(true); 
-        try { 
-            // Separar activas e historial
-            const activePos = dataToAnalyze.filter(p => !p.sellDate).map(p => ({
-                ticker: p.ticker,
-                empresa: p.name,
-                precio_compra: p.buyPrice,
-                precio_actual: p.currentPrice,
-                per_actual: p.currentPE,
-                divisa: p.stockCurrency,
-                fx_actual: p.currentFx
-            }));
-
-            const soldPos = dataToAnalyze.filter(p => !!p.sellDate).map(p => ({
-                ticker: p.ticker,
-                resultado: (((p.sellPrice * p.shares * p.sellFx) - (p.sellFeesIncludedInPrice ? 0 : p.sellFees) - (p.sellAdjustments || 0)) - ((p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : p.fees) + (p.adjustments || 0))).toFixed(2)
-            }));
-
-            // PROMPT BLINDADO PARA INFORME ESTRUCTURADO Y DIRECTO
-            const prompt = `
-            ROL: Analista Financiero Senior.
-            TAREA: Generar un informe de estrategia de inversión profesional para esta cartera.
-            IDIOMA: Español (España).
-            FORMATO: HTML puro. IMPORTANTE: NO incluyas saludos, ni introducciones tipo "Aquí tienes el informe", ni bloques de código markdown (\`\`\`html). Empieza directamente con <h3>.
-            
-            ESTILOS REQUERIDOS EN HTML:
-            - Títulos <h3>: style="color:#2563eb; border-bottom:1px solid #ccc; padding-bottom:5px; margin-top:20px; text-transform:uppercase;"
-            - Texto <p> y <li>: style="color:#334155; margin-bottom:5px;" (Negro/Gris oscuro para fondo blanco)
-            - Tablas: style="width:100%; border-collapse:collapse; margin:10px 0; font-size:12px; color:#000;"
-            - Celdas tabla: style="border:1px solid #ddd; padding:8px; text-align:left;"
-            - Cabecera tabla: style="background-color:#f1f5f9; font-weight:bold;"
-
-            DATOS DE CARTERA:
-            - POSICIONES ACTIVAS: ${JSON.stringify(activePos)}
-            - HISTORIAL VENTAS (P&L): ${JSON.stringify(soldPos)}
-
-            SECCIONES OBLIGATORIAS (Respetar orden):
-            1. <h3>RESUMEN EJECUTIVO</h3>: Visión global de la cartera y exposición.
-            2. <h3>ESTADO ACTUAL CARTERA (ACTIVE POSITIONS)</h3>:
-               Genera una TABLA HTML con estas columnas exactas:
-               [Valor | Precio Act. | Valor Intrínseco (Est.) | Desviación % | PER | Recom. (Comprar/Mantener/Vender) | Soportes / Resistencias]
-               *Nota: Estima el Valor Intrínseco, Soportes y Resistencias basándote en tu conocimiento financiero actualizado del ticker. Calcula la Desviación = (Precio - Intrínseco)/Intrínseco %.
-            3. <h3>RECOMENDACIONES DE REBALANCEO</h3>: Consejos específicos sobre qué posiciones reducir o aumentar.
-            4. <h3>ANÁLISIS DE VENTAS (HISTÓRICO)</h3>: Breve comentario sobre el rendimiento pasado.
-            5. <h3>CONCLUSIÓN FINAL</h3>.
-            `;
-            
-            const res = await askGemini(apiKey, prompt); 
-            // Limpieza agresiva de bloques de código y espacios
-            const cleanHtml = res.replace(/```html/g, '').replace(/```/g, '').trim();
-            setAnalysisResult(cleanHtml); 
-            setIsAnalysisModalOpen(true); 
-        } catch (e) { 
-            alert(e.message); 
-        } finally { 
-            setAnalyzing(false); 
-        } 
+    const analyzePortfolio = async () => {
+          const dataToAnalyze = visiblePortfolio;
+          if (dataToAnalyze.length === 0) return;
+          if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' });
+          setAnalyzing(true);
+          try {
+            const summary = dataToAnalyze.map(p => {
+              const inv = ((p.buyPrice||0) * (p.shares||0) * (p.buyFx||1)).toFixed(2);
+              const cur = ((p.currentPrice||0) * (p.shares||0) * (p.currentFx||1)).toFixed(2);
+              const plPct = p.buyPrice > 0 ? (((p.currentPrice - p.buyPrice) / p.buyPrice) * 100).toFixed(1) : '0';
+              const divTotal = (p.dividends||[]).reduce((a,b) => a+(b.net||0), 0).toFixed(2);
+              return `T:${p.ticker},S:${p.shares},B:${p.buyPrice},C:${p.currentPrice},G:${p.group},INV:${inv},VAL:${cur},GP%:${plPct},DIV:${divTotal},PER_B:${p.buyPE||0},PER_C:${p.currentPE||0}`;
+            }).join('|');
+        
+            const prompt = `INSTRUCCIÓN CRÍTICA: Responde ÚNICAMENTE HTML. La primera letra de tu respuesta DEBE ser "<". PROHIBIDO cualquier saludo, presentación, introducción, despedida o frase de cortesía. NO escribas "Claro", "Por supuesto", "Aquí tienes", "Espero", ni nada similar antes o después del HTML.
+        
+        Eres un analista financiero senior. Analiza esta cartera (${dataToAnalyze.length} posiciones visibles con filtro aplicado): ${summary.substring(0,28000)}
+        
+        Responde en ESPAÑOL, de forma CONCISA y directa. Usa SOLO etiquetas <h3>, <p>, <ul>, <li>, <strong>. Secciones OBLIGATORIAS en este orden:
+        
+        <h3>Resumen</h3>
+        Visión global de la cartera: diversificación sectorial/geográfica, perfil riesgo/retorno.
+        
+        <h3>Rentabilidad</h3>
+        Análisis por posición: G/P actual (%), aportación dividendos, PER entrada vs. actual. Mejores y peores posiciones.
+        
+        <h3>Situación de Mercado</h3>
+        Para cada ticker, usando búsqueda web: tendencia reciente, noticias clave, consenso de analistas y eventos próximos relevantes (resultados, dividendos, splits). Complementa los datos del inversor con la opinión actual del mercado.
+        
+        <h3>Riesgos</h3>
+        Concentración, exposición divisa (FX), sectores en presión, posiciones con deterioro fundamental.
+        
+        <h3>Conclusión</h3>
+        Veredicto final conciso y acción sugerida por posición: mantener / revisar / reforzar / reducir.`;
+        
+            const res = await askGemini(apiKey, prompt);
+            const cleaned = res
+              .replace(/```html[\s\S]*?```/gi, s => s.replace(/```html/i,'').replace(/```/,''))
+              .replace(/```/g, '')
+              .replace(/^[\s\S]*?(<h[1-6])/i, '$1')
+              .replace(/^(Claro|Por supuesto|Aquí tienes|Sin problema)[^<]*/i, '')
+              .trim();
+            setAnalysisResult(cleaned);
+            setIsAnalysisModalOpen(true);
+          } catch (e) {
+            setInfoModal({ isOpen: true, title: 'Error Análisis', msg: e.message, type: 'error' });
+          } finally {
+            setAnalyzing(false);
+          }
     };
 
     const handleSave = () => { const e = { ...form, name: form.name || form.ticker }; if (editingId) setPortfolio(prev => prev.map(p => p.id === editingId ? { ...p, ...e } : p)); else setPortfolio(prev => [...prev, { ...e, id: Date.now(), currentPrice: form.buyPrice, currentFx: form.buyFx, isActive: true, dividends: [] }]); setIsModalOpen(false); };
