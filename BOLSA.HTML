@@ -876,6 +876,7 @@ const StatsDashboard = ({ portfolio, baseCurrency, taxTotal }) => {
           );
       };
 
+
 const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady }) => {
     // --- ESTADOS PERSISTENTES PARA FILTROS ---
     const [filterText, setFilterText] = usePersistentState('bg_port_filter_text', '');
@@ -907,7 +908,6 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const cleanVal = (v) => { if (typeof v === 'number') return v; const n = parseFloat(String(v).replace(/[^0-9.-]/g, '')); return isNaN(n) ? 0 : n; };
     const getRegion = (ticker) => { if (!ticker) return 'S/D'; if (ticker.includes(':')) return ticker.split(':')[0].toUpperCase(); const t = ticker.toUpperCase(); if (t.endsWith('.MC')) return 'BME (ES)'; if (t.endsWith('.DE')) return 'XETRA (DE)'; if (t.endsWith('.PA')) return 'EURONEXT (FR)'; if (t.endsWith('.L')) return 'LSE (UK)'; return 'US/OTROS'; };
 
-    // Toggle de visibilidad
     const toggleView = (key) => setVisibleSections(prev => ({...prev, [key]: !prev[key]}));
 
     useEffect(() => { if (noteToast) { const timer = setTimeout(() => setNoteToast(null), 30000); return () => clearTimeout(timer); } }, [noteToast]);
@@ -940,7 +940,6 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           return 0; });
     }, [portfolio, filterText, filterDateStart, filterDateEnd, filterType, sortConfig]);
 
-    // Filtrar solo los visibles (checked) para cálculos globales y reportes
     const visiblePortfolio = useMemo(() => filteredPortfolio.filter(p => p.isActive !== false), [filteredPortfolio]);
 
     const gridTotals = useMemo(() => {
@@ -1049,20 +1048,58 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
     const updatePrices = async (isAuto = false) => { const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); if (!isAuto && active.length === 0) return; setUpdating(true); let log = { success: [], fail: [] }, newUpdates = []; try { for (const item of active) { const prompt = `IMPORTANTE: Responde SOLO JSON con PUNTO decimal. Sin símbolos de moneda ni comas. Datos de "${item.ticker}" (${item.stockCurrency}) a ${baseCurrency}. JSON: {"p":precio,"fx":cambio,"pe":per,"n":"nombre"}`; try { const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json && (json.p || json.p === 0)) { newUpdates.push({ id: item.id, n: json.n, p: cleanVal(json.p), fx: cleanVal(json.fx), pe: cleanVal(json.pe) }); log.success.push(item.ticker); } else { log.fail.push(item.ticker); } } catch (e) { log.fail.push(item.ticker); } } if (newUpdates.length > 0) { setPortfolio(prev => prev.map(p => { const u = newUpdates.find(x => x.id === p.id); return u ? { ...p, name: u.n || p.name, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe } : p; })); setLastUpdate(new Date().toISOString()); } if (!isAuto && log.fail.length > 0) setInfoModal({ isOpen: true, title: 'Sincronización con Errores', msg: `Fallos en: ${log.fail.join(', ')}.`, type: 'warning' }); } catch (e) { if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); } finally { setUpdating(false); } };
-    const analyzePortfolio = async () => { const dataToAnalyze = visiblePortfolio; if (dataToAnalyze.length === 0) return; setAnalyzing(true); try { const summary = dataToAnalyze.map(p => `T:${p.ticker},S:${p.shares},B:${p.buyPrice},C:${p.currentPrice},G:${p.group}`).join('|'); const prompt = `CRITICAL INSTRUCTION: Output ONLY HTML. No intro. Task: Analyze this portfolio list: ${summary.substring(0,30000)}. Structure: <h3>Headers</h3>, <p>Text</p>, <ul>Lists</ul>. Headers: Resumen, Rentabilidad, Riesgos, Conclusión.`; const res = await askGemini(apiKey, prompt); setAnalysisResult(res.replace(/```html/g, '').replace(/```/g, '').trim()); setIsAnalysisModalOpen(true); } catch (e) { alert(e.message); } finally { setAnalyzing(false); } };
+    
+    // ANALISIS IA MEJORADO Y CORREGIDO
+    const analyzePortfolio = async () => {
+          const dataToAnalyze = visiblePortfolio;
+          if (dataToAnalyze.length === 0) return;
+          setAnalyzing(true);
+          try {
+            const summary = dataToAnalyze.map(p => `T:${p.ticker},S:${p.shares},B:${p.buyPrice},C:${p.currentPrice},G:${p.group}`).join('|');
+            const tickers = dataToAnalyze.map(p => p.ticker).join(', ');
+            const prompt = `CRITICAL INSTRUCTION: Output ONLY HTML. Absolutely NO greeting, intro, farewell or courtesy phrase. First character MUST be "<". NEVER write "Claro", "Por supuesto", "Aquí tienes", "Espero" or similar before or after the HTML.
+        Task: Analyze this portfolio list in SPANISH, concise: ${summary.substring(0,28000)}.
+        Structure ONLY with <h3 style="color:#2563eb;border-bottom:1px solid #ccc;padding-bottom:4px;text-transform:uppercase;">, <p style="color:#111;font-size:14px;line-height:1.6;">, <ul>, <li style="color:#111;font-size:14px;margin-bottom:4px;">, <strong>.
+        Mandatory sections in this exact order:
+        <h3>Resumen</h3>
+        <h3>Rentabilidad</h3>
+        <h3>Riesgos</h3>
+        <h3>Situación de Mercado</h3> — Use web search. For each ticker (${tickers}): recent trend, key news, analyst consensus, upcoming events (earnings, dividends, splits). Concise bullet per ticker.
+        <h3>Conclusión</h3>`;
+        
+            const res = await askGemini(apiKey, prompt);
+            const cleaned = res
+              .replace(/```html[\s\S]*?```/gi, s => s.replace(/```html/i,'').replace(/```/,''))
+              .replace(/```/g, '')
+              .replace(/^[\s\S]*?(<h[1-6])/i, '$1')
+              .trim();
+            setAnalysisResult(cleaned);
+            setIsAnalysisModalOpen(true);
+          } catch (e) {
+            alert(e.message);
+          } finally {
+            setAnalyzing(false);
+          }
+     };
+
     const handleSave = () => { const e = { ...form, name: form.name || form.ticker }; if (editingId) setPortfolio(prev => prev.map(p => p.id === editingId ? { ...p, ...e } : p)); else setPortfolio(prev => [...prev, { ...e, id: Date.now(), currentPrice: form.buyPrice, currentFx: form.buyFx, isActive: true, dividends: [] }]); setIsModalOpen(false); };
     const handleSellSubmit = () => { const soldR = { ...sellItem, id: Date.now(), shares: sellForm.sharesToSell, isActive: true, sellDate: sellForm.sellDate, sellPrice: sellForm.sellPrice, sellFx: sellForm.sellFx, sellFees: sellForm.sellFees, sellAdjustments: sellForm.sellAdjustments, sellFeesIncludedInPrice: sellForm.sellFeesIncludedInPrice, dividends: [...(sellItem.dividends || [])] }; const updatedP = portfolio.map(p => p.id === sellItem.id ? { ...p, isActive: false, dividends: [] } : p); setPortfolio([...updatedP, soldR]); setIsSellModalOpen(false); };
     const handleClone = (p) => { const clone = { ...p, id: Date.now(), isActive: false, dividends: [] }; setPortfolio(prev => [...prev, clone]); setInfoModal({ isOpen: true, title: 'Éxito', msg: `Se ha creado una copia de ${p.ticker} (Desactivada) sin dividendos.`, type: 'info' }); };
     const resetFilters = () => { setFilterText(''); setFilterDateStart(''); setFilterDateEnd(''); setFilterType('active'); setSortConfig({ key: 'date', direction: 'desc' }); };
-    const handlePrintAI = () => { const printWindow = window.open('', '', 'height=800,width=800'); const time = new Date().toLocaleString(); let html = `<html><head><title>Informe IA</title><style>body{font-family:sans-serif;padding:20px;} h1{border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:20px;} h3{color:#2563eb; border-bottom:1px solid #ccc; padding-bottom:5px; margin-top:20px; text-transform:uppercase;} ul{padding-left:20px;} li{margin-bottom:5px;}</style></head><body>`; html += `<h1>INFORME iA de SITUACIÓN CARTERA</h1><div style="margin-bottom:20px;font-size:12px;color:#666;"><strong>TIPO:</strong> ${filterType.toUpperCase() === 'ACTIVE' ? 'CARTERA ACTIVA' : filterType.toUpperCase() === 'SOLD' ? 'POSICIONES CERRADAS' : 'CARTERA GLOBAL'}<br/><strong>FECHA:</strong> ${time}</div>`; html += `<div style="font-size:14px;line-height:1.6;">${analysisResult}</div></body></html>`; printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(()=>printWindow.print(),500); };
+    const handlePrintAI = () => { const printWindow = window.open('', '', 'height=800,width=800'); const time = new Date().toLocaleString(); let html = `<html><head><title>Informe IA</title><style>body{font-family:sans-serif;padding:20px;} h1{border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:20px;} h3{color:#2563eb; border-bottom:1px solid #ccc; padding-bottom:5px; margin-top:20px; text-transform:uppercase;} table{width:100%; border-collapse:collapse; margin:10px 0; font-size:12px;} th, td{border:1px solid #ddd; padding:8px; text-align:left;} th{background-color:#f2f2f2;} </style></head><body>`; html += `<h1>INFORME iA de SITUACIÓN CARTERA</h1><div style="margin-bottom:20px;font-size:12px;color:#666;"><strong>TIPO:</strong> ${filterType.toUpperCase() === 'ACTIVE' ? 'CARTERA ACTIVA' : filterType.toUpperCase() === 'SOLD' ? 'POSICIONES CERRADAS' : 'CARTERA GLOBAL'}<br/><strong>FECHA:</strong> ${time}</div>`; html += `<div style="font-size:14px;line-height:1.6;">${analysisResult}</div></body></html>`; printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(()=>printWindow.print(),500); };
     
-    // HANDLE PRINT
+    // HANDLE PRINT MEJORADO
     const handlePrint = () => { 
         const printWindow = window.open('', '', 'height=800,width=1200'); 
         const typeMap = { 'active': 'CARTERA ACTIVA', 'sold': 'HISTÓRICO VENTAS', 'all': 'INFORME GLOBAL' }; 
-        const filterLabel = typeMap[filterType]; 
         const emissionTime = new Date().toLocaleString(); 
         
+        const filterDetails = [];
+        if(filterText) filterDetails.push(`Texto: "${filterText}"`);
+        if(filterDateStart) filterDetails.push(`Desde: ${formatDateES(filterDateStart)}`);
+        if(filterDateEnd) filterDetails.push(`Hasta: ${formatDateES(filterDateEnd)}`);
+        const fullFilterLabel = `${typeMap[filterType]} ${filterDetails.length > 0 ? `[${filterDetails.join(' | ')}]` : ''}`;
+
         const genStatsBlock = (t, d, c) => { 
             const yieldPct = d.inv > 0 ? (d.divN / d.inv) * 100 : 0; 
             return ` <div style="border:1px solid #ccc; padding:5px; width:32%; border-top: 3px solid ${c}; background:#f9f9f9; font-size: 8px;"> <div style="font-weight:bold; color:#555; text-transform:uppercase; margin-bottom:2px;">${t} (${formatN(d.num, 0)} Val)</div> <table style="width:100%; border:none; margin:0;"> <tr><td>Invertido:</td><td style="text-align:right;"><b>${formatMoney(d.inv, baseCurrency)}</b></td></tr> <tr><td>Valor Act:</td><td style="text-align:right;"><b style="color:${c}">${formatMoney(d.cur, baseCurrency)}</b></td></tr> <tr><td colspan="2" style="text-align:center; padding-top:5px; border-top:1px solid #ddd;"><b>BALANCE: ${formatMoney(d.plPrice, baseCurrency)}</b></td></tr> <tr><td style="color:#666;">Rent. Simple/Anual:</td><td style="text-align:right;">${formatN(d.plP_S)}% / ${formatN(d.plP_A)}%</td></tr> <tr><td>Dividendos:</td><td style="text-align:right; color:#2563eb;">${formatMoney(d.divN, baseCurrency)} [${formatN(yieldPct)}%]</td></tr> <tr><td>FX Total:</td><td style="text-align:right;">${formatMoney(d.fX, baseCurrency)}</td></tr> <tr><td><b>Rdto Total:</b></td><td style="text-align:right;"><b>${formatMoney(d.plTotal, baseCurrency)} [${formatN(d.plT_S)}%]</b></td></tr> </table> </div>`; 
@@ -1074,7 +1111,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         
         const historyCardHTML = ` <div style="width: 250px; border: 2px solid #eab308; padding: 8px; background: #fffbeb; font-family:sans-serif;"> <div style="font-size:9px; font-weight:bold; color:#ca8a04; border-bottom:1px solid #eab308; padding-bottom:2px; margin-bottom:5px;">RENTABILIDAD HISTÓRICA (REAL)</div> <table style="width:100%; font-size:8px;"> <tr><td colspan="2" style="font-weight:bold; background:#eab30833;">CONSOLIDADA</td></tr> <tr><td>ROI:</td><td style="text-align:right; font-weight:bold;">${formatN(roiCons)}%</td></tr> <tr><td>Cap. Med:</td><td style="text-align:right;">${formatMoney(h.consolidated.avgCap, baseCurrency)}</td></tr> <tr><td>Beneficio:</td><td style="text-align:right;">${formatMoney(h.consolidated.profit, baseCurrency)}</td></tr> <tr><td colspan="2" style="font-weight:bold; background:#eab30833; padding-top:4px;">CERRADAS</td></tr> <tr><td>ROI:</td><td style="text-align:right; font-weight:bold;">${formatN(roiClosed)}%</td></tr> <tr><td>Cap. Med:</td><td style="text-align:right;">${formatMoney(h.closed.avgCap, baseCurrency)}</td></tr> </table> <div style="font-size:7px; color:#666; margin-top:5px; border-top:1px solid #ccc; padding-top:2px;">Intervalo Op: ${formatN(h.avgIntervalDays, 1)}d | Pos. Media: ${formatN(h.avgPositions, 1)}</div> </div> `; 
         
-        let html = `<html><head><title>Informe Cartera</title>`; html += `<style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:7px;} h1{font-size:14px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th{background:#f1f5f9;text-align:left;padding:3px;border-bottom:1px solid #94a3b8;font-size:6px;text-transform:uppercase;} td{padding:3px;border-bottom:1px solid #e2e8f0;vertical-align:top;font-size:7px;} .num{text-align:right;font-family:monospace;white-space:nowrap;} .center{text-align:center;} .profit{color:#16a34a;font-weight:bold;} .loss{color:#dc2626;font-weight:bold;} .blue{color:#3b82f6;} .orange{color:#f97316;} .total-row td { background: #1e293b; color: white; font-weight: bold; border-top: 2px solid #475569; }</style></head><body>`; html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>INFORME DE CARTERA - BoardingGate</h1><div style="font-size:8px;color:#666;">(FILTRO: ${filterLabel})</div></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`; html += `<div style="display:flex; gap:5px; margin-top:5px;">`; 
+        let html = `<html><head><title>Informe Cartera</title>`; html += `<style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:7px;} h1{font-size:14px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th{background:#f1f5f9;text-align:left;padding:3px;border-bottom:1px solid #94a3b8;font-size:6px;text-transform:uppercase;} td{padding:3px;border-bottom:1px solid #e2e8f0;vertical-align:top;font-size:7px;} .num{text-align:right;font-family:monospace;white-space:nowrap;} .center{text-align:center;} .profit{color:#16a34a;font-weight:bold;} .loss{color:#dc2626;font-weight:bold;} .blue{color:#3b82f6;} .orange{color:#f97316;} .total-row td { background: #1e293b; color: white; font-weight: bold; border-top: 2px solid #475569; }</style></head><body>`; html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>INFORME DE CARTERA - BoardingGate</h1><div style="font-size:8px;color:#666;">(FILTRO: ${fullFilterLabel})</div></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`; html += `<div style="display:flex; gap:5px; margin-top:5px;">`; 
         
         if (filterType === 'all') { 
             html += genStatsBlock("Cartera Activa", stats.active, "#3b82f6") + genStatsBlock("Posiciones Cerradas", stats.sold, "#f97316") + genStatsBlock("Cartera Global", stats.total, "#a855f7"); 
@@ -1112,7 +1149,10 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             <td></td>
         </tr>`;
 
-        html += `</tbody></table>`; html += `</body></html>`; printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(() => printWindow.print(), 500); 
+        html += `</tbody></table>`; 
+        html += `<div style="display:flex; justify-content:flex-end; margin-top:20px;">${historyCardHTML}</div>`; 
+        html += `</body></html>`; 
+        printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(() => printWindow.print(), 500); 
     };
     
     const toggleAllActive = () => { const allActive = filteredPortfolio.every(p => p.isActive !== false); setPortfolio(prev => prev.map(p => { const isVisible = filteredPortfolio.some(fp => fp.id === p.id); return isVisible ? { ...p, isActive: !allActive } : p; })); };
@@ -1154,7 +1194,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                 <div className="flex flex-wrap gap-2 items-center bg-slate-950/50 p-2 rounded-lg border border-slate-800/50">
                     <div className="flex-1 min-w-[150px] relative"><Icons.Search className="absolute left-2 top-2 text-slate-500" size={14}/><input type="text" value={filterText} onChange={e => setFilterText(e.target.value)} placeholder="Filtrar por ticker, nombre o grupo..." className="w-full bg-slate-900 border border-slate-700 h-8 pl-8 pr-2 text-xs rounded focus:border-blue-500 font-bold" /></div>
                     
-                    {/* PANEL VISTAS (AHORA AQUI) */}
+                    {/* PANEL VISTAS */}
                     <div className="flex items-center gap-1 bg-slate-900 border border-slate-700 rounded h-8 px-2">
                         <span className="text-[9px] text-slate-500 font-bold uppercase mr-1 tracking-wider">VISTAS:</span>
                         <button onClick={() => toggleView('table')} className={`p-1 rounded hover:bg-slate-700 transition-colors ${visibleSections.table ? 'text-blue-400 bg-slate-800' : 'text-slate-600'}`} title="Listado"><Icons.Briefcase size={14}/></button>
@@ -1163,7 +1203,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                         <button onClick={() => toggleView('charts')} className={`p-1 rounded hover:bg-slate-700 transition-colors ${visibleSections.charts ? 'text-blue-400 bg-slate-800' : 'text-slate-600'}`} title="Gráficas Evolución"><Icons.TrendingUp size={14}/></button>
                     </div>
 
-                    {/* PANEL FECHAS (CENTRO) */}
+                    {/* PANEL FECHAS */}
                     <div className="flex items-center gap-1">
                         <button onClick={() => handleYearJump(-1)} className="h-8 w-8 bg-slate-800 border border-slate-700 rounded text-slate-400 hover:text-white hover:bg-slate-700 font-bold flex items-center justify-center text-lg">-</button>
                         <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-2 h-8"><span className="text-[9px] font-bold text-slate-500 uppercase">DESDE</span><input type="date" value={filterDateStart} onChange={e => setFilterDateStart(e.target.value)} className="bg-transparent border-none text-xs text-white p-0 w-[95px] focus:ring-0 font-bold" /></div>
@@ -1171,10 +1211,10 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                         <button onClick={() => handleYearJump(1)} className="h-8 w-8 bg-slate-800 border border-slate-700 rounded text-slate-400 hover:text-white hover:bg-slate-700 font-bold flex items-center justify-center text-lg">+</button>
                     </div>
 
-                    {/* BOTÓN BORRAR (AHORA AQUI) */}
+                    {/* BOTÓN BORRAR */}
                     <button onClick={resetFilters} title="Limpiar Filtros" className="h-8 w-8 bg-red-900/30 text-red-400 border border-red-500/30 rounded font-bold hover:bg-red-900/50 flex items-center justify-center transition-colors"><Icons.Trash2 size={16}/></button>
 
-                    {/* PANEL TIPO (AHORA AL FINAL) */}
+                    {/* PANEL TIPO */}
                     <div className="flex bg-slate-900 rounded border border-slate-700 h-8 p-0.5"><button onClick={() => setFilterType('all')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'all' ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white'}`}>TODO</button><button onClick={() => setFilterType('active')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'active' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>ACTIVAS</button><button onClick={() => setFilterType('sold')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'sold' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>VENTAS</button></div>
                 </div>
             </div>
@@ -1418,7 +1458,15 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             </Modal>
             <Modal isOpen={confirmModal.isOpen} title={confirmModal.title} onClose={()=>setConfirmModal({isOpen:false})} size="sm"><div className="text-center space-y-4"><div className="bg-red-500/10 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto text-red-500 border border-red-500/20"><Icons.Trash2 size={30}/></div><p className="text-slate-300 text-sm font-bold">{confirmModal.msg}</p><div className="flex gap-2"><button onClick={()=>setConfirmModal({isOpen:false})} className="flex-1 bg-slate-700 py-3 rounded-xl font-bold uppercase text-[10px]">Cancelar</button><button onClick={confirmModal.onConfirm} className="flex-1 bg-red-600 py-3 rounded-xl font-bold text-white uppercase text-[10px]">Eliminar</button></div></div></Modal>
             <Modal isOpen={infoModal.isOpen} title={infoModal.title} onClose={()=>setInfoModal({...infoModal, isOpen:false})} size="sm"><div className="text-center space-y-4"><div className={`p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto border ${infoModal.type==='error'?'bg-red-500/10 text-red-500 border-red-500/20':infoModal.type==='warning'?'bg-yellow-500/10 text-yellow-500 border-yellow-500/20':'bg-blue-500/10 text-blue-500 border-blue-500/20'}`}>{infoModal.type==='error'?<Icons.AlertCircle size={30}/>:infoModal.type==='warning'?<Icons.AlertCircle size={30}/>:<Icons.CheckCircle size={30}/>}</div><p className="text-slate-300 text-sm font-medium whitespace-pre-wrap leading-relaxed">{infoModal.msg}</p><button onClick={()=>setInfoModal({...infoModal, isOpen:false})} className="w-full bg-slate-700 py-3 rounded-xl font-bold uppercase text-[10px]">Cerrar</button></div></Modal>
-            <Modal isOpen={isAnalysisModalOpen} title="Informe de Análisis IA" onClose={()=>setIsAnalysisModalOpen(false)} size="lg"> <div className="space-y-4"> <div className="prose-content text-sm text-slate-300 leading-relaxed" dangerouslySetInnerHTML={{__html: analysisResult}}></div> <div className="flex justify-end pt-4 border-t border-slate-700"> <button onClick={handlePrintAI} className="bg-slate-700 px-4 py-2 rounded-lg text-xs font-bold text-white flex items-center gap-2 hover:bg-slate-600"><Icons.ExternalLink size={14}/> IMPRIMIR</button> </div> </div> </Modal>
+            <Modal isOpen={isAnalysisModalOpen} title="Informe de Análisis IA" onClose={()=>setIsAnalysisModalOpen(false)} size="lg"> 
+                {/* CONTENEDOR MODIFICADO PARA SOPORTAR TEXTO NEGRO SOBRE FONDO BLANCO */}
+                <div className="space-y-4 bg-white p-6 rounded-xl shadow-inner max-h-[70vh] overflow-y-auto"> 
+                    <div className="prose-content text-sm text-slate-800 leading-relaxed font-sans" dangerouslySetInnerHTML={{__html: analysisResult}}></div> 
+                </div>
+                <div className="flex justify-end pt-4 border-t border-slate-700"> 
+                    <button onClick={handlePrintAI} className="bg-slate-700 px-4 py-2 rounded-lg text-xs font-bold text-white flex items-center gap-2 hover:bg-slate-600"><Icons.ExternalLink size={14}/> IMPRIMIR</button> 
+                </div> 
+            </Modal>
         </div>
     );
 };
