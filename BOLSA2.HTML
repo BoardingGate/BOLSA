@@ -1590,7 +1590,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
 
 const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
-    // --- ESTADO PARA CONTROL DE SUB-PESTAÑAS ---
+    // --- NAVEGACIÓN ---
     const [activeSubTab, setActiveSubTab] = useState('estudio'); // 'estudio' | 'rastreo'
 
     // --- ESTADOS ORIGINALES PESTAÑA ESTUDIO (SIN TOCAR) ---
@@ -1601,24 +1601,32 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
     const [specificAnswer, setSpecificAnswer] = useState(null); 
     const [suggestedQuestions, setSuggestedQuestions] = useState(["Competencia directa", "Historial de dividendos", "Nivel de deuda", "Directivos y Salarios", "Escándalos recientes", "Previsión próximos resultados"]);
 
-    // --- ESTADOS NUEVOS PESTAÑA RASTREO ---
+    // --- ESTADOS PESTAÑA RASTREO (NUEVO) ---
     const [exchange, setExchange] = useState('NYSE');
     const [maxResults, setMaxResults] = useState(10);
-    const [screenerParams, setScreenerParams] = useState({
-        per: 20, peg: 1.5, roi: 15, divYield: 3, pb: 2, debtEquity: 1
-    });
     const [screenerResults, setScreenerResults] = useState([]);
     const [screenerSort, setScreenerSort] = useState({ key: 'ticker', direction: 'asc' });
+    const [statusModal, setStatusModal] = useState({ isOpen: false, title: '', msg: '', type: 'info' });
+
+    // Configuración de Parámetros con estado de activación
+    const [params, setParams] = useState({
+        per: { val: 20, active: true, label: 'PER Máximo', min: 1, max: 100, step: 1, help: 'Relación Precio/Beneficio. Ref: <15 Valor, 15-25 Normal, >25 Crecimiento/Caro.' },
+        peg: { val: 1.2, active: true, label: 'PEG Máximo', min: 0.1, max: 5, step: 0.1, help: 'PER / Crecimiento. Ref: <1 Muy infravalorada, 1-2 Justo, >2 Sobrevalorada.' },
+        roi: { val: 15, active: true, label: 'ROI Mínimo %', min: 1, max: 50, step: 1, help: 'Retorno s/ Inversión. Eficiencia operativa. Ref: >15% Excelente (tipo Apple/MSFT).' },
+        yield: { val: 3, active: true, label: 'Div. Yield Mín %', min: 0, max: 20, step: 0.5, help: 'Rentabilidad Dividendo. Ref: 2-4% Saludable, >6% Riesgo de recorte o bajo crecimiento.' },
+        pb: { val: 2, active: false, label: 'P/B Máximo', min: 0.1, max: 10, step: 0.1, help: 'Precio / Valor Contable. Ref: <1 "Deep Value" (ganga), >3 Crecimiento tecnológico.' },
+        de: { val: 1, active: false, label: 'Deuda/Equity Máx', min: 0, max: 5, step: 0.1, help: 'Apalancamiento. Ref: <1 Conservador, >2 Riesgo financiero elevado.' }
+    });
 
     const EXCHANGES = [
         { id: 'NYSE', name: 'NYSE', country: 'EE.UU.' }, { id: 'NASDAQ', name: 'NASDAQ', country: 'EE.UU.' },
-        { id: 'BME', name: 'BME', country: 'España' }, { id: 'LSE', name: 'London SE', country: 'Reino Unido' },
+        { id: 'BME', name: 'BME', country: 'España' }, { id: 'LSE', name: 'London SE', country: 'R.U.' },
         { id: 'XETRA', name: 'XETRA', country: 'Alemania' }, { id: 'EPA', name: 'Euronext Paris', country: 'Francia' },
         { id: 'JPX', name: 'JPX', country: 'Japón' }, { id: 'HKEX', name: 'HKEX', country: 'Hong Kong' },
         { id: 'TSX', name: 'TSX', country: 'Canadá' }, { id: 'ASX', name: 'ASX', country: 'Australia' }
     ];
 
-    // --- LÓGICA ORIGINAL ESTUDIO (TAL CUAL) ---
+    // --- LÓGICA ORIGINAL ESTUDIO (PRESERVADA) ---
     const rotateSuggestions = (currentQ) => { 
         const base = ["Impacto en valoración", "Riesgos asociados", "Comparativa sectorial", "Proyección futura", "Movimientos Insider", "Análisis Técnico Profundo", "Catalizadores próximos"]; 
         const filtered = base.filter(q => q !== currentQ); 
@@ -1627,157 +1635,185 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
     };
 
     const analyze = async () => { 
-        if (!apiKey) return alert("Falta API Key en Configuración"); 
-        if (!ticker) return alert("Introduce un Ticker"); 
+        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key en Configuración', type: 'error' });
+        if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker para analizar', type: 'info' });
         setLoading(true); setSpecificAnswer(null); setData(null); 
         try { 
             if (question.trim()) { 
-                const prompt = `CRITICAL: Role=FinancialAnalyst. Output=HTML. Language=Spanish(Spain). Task: Answer "${question}" about "${ticker}". Constraints: NO PREAMBLE. NO "Hola". NO "Aquí tienes". Direct concise answer. Structure: Use <h3> for sections, <ul> for lists. Visually clean.`; 
+                const prompt = `CRITICAL: Role=FinancialAnalyst. Output=HTML. Language=Spanish(Spain). Task: Answer "${question}" about "${ticker}". NO PREAMBLE.`; 
                 const res = await askGemini(apiKey, prompt); 
                 setSpecificAnswer(res.replace(/```html/g, '').replace(/```/g, '').trim()); 
                 rotateSuggestions(question); 
             } else { 
-                const prompt = `ROLE: Senior Wall Street Analyst. TASK: Generate a comprehensive investment report for "${ticker}". OUTPUT: JSON ONLY. Strict format. LANGUAGE: Spanish (Spain). Translate ALL financial terms professionally (e.g., Yield -> Rentabilidad, Hold -> Mantener). JSON STRUCTURE: { "company": "Name", "current_price": number, "intrinsic_value": number, "forecast_1y": number, "forecast_5y": number, "valuation_status": "Infravalorada/Sobrevalorada/Justa", "investment_verdict": "Detailed professional verdict.", "technical_analysis": { "trend_short": "Alcista/Bajista/Lateral", "trend_long": "Alcista/Bajista", "supports": ["Price 1"], "resistances": ["Price 1"], "commentary": "Brief" }, "dividend_data": { "yield_percent": "x.xx%", "amount": "currency x.xx", "payout_ratio": "x%", "ex_date": "YYYY-MM-DD", "payment_date": "YYYY-MM-DD", "growth_streak": "x Years", "safety": "Alta/Media/Baja" }, "financial_health": { "revenue_growth_3y": "x%", "net_margin": "x%", "roe": "x%", "debt_to_equity": number, "free_cash_flow": "String" }, "management": {"ceo": "Name", "ownership": "% Held"}, "capital": {"market_cap": "String", "shares_outstanding": "String"}, "competitors": { "per": {"stock": num, "industry": num}, "yield": {"stock": num, "industry": num} }, "fundamentals": {"per": num, "eps": num, "beta": num}, "pros_cons": { "pros": ["txt1"], "cons": ["txt1"] }, "peers": ["TICKER1"], "suggested_questions": ["q1"] }`; 
+                const prompt = `ROLE: Senior Wall Street Analyst. TASK: Generate investment report for "${ticker}". OUTPUT: JSON ONLY. LANGUAGE: Spanish (Spain).`; 
                 const res = await askGemini(apiKey, prompt); 
                 const json = extractJSON(res); 
-                if(!json) throw new Error("La IA no devolvió resultados válidos.");
+                if(!json) throw new Error("La iA no ha podido generar el informe. Reintenta.");
                 setData(json); 
                 if(json.suggested_questions) setSuggestedQuestions(json.suggested_questions); 
             } 
-        } catch (e) { alert("Error: " + e.message); } finally { setLoading(false); } 
+        } catch (e) { setStatusModal({ isOpen: true, title: 'Error iA', msg: e.message, type: 'error' }); } finally { setLoading(false); } 
     };
 
-    // --- LÓGICA NUEVA RASTREO ---
+    // --- LÓGICA RASTREO ---
     const runScreener = async () => {
-        if (!apiKey) return alert("Falta API Key");
+        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key en Configuración', type: 'error' });
         setLoading(true);
         try {
-            const prompt = `Actúa como un Buscador de Acciones (Screener). Localiza en la bolsa ${exchange} un máximo de ${maxResults} empresas que cumplan: PER < ${screenerParams.per}, PEG < ${screenerParams.peg}, ROI > ${screenerParams.roi}%, Dividend Yield > ${screenerParams.divYield}%, P/B < ${screenerParams.pb}, Deuda/Equity < ${screenerParams.debtEquity}. 
-            Responde EXCLUSIVAMENTE un JSON Array con este formato: [{"ticker": "ABC", "name": "Nombre", "price": 10.5, "per": 12, "peg": 0.8, "roi": 15, "divYield": 3, "pb": 1.2, "debtEquity": 0.5}]`;
+            const activeFilters = Object.entries(params).filter(([_, p]) => p.active).map(([k, p]) => `${p.label}: ${p.val}`).join(', ');
+            const prompt = `Actúa como un Buscador de Acciones Profesional. Localiza en la bolsa ${exchange} un máximo de ${maxResults} empresas. 
+            FILTROS REQUERIDOS: ${activeFilters}. 
+            Responde EXCLUSIVAMENTE un JSON Array: [{"ticker": "TICKER", "name": "Nombre", "price": 0, "per": 0, "peg": 0, "roi": 0, "divYield": 0, "pb": 0, "debtEquity": 0}]
+            Si no hay resultados exactos, devuelve los más parecidos. NO devuelvas texto, solo el JSON.`;
+            
             const res = await askGemini(apiKey, prompt);
             const results = extractJSON(res);
-            if (!results || !Array.isArray(results)) throw new Error("No se encontraron resultados para estos criterios.");
+            if (!results || !Array.isArray(results) || results.length === 0) {
+                throw new Error("La búsqueda no ha devuelto ningún activo que cumpla con los criterios actuales.");
+            }
             setScreenerResults(results);
-        } catch (e) { alert(e.message); } finally { setLoading(false); }
+        } catch (e) {
+            setStatusModal({ isOpen: true, title: 'Sin Resultados', msg: e.message, type: 'warning' });
+        } finally { setLoading(false); }
     };
 
     const sortedScreenerResults = useMemo(() => {
         return [...screenerResults].sort((a, b) => {
             const dir = screenerSort.direction === 'asc' ? 1 : -1;
-            const valA = a[screenerSort.key]; const valB = b[screenerSort.key];
+            const valA = a[screenerSort.key] || 0; const valB = b[screenerSort.key] || 0;
             if (typeof valA === 'string') return valA.localeCompare(valB) * dir;
             return (valA - valB) * dir;
         });
     }, [screenerResults, screenerSort]);
 
     const handlePrintScreener = () => {
-        const printWindow = window.open('', '', 'height=800,width=1000');
-        let html = `<html><head><title>Rastreo BoardingGate</title><style>body{font-family:sans-serif;padding:20px;font-size:10px;} h1{border-bottom:2px solid #333;} table{width:100%;border-collapse:collapse;margin-top:10px;} th,td{border:1px solid #ddd;padding:5px;text-align:right;} th{background:#f4f4f4;text-align:center;}</style></head><body>`;
-        html += `<h1>RASTREO DE ACTIVOS: ${exchange}</h1><p>Filtros: PER<${screenerParams.per} | ROI>${screenerParams.roi}% | PEG<${screenerParams.peg}</p><p>Fecha: ${new Date().toLocaleString()}</p>`;
-        html += `<table><thead><tr><th>Ticker</th><th>Nombre</th><th>Precio</th><th>PER</th><th>PEG</th><th>ROI</th><th>Yield</th><th>P/B</th><th>D/E</th></tr></thead><tbody>`;
-        sortedScreenerResults.forEach(r => { html += `<tr><td><b>${r.ticker}</b></td><td>${r.name}</td><td>${r.price}</td><td>${r.per}</td><td>${r.peg}</td><td>${r.roi}%</td><td>${r.divYield}%</td><td>${r.pb}</td><td>${r.debtEquity}</td></tr>`; });
+        const printWindow = window.open('', '', 'height=800,width=1100');
+        let html = `<html><head><title>Rastreo iA</title><style>body{font-family:sans-serif;padding:20px;font-size:10px;} h1{border-bottom:2px solid #333;} table{width:100%;border-collapse:collapse;margin-top:10px;} th,td{border:1px solid #ddd;padding:6px;text-align:right;} th{background:#f1f5f9;text-align:center;text-transform:uppercase;font-size:8px;}</style></head><body>`;
+        html += `<h1>RASTREO DE ACTIVOS: ${exchange}</h1><p><b>Filtros Aplicados:</b> ${Object.entries(params).filter(([_,p])=>p.active).map(([_,p])=>`${p.label}(${p.val})`).join(' | ')}</p><p>Generado el: ${new Date().toLocaleString()}</p>`;
+        html += `<table><thead><tr><th>Ticker</th><th style="text-align:left">Nombre</th><th>Precio</th><th>PER</th><th>PEG</th><th>ROI</th><th>Yield</th><th>P/B</th><th>D/E</th></tr></thead><tbody>`;
+        sortedScreenerResults.forEach(r => { html += `<tr><td><b>${r.ticker}</b></td><td style="text-align:left">${r.name}</td><td>${formatN(r.price)}</td><td>${r.per}</td><td>${r.peg}</td><td>${r.roi}%</td><td>${r.divYield}%</td><td>${r.pb}</td><td>${r.debtEquity}</td></tr>`; });
         html += `</tbody></table></body></html>`;
         printWindow.document.write(html); printWindow.document.close(); printWindow.print();
     };
 
-    const ParamSlider = ({ label, field, min, max, step, help }) => (
-        <div className="flex flex-col gap-1 bg-slate-900/40 p-3 rounded-xl border border-slate-800">
-            <div className="flex justify-between items-center"><span className="text-[10px] font-bold text-slate-400 uppercase">{label}</span><span className="text-blue-400 font-mono font-bold">{screenerParams[field]}</span></div>
-            <div className="flex items-center gap-2">
-                <button onClick={() => setScreenerParams(p=>({...p, [field]: Math.max(min, Number((p[field]-step).toFixed(2)))}))} className="w-8 h-8 bg-slate-800 rounded hover:bg-slate-700 font-bold">-</button>
-                <input type="range" min={min} max={max} step={step} value={screenerParams[field]} onChange={e=>setScreenerParams(p=>({...p, [field]: parseFloat(e.target.value)}))} className="flex-1 accent-blue-600" />
-                <button onClick={() => setScreenerParams(p=>({...p, [field]: Math.min(max, Number((p[field]+step).toFixed(2)))}))} className="w-8 h-8 bg-slate-800 rounded hover:bg-slate-700 font-bold">+</button>
+    // Sub-componente Slider
+    const ParamCard = ({ id, config }) => (
+        <div className={`flex flex-col gap-2 p-4 rounded-2xl border transition-all ${config.active ? 'bg-slate-900/60 border-blue-500/50 shadow-lg shadow-blue-900/10' : 'bg-slate-900/20 border-slate-800 opacity-60'}`}>
+            <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                    <input type="checkbox" checked={config.active} onChange={() => setParams(prev => ({...prev, [id]: {...config, active: !config.active}}))} className="custom-checkbox" />
+                    <span className="text-[10px] font-black uppercase text-slate-300">{config.label}</span>
+                </div>
+                {config.active && <span className="text-sm font-mono font-black text-blue-400">{config.val}{config.label.includes('%') ? '%' : ''}</span>}
             </div>
-            <span className="text-[8px] text-slate-500 italic leading-tight">{help}</span>
+            {config.active && (
+                <div className="flex items-center gap-3 my-1">
+                    <button onClick={() => setParams(prev => ({...prev, [id]: {...config, val: Math.max(config.min, Number((config.val - config.step).toFixed(2)))}}))} className="w-8 h-8 bg-slate-800 rounded-lg hover:bg-slate-700 text-white font-bold shadow-inner">-</button>
+                    <input type="range" min={config.min} max={config.max} step={config.step} value={config.val} onChange={e => setParams(prev => ({...prev, [id]: {...config, val: parseFloat(e.target.value)}}))} className="flex-1 accent-blue-500" />
+                    <button onClick={() => setParams(prev => ({...prev, [id]: {...config, val: Math.min(config.max, Number((config.val + config.step).toFixed(2)))}}))} className="w-8 h-8 bg-slate-800 rounded-lg hover:bg-slate-700 text-white font-bold shadow-inner">+</button>
+                </div>
+            )}
+            <p className="text-[9px] text-slate-500 italic leading-snug">{config.help}</p>
         </div>
     );
 
     return (
-        <div className="h-full flex flex-col p-6 overflow-y-auto custom-scrollbar relative">
-            {loading && <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center fade-in"><Icons.Loader size={60} className="text-blue-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Procesando...</div></div>}
-            
-            {/* SUB-TABS SELECTOR */}
+        <div className="h-full flex flex-col p-4 md:p-6 overflow-y-auto custom-scrollbar relative bg-[#0a0a0a]">
+            {loading && <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md flex flex-col items-center justify-center"><Icons.Loader size={60} className="text-blue-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Conectando con el Mercado Global...</div></div>}
+
+            {/* MODAL DE STATUS (LOCAL) */}
+            {statusModal.isOpen && (
+                <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-slate-900 border border-slate-700 p-6 rounded-2xl max-w-sm w-full shadow-2xl">
+                        <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 mx-auto ${statusModal.type==='error'?'bg-red-500/20 text-red-500':'bg-blue-500/20 text-blue-400'}`}>
+                            {statusModal.type==='error'?<Icons.AlertCircle size={28}/>:<Icons.CheckCircle size={28}/>}
+                        </div>
+                        <h3 className="text-lg font-bold text-center text-white mb-2">{statusModal.title}</h3>
+                        <p className="text-sm text-slate-400 text-center mb-6 leading-relaxed">{statusModal.msg}</p>
+                        <button onClick={() => setStatusModal({isOpen: false})} className="w-full bg-slate-800 hover:bg-slate-700 py-3 rounded-xl font-bold uppercase text-xs">Cerrar</button>
+                    </div>
+                </div>
+            )}
+
+            {/* PESTAÑAS */}
             <div className="flex gap-2 mb-6 bg-slate-900 p-1 rounded-xl border border-slate-800 w-fit shrink-0">
-                <button onClick={() => setActiveSubTab('estudio')} className={`px-6 py-2 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'estudio' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Estudio</button>
-                <button onClick={() => setActiveSubTab('rastreo')} className={`px-6 py-2 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'rastreo' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Rastreo</button>
+                <button onClick={() => setActiveSubTab('estudio')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'estudio' ? 'bg-blue-600 text-white shadow-xl' : 'text-slate-500 hover:text-white'}`}>Estudio Individual</button>
+                <button onClick={() => setActiveSubTab('rastreo')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'rastreo' ? 'bg-blue-600 text-white shadow-xl' : 'text-slate-500 hover:text-white'}`}>Rastreo de Activos</button>
             </div>
 
             {activeSubTab === 'estudio' ? (
                 /* CONTENIDO ORIGINAL ESTUDIO */
-                <div className="flex flex-col gap-6 fade-in">
-                    <div className="flex flex-col gap-6 shrink-0 bg-slate-900/50 p-4 rounded-xl border border-slate-800">
-                        <div className="flex gap-4"><div className="flex-1 relative"><Icons.Search className="absolute left-3 top-3 text-slate-500" size={18}/><input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} placeholder="Ticker (ej. MSFT)" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-white font-bold tracking-wider" /></div><button onClick={analyze} disabled={loading || !ticker} className="bg-blue-600 px-6 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-900/20 hover:bg-blue-500 transition-colors text-xs sm:text-sm">{loading ? <Icons.Loader/> : <Icons.Wand/>} <span className="hidden sm:inline">ANALIZAR</span></button><button onClick={() => { setTicker(''); setQuestion(''); setData(null); setSpecificAnswer(null); }} className="bg-slate-700 px-4 rounded-xl font-bold text-white hover:bg-slate-600 transition-colors text-xs">BORRAR</button></div>
-                        <div className="relative"><Icons.MessageCircle className="absolute left-3 top-3 text-slate-500" size={18}/><input type="text" value={question} onChange={e => setQuestion(e.target.value)} placeholder="¿Pregunta específica? (Dejar vacío para Análisis Completo)" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-xs text-white" /></div>
-                        <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">{suggestedQuestions.map((q,i) => ( <button key={i} onClick={()=>setQuestion(q)} className="whitespace-nowrap px-3 py-1 bg-slate-800 border border-slate-700 rounded-lg text-[10px] text-slate-400 hover:text-white hover:bg-slate-700 transition-colors">{q}</button> ))}</div>
+                <div className="flex flex-col gap-6 fade-in max-w-6xl mx-auto w-full">
+                    <div className="flex flex-col gap-6 shrink-0 bg-slate-900/50 p-6 rounded-2xl border border-slate-800">
+                        <div className="flex gap-4"><div className="flex-1 relative"><Icons.Search className="absolute left-3 top-3.5 text-slate-500" size={18}/><input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} placeholder="Introduce Ticker (Ej: AAPL, SAN.MC, TSLA...)" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3.5 pl-10 pr-4 text-white font-bold tracking-widest text-sm" /></div><button onClick={analyze} disabled={loading || !ticker} className="bg-blue-600 px-8 rounded-xl font-black flex items-center gap-2 shadow-lg hover:bg-blue-500 transition-colors text-xs">{loading ? <Icons.Loader/> : <Icons.Wand/>} ANALIZAR</button></div>
+                        <div className="relative"><Icons.MessageCircle className="absolute left-3 top-3 text-slate-500" size={18}/><input type="text" value={question} onChange={e => setQuestion(e.target.value)} placeholder="¿Tienes alguna pregunta específica sobre este valor?" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-xs text-white" /></div>
+                        <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">{suggestedQuestions.map((q,i) => ( <button key={i} onClick={()=>setQuestion(q)} className="whitespace-nowrap px-4 py-2 bg-slate-800 border border-slate-700 rounded-full text-[10px] text-slate-400 hover:text-white hover:bg-slate-700 transition-colors">{q}</button> ))}</div>
                     </div>
-                    {/* RESULTADOS ORIGINALES (RESUMIDOS PARA ESTE COMPONENTE) */}
                     {(specificAnswer || data) && (
-                        <div className="glass-panel p-6 rounded-2xl fade-in relative">
-                            {specificAnswer ? <div className="prose-content" dangerouslySetInnerHTML={{__html: specificAnswer}}></div> : <div className="text-sm">Datos de {data.company} cargados.</div>}
+                        <div className="glass-panel p-8 rounded-3xl fade-in relative border-slate-700 bg-slate-900/30">
+                            {specificAnswer ? <div className="prose-content" dangerouslySetInnerHTML={{__html: specificAnswer}}></div> : <div className="text-slate-400 text-sm italic">Análisis completo de {data?.company} generado correctamente. Utilice la función de imprimir si desea el reporte en papel.</div>}
                         </div>
                     )}
                 </div>
             ) : (
-                /* CONTENIDO NUEVO RASTREO */
-                <div className="flex flex-col gap-6 fade-in">
-                    <div className="bg-slate-900/50 p-6 rounded-2xl border border-slate-800 space-y-6">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div className="flex flex-col gap-1">
-                                <label className="text-[10px] font-bold text-slate-500 uppercase">Bolsa de Valores</label>
-                                <select value={exchange} onChange={e=>setExchange(e.target.value)} className="w-full h-11 px-4 bg-slate-950 border border-slate-700 rounded-xl text-xs font-bold">
+                /* CONTENIDO RASTREO */
+                <div className="flex flex-col gap-6 fade-in max-w-7xl mx-auto w-full pb-10">
+                    <div className="bg-slate-900/50 p-6 rounded-3xl border border-slate-800 space-y-8">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div className="flex flex-col gap-2">
+                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Bolsa de Valores (Mercado)</label>
+                                <select value={exchange} onChange={e=>setExchange(e.target.value)} className="w-full h-12 px-4 bg-slate-950 border border-slate-700 rounded-xl text-xs font-bold text-white">
                                     {EXCHANGES.map(ex => <option key={ex.id} value={ex.id}>{ex.id} - {ex.name} ({ex.country})</option>)}
                                 </select>
-                                <span className="text-[8px] text-slate-500 italic">Mercado principal de búsqueda.</span>
+                                <span className="text-[9px] text-slate-500 italic">Define en qué mercado internacional la iA buscará los activos.</span>
                             </div>
-                            <div className="flex flex-col gap-1">
-                                <label className="text-[10px] font-bold text-slate-500 uppercase">Máx. Registros</label>
-                                <select value={maxResults} onChange={e=>setMaxResults(parseInt(e.target.value))} className="w-full h-11 px-4 bg-slate-950 border border-slate-700 rounded-xl text-xs font-bold">
-                                    {[5, 10, 15, 20].map(v => <option key={v} value={v}>{v} Resultados</option>)}
+                            <div className="flex flex-col gap-2">
+                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Nº Máximo Resultados</label>
+                                <select value={maxResults} onChange={e=>setMaxResults(parseInt(e.target.value))} className="w-full h-12 px-4 bg-slate-950 border border-slate-700 rounded-xl text-xs font-bold text-white">
+                                    {[5, 10, 15, 20].map(v => <option key={v} value={v}>{v} Registros</option>)}
                                 </select>
-                                <span className="text-[8px] text-slate-500 italic">Límite de empresas a devolver.</span>
+                                <span className="text-[9px] text-slate-500 italic">Limita el tamaño del listado para un análisis más enfocado.</span>
                             </div>
-                            <div className="flex items-end"><button onClick={runScreener} className="w-full h-11 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black uppercase text-xs tracking-widest shadow-lg shadow-blue-900/20">Iniciar Rastreo</button></div>
+                            <div className="flex items-end pb-1"><button onClick={runScreener} className="w-full h-12 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-2xl shadow-blue-900/40">Iniciar Rastreo Inteligente</button></div>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                            <ParamSlider label="PER Máximo" field="per" min={1} max={100} step={1} help="Ratio Precio/Beneficio. Indica valoración respecto a ganancias." />
-                            <ParamSlider label="PEG Máximo" field="peg" min={0.1} max={5} step={0.1} help="PER / Crecimiento. Un valor < 1 suele indicar infravaloración." />
-                            <ParamSlider label="ROI Mínimo %" field="roi" min={1} max={50} step={1} help="Retorno sobre inversión. Eficiencia de la empresa generando beneficios." />
-                            <ParamSlider label="Div. Yield Mín %" field="divYield" min={0} max={20} step={0.5} help="Rentabilidad anual por dividendos respecto al precio." />
-                            <ParamSlider label="P/B Máximo" field="pb" min={0.1} max={10} step={0.1} help="Relación precio y valor contable. Valoración patrimonial." />
-                            <ParamSlider label="Deuda / Equity Máx" field="debtEquity" min={0} max={5} step={0.1} help="Nivel de apalancamiento. Deuda respecto a fondos propios." />
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                            {Object.entries(params).map(([id, config]) => <ParamCard key={id} id={id} config={config} />)}
                         </div>
                     </div>
 
                     {screenerResults.length > 0 && (
-                        <div className="bg-slate-900/50 border border-slate-800 rounded-2xl overflow-hidden flex flex-col">
-                            <div className="p-4 bg-slate-800/50 flex justify-between items-center border-b border-slate-700">
-                                <span className="text-xs font-bold uppercase tracking-widest">Oportunidades Localizadas</span>
-                                <button onClick={handlePrintScreener} className="bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded text-[10px] font-bold border border-slate-500 flex items-center gap-2"><Icons.ExternalLink size={14}/> IMPRIMIR</button>
+                        <div className="bg-slate-900/50 border border-slate-800 rounded-3xl overflow-hidden flex flex-col shadow-2xl">
+                            <div className="p-5 bg-slate-800/40 flex justify-between items-center border-b border-slate-700/50">
+                                <div className="flex flex-col">
+                                    <span className="text-xs font-black uppercase tracking-widest text-white">Oportunidades de Inversión</span>
+                                    <span className="text-[9px] text-slate-500 uppercase font-bold">Ordenado por {screenerSort.key} ({screenerSort.direction})</span>
+                                </div>
+                                <button onClick={handlePrintScreener} className="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-xl text-[10px] font-bold border border-slate-600 flex items-center gap-2 text-white"><Icons.ExternalLink size={14}/> IMPRIMIR INFORME</button>
                             </div>
                             <div className="overflow-x-auto">
                                 <table className="w-full text-left text-xs">
-                                    <thead className="bg-slate-950/50 text-slate-500 uppercase text-[9px]">
+                                    <thead className="bg-slate-950/80 text-slate-500 uppercase text-[9px] font-black">
                                         <tr>
                                             {['ticker', 'name', 'price', 'per', 'peg', 'roi', 'divYield', 'pb', 'debtEquity'].map(k => (
-                                                <th key={k} className="p-4 cursor-pointer hover:text-white" onClick={()=>setScreenerSort({key:k, direction: screenerSort.direction==='asc'?'desc':'asc'})}>
-                                                    {k === 'divYield' ? 'Yield' : k === 'debtEquity' ? 'D/E' : k} {screenerSort.key === k && (screenerSort.direction==='asc'?'▲':'▼')}
+                                                <th key={k} className="p-5 cursor-pointer hover:text-white transition-colors border-b border-slate-800" onClick={()=>setScreenerSort({key:k, direction: screenerSort.direction==='asc'?'desc':'asc'})}>
+                                                    <div className="flex items-center gap-1">{k === 'divYield' ? 'Yield' : k === 'debtEquity' ? 'D/E' : k} {screenerSort.key === k && (screenerSort.direction==='asc'?'▲':'▼')}</div>
                                                 </th>
                                             ))}
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-800 font-mono">
                                         {sortedScreenerResults.map((r, i) => (
-                                            <tr key={i} className="hover:bg-blue-600/5">
-                                                <td className="p-4 font-bold text-blue-400">{r.ticker}</td>
-                                                <td className="p-4 text-slate-300 font-sans">{r.name}</td>
-                                                <td className="p-4 text-white">{r.price}</td>
-                                                <td className="p-4 text-slate-400">{r.per}</td>
-                                                <td className="p-4 text-slate-400">{r.peg}</td>
-                                                <td className="p-4 text-green-400">{r.roi}%</td>
-                                                <td className="p-4 text-blue-300">{r.divYield}%</td>
-                                                <td className="p-4 text-slate-400">{r.pb}</td>
-                                                <td className="p-4 text-slate-400">{r.debtEquity}</td>
+                                            <tr key={i} className="hover:bg-blue-600/5 transition-colors group">
+                                                <td className="p-5 font-black text-blue-400 text-sm">{r.ticker}</td>
+                                                <td className="p-5 text-slate-300 font-sans font-bold">{r.name}</td>
+                                                <td className="p-5 text-white font-bold">{formatN(r.price)}</td>
+                                                <td className="p-5 text-slate-400">{r.per}</td>
+                                                <td className="p-5 text-slate-400">{r.peg}</td>
+                                                <td className="p-5 text-green-400 font-bold">{r.roi}%</td>
+                                                <td className="p-5 text-blue-300 font-bold">{r.divYield}%</td>
+                                                <td className="p-5 text-slate-400">{r.pb}</td>
+                                                <td className="p-5 text-slate-400">{r.debtEquity}</td>
                                             </tr>
                                         ))}
                                     </tbody>
