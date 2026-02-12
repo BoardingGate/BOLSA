@@ -1485,89 +1485,294 @@ const DividendTab = ({ portfolio, setPortfolio, baseCurrency, syncStatus, onManu
 
 
 const SettingsTab = ({ apiKey, setApiKey, isAuth, onActivate, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio, onForceBackup, gScriptUrl, setGScriptUrl, resultsData, appPin, setAppPin }) => {
-          const [localLic, setLocalLic] = useState(''); 
-          const [showKey, setShowKey] = useState(false); 
-          const [testStatus, setTestStatus] = useState(null); 
-          const [errorDetail, setErrorDetail] = useState(''); 
-          const [ioStatus, setIoStatus] = useState('idle');
-          const [showUrl, setShowUrl] = useState(false); 
-          const [importMethod, setImportMethod] = useState('pdf'); 
-          const [pdfFile, setPdfFile] = useState(null); 
-          const [rawTextData, setRawTextData] = useState('');
-          const [pdfPrompt, setPdfPrompt] = useState('Analiza este listado y extrae las operaciones de compra/venta.'); 
-          const [importing, setImporting] = useState(false); 
-          const [importResult, setImportResult] = useState(null);
-          
-          // PIN STATES
-          const [tempPin, setTempPin] = useState(appPin || '');
-          const [pinVisible, setPinVisible] = useState(false);
+    const [localLic, setLocalLic] = useState(''); 
+    const [showKey, setShowKey] = useState(false); 
+    const [testStatus, setTestStatus] = useState(null); 
+    const [errorDetail, setErrorDetail] = useState(''); 
+    const [ioStatus, setIoStatus] = useState('idle');
+    const [showUrl, setShowUrl] = useState(false); 
+    
+    // ESTADOS PARA IMPORTACIÓN
+    const [importMethod, setImportMethod] = useState('pdf'); 
+    const [pdfFile, setPdfFile] = useState(null); 
+    const [rawTextData, setRawTextData] = useState('');
+    const [pdfPrompt, setPdfPrompt] = useState('Analiza este listado y extrae las operaciones de compra/venta.'); 
+    const [importing, setImporting] = useState(false); 
+    const [importResult, setImportResult] = useState(null);
 
-          const sanitizeAndParseJSON = (text) => { try { let clean = text.replace(/```json/g, '').replace(/```/g, '').trim(); const firstBracket = clean.indexOf('['); const lastBracket = clean.lastIndexOf(']'); if (firstBracket !== -1 && lastBracket !== -1) { clean = clean.substring(firstBracket, lastBracket + 1); return JSON.parse(clean); } return JSON.parse(clean); } catch (e) { console.error("Raw AI Response:", text); throw new Error("La IA no devolvió un JSON válido. Ver detalles en consola."); } };
-          const testConnection = async () => { if(!apiKey) return alert("Introduce una clave primero."); setTestStatus('loading'); setErrorDetail(''); try { await askGemini(apiKey, "Test conexión"); setTestStatus('success'); } catch(e) { setTestStatus('error'); setErrorDetail(e.message); } };
-          const handleRunExport = () => { setIoStatus('processing'); try { const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 3, resultsData, appPin }; const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `BoardingGate_Backup_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); setIoStatus('success'); setTimeout(() => setIoStatus('idle'), 2000); } catch (e) { alert("Error: " + e.message); setIoStatus('error'); } };
-          const handleRunImport = (e) => { const file = e.target.files[0]; if (!file) return; if(!confirm("⚠️ IMPORTANTE:\n\nEsta acción reemplazará TODA tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) { e.target.value = null; return; } setIoStatus('processing'); const reader = new FileReader(); reader.onload = (ev) => { try { const d = JSON.parse(ev.target.result); if (d.portfolio) setPortfolio(d.portfolio); if (d.apiKey) setApiKey(d.apiKey); if (d.baseCurrency) setBaseCurrency(d.baseCurrency); if (d.refreshInterval) setRefreshInterval(d.refreshInterval); if(d.appPin) setAppPin(d.appPin); setIoStatus('success'); alert("✅ Restauración completada correctamente."); window.location.reload(); } catch (err) { alert("Archivo inválido o corrupto."); setIoStatus('error'); } }; reader.readAsText(file); };
-          const handleAiImport = async () => { if (!apiKey) return alert("Falta API Key"); if (importMethod === 'pdf' && !pdfFile) return alert("Selecciona un PDF"); if (importMethod === 'text' && !rawTextData.trim()) return alert("Pega el texto de tus acciones"); setImporting(true); setImportResult(null); try { let dataToAnalyze = ""; if (importMethod === 'pdf') { try { dataToAnalyze = await readPdfText(pdfFile); } catch (pdfErr) { throw new Error("No se pudo leer el PDF. Es posible que sea una imagen escaneada o esté protegido."); } } else { dataToAnalyze = rawTextData; } const truncatedText = dataToAnalyze.substring(0, 50000); const prompt = `ROLE: Data Extraction Expert. GOAL: Convert the following unstructured financial text into a Strict JSON Array. INSTRUCTIONS: "${pdfPrompt}". INPUT DATA: """${truncatedText}""". OUTPUT REQUIREMENTS: 1. Return ONLY a JSON Array. 2. Use schema: [{ "ticker": "SYMBOL", "name": "Company Name", "shares": number, "buyPrice": number, "buyDate": "YYYY-MM-DD" (guess if missing), "stockCurrency": "USD/EUR", "buyFx": number (default 1), "fees": number, "sellDate": "YYYY-MM-DD" (null if active), "sellPrice": number, "sellFx": number, "sellFees": number }]. 3. Ignore headers.`; const res = await askGemini(apiKey, prompt); const extractedData = sanitizeAndParseJSON(res); if (Array.isArray(extractedData)) { setPortfolio(prev => { const newItems = extractedData.map(item => ({ ...item, id: Date.now() + Math.random(), group: 'Importado IA', isActive: true, dividends: [], adjustments: 0, buyPE: 0, currentPE: 0, annualDividend: 0, currentPrice: item.sellDate ? 0 : item.buyPrice, currentFx: item.buyFx })); return [...prev, ...newItems]; }); setImportResult({ success: true, count: extractedData.length, rawResponse: null }); } else { throw new Error("La IA respondió, pero no devolvió una lista (Array)."); } } catch (e) { setImportResult({ success: false, error: e.message, rawResponse: e.toString() }); } finally { setImporting(false); setPdfFile(null); } };
+    // ESTADOS PARA PIN (NUEVO)
+    const [tempPin, setTempPin] = useState(appPin || '');
+    const [pinVisible, setPinVisible] = useState(false);
 
-          return (
-              <div className="h-full p-6 flex flex-col items-center justify-start fade-in overflow-y-auto custom-scrollbar">
-                  {importing && <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center fade-in"><Icons.Loader size={60} className="text-purple-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando Datos...</div><div className="text-xs text-slate-400 mt-2">La IA está leyendo tu documento</div></div>}
-                  {importResult && ( <div className="absolute inset-0 z-[60] bg-black/90 flex items-center justify-center p-4 fade-in"> <div className="bg-slate-900 border border-slate-700 p-6 rounded-xl max-w-lg w-full text-center shadow-2xl"> {importResult.success ? ( <> <div className="text-green-500 mb-4 mx-auto"><Icons.CheckCircle size={50}/></div> <h3 className="text-xl font-bold text-white mb-2">Importación Completada</h3> <p className="text-slate-400 text-sm mb-6">Se han añadido <strong>{importResult.count}</strong> registros a tu cartera.</p> </> ) : ( <> <div className="text-red-500 mb-4 mx-auto"><Icons.AlertCircle size={50}/></div> <h3 className="text-xl font-bold text-white mb-2">Error de Importación</h3> <p className="text-red-300 text-sm mb-4 font-bold">{importResult.error}</p> <div className="text-left bg-black p-2 rounded border border-slate-800 text-[10px] font-mono text-slate-400 max-h-32 overflow-y-auto mb-4"> {importResult.rawResponse || "Sin detalles adicionales."} </div> <p className="text-slate-500 text-xs italic">Consejo: Si el PDF falla, prueba a copiar el texto del PDF y usar la opción "Pegar Texto".</p> </> )} <button onClick={()=>setImportResult(null)} className="bg-slate-700 px-6 py-2 rounded-lg font-bold text-white hover:bg-slate-600 border border-slate-600">Cerrar</button> </div> </div> )}
-                  
-                  {/* SEGURIDAD PIN */}
-                  <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
-                      <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4"><div className="p-3 bg-red-500/20 rounded-xl text-red-400"><Icons.EyeOff size={32} /></div><div><h2 className="text-2xl font-bold text-white">Seguridad de Acceso</h2><p className="text-slate-400 text-sm">Protege tu cartera con un PIN</p></div></div>
-                      <div className="bg-slate-950/50 p-4 rounded-xl border border-slate-700 flex flex-col gap-4">
-                          <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">PIN de 4 Dígitos (Dejar vacío para desactivar)</label>
-                          <div className="flex gap-4">
-                              <div className="relative flex-1">
-                                  <input type={pinVisible ? "text" : "password"} value={tempPin} onChange={(e) => { const val = e.target.value.replace(/[^0-9]/g, '').slice(0,4); setTempPin(val); }} placeholder="----" className="w-full bg-slate-800 border border-slate-600 rounded-xl p-3 text-white text-center font-mono text-xl tracking-[1em] focus:border-red-500 focus:outline-none"/>
-                                  <button onClick={() => setPinVisible(!pinVisible)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"><Icons.Eye size={18}/></button>
+    const sanitizeAndParseJSON = (text) => { 
+        try {
+            let clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
+            const firstBracket = clean.indexOf('[');
+            const lastBracket = clean.lastIndexOf(']');
+            
+            if (firstBracket !== -1 && lastBracket !== -1) {
+                clean = clean.substring(firstBracket, lastBracket + 1);
+                return JSON.parse(clean);
+            }
+            return JSON.parse(clean);
+        } catch (e) { 
+            console.error("Raw AI Response:", text);
+            throw new Error("La IA no devolvió un JSON válido. Ver detalles en consola."); 
+        } 
+    };
+
+    const testConnection = async () => { if(!apiKey) return alert("Introduce una clave primero."); setTestStatus('loading'); setErrorDetail(''); try { await askGemini(apiKey, "Test conexión"); setTestStatus('success'); } catch(e) { setTestStatus('error'); setErrorDetail(e.message); } };
+    
+    const handleRunExport = () => { 
+        setIoStatus('processing'); 
+        try { 
+            const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 3, resultsData, appPin }; // Incluimos PIN en backup
+            const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"}); 
+            const url = URL.createObjectURL(blob); 
+            const a = document.createElement('a'); a.href = url; a.download = `BoardingGate_Backup_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); setIoStatus('success'); setTimeout(() => setIoStatus('idle'), 2000); 
+        } catch (e) { alert("Error: " + e.message); setIoStatus('error'); } 
+    };
+    
+    const handleRunImport = (e) => { const file = e.target.files[0]; if (!file) return; if(!confirm("⚠️ IMPORTANTE:\n\nEsta acción reemplazará TODA tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) { e.target.value = null; return; } setIoStatus('processing'); const reader = new FileReader(); reader.onload = (ev) => { try { const d = JSON.parse(ev.target.result); if (d.portfolio) setPortfolio(d.portfolio); if (d.apiKey) setApiKey(d.apiKey); if (d.baseCurrency) setBaseCurrency(d.baseCurrency); if (d.refreshInterval) setRefreshInterval(d.refreshInterval); if(d.appPin) setAppPin(d.appPin); setIoStatus('success'); alert("✅ Restauración completada correctamente."); window.location.reload(); } catch (err) { alert("Archivo inválido o corrupto."); setIoStatus('error'); } }; reader.readAsText(file); };
+    
+    const handleAiImport = async () => { 
+        if (!apiKey) return alert("Falta API Key"); 
+        if (importMethod === 'pdf' && !pdfFile) return alert("Selecciona un PDF");
+        if (importMethod === 'text' && !rawTextData.trim()) return alert("Pega el texto de tus acciones");
+
+        setImporting(true); 
+        setImportResult(null); 
+
+        try { 
+            let dataToAnalyze = "";
+            if (importMethod === 'pdf') {
+                try { dataToAnalyze = await readPdfText(pdfFile); } catch (pdfErr) { throw new Error("No se pudo leer el PDF. Es posible que sea una imagen escaneada o esté protegido."); }
+            } else { dataToAnalyze = rawTextData; }
+
+            const truncatedText = dataToAnalyze.substring(0, 50000); 
+            const prompt = `
+              ROLE: Data Extraction Expert.
+              GOAL: Convert the following unstructured financial text into a Strict JSON Array.
+              INSTRUCTIONS: "${pdfPrompt}"
+              INPUT DATA: """${truncatedText}"""
+              OUTPUT REQUIREMENTS:
+              1. Return ONLY a JSON Array. No markdown formatting, no intro text.
+              2. Use this schema for each item:
+              [{
+                  "ticker": "SYMBOL (e.g., AAPL, SAN.MC)",
+                  "name": "Company Name",
+                  "shares": number (positive integer),
+                  "buyPrice": number (price per share),
+                  "buyDate": "YYYY-MM-DD" (guess if missing, default to 2024-01-01),
+                  "stockCurrency": "USD/EUR/GBP",
+                  "buyFx": number (exchange rate to base currency, default 1),
+                  "fees": number (total transaction fees),
+                  "sellDate": "YYYY-MM-DD" (ONLY if it's a SELL operation, else null),
+                  "sellPrice": number (price per share if sold, else 0),
+                  "sellFx": number (default 1),
+                  "sellFees": number
+              }]
+              3. If a row represents a SELL, populate 'sellDate' and 'sellPrice'. If it's a BUY or currently held, keep sellDate null.
+              4. Ignore headers, totals, or footer text.
+            `;
+
+            const res = await askGemini(apiKey, prompt); 
+            const extractedData = sanitizeAndParseJSON(res); 
+
+            if (Array.isArray(extractedData)) { 
+                setPortfolio(prev => { 
+                    const newItems = extractedData.map(item => ({ 
+                        ...item, 
+                        id: Date.now() + Math.random(), 
+                        group: 'Importado IA', 
+                        isActive: true, 
+                        dividends: [], 
+                        adjustments: 0, 
+                        buyPE: 0, 
+                        currentPE: 0, 
+                        annualDividend: 0, 
+                        currentPrice: item.sellDate ? 0 : item.buyPrice, 
+                        currentFx: item.buyFx 
+                    })); 
+                    return [...prev, ...newItems]; 
+                }); 
+                setImportResult({ success: true, count: extractedData.length, rawResponse: null }); 
+            } else { 
+                throw new Error("La IA respondió, pero no devolvió una lista (Array)."); 
+            } 
+        } catch (e) { 
+            setImportResult({ success: false, error: e.message, rawResponse: e.toString() }); 
+        } finally { 
+            setImporting(false); 
+            setPdfFile(null); 
+        } 
+    };
+
+    return (
+        <div className="h-full p-6 flex flex-col items-center justify-start fade-in overflow-y-auto custom-scrollbar">
+            {importing && <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center fade-in"><Icons.Loader size={60} className="text-purple-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando Datos...</div><div className="text-xs text-slate-400 mt-2">La IA está leyendo tu documento</div></div>}
+            
+            {importResult && ( 
+                <div className="absolute inset-0 z-[60] bg-black/90 flex items-center justify-center p-4 fade-in"> 
+                    <div className="bg-slate-900 border border-slate-700 p-6 rounded-xl max-w-lg w-full text-center shadow-2xl"> 
+                        {importResult.success ? ( 
+                            <> <div className="text-green-500 mb-4 mx-auto"><Icons.CheckCircle size={50}/></div> <h3 className="text-xl font-bold text-white mb-2">Importación Completada</h3> <p className="text-slate-400 text-sm mb-6">Se han añadido <strong>{importResult.count}</strong> registros a tu cartera.</p> </> 
+                        ) : ( 
+                            <> 
+                              <div className="text-red-500 mb-4 mx-auto"><Icons.AlertCircle size={50}/></div> 
+                              <h3 className="text-xl font-bold text-white mb-2">Error de Importación</h3> 
+                              <p className="text-red-300 text-sm mb-4 font-bold">{importResult.error}</p>
+                              <div className="text-left bg-black p-2 rounded border border-slate-800 text-[10px] font-mono text-slate-400 max-h-32 overflow-y-auto mb-4">
+                                  {importResult.rawResponse || "Sin detalles adicionales."}
                               </div>
-                              <button onClick={() => { setAppPin(tempPin); alert("Configuración de PIN guardada."); }} className="bg-red-600 hover:bg-red-500 text-white px-6 rounded-xl font-bold uppercase text-xs">Guardar PIN</button>
-                          </div>
-                          <p className="text-[10px] text-slate-500 italic">Si defines un PIN, se te pedirá cada vez que recargues la página.</p>
-                      </div>
-                  </div>
+                              <p className="text-slate-500 text-xs italic">Consejo: Si el PDF falla, prueba a copiar el texto del PDF y usar la opción "Pegar Texto".</p>
+                            </> 
+                        )} 
+                        <button onClick={()=>setImportResult(null)} className="bg-slate-700 px-6 py-2 rounded-lg font-bold text-white hover:bg-slate-600 border border-slate-600">Cerrar</button> 
+                    </div> 
+                </div> 
+            )}
 
-                  {/* PREFERENCIAS GENERALES */}
-                  <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
-                      <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4"><div className="p-3 bg-blue-500/20 rounded-xl text-blue-400"><Icons.Settings size={32} /></div><div><h2 className="text-2xl font-bold text-white">Preferencias Generales</h2><p className="text-slate-400 text-sm">Personalización de la cartera</p></div></div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">Divisa Base (Totales)</label><select value={baseCurrency} onChange={(e) => setBaseCurrency(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded-xl p-3 text-white text-sm focus:outline-none focus:border-blue-500">{CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.code} - {c.name}</option>)}</select><p className="text-[10px] text-slate-500 mt-2">Moneda para mostrar resultados globales.</p></div><div><label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">Refresco Automático</label><div className="bg-slate-800 p-3 rounded-xl border border-slate-600 flex items-center gap-4"><input type="range" min="5" max="60" step="5" value={refreshInterval} onChange={(e) => setRefreshInterval(parseInt(e.target.value))} className="flex-1 accent-blue-500 h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer" /><div className="font-mono font-bold text-blue-400 w-16 text-right">{refreshInterval} min</div></div><p className="text-[10px] text-slate-500 mt-2">Frecuencia de actualización de precios.</p></div></div>
-                  </div>
+            {/* --- SECCIÓN NUEVA: SEGURIDAD PIN --- */}
+            <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
+                <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
+                    <div className="p-3 bg-red-500/20 rounded-xl text-red-400"><Icons.EyeOff size={32} /></div>
+                    <div><h2 className="text-2xl font-bold text-white">Seguridad de Acceso</h2><p className="text-slate-400 text-sm">Protege tu cartera con un PIN</p></div>
+                </div>
+                <div className="bg-slate-950/50 p-4 rounded-xl border border-slate-700 flex flex-col gap-4">
+                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">PIN de 4 Dígitos (Dejar vacío para desactivar)</label>
+                    <div className="flex gap-4">
+                        <div className="relative flex-1">
+                            <input type={pinVisible ? "text" : "password"} value={tempPin} onChange={(e) => { const val = e.target.value.replace(/[^0-9]/g, '').slice(0,4); setTempPin(val); }} placeholder="----" className="w-full bg-slate-800 border border-slate-600 rounded-xl p-3 text-white text-center font-mono text-xl tracking-[1em] focus:border-red-500 focus:outline-none"/>
+                            <button onClick={() => setPinVisible(!pinVisible)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"><Icons.Eye size={18}/></button>
+                        </div>
+                        <button onClick={() => { setAppPin(tempPin); alert("Configuración de PIN guardada."); }} className="bg-red-600 hover:bg-red-500 text-white px-6 rounded-xl font-bold uppercase text-xs">Guardar PIN</button>
+                    </div>
+                    <p className="text-[10px] text-slate-500 italic">Si defines un PIN, se te pedirá cada vez que recargues la página.</p>
+                </div>
+            </div>
+            
+            {/* PREFERENCIAS GENERALES */}
+            <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
+                <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4"><div className="p-3 bg-blue-500/20 rounded-xl text-blue-400"><Icons.Settings size={32} /></div><div><h2 className="text-2xl font-bold text-white">Preferencias Generales</h2><p className="text-slate-400 text-sm">Personalización de la cartera</p></div></div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">Divisa Base (Totales)</label><select value={baseCurrency} onChange={(e) => setBaseCurrency(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded-xl p-3 text-white text-sm focus:outline-none focus:border-blue-500">{CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.code} - {c.name}</option>)}</select><p className="text-[10px] text-slate-500 mt-2">Moneda para mostrar resultados globales.</p></div><div><label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">Refresco Automático</label><div className="bg-slate-800 p-3 rounded-xl border border-slate-600 flex items-center gap-4"><input type="range" min="5" max="60" step="5" value={refreshInterval} onChange={(e) => setRefreshInterval(parseInt(e.target.value))} className="flex-1 accent-blue-500 h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer" /><div className="font-mono font-bold text-blue-400 w-16 text-right">{refreshInterval} min</div></div><p className="text-[10px] text-slate-500 mt-2">Frecuencia de actualización de precios.</p></div></div>
+            </div>
 
-                 {/* CONFIGURACIÓN IA */}
-                  <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
-                      <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4"><div className="p-3 bg-purple-500/20 rounded-xl text-purple-400"><Icons.Wand size={32} /></div><div><h2 className="text-2xl font-bold text-white">Configuración IA</h2><p className="text-slate-400 text-sm">Conexión con Google Gemini</p></div></div>
-                      <div className="space-y-6">
-                          <div><label className="block text-sm font-bold text-slate-300 mb-2">Google Gemini API Key</label><div className="relative mb-4"><input type={showKey ? "text" : "password"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full bg-black/50 border border-slate-600 rounded-xl p-4 pr-12 text-white focus:border-purple-500 focus:outline-none font-mono"/><button onClick={() => setShowKey(!showKey)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showKey ? <Icons.EyeOff size={20}/> : <Icons.Eye size={20}/>}</button></div><div className="flex justify-end gap-3 items-center"><button onClick={testConnection} className={`h-[40px] px-6 rounded-xl border font-bold text-sm flex items-center gap-2 ${testStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : testStatus === 'error' ? 'bg-red-600 border-red-500 text-white' : 'bg-slate-700 border-slate-600 text-slate-300'}`}>{testStatus === 'loading' ? <Icons.Loader/> : testStatus === 'success' ? <Icons.CheckCircle size={18}/> : 'PROBAR CONEXIÓN'}</button></div>{testStatus === 'error' && <div className="mt-4 p-4 bg-red-900/30 border border-red-500/50 rounded-xl text-red-200 text-xs font-mono whitespace-pre-wrap">{errorDetail}</div>}
-                              <div className="mt-6 p-6 bg-[#1e293b] border border-[#334155] rounded-xl relative overflow-hidden"><h4 className="text-lg font-bold text-blue-400 mb-4 flex items-center gap-2"><Icons.HelpCircle size={20} /> Gestión de la API Key (Gratis vs Pago)</h4><div className="mb-6 border-b border-slate-700 pb-6"><h5 className="text-sm font-bold text-white mb-3 flex items-center gap-2"><span className="bg-green-500/20 text-green-400 px-2 py-0.5 rounded text-[10px] uppercase border border-green-500/30">Opción Gratuita</span><span className="text-slate-400 text-xs font-normal">Ideal para uso básico</span></h5><ol className="list-decimal list-inside text-xs text-slate-300 space-y-2 mb-4 leading-relaxed"><li>Accede a <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-blue-400 hover:underline font-bold">Google AI Studio</a>.</li><li>Haz clic en <strong>"Get API key"</strong> (arriba izquierda) y luego en <strong>"Create API key in new project"</strong>.</li><li>Copia la clave y pégala arriba.</li></ol><p className="text-[10px] text-slate-400 bg-slate-900/50 p-3 rounded border border-slate-700"><strong>Límites actuales:</strong> 15 peticiones/minuto (RPM) y 1.500/día. Si la IA falla o tarda mucho, es probable que hayas superado este límite temporalmente.</p></div><div><h5 className="text-sm font-bold text-white mb-3 flex items-center gap-2"><span className="bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded text-[10px] uppercase border border-blue-500/30">Opción Ilimitada (Pay-as-you-go)</span><span className="text-slate-400 text-xs font-normal">Para uso intensivo</span></h5><p className="text-xs text-slate-300 mb-3 leading-relaxed">Si actualizas precios de muchos valores frecuentemente o realizas análisis complejos, te conviene activar la facturación para eliminar esperas.</p><ol className="list-decimal list-inside text-xs text-slate-300 space-y-2 mb-6 leading-relaxed"><li>Ve a la <a href="https://console.cloud.google.com/billing" target="_blank" className="text-blue-400 hover:underline font-bold">Consola de Google Cloud Billing</a>.</li><li>Selecciona el <strong>mismo proyecto</strong> que se creó automáticamente en AI Studio (suele llamarse "Generative Language Client").</li><li>Haz clic en <strong>"Vincular una cuenta de facturación"</strong> e introduce tu tarjeta.</li><li><strong>Coste:</strong> Es extremadamente barato (aprox. $0.35 por millón de tokens). Actualizar una cartera consume centavos.</li></ol><div className="flex gap-3"><a href="https://aistudio.google.com/app/apikey" target="_blank" className="flex-1 text-center py-2.5 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2 border border-slate-600"><Icons.ExternalLink size={14}/> Obtener Key (AI Studio)</a><a href="https://console.cloud.google.com/billing" target="_blank" className="flex-1 text-center py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2 border border-blue-500"><Icons.ExternalLink size={14}/> Activar Facturación (Cloud)</a></div></div></div>
-                          </div>
-                      </div>
-                  </div>
+           {/* CONFIGURACIÓN IA */}
+            <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
+                <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4"><div className="p-3 bg-purple-500/20 rounded-xl text-purple-400"><Icons.Wand size={32} /></div><div><h2 className="text-2xl font-bold text-white">Configuración IA</h2><p className="text-slate-400 text-sm">Conexión con Google Gemini</p></div></div>
+                <div className="space-y-6">
+                    <div><label className="block text-sm font-bold text-slate-300 mb-2">Google Gemini API Key</label><div className="relative mb-4"><input type={showKey ? "text" : "password"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full bg-black/50 border border-slate-600 rounded-xl p-4 pr-12 text-white focus:border-purple-500 focus:outline-none font-mono"/><button onClick={() => setShowKey(!showKey)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showKey ? <Icons.EyeOff size={20}/> : <Icons.Eye size={20}/>}</button></div><div className="flex justify-end gap-3 items-center"><button onClick={testConnection} className={`h-[40px] px-6 rounded-xl border font-bold text-sm flex items-center gap-2 ${testStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : testStatus === 'error' ? 'bg-red-600 border-red-500 text-white' : 'bg-slate-700 border-slate-600 text-slate-300'}`}>{testStatus === 'loading' ? <Icons.Loader/> : testStatus === 'success' ? <Icons.CheckCircle size={18}/> : 'PROBAR CONEXIÓN'}</button></div>{testStatus === 'error' && <div className="mt-4 p-4 bg-red-900/30 border border-red-500/50 rounded-xl text-red-200 text-xs font-mono whitespace-pre-wrap">{errorDetail}</div>}
+                        <div className="mt-6 p-6 bg-[#1e293b] border border-[#334155] rounded-xl relative overflow-hidden"><h4 className="text-lg font-bold text-blue-400 mb-4 flex items-center gap-2"><Icons.HelpCircle size={20} /> Gestión de la API Key (Gratis vs Pago)</h4><div className="mb-6 border-b border-slate-700 pb-6"><h5 className="text-sm font-bold text-white mb-3 flex items-center gap-2"><span className="bg-green-500/20 text-green-400 px-2 py-0.5 rounded text-[10px] uppercase border border-green-500/30">Opción Gratuita</span><span className="text-slate-400 text-xs font-normal">Ideal para uso básico</span></h5><ol className="list-decimal list-inside text-xs text-slate-300 space-y-2 mb-4 leading-relaxed"><li>Accede a <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-blue-400 hover:underline font-bold">Google AI Studio</a>.</li><li>Haz clic en <strong>"Get API key"</strong> (arriba izquierda) y luego en <strong>"Create API key in new project"</strong>.</li><li>Copia la clave y pégala arriba.</li></ol><p className="text-[10px] text-slate-400 bg-slate-900/50 p-3 rounded border border-slate-700"><strong>Límites actuales:</strong> 15 peticiones/minuto (RPM) y 1.500/día. Si la IA falla o tarda mucho, es probable que hayas superado este límite temporalmente.</p></div><div><h5 className="text-sm font-bold text-white mb-3 flex items-center gap-2"><span className="bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded text-[10px] uppercase border border-blue-500/30">Opción Ilimitada (Pay-as-you-go)</span><span className="text-slate-400 text-xs font-normal">Para uso intensivo</span></h5><p className="text-xs text-slate-300 mb-3 leading-relaxed">Si actualizas precios de muchos valores frecuentemente o realizas análisis complejos, te conviene activar la facturación para eliminar esperas.</p><ol className="list-decimal list-inside text-xs text-slate-300 space-y-2 mb-6 leading-relaxed"><li>Ve a la <a href="https://console.cloud.google.com/billing" target="_blank" className="text-blue-400 hover:underline font-bold">Consola de Google Cloud Billing</a>.</li><li>Selecciona el <strong>mismo proyecto</strong> que se creó automáticamente en AI Studio (suele llamarse "Generative Language Client").</li><li>Haz clic en <strong>"Vincular una cuenta de facturación"</strong> e introduce tu tarjeta.</li><li><strong>Coste:</strong> Es extremadamente barato (aprox. $0.35 por millón de tokens). Actualizar una cartera consume centavos.</li></ol><div className="flex gap-3"><a href="https://aistudio.google.com/app/apikey" target="_blank" className="flex-1 text-center py-2.5 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2 border border-slate-600"><Icons.ExternalLink size={14}/> Obtener Key (AI Studio)</a><a href="https://console.cloud.google.com/billing" target="_blank" className="flex-1 text-center py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2 border border-blue-500"><Icons.ExternalLink size={14}/> Activar Facturación (Cloud)</a></div></div></div>
+                    </div>
+                </div>
+            </div>
 
-                  {/* COPIA DE SEGURIDAD Y CLOUD */}
-                  <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
-                      <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4"><div className="p-3 bg-cyan-500/20 rounded-xl text-cyan-400"><Icons.Upload size={32} className="rotate-180" /></div><div><h2 className="text-2xl font-bold text-white">Copia de Seguridad y Cloud</h2><p className="text-slate-400 text-sm">Exporta tu configuración y conecta Google Drive</p></div></div>
-                      <div className="bg-yellow-900/20 border border-yellow-600/30 rounded-xl p-4 mb-6"><h4 className="text-yellow-500 font-bold text-sm mb-2 flex items-center gap-2"><Icons.AlertCircle size={16}/> Información Importante</h4><p className="text-sm text-slate-300 leading-relaxed">El archivo de exportación contiene <strong>toda tu configuración, claves, y cartera de inversiones</strong>. Guárdalo en un lugar seguro.</p></div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4"><button onClick={handleRunExport} disabled={ioStatus === 'processing'} className={`flex items-center justify-center gap-2 py-4 px-6 rounded-xl border transition-all font-bold ${ioStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : 'bg-slate-800 border-slate-600 hover:bg-slate-700 text-white'}`}>{ioStatus === 'processing' ? <Icons.Loader size={20}/> : <Icons.Upload size={20} className="rotate-180" />} EXPORTAR (LOCAL)</button><label className={`cursor-pointer flex items-center justify-center gap-2 py-4 px-6 rounded-xl border transition-all font-bold ${ioStatus === 'processing' ? 'bg-slate-800 opacity-50 cursor-not-allowed' : 'bg-blue-600 border-blue-500 hover:bg-blue-500 text-white'}`}><input type="file" accept=".json" className="hidden" onChange={handleRunImport} disabled={ioStatus === 'processing'} /><Icons.Upload size={20} /> RESTAURAR (LOCAL)</label></div>
-                      <div className="mt-8 border-t border-slate-700 pt-6"><h4 className="text-sm font-bold text-blue-400 mb-4 uppercase tracking-widest flex items-center gap-2"><Icons.Globe size={16}/> Copia Automática (Google Apps Script)</h4><div><label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">URL de la Aplicación Web (Script)</label><div className="flex items-end gap-2 mb-4"><div className="relative flex-1"><input type={showUrl ? "text" : "password"} value={simpleDecrypt(gScriptUrl)} onChange={(e) => setGScriptUrl(simpleEncrypt(e.target.value))} placeholder="https://script.google.com/macros/s/..." className="w-full bg-black/50 border border-slate-600 rounded-xl p-3 pr-12 text-white focus:border-green-500 focus:outline-none font-mono text-xs"/><button onClick={() => setShowUrl(!showUrl)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showUrl ? <Icons.EyeOff size={16}/> : <Icons.Eye size={16}/>}</button></div><button onClick={onForceBackup} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-3 rounded-xl font-bold text-xs flex items-center gap-2 transition-colors shadow-lg whitespace-nowrap"><Icons.Refresh size={16} className="shrink-0"/> FORZAR COPIA</button></div></div></div>
-                  </div>
 
-                  {/* IMPORTACIÓN MASIVA IA */}
-                  <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
-                       <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4"><div className="p-3 bg-pink-500/20 rounded-xl text-pink-400"><Icons.Upload size={32} /></div><div><h2 className="text-2xl font-bold text-white">Importación Masiva IA</h2><p className="text-slate-400 text-sm">Carga de datos inteligente (PDF o Texto)</p></div></div>
-                       <div className="flex bg-slate-950 p-1 rounded-xl mb-4 border border-slate-700"><button onClick={() => setImportMethod('pdf')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2 ${importMethod === 'pdf' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-white'}`}><Icons.Upload size={14}/> SUBIR PDF</button><button onClick={() => setImportMethod('text')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2 ${importMethod === 'text' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-white'}`}><Icons.Copy size={14}/> PEGAR TEXTO / CSV</button></div>
-                       <div className="flex flex-col gap-4"><div className="w-full"><label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">Instrucciones para la IA</label><input type="text" value={pdfPrompt} onChange={e=>setPdfPrompt(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-300 mb-2" placeholder="Ej: Las ventas tienen precio negativo en la columna Importe..." /></div>{importMethod === 'pdf' ? (<label className="w-full cursor-pointer bg-slate-800 border border-slate-600 hover:bg-slate-700 text-white px-4 py-8 rounded-xl text-sm font-bold flex flex-col items-center justify-center gap-2 transition-colors border-dashed border-2"><input type="file" accept="application/pdf" className="hidden" onChange={e => setPdfFile(e.target.files[0])} /><Icons.Upload size={32} className="text-slate-500"/>{pdfFile ? <span className="text-green-400 truncate">{pdfFile.name}</span> : <span className="text-slate-400">Haz clic para seleccionar tu PDF</span>}</label>) : (<textarea value={rawTextData} onChange={e => setRawTextData(e.target.value)} className="w-full h-40 bg-slate-950 border border-slate-700 rounded-xl p-4 text-xs font-mono text-slate-300 focus:border-pink-500 focus:outline-none custom-scrollbar" placeholder="Pega aquí el contenido de tu tabla (Excel, CSV, o texto copiado del PDF)..." />)}<button onClick={handleAiImport} disabled={importing || (importMethod==='pdf' && !pdfFile) || (importMethod==='text' && !rawTextData)} className="w-full bg-pink-600 hover:bg-pink-500 disabled:opacity-50 text-white px-4 py-4 rounded-xl text-sm font-black flex items-center justify-center gap-2 shadow-lg shadow-pink-900/20 transition-colors uppercase tracking-wider"><Icons.Wand size={18}/> {importing ? 'Analizando...' : 'Procesar Datos con IA'}</button></div>
-                  </div>
+            {/* COPIA DE SEGURIDAD Y CLOUD */}
+            <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
+                <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4"><div className="p-3 bg-cyan-500/20 rounded-xl text-cyan-400"><Icons.Upload size={32} className="rotate-180" /></div><div><h2 className="text-2xl font-bold text-white">Copia de Seguridad y Cloud</h2><p className="text-slate-400 text-sm">Exporta tu configuración y conecta Google Drive</p></div></div>
+                <div className="bg-yellow-900/20 border border-yellow-600/30 rounded-xl p-4 mb-6"><h4 className="text-yellow-500 font-bold text-sm mb-2 flex items-center gap-2"><Icons.AlertCircle size={16}/> Información Importante</h4><p className="text-sm text-slate-300 leading-relaxed">El archivo de exportación contiene <strong>toda tu configuración, claves, y cartera de inversiones</strong>. Guárdalo en un lugar seguro.</p></div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4"><button onClick={handleRunExport} disabled={ioStatus === 'processing'} className={`flex items-center justify-center gap-2 py-4 px-6 rounded-xl border transition-all font-bold ${ioStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : 'bg-slate-800 border-slate-600 hover:bg-slate-700 text-white'}`}>{ioStatus === 'processing' ? <Icons.Loader size={20}/> : <Icons.Upload size={20} className="rotate-180" />} EXPORTAR (LOCAL)</button><label className={`cursor-pointer flex items-center justify-center gap-2 py-4 px-6 rounded-xl border transition-all font-bold ${ioStatus === 'processing' ? 'bg-slate-800 opacity-50 cursor-not-allowed' : 'bg-blue-600 border-blue-500 hover:bg-blue-500 text-white'}`}><input type="file" accept=".json" className="hidden" onChange={handleRunImport} disabled={ioStatus === 'processing'} /><Icons.Upload size={20} /> RESTAURAR (LOCAL)</label></div>
+                
+                <div className="mt-8 border-t border-slate-700 pt-6">
+                    <h4 className="text-sm font-bold text-blue-400 mb-4 uppercase tracking-widest flex items-center gap-2"><Icons.Globe size={16}/> Copia Automática (Google Apps Script)</h4>
+                    <div><label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">URL de la Aplicación Web (Script)</label><div className="flex items-end gap-2 mb-4"><div className="relative flex-1"><input type={showUrl ? "text" : "password"} value={simpleDecrypt(gScriptUrl)} onChange={(e) => setGScriptUrl(simpleEncrypt(e.target.value))} placeholder="https://script.google.com/macros/s/..." className="w-full bg-black/50 border border-slate-600 rounded-xl p-3 pr-12 text-white focus:border-green-500 focus:outline-none font-mono text-xs"/><button onClick={() => setShowUrl(!showUrl)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showUrl ? <Icons.EyeOff size={16}/> : <Icons.Eye size={16}/>}</button></div><button onClick={onForceBackup} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-3 rounded-xl font-bold text-xs flex items-center gap-2 transition-colors shadow-lg whitespace-nowrap"><Icons.Refresh size={16} className="shrink-0"/> FORZAR COPIA</button></div></div>
+                    
+                    {/* PARTE RESTAURADA COMPLETA */}
+                    <div className="bg-slate-950/50 border border-slate-700 rounded-xl p-4"><h5 className="text-xs font-bold text-white mb-3 flex items-center gap-2"><Icons.HelpCircle size={14}/> Guía de Configuración (Script de Google)</h5><ol className="list-decimal list-inside text-[10px] text-slate-300 space-y-2 leading-relaxed font-sans"><li>Ve a <a href="https://script.google.com/home/start" target="_blank" className="text-blue-400 font-bold hover:underline">Google Apps Script</a> y haz clic en <strong>"Nuevo Proyecto"</strong>.</li><li>Borra todo el código del editor y pega este bloque tal cual:<pre className="bg-black text-green-400 p-2 rounded mt-1 mb-1 border border-slate-800 overflow-x-auto text-[9px] font-mono select-all">{`function doPost(e) {
+var lock = LockService.getScriptLock(); lock.tryLock(10000);
+try {
+var data = JSON.parse(e.postData.contents);
+var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
+var file = files.hasNext() ? files.next() : DriveApp.createFile("BOARDINGGATE_DB.json", "", MimeType.PLAIN_TEXT);
+file.setContent(JSON.stringify(data));
+return ContentService.createTextOutput(JSON.stringify({ status: "success", timestamp: data.timestamp })).setMimeType(ContentService.MimeType.JSON);
+} catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
+finally { lock.releaseLock(); }
+}
 
-                  {/* REGISTRO Y LICENCIA */}
-                  <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-20">
-                      <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4"><div className={`p-3 rounded-xl ${isAuth ? 'bg-green-500/20 text-green-400' : 'bg-blue-500/20 text-blue-400'}`}><Icons.CheckCircle size={32} /></div><div><h2 className="text-2xl font-bold text-white">Registro de la aplicación</h2><p className="text-slate-400 text-sm">Estado de la instalación y licencia</p></div></div>
-                      <div className="space-y-6"><p className="text-sm text-slate-400 leading-relaxed italic">Esta plataforma es un proyecto independiente que se sustenta exclusivamente mediante un modelo de <strong>crowdfunding</strong> y las aportaciones directas de sus usuarios. Tu registro ayuda a mantener los costes de desarrollo y mantenimiento. Sin registro, la aplicación está limitada a la gestión de <strong>5 acciones</strong>.</p><div className="bg-black/30 border border-slate-700 rounded-xl p-5"><label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">Número de Registro / Código de Instalación</label><div className="flex gap-3"><input type="text" value={localLic} onChange={(e) => setLocalLic(e.target.value.toUpperCase())} placeholder="BG-XXXX-XXXX" className={`flex-1 bg-slate-900 border ${isAuth ? 'border-green-600' : 'border-slate-600'} rounded-lg p-3 text-white font-mono focus:outline-none`} /><button onClick={() => onActivate(localLic)} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-xs">ACTIVAR</button></div>{isAuth && <div className="mt-3 text-center text-green-400 text-xs font-bold uppercase tracking-widest">● Dispositivo Registrado</div>}</div><div className="text-center bg-slate-800/50 p-4 rounded-xl"><p className="text-xs text-slate-400 mb-2">Para obtener tu Nº de registro o colaborar con el crowdfunding:</p><a href="https://x.com/BoardingGate" target="_blank" className="inline-flex items-center gap-2 text-blue-400 hover:text-blue-300 font-bold transition-colors"><Icons.Globe size={16}/> @BoardingGate en X (Twitter)</a></div></div>
-                  </div>
-              </div>
-          );
-      };
+function doGet(e) {
+try {
+var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
+if (files.hasNext()) return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON);
+return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
+} catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
+}`}</pre></li><li>Pulsa el botón azul <strong>"Implementar"</strong> (arriba dcha) {'>'} <strong>"Nueva implementación"</strong>.</li><li>En la rueda dentada (tipo), selecciona <strong>"Aplicación web"</strong>.</li><li>En "Quién tiene acceso", selecciona <strong>"Cualquier usuario"</strong> (Esto permite que la app guarde sin pedir login cada vez).</li><li>Pulsa "Implementar", autoriza el acceso a Drive, copia la URL que te dan ("Aplicación web") y pégala arriba.</li></ol></div>
+                </div>
+            </div>
+
+            {/* IMPORTACIÓN MASIVA IA */}
+            <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
+                 <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
+                    <div className="p-3 bg-pink-500/20 rounded-xl text-pink-400"><Icons.Upload size={32} /></div>
+                    <div><h2 className="text-2xl font-bold text-white">Importación Masiva IA</h2><p className="text-slate-400 text-sm">Carga de datos inteligente (PDF o Texto)</p></div>
+                 </div>
+                 
+                 {/* Selector de Método */}
+                 <div className="flex bg-slate-950 p-1 rounded-xl mb-4 border border-slate-700">
+                     <button onClick={() => setImportMethod('pdf')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2 ${importMethod === 'pdf' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-white'}`}>
+                         <Icons.Upload size={14}/> SUBIR PDF
+                     </button>
+                     <button onClick={() => setImportMethod('text')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2 ${importMethod === 'text' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-white'}`}>
+                         <Icons.Copy size={14}/> PEGAR TEXTO / CSV
+                     </button>
+                 </div>
+
+                 <div className="flex flex-col gap-4">
+                     <div className="w-full">
+                         <label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">Instrucciones para la IA</label>
+                         <input type="text" value={pdfPrompt} onChange={e=>setPdfPrompt(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-300 mb-2" placeholder="Ej: Las ventas tienen precio negativo en la columna Importe..." />
+                     </div>
+                     
+                     {/* ZONA DE ENTRADA SEGUN METODO */}
+                     {importMethod === 'pdf' ? (
+                         <label className="w-full cursor-pointer bg-slate-800 border border-slate-600 hover:bg-slate-700 text-white px-4 py-8 rounded-xl text-sm font-bold flex flex-col items-center justify-center gap-2 transition-colors border-dashed border-2">
+                             <input type="file" accept="application/pdf" className="hidden" onChange={e => setPdfFile(e.target.files[0])} />
+                             <Icons.Upload size={32} className="text-slate-500"/>
+                             {pdfFile ? <span className="text-green-400 truncate">{pdfFile.name}</span> : <span className="text-slate-400">Haz clic para seleccionar tu PDF</span>}
+                         </label>
+                     ) : (
+                         <textarea 
+                             value={rawTextData} 
+                             onChange={e => setRawTextData(e.target.value)} 
+                             className="w-full h-40 bg-slate-950 border border-slate-700 rounded-xl p-4 text-xs font-mono text-slate-300 focus:border-pink-500 focus:outline-none custom-scrollbar"
+                             placeholder="Pega aquí el contenido de tu tabla (Excel, CSV, o texto copiado del PDF)..."
+                         />
+                     )}
+
+                     <button onClick={handleAiImport} disabled={importing || (importMethod==='pdf' && !pdfFile) || (importMethod==='text' && !rawTextData)} className="w-full bg-pink-600 hover:bg-pink-500 disabled:opacity-50 text-white px-4 py-4 rounded-xl text-sm font-black flex items-center justify-center gap-2 shadow-lg shadow-pink-900/20 transition-colors uppercase tracking-wider">
+                         <Icons.Wand size={18}/> {importing ? 'Analizando...' : 'Procesar Datos con IA'}
+                     </button>
+                 </div>
+            </div>
+
+            {/* REGISTRO Y LICENCIA */}
+            <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-20">
+                <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
+                    <div className={`p-3 rounded-xl ${isAuth ? 'bg-green-500/20 text-green-400' : 'bg-blue-500/20 text-blue-400'}`}><Icons.CheckCircle size={32} /></div>
+                    <div><h2 className="text-2xl font-bold text-white">Registro de la aplicación</h2><p className="text-slate-400 text-sm">Estado de la instalación y licencia</p></div>
+                </div>
+                <div className="space-y-6">
+                    <p className="text-sm text-slate-400 leading-relaxed italic">Esta plataforma es un proyecto independiente que se sustenta exclusivamente mediante un modelo de <strong>crowdfunding</strong> y las aportaciones directas de sus usuarios. Tu registro ayuda a mantener los costes de desarrollo y mantenimiento. Sin registro, la aplicación está limitada a la gestión de <strong>5 acciones</strong>.</p>
+                    <div className="bg-black/30 border border-slate-700 rounded-xl p-5">
+                        <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">Número de Registro / Código de Instalación</label>
+                        <div className="flex gap-3">
+                            <input type="text" value={localLic} onChange={(e) => setLocalLic(e.target.value.toUpperCase())} placeholder="BG-XXXX-XXXX" className={`flex-1 bg-slate-900 border ${isAuth ? 'border-green-600' : 'border-slate-600'} rounded-lg p-3 text-white font-mono focus:outline-none`} />
+                            <button onClick={() => onActivate(localLic)} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-xs">ACTIVAR</button>
+                        </div>
+                        {isAuth && <div className="mt-3 text-center text-green-400 text-xs font-bold uppercase tracking-widest">● Dispositivo Registrado</div>}
+                    </div>
+                    <div className="text-center bg-slate-800/50 p-4 rounded-xl">
+                        <p className="text-xs text-slate-400 mb-2">Para obtener tu Nº de registro o colaborar con el crowdfunding:</p>
+                        <a href="https://x.com/BoardingGate" target="_blank" className="inline-flex items-center gap-2 text-blue-400 hover:text-blue-300 font-bold transition-colors"><Icons.Globe size={16}/> @BoardingGate en X (Twitter)</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 
 
 
