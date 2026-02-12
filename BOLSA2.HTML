@@ -681,9 +681,6 @@ const StatsDashboard = ({ portfolio, baseCurrency, taxTotal }) => {
       };
 
 
-
-
-
 const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady }) => {
     // --- ESTADOS PERSISTENTES PARA FILTROS ---
     const [filterText, setFilterText] = usePersistentState('bg_port_filter_text', '');
@@ -691,6 +688,9 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const [filterDateEnd, setFilterDateEnd] = usePersistentState('bg_port_filter_end', '');
     const [filterType, setFilterType] = usePersistentState('bg_port_filter_type', 'active'); 
     const [sortConfig, setSortConfig] = usePersistentState('bg_port_sort_config', { key: 'date', direction: 'desc' });
+    
+    // --- NUEVO: ESTADO PERSISTENTE PARA VISIBILIDAD DE SECCIONES ---
+    const [visibleSections, setVisibleSections] = usePersistentState('bg_visible_sections', { table: true, diverging: true, stats: true, charts: true });
 
     const [updating, setUpdating] = useState(false);
     const [analyzing, setAnalyzing] = useState(false);
@@ -709,9 +709,11 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
     const formatDateES = (d) => { if(!d) return ''; const date = new Date(d); return `${date.getDate().toString().padStart(2,'0')}-${(date.getMonth()+1).toString().padStart(2,'0')}-${date.getFullYear()}`; };
-    // calcReturns is defined globally now, so we don't redefine it here
     const cleanVal = (v) => { if (typeof v === 'number') return v; const n = parseFloat(String(v).replace(/[^0-9.-]/g, '')); return isNaN(n) ? 0 : n; };
     const getRegion = (ticker) => { if (!ticker) return 'S/D'; if (ticker.includes(':')) return ticker.split(':')[0].toUpperCase(); const t = ticker.toUpperCase(); if (t.endsWith('.MC')) return 'BME (ES)'; if (t.endsWith('.DE')) return 'XETRA (DE)'; if (t.endsWith('.PA')) return 'EURONEXT (FR)'; if (t.endsWith('.L')) return 'LSE (UK)'; return 'US/OTROS'; };
+
+    // Toggle de visibilidad
+    const toggleView = (key) => setVisibleSections(prev => ({...prev, [key]: !prev[key]}));
 
     useEffect(() => { if (noteToast) { const timer = setTimeout(() => setNoteToast(null), 30000); return () => clearTimeout(timer); } }, [noteToast]);
     const requestSort = (key) => { let direction = 'desc'; if (sortConfig.key === key && sortConfig.direction === 'desc') { direction = 'asc'; } setSortConfig({ key, direction }); };
@@ -936,6 +938,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             {analyzing && <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center fade-in"><Icons.Wand size={60} className="text-purple-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando Cartera Global...</div></div>}
             {noteToast && ( <div className="fixed top-20 right-10 z-[100] bg-yellow-900/90 border-l-4 border-yellow-500 p-4 rounded shadow-2xl max-w-sm fade-in backdrop-blur-sm"> <div className="flex justify-between items-start mb-1"> <h4 className="text-yellow-400 font-bold text-xs uppercase flex items-center gap-2"><Icons.MessageCircle size={14}/> Observaciones</h4> <button onClick={()=>setNoteToast(null)} className="text-yellow-200 hover:text-white"><Icons.X size={14}/></button> </div> <p className="text-sm text-yellow-100 italic leading-relaxed">{noteToast}</p> </div> )}
             
+            {/* --- SECCIÓN SUPERIOR DE KPIS --- */}
             <div className="flex gap-4 overflow-x-auto pb-2 custom-scrollbar shrink-0">
                 <StatsBlock title="ACTIVOS FILTRADOS" data={stats.active} color="#22c55e" baseCurrency={baseCurrency} type="active" />
                 <StatsBlock title="VENTAS FILTRADAS" data={stats.sold} color="#f97316" baseCurrency={baseCurrency} type="sold" />
@@ -943,6 +946,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                 <RenderHistoryCard />
             </div>
             
+            {/* --- BARRA DE ACCIONES Y FILTROS --- */}
             <div className="flex flex-col gap-3 shrink-0 bg-slate-900/50 p-3 rounded-xl border border-slate-800">
                 <div className="flex justify-between items-center"><div className="flex gap-2 items-start">
                   <div className="flex flex-col">
@@ -956,8 +960,19 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                   <button onClick={analyzePortfolio} className="bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 transition-colors flex items-center gap-2"><Icons.Wand/> INFORME iA</button>
                   <button onClick={handlePrint} className="bg-slate-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button></div><button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', group: '', notes: '', customOrder:'', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, feesIncludedInPrice: false, buyPE:0, annualDividend:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, sellFeesIncludedInPrice: false, currentPE:0, dividends: [] }); setIsModalOpen(true); }} className="bg-blue-600 px-4 h-9 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg hover:bg-blue-500"><Icons.Plus size={14}/> NUEVA POSICIÓN</button></div>
                 
+                {/* --- BARRA DE FILTROS Y VISTAS --- */}
                 <div className="flex flex-wrap gap-2 items-center bg-slate-950/50 p-2 rounded-lg border border-slate-800/50">
                     <div className="flex-1 min-w-[150px] relative"><Icons.Search className="absolute left-2 top-2 text-slate-500" size={14}/><input type="text" value={filterText} onChange={e => setFilterText(e.target.value)} placeholder="Filtrar por ticker, nombre o grupo..." className="w-full bg-slate-900 border border-slate-700 h-8 pl-8 pr-2 text-xs rounded focus:border-blue-500 font-bold" /></div>
+                    
+                    {/* BOTONES DE VISTA (NUEVO) */}
+                    <div className="flex items-center gap-1 bg-slate-900 border border-slate-700 rounded h-8 px-2">
+                        <span className="text-[9px] text-slate-500 font-bold uppercase mr-1 tracking-wider">Vistas:</span>
+                        <button onClick={() => toggleView('table')} className={`p-1 rounded hover:bg-slate-700 transition-colors ${visibleSections.table ? 'text-blue-400 bg-slate-800' : 'text-slate-600'}`} title="Listado"><Icons.Briefcase size={14}/></button>
+                        <button onClick={() => toggleView('diverging')} className={`p-1 rounded hover:bg-slate-700 transition-colors ${visibleSections.diverging ? 'text-blue-400 bg-slate-800' : 'text-slate-600'}`} title="Gráfico Rendimiento"><Icons.ChartBar size={14}/></button>
+                        <button onClick={() => toggleView('stats')} className={`p-1 rounded hover:bg-slate-700 transition-colors ${visibleSections.stats ? 'text-blue-400 bg-slate-800' : 'text-slate-600'}`} title="Estadísticas"><Icons.PieChart size={14}/></button>
+                        <button onClick={() => toggleView('charts')} className={`p-1 rounded hover:bg-slate-700 transition-colors ${visibleSections.charts ? 'text-blue-400 bg-slate-800' : 'text-slate-600'}`} title="Gráficas Evolución"><Icons.TrendingUp size={14}/></button>
+                    </div>
+
                     <div className="flex items-center gap-1">
                         <button onClick={() => handleYearJump(-1)} className="h-8 w-8 bg-slate-800 border border-slate-700 rounded text-slate-400 hover:text-white hover:bg-slate-700 font-bold flex items-center justify-center text-lg">-</button>
                         <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-2 h-8"><span className="text-[9px] font-bold text-slate-500 uppercase">Desde</span><input type="date" value={filterDateStart} onChange={e => setFilterDateStart(e.target.value)} className="bg-transparent border-none text-xs text-white p-0 w-[95px] focus:ring-0 font-bold" /></div>
@@ -969,86 +984,110 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                 </div>
             </div>
             
-            <div className="w-full overflow-x-auto bg-slate-900/50 border border-slate-800 rounded-xl">
-                <table className="w-full text-left min-w-[1700px] text-sm"><thead className="bg-slate-800 text-slate-400 text-[10px] uppercase font-bold sticky top-0 z-20">
-<tr>
-  <th className="p-3 w-10 text-center sticky left-0 z-30 bg-slate-900 border-r border-slate-800"><button onClick={toggleAllActive} title="Marcar/Desmarcar Todo"><Icons.CursorClick size={16} className="text-blue-400"/></button></th>
-  <th className={`p-3 cursor-pointer select-none hover:text-white transition-colors group bg-slate-900 border-r border-slate-800 min-w-[180px] sticky left-10 z-30 ${sortConfig.key==='value'?'bg-slate-800 text-white':''}`} onClick={()=>requestSort('value')}><div className="flex items-center gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='value'?'opacity-100':''}`}/> Valor {sortConfig.key==='value' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
-  <th className={`p-3 w-14 text-center cursor-pointer select-none hover:text-white border-r border-slate-800 ${sortConfig.key==='customOrder'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('customOrder')}>Ord {sortConfig.key==='customOrder' && (sortConfig.direction==='asc'?'▲':'▼')}</th>
-  <th className={`p-3 text-center cursor-pointer select-none hover:text-white hover:bg-slate-700 transition-colors group ${sortConfig.key==='date'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('date')}><div className="flex items-center justify-center gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='date'?'opacity-100':''}`}/> Fechas / Días {sortConfig.key==='date' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
-  <th className="p-3 text-right">Títulos</th>
-  <th className="p-3 text-right">Precios (Inv/Act)</th>
-  <th className="p-3 text-center">FX (I/A)</th>
-  <th className="p-3 text-center text-blue-400">FX Desv.</th>
-  <th className="p-3 text-center">Gastos / Adj</th>
-  <th className="p-3 text-right">Coste Total</th>
-  <th className="p-3 text-right text-white font-bold bg-[#161b25] border-l border-slate-700">Valor Final</th>
-  <th className={`p-3 text-right cursor-pointer select-none hover:text-white bg-[#161b25] border-r border-slate-700 transition-colors group ${sortConfig.key==='yield'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('yield')}><div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='yield'?'opacity-100':''}`}/> RENDIMIENTO {sortConfig.key==='yield' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
-  <th className={`p-3 text-right cursor-pointer select-none hover:text-white hover:bg-slate-700 transition-colors group ${sortConfig.key==='percent'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('percent')}><div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='percent'?'opacity-100':''}`}/> % Ben/Pérd {sortConfig.key==='percent' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
-  <th className="p-3 text-center">PER (I/A)</th>
-  <th className="p-3 text-center">Acciones</th>
-</tr>
-</thead>
-<tbody className="divide-y divide-slate-800">
-{filteredPortfolio.length === 0 ? ( <tr><td colSpan="15" className="p-10 text-center text-slate-500 italic">No hay registros que coincidan con los filtros aplicados.</td></tr> ) : ( filteredPortfolio.map(p => { 
-  const isS = !!p.sellDate;
-  const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
-  const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
-  const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
-  const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
-  const ds = (p.dividends || []).reduce((a,b)=>a+b.net,0); 
-  const capitalGain = vF - cost; 
-  const days = calculateDays(p.buyDate, p.sellDate || new Date()); 
-  const rs = calcReturns(cost, vF + ds, days); 
+            {/* --- SECCIONES RENDERIZADAS CONDICIONALMENTE --- */}
+            
+            {/* 1. LISTADO DE ACCIONES */}
+            {visibleSections.table && (
+                <div className="w-full overflow-x-auto bg-slate-900/50 border border-slate-800 rounded-xl fade-in">
+                    <table className="w-full text-left min-w-[1700px] text-sm"><thead className="bg-slate-800 text-slate-400 text-[10px] uppercase font-bold sticky top-0 z-20">
+                    <tr>
+                    <th className="p-3 w-10 text-center sticky left-0 z-30 bg-slate-900 border-r border-slate-800"><button onClick={toggleAllActive} title="Marcar/Desmarcar Todo"><Icons.CursorClick size={16} className="text-blue-400"/></button></th>
+                    <th className={`p-3 cursor-pointer select-none hover:text-white transition-colors group bg-slate-900 border-r border-slate-800 min-w-[180px] sticky left-10 z-30 ${sortConfig.key==='value'?'bg-slate-800 text-white':''}`} onClick={()=>requestSort('value')}><div className="flex items-center gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='value'?'opacity-100':''}`}/> Valor {sortConfig.key==='value' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
+                    <th className={`p-3 w-14 text-center cursor-pointer select-none hover:text-white border-r border-slate-800 ${sortConfig.key==='customOrder'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('customOrder')}>Ord {sortConfig.key==='customOrder' && (sortConfig.direction==='asc'?'▲':'▼')}</th>
+                    <th className={`p-3 text-center cursor-pointer select-none hover:text-white hover:bg-slate-700 transition-colors group ${sortConfig.key==='date'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('date')}><div className="flex items-center justify-center gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='date'?'opacity-100':''}`}/> Fechas / Días {sortConfig.key==='date' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
+                    <th className="p-3 text-right">Títulos</th>
+                    <th className="p-3 text-right">Precios (Inv/Act)</th>
+                    <th className="p-3 text-center">FX (I/A)</th>
+                    <th className="p-3 text-center text-blue-400">FX Desv.</th>
+                    <th className="p-3 text-center">Gastos / Adj</th>
+                    <th className="p-3 text-right">Coste Total</th>
+                    <th className="p-3 text-right text-white font-bold bg-[#161b25] border-l border-slate-700">Valor Final</th>
+                    <th className={`p-3 text-right cursor-pointer select-none hover:text-white bg-[#161b25] border-r border-slate-700 transition-colors group ${sortConfig.key==='yield'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('yield')}><div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='yield'?'opacity-100':''}`}/> RENDIMIENTO {sortConfig.key==='yield' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
+                    <th className={`p-3 text-right cursor-pointer select-none hover:text-white hover:bg-slate-700 transition-colors group ${sortConfig.key==='percent'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('percent')}><div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='percent'?'opacity-100':''}`}/> % Ben/Pérd {sortConfig.key==='percent' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
+                    <th className="p-3 text-center">PER (I/A)</th>
+                    <th className="p-3 text-center">Acciones</th>
+                    </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                    {filteredPortfolio.length === 0 ? ( <tr><td colSpan="15" className="p-10 text-center text-slate-500 italic">No hay registros que coincidan con los filtros aplicados.</td></tr> ) : ( filteredPortfolio.map(p => { 
+                    const isS = !!p.sellDate;
+                    const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
+                    const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
+                    const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+                    const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+                    const ds = (p.dividends || []).reduce((a,b)=>a+b.net,0); 
+                    const capitalGain = vF - cost; 
+                    const days = calculateDays(p.buyDate, p.sellDate || new Date()); 
+                    const rs = calcReturns(cost, vF + ds, days); 
 
-  return ( 
-      <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''}`} onClick={() => p.notes && setNoteToast(p.notes)}>
-          <td className="p-3 text-center sticky left-0 z-20 bg-slate-900 border-r border-slate-800" onClick={(e) => { e.stopPropagation(); setPortfolio(prev => prev.map(x => x.id === p.id ? {...x, isActive: !x.isActive} : x)); }}><input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" /></td>
-          <td className="p-3 sticky left-10 z-20 bg-slate-900 border-r border-slate-800 min-w-[180px]">
-              <div className="w-[160px] whitespace-normal break-words leading-tight">
-                  <b className="text-sm">{p.name}</b>{isS && <span className="ml-2 px-1.5 py-0.5 bg-red-900/40 text-red-400 text-[8px] rounded uppercase font-bold border border-red-500/20">VENDIDA</span>}<br/>
-                  <span className="text-[10px] text-slate-400 uppercase">{p.ticker}</span>
-                  {p.group && <span className="text-[10px] text-purple-300 font-bold bg-purple-900/30 px-1 rounded ml-1 inline-block mt-1">Grp: {p.group}</span>}
-              </div>
-          </td>
-          <td className="p-3 text-center border-r border-slate-800 font-mono text-slate-400 text-[10px]">{p.customOrder}</td>
-          <td className="p-3 text-center text-[10px] font-bold"><div className="text-blue-400">{formatDateES(p.buyDate)}</div>{p.sellDate && <div className="text-orange-400">{formatDateES(p.sellDate)}</div>}<div className="text-slate-500 text-[9px] mt-1">{formatN(days, 0)} días</div></td>
-          <td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td>
-          <td className="p-3 text-right text-xs font-mono">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td>
-          <td className="p-3 text-center text-[10px] font-mono text-slate-400">I: {formatN(p.buyFx, 4)}<br/>A: {formatN(curF, 4)}</td>
-          <td className="p-3 text-center text-[9px] font-mono">
-              {(() => { const fxDevVal = (p.isIndex ? 0 : (p.shares * (isS ? p.sellPrice : p.currentPrice) * (curF - p.buyFx))); return <div className={fxDevVal >= 0 ? 'text-green-500' : 'text-red-500'}>{formatMoney(fxDevVal, baseCurrency)}</div>; })()}
-          </td>
-          <td className="p-3 text-center text-[10px] font-mono text-slate-400">G: {formatN(isS?p.sellFees:p.fees)}<br/>A: {formatN(isS?p.sellAdjustments:p.adjustments)}</td>
-          <td className="p-3 text-right text-slate-400 font-mono">{formatMoney(cost, baseCurrency)}</td>
-          <td className="p-3 text-right font-mono text-white bg-[#161b25] border-l border-slate-800"><div className="font-bold">{formatMoney(vF, baseCurrency)}</div></td>
-          <td className="p-3 text-right font-mono bg-[#161b25] border-r border-slate-800"><div className={`font-bold ${capitalGain >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(capitalGain, baseCurrency)}</div>{ds > 0 && <div className="text-[10px] text-blue-300 font-bold mt-0.5">+ {formatMoney(ds, baseCurrency)} (Div)</div>}</td>
-          <td className="p-3 text-right text-xs"><div className={rs.simple>=0?'text-green-400 font-bold':'text-red-400 font-bold'}>{formatN(rs.simple)}%</div><div className="text-[9px] text-slate-500">Anual: {formatN(rs.annual)}%</div></td>
-          <td className="p-3 text-center text-xs font-mono">I: {formatN(p.buyPE, 1)}<br/>A: <span className="text-yellow-500 font-bold">{formatN(p.currentPE, 1)}</span></td>
-          <td className="p-3 text-center flex gap-2 justify-center" onClick={e=>e.stopPropagation()}>{!p.sellDate && <button onClick={() => { setSellItem(p); setSellForm({sharesToSell: p.shares, sellPrice: parseFloat(curP.toFixed(3)), sellDate: new Date().toISOString().slice(0,10), sellFx: p.currentFx, sellFees: 0, sellAdjustments: 0, sellFeesIncludedInPrice: false}); setIsSellModalOpen(true); }} className="bg-green-600/20 text-green-400 border border-green-500/30 px-2 py-1 rounded text-[10px] font-bold hover:bg-green-600/40">VENDER</button>}<button onClick={() => { setForm(p); setEditingId(p.id); setIsModalOpen(true); }} className="text-blue-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors"><Icons.Edit size={14}/></button><button onClick={() => handleClone(p)} className="text-purple-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors" title="Clonar Posición"><Icons.Copy size={14}/></button><button onClick={() => setConfirmModal({isOpen:true, title:'Borrado', msg:`¿Eliminar permanentemente?`, onConfirm:()=>{setPortfolio(prev=>prev.filter(x=>x.id!==p.id)); setConfirmModal({isOpen:false})} })} className="text-red-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors"><Icons.Trash2 size={14}/></button></td>
-      </tr> 
-  ); 
-}) )}
-{filteredPortfolio.length > 0 && (
-  <tr className="bg-slate-900 border-t-2 border-slate-600 font-bold text-white text-[9px] sticky bottom-0 z-30 shadow-2xl">
-      <td className="p-2 sticky left-0 z-40 bg-slate-900 border-r border-slate-800"></td>
-      <td className="p-2 sticky left-10 z-40 bg-slate-900 border-r border-slate-800 text-right uppercase tracking-wider text-slate-400">TOTALES:</td>
-      <td colSpan="5"></td>
-      <td className="p-2 text-center text-slate-300 font-mono">{formatMoney(gridTotals.tFx, baseCurrency)}</td>
-      <td></td>
-      <td className="p-2 text-right font-mono text-slate-300">{formatMoney(gridTotals.tCost, baseCurrency)}</td>
-      <td className="p-2 text-right font-mono bg-[#0f121a] border-l border-slate-800 text-white">{formatMoney(gridTotals.tVal, baseCurrency)}</td>
-      <td className="p-2 text-right font-mono bg-[#0f121a] border-r border-slate-800"><span className={gridTotals.tRes >= 0 ? 'text-green-400' : 'text-red-400'}>{formatMoney(gridTotals.tRes, baseCurrency)}</span></td>
-      <td className="p-2 text-right font-mono"><span className={gridTotals.tPct >= 0 ? 'text-green-400' : 'text-red-400'}>{formatN(gridTotals.tPct)}%</span></td>
-      <td colSpan="2"></td>
-  </tr>
-)}
-</tbody>
-                </table>
-            </div>
-            <DivergingBarChart data={divergingData} baseCurrency={baseCurrency} />
-            <StatsDashboard portfolio={portfolio} baseCurrency={baseCurrency} taxTotal={taxSum} />
-            <CarouselCharts chartsData={chartsData} />
+                    return ( 
+                        <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''}`} onClick={() => p.notes && setNoteToast(p.notes)}>
+                            <td className="p-3 text-center sticky left-0 z-20 bg-slate-900 border-r border-slate-800" onClick={(e) => { e.stopPropagation(); setPortfolio(prev => prev.map(x => x.id === p.id ? {...x, isActive: !x.isActive} : x)); }}><input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" /></td>
+                            <td className="p-3 sticky left-10 z-20 bg-slate-900 border-r border-slate-800 min-w-[180px]">
+                                <div className="w-[160px] whitespace-normal break-words leading-tight">
+                                    <b className="text-sm">{p.name}</b>{isS && <span className="ml-2 px-1.5 py-0.5 bg-red-900/40 text-red-400 text-[8px] rounded uppercase font-bold border border-red-500/20">VENDIDA</span>}<br/>
+                                    <span className="text-[10px] text-slate-400 uppercase">{p.ticker}</span>
+                                    {p.group && <span className="text-[10px] text-purple-300 font-bold bg-purple-900/30 px-1 rounded ml-1 inline-block mt-1">Grp: {p.group}</span>}
+                                </div>
+                            </td>
+                            <td className="p-3 text-center border-r border-slate-800 font-mono text-slate-400 text-[10px]">{p.customOrder}</td>
+                            <td className="p-3 text-center text-[10px] font-bold"><div className="text-blue-400">{formatDateES(p.buyDate)}</div>{p.sellDate && <div className="text-orange-400">{formatDateES(p.sellDate)}</div>}<div className="text-slate-500 text-[9px] mt-1">{formatN(days, 0)} días</div></td>
+                            <td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td>
+                            <td className="p-3 text-right text-xs font-mono">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td>
+                            <td className="p-3 text-center text-[10px] font-mono text-slate-400">I: {formatN(p.buyFx, 4)}<br/>A: {formatN(curF, 4)}</td>
+                            <td className="p-3 text-center text-[9px] font-mono">
+                                {(() => { const fxDevVal = (p.isIndex ? 0 : (p.shares * (isS ? p.sellPrice : p.currentPrice) * (curF - p.buyFx))); return <div className={fxDevVal >= 0 ? 'text-green-500' : 'text-red-500'}>{formatMoney(fxDevVal, baseCurrency)}</div>; })()}
+                            </td>
+                            <td className="p-3 text-center text-[10px] font-mono text-slate-400">G: {formatN(isS?p.sellFees:p.fees)}<br/>A: {formatN(isS?p.sellAdjustments:p.adjustments)}</td>
+                            <td className="p-3 text-right text-slate-400 font-mono">{formatMoney(cost, baseCurrency)}</td>
+                            <td className="p-3 text-right font-mono text-white bg-[#161b25] border-l border-slate-800"><div className="font-bold">{formatMoney(vF, baseCurrency)}</div></td>
+                            <td className="p-3 text-right font-mono bg-[#161b25] border-r border-slate-800"><div className={`font-bold ${capitalGain >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(capitalGain, baseCurrency)}</div>{ds > 0 && <div className="text-[10px] text-blue-300 font-bold mt-0.5">+ {formatMoney(ds, baseCurrency)} (Div)</div>}</td>
+                            <td className="p-3 text-right text-xs"><div className={rs.simple>=0?'text-green-400 font-bold':'text-red-400 font-bold'}>{formatN(rs.simple)}%</div><div className="text-[9px] text-slate-500">Anual: {formatN(rs.annual)}%</div></td>
+                            <td className="p-3 text-center text-xs font-mono">I: {formatN(p.buyPE, 1)}<br/>A: <span className="text-yellow-500 font-bold">{formatN(p.currentPE, 1)}</span></td>
+                            <td className="p-3 text-center flex gap-2 justify-center" onClick={e=>e.stopPropagation()}>{!p.sellDate && <button onClick={() => { setSellItem(p); setSellForm({sharesToSell: p.shares, sellPrice: parseFloat(curP.toFixed(3)), sellDate: new Date().toISOString().slice(0,10), sellFx: p.currentFx, sellFees: 0, sellAdjustments: 0, sellFeesIncludedInPrice: false}); setIsSellModalOpen(true); }} className="bg-green-600/20 text-green-400 border border-green-500/30 px-2 py-1 rounded text-[10px] font-bold hover:bg-green-600/40">VENDER</button>}<button onClick={() => { setForm(p); setEditingId(p.id); setIsModalOpen(true); }} className="text-blue-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors"><Icons.Edit size={14}/></button><button onClick={() => handleClone(p)} className="text-purple-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors" title="Clonar Posición"><Icons.Copy size={14}/></button><button onClick={() => setConfirmModal({isOpen:true, title:'Borrado', msg:`¿Eliminar permanentemente?`, onConfirm:()=>{setPortfolio(prev=>prev.filter(x=>x.id!==p.id)); setConfirmModal({isOpen:false})} })} className="text-red-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors"><Icons.Trash2 size={14}/></button></td>
+                        </tr> 
+                    ); 
+                    }) )}
+                    {filteredPortfolio.length > 0 && (
+                    <tr className="bg-slate-900 border-t-2 border-slate-600 font-bold text-white text-[9px] sticky bottom-0 z-30 shadow-2xl">
+                        <td className="p-2 sticky left-0 z-40 bg-slate-900 border-r border-slate-800"></td>
+                        <td className="p-2 sticky left-10 z-40 bg-slate-900 border-r border-slate-800 text-right uppercase tracking-wider text-slate-400">TOTALES:</td>
+                        <td colSpan="5"></td>
+                        <td className="p-2 text-center text-slate-300 font-mono">{formatMoney(gridTotals.tFx, baseCurrency)}</td>
+                        <td></td>
+                        <td className="p-2 text-right font-mono text-slate-300">{formatMoney(gridTotals.tCost, baseCurrency)}</td>
+                        <td className="p-2 text-right font-mono bg-[#0f121a] border-l border-slate-800 text-white">{formatMoney(gridTotals.tVal, baseCurrency)}</td>
+                        <td className="p-2 text-right font-mono bg-[#0f121a] border-r border-slate-800"><span className={gridTotals.tRes >= 0 ? 'text-green-400' : 'text-red-400'}>{formatMoney(gridTotals.tRes, baseCurrency)}</span></td>
+                        <td className="p-2 text-right font-mono"><span className={gridTotals.tPct >= 0 ? 'text-green-400' : 'text-red-400'}>{formatN(gridTotals.tPct)}%</span></td>
+                        <td colSpan="2"></td>
+                    </tr>
+                    )}
+                    </tbody>
+                    </table>
+                </div>
+            )}
+
+            {/* 2. GRÁFICA RENDIMIENTO (BARRAS DIVERGENTES) */}
+            {visibleSections.diverging && (
+                <div className="fade-in">
+                    <DivergingBarChart data={divergingData} baseCurrency={baseCurrency} />
+                </div>
+            )}
+
+            {/* 3. ESTADÍSTICAS (DASHBOARD) */}
+            {visibleSections.stats && (
+                <div className="fade-in">
+                    <StatsDashboard portfolio={portfolio} baseCurrency={baseCurrency} taxTotal={taxSum} />
+                </div>
+            )}
+
+            {/* 4. GRÁFICAS DE EVOLUCIÓN (CARRUSEL) */}
+            {visibleSections.charts && (
+                <div className="fade-in">
+                    <CarouselCharts chartsData={chartsData} />
+                </div>
+            )}
+
             <Modal isOpen={isModalOpen} title={editingId ? `Ficha de Inversión: ${form.ticker}` : "Apertura de Posición"} onClose={()=>setIsModalOpen(false)}>
                 <div className="space-y-6">
                     <div className="bg-slate-800/40 border border-slate-700 p-5 rounded-2xl space-y-4">
