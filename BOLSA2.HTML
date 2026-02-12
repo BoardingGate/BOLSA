@@ -877,7 +877,6 @@ const StatsDashboard = ({ portfolio, baseCurrency, taxTotal }) => {
       };
 
 
-
 const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady }) => {
     // --- ESTADOS PERSISTENTES PARA FILTROS ---
     const [filterText, setFilterText] = usePersistentState('bg_port_filter_text', '');
@@ -909,7 +908,6 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const cleanVal = (v) => { if (typeof v === 'number') return v; const n = parseFloat(String(v).replace(/[^0-9.-]/g, '')); return isNaN(n) ? 0 : n; };
     const getRegion = (ticker) => { if (!ticker) return 'S/D'; if (ticker.includes(':')) return ticker.split(':')[0].toUpperCase(); const t = ticker.toUpperCase(); if (t.endsWith('.MC')) return 'BME (ES)'; if (t.endsWith('.DE')) return 'XETRA (DE)'; if (t.endsWith('.PA')) return 'EURONEXT (FR)'; if (t.endsWith('.L')) return 'LSE (UK)'; return 'US/OTROS'; };
 
-    // Toggle de visibilidad
     const toggleView = (key) => setVisibleSections(prev => ({...prev, [key]: !prev[key]}));
 
     useEffect(() => { if (noteToast) { const timer = setTimeout(() => setNoteToast(null), 30000); return () => clearTimeout(timer); } }, [noteToast]);
@@ -942,7 +940,6 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           return 0; });
     }, [portfolio, filterText, filterDateStart, filterDateEnd, filterType, sortConfig]);
 
-    // Filtrar solo los visibles (checked) para cálculos globales y reportes
     const visiblePortfolio = useMemo(() => filteredPortfolio.filter(p => p.isActive !== false), [filteredPortfolio]);
 
     const gridTotals = useMemo(() => {
@@ -1052,61 +1049,61 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
     const updatePrices = async (isAuto = false) => { const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); if (!isAuto && active.length === 0) return; setUpdating(true); let log = { success: [], fail: [] }, newUpdates = []; try { for (const item of active) { const prompt = `IMPORTANTE: Responde SOLO JSON con PUNTO decimal. Sin símbolos de moneda ni comas. Datos de "${item.ticker}" (${item.stockCurrency}) a ${baseCurrency}. JSON: {"p":precio,"fx":cambio,"pe":per,"n":"nombre"}`; try { const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json && (json.p || json.p === 0)) { newUpdates.push({ id: item.id, n: json.n, p: cleanVal(json.p), fx: cleanVal(json.fx), pe: cleanVal(json.pe) }); log.success.push(item.ticker); } else { log.fail.push(item.ticker); } } catch (e) { log.fail.push(item.ticker); } } if (newUpdates.length > 0) { setPortfolio(prev => prev.map(p => { const u = newUpdates.find(x => x.id === p.id); return u ? { ...p, name: u.n || p.name, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe } : p; })); setLastUpdate(new Date().toISOString()); } if (!isAuto && log.fail.length > 0) setInfoModal({ isOpen: true, title: 'Sincronización con Errores', msg: `Fallos en: ${log.fail.join(', ')}.`, type: 'warning' }); } catch (e) { if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); } finally { setUpdating(false); } };
     
-    // ANALISIS IA MEJORADO
+    // ANALISIS IA MEJORADO Y CORREGIDO
     const analyzePortfolio = async () => { 
         const dataToAnalyze = visiblePortfolio; 
         if (dataToAnalyze.length === 0) return setInfoModal({ isOpen: true, title: 'Info', msg: 'No hay datos visibles para analizar.', type: 'info' }); 
         setAnalyzing(true); 
         try { 
-            // Separar activas e historial para el contexto
+            // Separar activas e historial
             const activePos = dataToAnalyze.filter(p => !p.sellDate).map(p => ({
-                t: p.ticker,
-                n: p.name,
-                s: p.shares,
-                buy: p.buyPrice,
-                cur: p.currentPrice,
-                fx: p.currentFx,
-                pe: p.currentPE,
-                val: (p.shares * p.currentPrice * p.currentFx).toFixed(2),
-                div: p.annualDividend || 0
+                ticker: p.ticker,
+                empresa: p.name,
+                precio_compra: p.buyPrice,
+                precio_actual: p.currentPrice,
+                per_actual: p.currentPE,
+                divisa: p.stockCurrency,
+                fx_actual: p.currentFx
             }));
 
             const soldPos = dataToAnalyze.filter(p => !!p.sellDate).map(p => ({
-                t: p.ticker,
-                n: p.name,
-                pl: (((p.sellPrice * p.shares * p.sellFx) - (p.sellFeesIncludedInPrice ? 0 : p.sellFees) - (p.sellAdjustments || 0)) - ((p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : p.fees) + (p.adjustments || 0))).toFixed(2)
+                ticker: p.ticker,
+                resultado: (((p.sellPrice * p.shares * p.sellFx) - (p.sellFeesIncludedInPrice ? 0 : p.sellFees) - (p.sellAdjustments || 0)) - ((p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : p.fees) + (p.adjustments || 0))).toFixed(2)
             }));
 
+            // PROMPT BLINDADO PARA INFORME ESTRUCTURADO Y DIRECTO
             const prompt = `
-            CRITICAL ROLE: Senior Financial Portfolio Analyst.
-            TASK: Generate a comprehensive HTML report for this portfolio.
+            ROL: Analista Financiero Senior.
+            TAREA: Generar un informe de estrategia de inversión profesional para esta cartera.
+            IDIOMA: Español (España).
+            FORMATO: HTML puro. IMPORTANTE: NO incluyas saludos, ni introducciones tipo "Aquí tienes el informe", ni bloques de código markdown (\`\`\`html). Empieza directamente con <h3>.
             
-            INPUT DATA:
-            - ACTIVE POSITIONS (Current Portfolio): ${JSON.stringify(activePos)}
-            - SOLD HISTORY (Past Performance): ${JSON.stringify(soldPos)}
-            
-            REQUIRED OUTPUT FORMAT (HTML Only, Clean styling):
-            
-            <h3>1. RESUMEN EJECUTIVO</h3>
-            <p>[Brief summary of current exposure, main risks, and sector allocation based on names]</p>
-            
-            <h3>2. ESTADO ACTUAL CARTERA (ACTIVE POSITIONS)</h3>
-            <p>Generate a standard HTML Table with these columns:
-               <strong>Valor | Precio Act. | Valor Intrínseco (Est.) | Desviación % | PER | Recom. (Comprar/Mantener/Vender) | Soportes / Resistencias</strong>
-            </p>
-            <p><em>(IMPORTANT: Estimate Intrinsic Value, Supports, and Resistances based on your knowledge base for the Tickers provided. Calculate Deviation % = (Current - Intrinsic)/Intrinsic * 100)</em></p>
-            
-            <h3>3. RECOMENDACIONES DE REBALANCEO</h3>
-            <p>[Specific advice on which active positions to trim or add to based on valuation and weight]</p>
-            
-            <h3>4. ANÁLISIS DE VENTAS (HISTÓRICO)</h3>
-            <p>[Brief analysis of the realized P&L from sold positions]</p>
-            
-            <h3>5. CONCLUSIÓN FINAL</h3>
+            ESTILOS REQUERIDOS EN HTML:
+            - Títulos <h3>: style="color:#2563eb; border-bottom:1px solid #ccc; padding-bottom:5px; margin-top:20px; text-transform:uppercase;"
+            - Texto <p> y <li>: style="color:#334155; margin-bottom:5px;" (Negro/Gris oscuro para fondo blanco)
+            - Tablas: style="width:100%; border-collapse:collapse; margin:10px 0; font-size:12px; color:#000;"
+            - Celdas tabla: style="border:1px solid #ddd; padding:8px; text-align:left;"
+            - Cabecera tabla: style="background-color:#f1f5f9; font-weight:bold;"
+
+            DATOS DE CARTERA:
+            - POSICIONES ACTIVAS: ${JSON.stringify(activePos)}
+            - HISTORIAL VENTAS (P&L): ${JSON.stringify(soldPos)}
+
+            SECCIONES OBLIGATORIAS (Respetar orden):
+            1. <h3>RESUMEN EJECUTIVO</h3>: Visión global de la cartera y exposición.
+            2. <h3>ESTADO ACTUAL CARTERA (ACTIVE POSITIONS)</h3>:
+               Genera una TABLA HTML con estas columnas exactas:
+               [Valor | Precio Act. | Valor Intrínseco (Est.) | Desviación % | PER | Recom. (Comprar/Mantener/Vender) | Soportes / Resistencias]
+               *Nota: Estima el Valor Intrínseco, Soportes y Resistencias basándote en tu conocimiento financiero actualizado del ticker. Calcula la Desviación = (Precio - Intrínseco)/Intrínseco %.
+            3. <h3>RECOMENDACIONES DE REBALANCEO</h3>: Consejos específicos sobre qué posiciones reducir o aumentar.
+            4. <h3>ANÁLISIS DE VENTAS (HISTÓRICO)</h3>: Breve comentario sobre el rendimiento pasado.
+            5. <h3>CONCLUSIÓN FINAL</h3>.
             `;
             
             const res = await askGemini(apiKey, prompt); 
-            setAnalysisResult(res.replace(/```html/g, '').replace(/```/g, '').trim()); 
+            // Limpieza agresiva de bloques de código y espacios
+            const cleanHtml = res.replace(/```html/g, '').replace(/```/g, '').trim();
+            setAnalysisResult(cleanHtml); 
             setIsAnalysisModalOpen(true); 
         } catch (e) { 
             alert(e.message); 
@@ -1127,7 +1124,6 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         const typeMap = { 'active': 'CARTERA ACTIVA', 'sold': 'HISTÓRICO VENTAS', 'all': 'INFORME GLOBAL' }; 
         const emissionTime = new Date().toLocaleString(); 
         
-        // CONSTRUIR DETALLE DE FILTROS PARA CABECERA
         const filterDetails = [];
         if(filterText) filterDetails.push(`Texto: "${filterText}"`);
         if(filterDateStart) filterDetails.push(`Desde: ${formatDateES(filterDateStart)}`);
@@ -1139,7 +1135,6 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             return ` <div style="border:1px solid #ccc; padding:5px; width:32%; border-top: 3px solid ${c}; background:#f9f9f9; font-size: 8px;"> <div style="font-weight:bold; color:#555; text-transform:uppercase; margin-bottom:2px;">${t} (${formatN(d.num, 0)} Val)</div> <table style="width:100%; border:none; margin:0;"> <tr><td>Invertido:</td><td style="text-align:right;"><b>${formatMoney(d.inv, baseCurrency)}</b></td></tr> <tr><td>Valor Act:</td><td style="text-align:right;"><b style="color:${c}">${formatMoney(d.cur, baseCurrency)}</b></td></tr> <tr><td colspan="2" style="text-align:center; padding-top:5px; border-top:1px solid #ddd;"><b>BALANCE: ${formatMoney(d.plPrice, baseCurrency)}</b></td></tr> <tr><td style="color:#666;">Rent. Simple/Anual:</td><td style="text-align:right;">${formatN(d.plP_S)}% / ${formatN(d.plP_A)}%</td></tr> <tr><td>Dividendos:</td><td style="text-align:right; color:#2563eb;">${formatMoney(d.divN, baseCurrency)} [${formatN(yieldPct)}%]</td></tr> <tr><td>FX Total:</td><td style="text-align:right;">${formatMoney(d.fX, baseCurrency)}</td></tr> <tr><td><b>Rdto Total:</b></td><td style="text-align:right;"><b>${formatMoney(d.plTotal, baseCurrency)} [${formatN(d.plT_S)}%]</b></td></tr> </table> </div>`; 
         }; 
         
-        // RECUPERAR RENTABILIDAD HISTORICA (PRE-CALCULADA)
         const h = historicalStats; 
         const roiCons = h.consolidated.avgCap > 0 ? (h.consolidated.profit / h.consolidated.avgCap) * 100 : 0; 
         const roiClosed = h.closed.avgCap > 0 ? (h.closed.profit / h.closed.avgCap) * 100 : 0; 
@@ -1184,7 +1179,6 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             <td></td>
         </tr>`;
 
-        // PIE DE PÁGINA CON HISTORIAL Y TOTALES
         html += `</tbody></table>`; 
         html += `<div style="display:flex; justify-content:flex-end; margin-top:20px;">${historyCardHTML}</div>`; 
         html += `</body></html>`; 
@@ -1494,10 +1488,20 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             </Modal>
             <Modal isOpen={confirmModal.isOpen} title={confirmModal.title} onClose={()=>setConfirmModal({isOpen:false})} size="sm"><div className="text-center space-y-4"><div className="bg-red-500/10 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto text-red-500 border border-red-500/20"><Icons.Trash2 size={30}/></div><p className="text-slate-300 text-sm font-bold">{confirmModal.msg}</p><div className="flex gap-2"><button onClick={()=>setConfirmModal({isOpen:false})} className="flex-1 bg-slate-700 py-3 rounded-xl font-bold uppercase text-[10px]">Cancelar</button><button onClick={confirmModal.onConfirm} className="flex-1 bg-red-600 py-3 rounded-xl font-bold text-white uppercase text-[10px]">Eliminar</button></div></div></Modal>
             <Modal isOpen={infoModal.isOpen} title={infoModal.title} onClose={()=>setInfoModal({...infoModal, isOpen:false})} size="sm"><div className="text-center space-y-4"><div className={`p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto border ${infoModal.type==='error'?'bg-red-500/10 text-red-500 border-red-500/20':infoModal.type==='warning'?'bg-yellow-500/10 text-yellow-500 border-yellow-500/20':'bg-blue-500/10 text-blue-500 border-blue-500/20'}`}>{infoModal.type==='error'?<Icons.AlertCircle size={30}/>:infoModal.type==='warning'?<Icons.AlertCircle size={30}/>:<Icons.CheckCircle size={30}/>}</div><p className="text-slate-300 text-sm font-medium whitespace-pre-wrap leading-relaxed">{infoModal.msg}</p><button onClick={()=>setInfoModal({...infoModal, isOpen:false})} className="w-full bg-slate-700 py-3 rounded-xl font-bold uppercase text-[10px]">Cerrar</button></div></Modal>
-            <Modal isOpen={isAnalysisModalOpen} title="Informe de Análisis IA" onClose={()=>setIsAnalysisModalOpen(false)} size="lg"> <div className="space-y-4"> <div className="prose-content text-sm text-slate-300 leading-relaxed" dangerouslySetInnerHTML={{__html: analysisResult}}></div> <div className="flex justify-end pt-4 border-t border-slate-700"> <button onClick={handlePrintAI} className="bg-slate-700 px-4 py-2 rounded-lg text-xs font-bold text-white flex items-center gap-2 hover:bg-slate-600"><Icons.ExternalLink size={14}/> IMPRIMIR</button> </div> </div> </Modal>
+            <Modal isOpen={isAnalysisModalOpen} title="Informe de Análisis IA" onClose={()=>setIsAnalysisModalOpen(false)} size="lg"> 
+                {/* CONTENEDOR MODIFICADO PARA SOPORTAR TEXTO NEGRO SOBRE FONDO BLANCO */}
+                <div className="space-y-4 bg-white p-6 rounded-xl shadow-inner max-h-[70vh] overflow-y-auto"> 
+                    <div className="prose-content text-sm text-slate-800 leading-relaxed font-sans" dangerouslySetInnerHTML={{__html: analysisResult}}></div> 
+                </div>
+                <div className="flex justify-end pt-4 border-t border-slate-700"> 
+                    <button onClick={handlePrintAI} className="bg-slate-700 px-4 py-2 rounded-lg text-xs font-bold text-white flex items-center gap-2 hover:bg-slate-600"><Icons.ExternalLink size={14}/> IMPRIMIR</button> 
+                </div> 
+            </Modal>
         </div>
     );
 };
+
+
 
 
 const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
