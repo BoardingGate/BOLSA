@@ -1614,13 +1614,13 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
     const [suggestedQuestions, setSuggestedQuestions] = useState(["Competencia directa", "Historial de dividendos", "Nivel de deuda", "Directivos y Salarios", "Escándalos recientes", "Previsión próximos resultados"]);
 
     // --- ESTADOS PESTAÑA RASTREO ---
-    const [exchange, setExchange] = useState('NYSE');
+    const [exchange, setExchange] = useState('US_MARKET');
     const [maxResults, setMaxResults] = useState(10);
     const [screenerResults, setScreenerResults] = useState([]);
     const [screenerSort, setScreenerSort] = useState({ key: 'ticker', direction: 'asc' });
     const [statusModal, setStatusModal] = useState({ isOpen: false, title: '', msg: '', type: 'info' });
 
-    // Configuración de Parámetros RASTREO con Checkbox
+    // Configuración de Parámetros RASTREO
     const [params, setParams] = useState({
         per: { val: 20, active: true, label: 'PER Máximo', min: 5, max: 100, step: 1, help: 'Veces que el precio cubre el beneficio. <15: Barata, >25: Crecimiento/Cara.' },
         peg: { val: 1.5, active: true, label: 'PEG Máximo', min: 0.1, max: 5, step: 0.1, help: 'PER ajustado al crecimiento. <1: Infravalorada, >2: Sobrevalorada.' },
@@ -1630,25 +1630,38 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         debtEquity: { val: 1, active: false, label: 'Deuda/Equity Máx', min: 0, max: 5, step: 0.1, help: 'Apalancamiento. >1.5 implica riesgo alto si suben tipos de interés.' }
     });
 
+    // LISTA DE BOLSAS MEJORADA (Nombres descriptivos para la IA)
     const EXCHANGES = [
-        { id: 'NYSE', name: 'NYSE', country: 'EE.UU.' }, { id: 'NASDAQ', name: 'NASDAQ', country: 'EE.UU.' },
-        { id: 'BME', name: 'BME', country: 'España' }, { id: 'LSE', name: 'London SE', country: 'R.U.' },
-        { id: 'XETRA', name: 'XETRA', country: 'Alemania' }, { id: 'EPA', name: 'Euronext Paris', country: 'Francia' },
-        { id: 'JPX', name: 'JPX', country: 'Japón' }, { id: 'HKEX', name: 'HKEX', country: 'Hong Kong' },
-        { id: 'TSX', name: 'TSX', country: 'Canadá' }, { id: 'ASX', name: 'ASX', country: 'Australia' }
+        { id: 'US_MARKET', name: 'EE.UU. (NYSE/NASDAQ)', country: 'USA' },
+        { id: 'SPAIN_SIBE', name: 'España (Mercado Continuo/IBEX)', country: 'España' },
+        { id: 'LONDON_LSE', name: 'Reino Unido (LSE)', country: 'UK' },
+        { id: 'GERMANY_XETRA', name: 'Alemania (XETRA/DAX)', country: 'Alemania' },
+        { id: 'FRANCE_CAC', name: 'Francia (Euronext Paris)', country: 'Francia' },
+        { id: 'JAPAN_TOKYO', name: 'Japón (Tokyo Stock Exchange)', country: 'Japón' },
+        { id: 'HK_HKEX', name: 'Hong Kong (HKEX)', country: 'China' },
+        { id: 'CANADA_TSX', name: 'Canadá (TSX)', country: 'Canadá' },
+        { id: 'AUSTRALIA_ASX', name: 'Australia (ASX)', country: 'Australia' },
+        { id: 'ITALY_MILAN', name: 'Italia (Borsa Italiana)', country: 'Italia' },
+        { id: 'SWISS_SIX', name: 'Suiza (SIX Swiss Exchange)', country: 'Suiza' },
+        { id: 'NETHERLANDS_AEX', name: 'Países Bajos (Euronext Amsterdam)', country: 'Holanda' }
     ];
 
     // --- UTILIDADES ---
-    const sanitizeAndParseJSON = (text) => { 
+    const extractJSON = (text) => { 
         try {
             let clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
             const match = clean.match(/(\{[\s\S]*\}|\[[\s\S]*\])/); 
             if (match) return JSON.parse(match[0]); 
             return JSON.parse(clean); 
-        } catch (e) { throw new Error("La IA no devolvió un formato válido. Intenta simplificar la petición."); } 
+        } catch (e) { return null; } 
     };
 
-    // --- LÓGICA ESTUDIO (PROMPT ORIGINAL RESTAURADO) ---
+    const formatN = (v, dec = 2) => {
+        let n = parseFloat(v) || 0;
+        return n.toFixed(dec).replace('.', ',');
+    };
+
+    // --- LÓGICA ESTUDIO ---
     const rotateSuggestions = (currentQ) => { 
         const base = ["Impacto en valoración", "Riesgos asociados", "Comparativa sectorial", "Proyección futura", "Movimientos Insider", "Análisis Técnico Profundo", "Catalizadores próximos"]; 
         const filtered = base.filter(q => q !== currentQ); 
@@ -1667,9 +1680,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
                 setSpecificAnswer(res.replace(/```html/g, '').replace(/```/g, '').trim()); 
                 rotateSuggestions(question); 
             } else { 
-                // PROMPT ROBUSTO ORIGINAL
                 const prompt = `ROLE: Senior Wall Street Analyst. TASK: Generate a comprehensive investment report for "${ticker}". OUTPUT: JSON ONLY. Strict format. LANGUAGE: Spanish (Spain). Translate ALL financial terms professionally (e.g., Yield -> Rentabilidad, Hold -> Mantener). 
-                
                 JSON STRUCTURE: { 
                     "company": "Name", "current_price": number, "intrinsic_value": number, "forecast_1y": number, "forecast_5y": number, "valuation_status": "Infravalorada/Sobrevalorada/Justa", "investment_verdict": "Detailed professional verdict (approx 60 words).", 
                     "technical_analysis": { "trend_short": "Alcista/Bajista/Lateral", "trend_long": "Alcista/Bajista", "supports": ["Price 1", "Price 2"], "resistances": ["Price 1", "Price 2"], "commentary": "Brief technical insight" }, 
@@ -1683,53 +1694,80 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
                     "peers": ["TICKER1", "TICKER2"], "suggested_questions": ["q1","q2","q3"] 
                 }`; 
                 const res = await askGemini(apiKey, prompt); 
-                const json = sanitizeAndParseJSON(res); 
+                const json = extractJSON(res); 
+                if(!json) throw new Error("La IA no devolvió un JSON válido. Inténtalo de nuevo.");
                 setData(json); 
                 if(json.suggested_questions) setSuggestedQuestions(json.suggested_questions); 
             } 
         } catch (e) { setStatusModal({ isOpen: true, title: 'Error iA', msg: e.message, type: 'error' }); } finally { setLoading(false); } 
     };
 
-    // --- LÓGICA RASTREO (PROMPT MEJORADO) ---
+    // --- LÓGICA RASTREO (CORREGIDA) ---
     const runScreener = async () => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+        
+        // 1. Construir descripción del mercado legible para la IA
+        const marketObj = EXCHANGES.find(e => e.id === exchange);
+        const marketDesc = marketObj ? marketObj.name : exchange;
+
+        // 2. Construir filtros activos de forma narrativa ("Soft Filtering")
+        const activeFilters = Object.entries(params)
+            .filter(([_, p]) => p.active)
+            .map(([k, p]) => {
+                // Invertimos la lógica para que la IA entienda el "deseo" del inversor
+                if (k === 'roi') return `Alta Eficiencia (ROI superior a ${p.val}%)`;
+                if (k === 'divYield') return `Altos Dividendos (Yield superior a ${p.val}%)`;
+                if (k === 'per') return `Barata/Valor (PER menor a ${p.val})`;
+                if (k === 'peg') return `Crecimiento a buen precio (PEG menor a ${p.val})`;
+                if (k === 'pb') return `Valor en libros (P/B menor a ${p.val})`;
+                if (k === 'debtEquity') return `Poca Deuda (Deuda/Eq menor a ${p.val})`;
+                return '';
+            })
+            .join(', ');
+
+        if (!activeFilters) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Por favor, activa al menos un filtro.', type: 'info' });
+
         setLoading(true);
         try {
-            // Construimos la lista de filtros activos solo
-            const filters = Object.entries(params)
-                .filter(([_, p]) => p.active)
-                .map(([k, p]) => {
-                    if (k === 'roi' || k === 'divYield') return `${p.label} (mayor que ${p.val})`;
-                    return `${p.label} (menor que ${p.val})`;
-                })
-                .join(', ');
-
-            if (!filters) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Activa al menos un filtro.', type: 'info' });
-
-            const prompt = `Actúa como un Screener de Acciones Experto.
-            OBJETIVO: Identificar las ${maxResults} mejores oportunidades en la bolsa "${exchange}" que cumplan (o se aproximen mucho) a estos criterios:
-            ${filters}.
-            
-            INSTRUCCIONES:
-            1. Usa tu conocimiento interno para seleccionar empresas reales que típicamente encajen en este perfil Fundamental.
-            2. Si no existen coincidencias exactas, incluye las empresas que estén más cerca de cumplir los requisitos.
-            3. El precio debe estar en la divisa local de ${exchange}.
-            
-            SALIDA OBLIGATORIA (JSON ARRAY PURO):
-            [
-              {"ticker": "SYMBOL", "name": "Nombre Empresa", "price": 0.00, "per": 0.0, "peg": 0.0, "roi": 0.0, "divYield": 0.0, "pb": 0.0, "debtEquity": 0.0}
-            ]
+            // 3. Prompt de "Experto" en lugar de "Base de Datos"
+            const prompt = `
+                Actúa como un Gestor de Fondos Experto especializado en el mercado: ${marketDesc}.
+                
+                TU TAREA:
+                Genera una lista de las ${maxResults} mejores acciones que encajen en este PERFIL DE INVERSIÓN:
+                [ ${activeFilters} ]
+                
+                INSTRUCCIONES CRÍTICAS:
+                1. NO digas "no tengo datos en tiempo real". Usa tu conocimiento entrenado (training data) sobre los fundamentales históricos y recientes de las empresas.
+                2. Si no hay empresas que cumplan los filtros EXACTAMENTE, devuelve las que MÁS SE APROXIMEN. ¡Nunca devuelvas una lista vacía!
+                3. Estima los datos numéricos (Precio, PER, Yield) basándote en el último cierre conocido.
+                4. La divisa del precio debe ser la local del mercado seleccionado.
+                
+                SALIDA JSON OBLIGATORIA (Sin texto extra):
+                [
+                  {
+                    "ticker": "SYMBOL",
+                    "name": "Nombre Corto Empresa",
+                    "price": 0.00,
+                    "per": 0.0,
+                    "peg": 0.0,
+                    "roi": 0.0,
+                    "divYield": 0.0,
+                    "pb": 0.0,
+                    "debtEquity": 0.0
+                  }
+                ]
             `;
             
             const res = await askGemini(apiKey, prompt);
-            const results = sanitizeAndParseJSON(res);
+            const results = extractJSON(res);
             
             if (!results || !Array.isArray(results) || results.length === 0) {
-                throw new Error("No se encontraron activos.");
+                throw new Error("La IA no pudo generar recomendaciones. Intenta con filtros menos restrictivos.");
             }
             setScreenerResults(results);
         } catch (e) {
-            setStatusModal({ isOpen: true, title: 'Sin Resultados', msg: 'La IA no encontró coincidencias o el formato falló. Intenta relajar los filtros.', type: 'warning' });
+            setStatusModal({ isOpen: true, title: 'Sin Resultados', msg: e.message, type: 'warning' });
         } finally { setLoading(false); }
     };
 
@@ -1742,18 +1780,17 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         });
     }, [screenerResults, screenerSort]);
 
-    // Imprimir Rastreo
     const handlePrintScreener = () => {
         const printWindow = window.open('', '', 'height=800,width=1100');
-        let html = `<html><head><title>Rastreo iA</title><style>body{font-family:sans-serif;padding:20px;font-size:10px;} h1{border-bottom:2px solid #333;} table{width:100%;border-collapse:collapse;margin-top:10px;} th,td{border:1px solid #ddd;padding:6px;text-align:right;} th{background:#f1f5f9;text-align:center;text-transform:uppercase;font-size:8px;}</style></head><body>`;
-        html += `<h1>RASTREO DE ACTIVOS: ${exchange}</h1><p><b>Filtros Activos:</b> ${Object.entries(params).filter(([_,p])=>p.active).map(([_,p])=>`${p.label}(${p.val})`).join(' | ')}</p><p>Fecha: ${new Date().toLocaleString()}</p>`;
-        html += `<table><thead><tr><th>Ticker</th><th style="text-align:left">Nombre</th><th>Precio</th><th>PER</th><th>PEG</th><th>ROI</th><th>Yield</th><th>P/B</th><th>D/E</th></tr></thead><tbody>`;
-        sortedScreenerResults.forEach(r => { html += `<tr><td><b>${r.ticker}</b></td><td style="text-align:left">${r.name}</td><td>${formatN(r.price)}</td><td>${r.per}</td><td>${r.peg}</td><td>${r.roi}%</td><td>${r.divYield}%</td><td>${r.pb}</td><td>${r.debtEquity}</td></tr>`; });
+        const marketName = EXCHANGES.find(e => e.id === exchange)?.name || exchange;
+        let html = `<html><head><title>Rastreo iA</title><style>body{font-family:sans-serif;padding:20px;font-size:10px;} h1{border-bottom:2px solid #333;} table{width:100%;border-collapse:collapse;margin-top:10px;} th,td{border:1px solid #ddd;padding:6px;text-align:right;} th{background:#f1f5f9;text-align:center;text-transform:uppercase;font-size:8px;} .left{text-align:left;}</style></head><body>`;
+        html += `<h1>RASTREO DE ACTIVOS: ${marketName}</h1><p><b>Perfil Buscado:</b> ${Object.entries(params).filter(([_,p])=>p.active).map(([_,p])=>`${p.label}(${p.val})`).join(' | ')}</p><p>Fecha: ${new Date().toLocaleString()}</p>`;
+        html += `<table><thead><tr><th>Ticker</th><th class="left">Nombre</th><th>Precio</th><th>PER</th><th>PEG</th><th>ROI</th><th>Yield</th><th>P/B</th><th>D/E</th></tr></thead><tbody>`;
+        sortedScreenerResults.forEach(r => { html += `<tr><td><b>${r.ticker}</b></td><td class="left">${r.name}</td><td>${formatN(r.price)}</td><td>${r.per}</td><td>${r.peg}</td><td>${r.roi}%</td><td>${r.divYield}%</td><td>${r.pb}</td><td>${r.debtEquity}</td></tr>`; });
         html += `</tbody></table></body></html>`;
         printWindow.document.write(html); printWindow.document.close(); printWindow.print();
     };
 
-    // Imprimir Estudio (Original recuperado)
     const handlePrintEstudio = () => { 
         const printWindow = window.open('', '', 'height=800,width=800'); 
         let html = `<html><head><title>Estudio Valor</title><style>body{font-family:sans-serif;padding:20px;font-size:10px;} h1{border-bottom:2px solid #333;} .grid{display:flex; gap:10px;} .col{flex:1;} ul{padding-left:15px;} .label{font-weight:bold; color:#555;}</style></head><body>`; 
@@ -1768,7 +1805,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         printWindow.document.write(html); printWindow.document.close(); printWindow.print(); 
     };
 
-    // Sub-componente Slider con Selector de Activación
     const ParamCard = ({ id, config }) => (
         <div className={`flex flex-col gap-2 p-4 rounded-2xl border transition-all ${config.active ? 'bg-slate-900/60 border-blue-500/50 shadow-lg shadow-blue-900/10' : 'bg-slate-900/20 border-slate-800 opacity-60 grayscale'}`}>
             <div className="flex justify-between items-center pb-2 border-b border-white/5">
@@ -1794,13 +1830,13 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
 
     return (
         <div className="h-full flex flex-col p-4 md:p-6 overflow-y-auto custom-scrollbar relative bg-[#0a0a0a]">
-            {loading && <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md flex flex-col items-center justify-center"><Icons.Loader size={60} className="text-blue-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Procesando Consulta iA...</div></div>}
+            {loading && <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md flex flex-col items-center justify-center"><Icons.Loader size={60} className="text-blue-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando Mercado Global...</div></div>}
 
             {/* MODAL DE STATUS (NO ALERT) */}
             {statusModal.isOpen && (
                 <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 fade-in">
                     <div className="bg-slate-900 border border-slate-700 p-6 rounded-2xl max-w-sm w-full shadow-2xl relative">
-                        <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 mx-auto ${statusModal.type==='error'?'bg-red-500/20 text-red-500':'bg-blue-500/20 text-blue-400'}`}>
+                        <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 mx-auto ${statusModal.type==='error'?'bg-red-500/20 text-red-500': statusModal.type==='warning'?'bg-yellow-500/20 text-yellow-500':'bg-blue-500/20 text-blue-400'}`}>
                             {statusModal.type==='error'?<Icons.AlertCircle size={28}/>:<Icons.CheckCircle size={28}/>}
                         </div>
                         <h3 className="text-lg font-bold text-center text-white mb-2">{statusModal.title}</h3>
@@ -1813,18 +1849,17 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
             {/* PESTAÑAS */}
             <div className="flex gap-2 mb-6 bg-slate-900 p-1 rounded-xl border border-slate-800 w-fit shrink-0 shadow-lg">
                 <button onClick={() => setActiveSubTab('estudio')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'estudio' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Estudio Individual</button>
-                <button onClick={() => setActiveSubTab('rastreo')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'rastreo' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Rastreo de Mercado</button>
+                <button onClick={() => setActiveSubTab('rastreo')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'rastreo' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Rastreo de Activos</button>
             </div>
 
             {activeSubTab === 'estudio' ? (
-                /* CONTENIDO ORIGINAL ESTUDIO (RESTAURADO) */
+                /* CONTENIDO ORIGINAL ESTUDIO */
                 <div className="flex flex-col gap-6 fade-in max-w-6xl mx-auto w-full pb-10">
                     <div className="flex flex-col gap-6 shrink-0 bg-slate-900/50 p-6 rounded-2xl border border-slate-800 shadow-xl">
                         <div className="flex gap-4"><div className="flex-1 relative"><Icons.Search className="absolute left-3 top-3.5 text-slate-500" size={18}/><input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} placeholder="Introduce Ticker (Ej: AAPL, SAN.MC, TSLA...)" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3.5 pl-10 pr-4 text-white font-bold tracking-widest text-sm" /></div><button onClick={analyze} disabled={loading || !ticker} className="bg-blue-600 px-8 rounded-xl font-black flex items-center gap-2 shadow-lg hover:bg-blue-500 transition-colors text-xs text-white">{loading ? <Icons.Loader/> : <Icons.Wand/>} ANALIZAR</button><button onClick={() => { setTicker(''); setQuestion(''); setData(null); setSpecificAnswer(null); }} className="bg-slate-700 px-4 rounded-xl font-bold text-white hover:bg-slate-600 transition-colors text-xs border border-slate-600">BORRAR</button></div>
                         <div className="relative"><Icons.MessageCircle className="absolute left-3 top-3 text-slate-500" size={18}/><input type="text" value={question} onChange={e => setQuestion(e.target.value)} placeholder="¿Tienes alguna pregunta específica sobre este valor?" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-xs text-white" /></div>
                         <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">{suggestedQuestions.map((q,i) => ( <button key={i} onClick={()=>setQuestion(q)} className="whitespace-nowrap px-4 py-2 bg-slate-800 border border-slate-700 rounded-full text-[10px] text-slate-400 hover:text-white hover:bg-slate-700 transition-colors">{q}</button> ))}</div>
                     </div>
-                    {/* RESULTADOS ESTUDIO */}
                     {(specificAnswer || data) && (
                         <div className="glass-panel p-6 rounded-2xl fade-in relative border-slate-700 bg-slate-900/30 shadow-2xl">
                              <button onClick={handlePrintEstudio} className="absolute top-4 right-4 bg-slate-700 px-3 py-1 rounded text-xs font-bold text-white flex gap-2 items-center hover:bg-slate-600 border border-slate-600"><Icons.ExternalLink size={12}/> IMPRIMIR</button>
@@ -1913,7 +1948,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         </div>
     );
 };
-
 
 
 
