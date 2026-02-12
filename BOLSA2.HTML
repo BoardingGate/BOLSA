@@ -1047,8 +1047,67 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     }, [apiKey, refreshInterval, isAppReady]);
 
     const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
-    const updatePrices = async (isAuto = false) => { const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); if (!isAuto && active.length === 0) return; setUpdating(true); let log = { success: [], fail: [] }, newUpdates = []; try { for (const item of active) { const prompt = `IMPORTANTE: Responde SOLO JSON con PUNTO decimal. Sin símbolos de moneda ni comas. Datos de "${item.ticker}" (${item.stockCurrency}) a ${baseCurrency}. JSON: {"p":precio,"fx":cambio,"pe":per,"n":"nombre"}`; try { const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json && (json.p || json.p === 0)) { newUpdates.push({ id: item.id, n: json.n, p: cleanVal(json.p), fx: cleanVal(json.fx), pe: cleanVal(json.pe) }); log.success.push(item.ticker); } else { log.fail.push(item.ticker); } } catch (e) { log.fail.push(item.ticker); } } if (newUpdates.length > 0) { setPortfolio(prev => prev.map(p => { const u = newUpdates.find(x => x.id === p.id); return u ? { ...p, name: u.n || p.name, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe } : p; })); setLastUpdate(new Date().toISOString()); } if (!isAuto && log.fail.length > 0) setInfoModal({ isOpen: true, title: 'Sincronización con Errores', msg: `Fallos en: ${log.fail.join(', ')}.`, type: 'warning' }); } catch (e) { if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); } finally { setUpdating(false); } };
-    
+ //   const updatePrices = async (isAuto = false) => { const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); if (!isAuto && active.length === 0) return; setUpdating(true); let log = { success: [], fail: [] }, newUpdates = []; try { for (const item of active) { const prompt = `IMPORTANTE: Responde SOLO JSON con PUNTO decimal. Sin símbolos de moneda ni comas. Datos de "${item.ticker}" (${item.stockCurrency}) a ${baseCurrency}. JSON: {"p":precio,"fx":cambio,"pe":per,"n":"nombre"}`; try { const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json && (json.p || json.p === 0)) { newUpdates.push({ id: item.id, n: json.n, p: cleanVal(json.p), fx: cleanVal(json.fx), pe: cleanVal(json.pe) }); log.success.push(item.ticker); } else { log.fail.push(item.ticker); } } catch (e) { log.fail.push(item.ticker); } } if (newUpdates.length > 0) { setPortfolio(prev => prev.map(p => { const u = newUpdates.find(x => x.id === p.id); return u ? { ...p, name: u.n || p.name, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe } : p; })); setLastUpdate(new Date().toISOString()); } if (!isAuto && log.fail.length > 0) setInfoModal({ isOpen: true, title: 'Sincronización con Errores', msg: `Fallos en: ${log.fail.join(', ')}.`, type: 'warning' }); } catch (e) { if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); } finally { setUpdating(false); } };
+
+     const updatePrices = async (isAuto = false) => { 
+        const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); 
+        if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); 
+        if (!isAuto && active.length === 0) return; 
+        
+        setUpdating(true); 
+        let log = { success: [], fail: [] }, newUpdates = []; 
+        
+        try { 
+            for (const item of active) { 
+                // Prompt mejorado para evitar alucinaciones y nombres
+                const prompt = `Actúa como un terminal financiero de alta precisión. 
+                Busca los datos actuales del activo "${item.ticker}" en su moneda de origen (${item.stockCurrency}). 
+                Si es un índice (como IBEX, SP500, etc.), asegúrate de dar el valor del índice spot, no de un futuro.
+                
+                Responde EXCLUSIVAMENTE un objeto JSON con esta estructura exacta y valores numéricos (usa punto para decimales):
+                {"p": precio_actual, "fx": tasa_de_cambio_a_${baseCurrency}, "pe": ratio_per_actual}
+                
+                No incluyas texto, ni el nombre de la empresa, ni explicaciones. Solo el JSON.`; 
+
+                try { 
+                    const res = await askGemini(apiKey, prompt); 
+                    const json = extractJSON(res); 
+                    
+                    if (json && (json.p || json.p === 0)) { 
+                        newUpdates.push({ 
+                            id: item.id, 
+                            p: cleanVal(json.p), 
+                            fx: cleanVal(json.fx), 
+                            pe: cleanVal(json.pe) 
+                        }); 
+                        log.success.push(item.ticker); 
+                    } else { 
+                        log.fail.push(item.ticker); 
+                    } 
+                } catch (e) { 
+                    log.fail.push(item.ticker); 
+                } 
+            } 
+
+            if (newUpdates.length > 0) { 
+                setPortfolio(prev => prev.map(p => { 
+                    const u = newUpdates.find(x => x.id === p.id); 
+                    // Mantenemos p.name intacto, solo actualizamos los 3 datos financieros
+                    return u ? { ...p, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe } : p; 
+                })); 
+                setLastUpdate(new Date().toISOString()); 
+            } 
+            
+            if (!isAuto && log.fail.length > 0) {
+                setInfoModal({ isOpen: true, title: 'Sincronización parcial', msg: `No se pudieron actualizar: ${log.fail.join(', ')}.`, type: 'warning' });
+            }
+        } catch (e) { 
+            if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); 
+        } finally { 
+            setUpdating(false); 
+        } 
+    };
+
     // ANALISIS IA MEJORADO Y CORREGIDO
     const analyzePortfolio = async () => {
       const dataToAnalyze = visiblePortfolio;
