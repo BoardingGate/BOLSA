@@ -1059,7 +1059,8 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
  
-     const updatePrices = async (isAuto = false) => { 
+
+const updatePrices = async (isAuto = false) => { 
         const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); 
         if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); 
         if (!isAuto && active.length === 0) return; 
@@ -1068,39 +1069,46 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         let log = { success: [], fail: [] }, newUpdates = []; 
         
         try { 
-            // Procesamos en lotes o uno a uno (aquí uno a uno para máxima precisión con el prompt específico)
+            // Agrupamos peticiones para optimizar, pero mantenemos lógica individual por precisión
             for (const item of active) { 
-                // LÓGICA ESPECÍFICA PARA ÍNDICES VS ACCIONES
-                const assetType = item.isIndex ? "ÍNDICE BURSÁTIL (INDEX SPOT, NO ETF)" : "ACCIÓN / ETF";
+                // DETECCIÓN DE TIPO PARA EVITAR ETFs EN ÍNDICES
+                const isIndex = item.isIndex || item.ticker.startsWith('^') || item.ticker.includes('INDEX');
+                const assetDesc = isIndex ? "MARKET INDEX (SPOT VALUE)" : "STOCK/EQUITY";
                 
-                const prompt = `Actúa como un terminal financiero de alta precisión (Bloomberg/Reuters).
-                OBJETIVO: Obtener datos de mercado en tiempo real.
+                // PROMPT REPARADO: 
+                // 1. Busca el precio.
+                // 2. Si la moneda del mercado difiere de 'stockCurrency', convierte el PRECIO ('p') a 'stockCurrency'.
+                // 3. Calcula el FX independientemente ('stockCurrency' -> 'baseCurrency').
+                const prompt = `
+                ROLE: Financial Data API.
+                TASK: Get data for asset: "${item.name}" (Ticker: ${item.ticker}).
+                TYPE: ${assetDesc} (If Index, return SPOT value, NOT ETF).
                 
-                ACTIVO: "${item.ticker}"
-                NOMBRE: "${item.name}"
-                TIPO: ${assetType}
+                CONFIGURATION:
+                - The user holds this asset in: ${item.stockCurrency} (This is CRITICAL).
+                - The portfolio base currency is: ${baseCurrency}.
                 
-                REQUISITO CRÍTICO DE MONEDA:
-                Debes devolver el precio EXCLUSIVAMENTE en: ${item.stockCurrency}.
-                NO realices conversiones de divisa. Si el activo cotiza en otra moneda, busca su equivalente en ${item.stockCurrency} o el ticker correcto en esa divisa.
+                REQUIREMENTS:
+                1. "p": Current Price in ${item.stockCurrency}. 
+                   (IF market price is in USD but user has ${item.stockCurrency}=EUR, CONVERT PRICE TO EUR).
+                2. "fx": Exchange rate: 1 ${item.stockCurrency} = ? ${baseCurrency}.
+                   (If currencies are same, fx = 1).
+                3. "pe": TTM P/E Ratio (0 if Index).
                 
-                Responde SOLO JSON:
-                {"p": precio_numérico_actual, "fx": tasa_cambio_1_${item.stockCurrency}_a_${baseCurrency}, "pe": ratio_per_numérico}
-                
-                Notas:
-                - "p": Usa punto decimal.
-                - "fx": Cuántos ${baseCurrency} vale 1 ${item.stockCurrency}. Si es la misma moneda, pon 1.
-                - "pe": Si es un índice o no tiene PER, pon 0.`; 
+                RETURN JSON ONLY: {"p": number, "fx": number, "pe": number}`; 
 
                 try { 
                     const res = await askGemini(apiKey, prompt); 
                     const json = extractJSON(res); 
                     
                     if (json && (json.p || json.p === 0)) { 
+                        // Corrección de seguridad para FX si las monedas coinciden
+                        const safeFx = (item.stockCurrency === baseCurrency) ? 1 : cleanVal(json.fx);
+                        
                         newUpdates.push({ 
                             id: item.id, 
                             p: cleanVal(json.p), 
-                            fx: cleanVal(json.fx), 
+                            fx: safeFx,
                             pe: cleanVal(json.pe) 
                         }); 
                         log.success.push(item.ticker); 
@@ -1116,12 +1124,13 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                 setPortfolio(prev => prev.map(p => { 
                     const u = newUpdates.find(x => x.id === p.id); 
                     return u ? { ...p, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe } : p; 
-                })); 
+                }), false); // <--- ESTE 'false' ES LA CLAVE
+                
                 setLastUpdate(new Date().toISOString()); 
             } 
             
             if (!isAuto && log.fail.length > 0) {
-                setInfoModal({ isOpen: true, title: 'Sincronización parcial', msg: `No se pudieron actualizar: ${log.fail.join(', ')}. Verifica que el Ticker coincida con la moneda solicitada.`, type: 'warning' });
+                setInfoModal({ isOpen: true, title: 'Sincronización parcial', msg: `Fallos en: ${log.fail.join(', ')}.`, type: 'warning' });
             }
         } catch (e) { 
             if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); 
@@ -1129,6 +1138,8 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             setUpdating(false); 
         } 
     };
+
+   
 
 
     // ANALISIS IA MEJORADO Y CORREGIDO
@@ -2457,7 +2468,14 @@ const App = () => {
 
           const isAuth = _0x7a2(rk);
           const handleActivate = v => { if(_0x7a2(v)){ setRk(v); alert("¡Sistema Activado!"); } else alert("Código No Válido."); };
-          const updatePortfolio = (newVal) => { setPortfolio(newVal); setLocalTimestamp(Date.now()); setSyncStatus('unsaved'); };
+          const updatePortfolio = (newVal, triggerSave = true) => { 
+           setPortfolio(newVal); 
+        
+          if (triggerSave) {
+            setLocalTimestamp(Date.now()); 
+            setSyncStatus('unsaved'); 
+            }
+          };
           const updateResultsData = (newVal) => { setResultsData(newVal); setLocalTimestamp(Date.now()); setSyncStatus('unsaved'); };
 
           const uploadToCloud = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) return alert("Configura la URL de Google Script en Ajustes."); setSyncStatus('uploading'); setSyncMessage('Subiendo datos...'); try { const now = Date.now(); const payload = { timestamp: now, portfolio, resultsData, apiKey, baseCurrency, refreshInterval, version: 3, appPin }; await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); setLocalTimestamp(now); setSyncStatus('synced'); setSyncMessage('✅ Sincronizado'); setTimeout(() => setSyncMessage(''), 3000); } catch (e) { console.error(e); setSyncStatus('error'); setSyncMessage('❌ Error al subir'); } };
