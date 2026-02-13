@@ -1059,7 +1059,9 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
  
-     const updatePrices = async (isAuto = false) => { 
+
+
+    const updatePrices = async (isAuto = false) => { 
         const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); 
         if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); 
         if (!isAuto && active.length === 0) return; 
@@ -1068,29 +1070,40 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         let log = { success: [], fail: [] }, newUpdates = []; 
         
         try { 
-            // Procesamos en lotes o uno a uno (aquí uno a uno para máxima precisión con el prompt específico)
+            // Procesamos uno a uno para máxima precisión en índices y divisas
             for (const item of active) { 
-                // LÓGICA ESPECÍFICA PARA ÍNDICES VS ACCIONES
-                const assetType = item.isIndex ? "ÍNDICE BURSÁTIL (INDEX SPOT, NO ETF)" : "ACCIÓN / ETF";
+                // 1. Definición estricta del tipo de activo para evitar confusión con ETFs
+                const assetType = item.isIndex ? "MAJOR MARKET INDEX SPOT PRICE (NOT ETF, NOT FUTURES)" : "STOCK/EQUITY";
                 
-                const prompt = `Actúa como un terminal financiero de alta precisión (Bloomberg/Reuters).
-                OBJETIVO: Obtener datos de mercado en tiempo real.
+                // 2. Refuerzo de búsqueda para tickers genéricos (ej: INDEXSP -> S&P 500)
+                // Si es índice, le damos prioridad al Nombre sobre el Ticker si el ticker es ambiguo
+                const searchSubject = item.isIndex ? `${item.name} (${item.ticker}) Index` : item.ticker;
+
+                // 3. Prompt Blindado: Obliga a conversión de divisa y discriminación de ETFs
+                const prompt = `
+                ACT AS: Professional Financial Data Terminal (Bloomberg/Reuters).
+                TASK: Get real-time valuation for a specific asset in a SPECIFIC CURRENCY.
                 
-                ACTIVO: "${item.ticker}"
-                NOMBRE: "${item.name}"
-                TIPO: ${assetType}
+                TARGET ASSET:
+                - Search Term: "${searchSubject}"
+                - Name: "${item.name}"
+                - Type: ${assetType} (CRITICAL: If Index, return SPOT price, do NOT return ETF price).
                 
-                REQUISITO CRÍTICO DE MONEDA:
-                Debes devolver el precio EXCLUSIVAMENTE en: ${item.stockCurrency}.
-                NO realices conversiones de divisa. Si el activo cotiza en otra moneda, busca su equivalente en ${item.stockCurrency} o el ticker correcto en esa divisa.
+                REQUIRED CURRENCY: ${item.stockCurrency}
                 
-                Responde SOLO JSON:
-                {"p": precio_numérico_actual, "fx": tasa_cambio_1_${item.stockCurrency}_a_${baseCurrency}, "pe": ratio_per_numérico}
+                LOGIC RULES:
+                1. Find the current market price of "${searchSubject}".
+                2. CHECK CURRENCY: 
+                   - If the asset trades in ${item.stockCurrency}, use that price.
+                   - If it trades in USD but user wants EUR (or vice-versa), YOU MUST CONVERT THE PRICE using the live FX rate immediately.
+                   - The output "p" MUST BE in ${item.stockCurrency}.
+                3. PER RATIO ("pe"): If it's an Index, set "pe": 0. If it's a stock, get current TTM P/E.
                 
-                Notas:
-                - "p": Usa punto decimal.
-                - "fx": Cuántos ${baseCurrency} vale 1 ${item.stockCurrency}. Si es la misma moneda, pon 1.
-                - "pe": Si es un índice o no tiene PER, pon 0.`; 
+                OUTPUT FORMAT (JSON ONLY, NO TEXT):
+                {"p": <number_in_${item.stockCurrency}>, "fx": <rate_1_${item.stockCurrency}_to_${baseCurrency}>, "pe": <number>}
+                
+                Example Logic: If S&P500 is 5800 USD, and user wants EUR (rate 0.92), "p" must be ~5336.
+                `; 
 
                 try { 
                     const res = await askGemini(apiKey, prompt); 
@@ -1121,7 +1134,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             } 
             
             if (!isAuto && log.fail.length > 0) {
-                setInfoModal({ isOpen: true, title: 'Sincronización parcial', msg: `No se pudieron actualizar: ${log.fail.join(', ')}. Verifica que el Ticker coincida con la moneda solicitada.`, type: 'warning' });
+                setInfoModal({ isOpen: true, title: 'Sincronización parcial', msg: `No se pudieron actualizar: ${log.fail.join(', ')}. Verifica el Ticker.`, type: 'warning' });
             }
         } catch (e) { 
             if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); 
@@ -1129,6 +1142,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             setUpdating(false); 
         } 
     };
+
 
 
     // ANALISIS IA MEJORADO Y CORREGIDO
