@@ -1601,7 +1601,6 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 };
 
 
-
 const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
     // --- NAVEGACIÓN ---
     const [activeSubTab, setActiveSubTab] = useState('estudio');
@@ -1650,19 +1649,27 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
     const extractJSON = (text) => { 
         if (!text) return null;
         try {
-            let clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
-            const delimiterRegex = /<<<INICIO_JSON>>>([\s\S]*?)<<<FIN_JSON>>>/;
-            const match = text.match(delimiterRegex);
-            if (match && match[1]) return JSON.parse(match[1].trim());
-
+            // 1. Eliminar bloques de código markdown si los hay
+            let clean = text.replace(/```json/g, '').replace(/```/g, '');
+            
+            // 2. BUSQUEDA FUERZA BRUTA: Encontrar el primer '[' y el último ']'
             const firstBracket = clean.indexOf('[');
             const lastBracket = clean.lastIndexOf(']');
+            
             if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
-                return JSON.parse(clean.substring(firstBracket, lastBracket + 1));
+                // Cortamos exactamente el array JSON
+                const jsonStr = clean.substring(firstBracket, lastBracket + 1);
+                return JSON.parse(jsonStr);
             }
-            if (clean.startsWith('{')) return JSON.parse(clean);
-            return null;
-        } catch (e) { console.error("Error JSON:", e); return null; } 
+            
+            // Fallback: Si devuelve un objeto único en vez de array
+            if (clean.trim().startsWith('{')) return [JSON.parse(clean)];
+
+            throw new Error("No se encontraron corchetes de Array [] en la respuesta.");
+        } catch (e) { 
+            console.error("EXTRACT JSON ERROR:", e);
+            return null; 
+        } 
     };
 
     const formatN = (v, dec = 2) => {
@@ -1670,21 +1677,15 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         return n.toFixed(dec).replace('.', ',');
     };
 
-    // Función para validar visualmente si un valor cumple el criterio
     const checkCriteria = (paramKey, value) => {
         const p = params[paramKey];
-        if (!p.active) return "text-slate-400"; // Si no está activo el filtro, color neutro
-        
+        if (!p.active) return "text-slate-400";
         const val = parseFloat(value);
-        // Lógica: Para ROI y Yield queremos MAYOR QUE. Para el resto MENOR QUE.
-        if (paramKey === 'roi' || paramKey === 'divYield') {
-            return val >= p.val ? "text-green-400 font-bold" : "text-red-400 font-bold";
-        } else {
-            return val <= p.val ? "text-green-400 font-bold" : "text-red-400 font-bold";
-        }
+        if (paramKey === 'roi' || paramKey === 'divYield') return val >= p.val ? "text-green-400 font-bold" : "text-red-400 font-bold";
+        return val <= p.val ? "text-green-400 font-bold" : "text-red-400 font-bold";
     };
 
-    // --- LÓGICA ESTUDIO ---
+    // --- LÓGICA ESTUDIO (ORIGINAL) ---
     const rotateSuggestions = (currentQ) => { 
         const base = ["Impacto en valoración", "Riesgos asociados", "Comparativa sectorial", "Proyección futura", "Movimientos Insider", "Análisis Técnico Profundo", "Catalizadores próximos"]; 
         const filtered = base.filter(q => q !== currentQ); 
@@ -1725,7 +1726,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         } catch (e) { setStatusModal({ isOpen: true, title: 'Error iA', msg: e.message, type: 'error' }); } finally { setLoading(false); } 
     };
 
-    // --- LÓGICA RASTREO ---
+    // --- LÓGICA RASTREO (CORREGIDA Y DEPURADA) ---
     const runScreener = async () => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
         
@@ -1749,37 +1750,35 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
 
         setLoading(true);
         try {
-            // PROMPT REFORZADO "LOGICA AND"
             const prompt = `
-            ROL: Stock Screener API Strict Mode.
-            MERCADO: ${marketDesc}.
-            CANTIDAD: ${maxResults} resultados.
+            Genera un JSON Array con las ${maxResults} mejores acciones del mercado ${marketDesc} que cumplan: ${activeFilters}.
             
-            FILTROS OBLIGATORIOS (Operador Lógico: AND): 
-            ${activeFilters}
+            IMPORTANTE:
+            1. Usa tu conocimiento interno. No busques en tiempo real si fallas.
+            2. Prioriza cumplir los criterios. Si es difícil, busca los más cercanos.
+            3. Devuelve SOLO el JSON Array. Sin texto introductorio.
             
-            INSTRUCCIONES DE PRIORIDAD:
-            1. PRIORIZA ABSOLUTAMENTE el cumplimiento de TODOS los filtros a la vez.
-            2. Si no existen empresas que cumplan TODO, busca las que fallen por el margen más pequeño posible.
-            3. NO inventes datos. Usa tu base de conocimiento financiera.
-            
-            SALIDA JSON OBLIGATORIA (Envolver entre etiquetas):
-            <<<INICIO_JSON>>>
-            [
-              {"ticker":"SYM","name":"Company","price":10.5,"per":12.1,"peg":0.9,"roi":15.5,"divYield":3.2,"pb":1.1,"debtEquity":0.5}
-            ]
-            <<<FIN_JSON>>>
+            SCHEMA:
+            [{"ticker":"SYM","name":"Name","price":1.0,"per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0}]
             `;
             
             const res = await askGemini(apiKey, prompt);
+            
+            // --- DEBUG LOG PARA ERUDA ---
+            console.log("%c RASTREO RESPONSE: ", "background: #222; color: #bada55", res);
+            
+            if (!res) throw new Error("La IA devolvió una respuesta vacía.");
+
             const results = extractJSON(res);
             
             if (!results || !Array.isArray(results) || results.length === 0) {
-                throw new Error("La IA no devolvió datos estructurados. Intenta relajar los filtros.");
+                console.error("FALLO PARSEO JSON. Respuesta:", res); // Esto saldrá rojo en Eruda
+                throw new Error("Formato de respuesta inválido. Ver Consola para detalles.");
             }
             setScreenerResults(results);
         } catch (e) {
-            setStatusModal({ isOpen: true, title: 'Sin Resultados', msg: e.message, type: 'warning' });
+            console.error("ERROR RASTREO:", e); // Esto saldrá rojo en Eruda
+            setStatusModal({ isOpen: true, title: 'Error de Rastreo', msg: e.message + "\n(Revisa la consola para ver la respuesta cruda)", type: 'error' });
         } finally { setLoading(false); }
     };
 
@@ -1836,14 +1835,14 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         </div>
     );
 
-    const calcUpside = (t, c) => (!t || !c) ? 0 : ((t - c) / c) * 100;
     const getComparisonVerdict = (metric, sVal, iVal) => { if(!sVal || !iVal) return ""; if(metric === 'yield') return sVal > iVal ? "✅ Mejor" : "❌ Peor"; return sVal < iVal ? "✅ Mejor" : "❌ Peor"; };
+    const calcUpside = (t, c) => (!t || !c) ? 0 : ((t - c) / c) * 100;
 
     return (
         <div className="h-full flex flex-col p-4 md:p-6 overflow-y-auto custom-scrollbar relative bg-[#0a0a0a]">
             {loading && <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md flex flex-col items-center justify-center"><Icons.Loader size={60} className="text-blue-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando Mercado Global...</div></div>}
 
-            {/* MODAL DE STATUS */}
+            {/* MODAL DE STATUS (NO ALERT) */}
             {statusModal.isOpen && (
                 <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 fade-in">
                     <div className="bg-slate-900 border border-slate-700 p-6 rounded-2xl max-w-sm w-full shadow-2xl relative">
