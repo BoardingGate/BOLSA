@@ -1601,6 +1601,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 };
 
 
+
 const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
     // --- NAVEGACIÓN ---
     const [activeSubTab, setActiveSubTab] = useState('estudio');
@@ -1645,39 +1646,23 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         { id: 'NETHERLANDS', name: 'Holanda (Euronext Amsterdam)', country: 'Holanda' }
     ];
 
-    // --- UTILIDADES MEJORADAS (ESTRATEGIA DE ENVOLTORIO) ---
+    // --- UTILIDADES ---
     const extractJSON = (text) => { 
         if (!text) return null;
         try {
-            // 1. Estrategia de Delimitadores (Prioritaria)
-            // Busca <<<INICIO_JSON>>> ... <<<FIN_JSON>>>
+            let clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
             const delimiterRegex = /<<<INICIO_JSON>>>([\s\S]*?)<<<FIN_JSON>>>/;
             const match = text.match(delimiterRegex);
-            
-            if (match && match[1]) {
-                const cleanContent = match[1].trim();
-                return JSON.parse(cleanContent);
-            }
+            if (match && match[1]) return JSON.parse(match[1].trim());
 
-            // 2. Estrategia de Corchetes (Fallback)
-            // Busca el primer '[' y el último ']'
-            const firstBracket = text.indexOf('[');
-            const lastBracket = text.lastIndexOf(']');
-            
+            const firstBracket = clean.indexOf('[');
+            const lastBracket = clean.lastIndexOf(']');
             if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
-                const potentialJson = text.substring(firstBracket, lastBracket + 1);
-                return JSON.parse(potentialJson);
+                return JSON.parse(clean.substring(firstBracket, lastBracket + 1));
             }
-
-            // 3. Intento Objeto simple
-            if (text.trim().startsWith('{')) return JSON.parse(text.trim());
-
-            console.warn("Fallo Extracción JSON. Texto crudo:", text);
+            if (clean.startsWith('{')) return JSON.parse(clean);
             return null;
-        } catch (e) { 
-            console.error("Error parseando JSON:", e, "Texto:", text);
-            return null; 
-        } 
+        } catch (e) { console.error("Error JSON:", e); return null; } 
     };
 
     const formatN = (v, dec = 2) => {
@@ -1685,7 +1670,21 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         return n.toFixed(dec).replace('.', ',');
     };
 
-    // --- LÓGICA ESTUDIO (PROMPT ORIGINAL) ---
+    // Función para validar visualmente si un valor cumple el criterio
+    const checkCriteria = (paramKey, value) => {
+        const p = params[paramKey];
+        if (!p.active) return "text-slate-400"; // Si no está activo el filtro, color neutro
+        
+        const val = parseFloat(value);
+        // Lógica: Para ROI y Yield queremos MAYOR QUE. Para el resto MENOR QUE.
+        if (paramKey === 'roi' || paramKey === 'divYield') {
+            return val >= p.val ? "text-green-400 font-bold" : "text-red-400 font-bold";
+        } else {
+            return val <= p.val ? "text-green-400 font-bold" : "text-red-400 font-bold";
+        }
+    };
+
+    // --- LÓGICA ESTUDIO ---
     const rotateSuggestions = (currentQ) => { 
         const base = ["Impacto en valoración", "Riesgos asociados", "Comparativa sectorial", "Proyección futura", "Movimientos Insider", "Análisis Técnico Profundo", "Catalizadores próximos"]; 
         const filtered = base.filter(q => q !== currentQ); 
@@ -1726,7 +1725,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         } catch (e) { setStatusModal({ isOpen: true, title: 'Error iA', msg: e.message, type: 'error' }); } finally { setLoading(false); } 
     };
 
-    // --- LÓGICA RASTREO (NUEVO PROMPT CON ENVOLTORIO) ---
+    // --- LÓGICA RASTREO ---
     const runScreener = async () => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
         
@@ -1750,23 +1749,24 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
 
         setLoading(true);
         try {
-            // PROMPT BLINDADO CON ETIQUETAS
+            // PROMPT REFORZADO "LOGICA AND"
             const prompt = `
-            ROL: Stock Screener API.
+            ROL: Stock Screener API Strict Mode.
             MERCADO: ${marketDesc}.
-            FILTROS: ${activeFilters}.
             CANTIDAD: ${maxResults} resultados.
             
-            INSTRUCCIONES OBLIGATORIAS:
-            1. Genera una lista basada en tu conocimiento financiero de empresas que CUMPLAN o se aproximen a estos criterios.
-            2. NO escribas introducciones, ni conclusiones, ni texto explicativo.
-            3. Envuelve el JSON estrictamente entre las etiquetas <<<INICIO_JSON>>> y <<<FIN_JSON>>>.
+            FILTROS OBLIGATORIOS (Operador Lógico: AND): 
+            ${activeFilters}
             
-            EJEMPLO DE SALIDA EXACTA:
+            INSTRUCCIONES DE PRIORIDAD:
+            1. PRIORIZA ABSOLUTAMENTE el cumplimiento de TODOS los filtros a la vez.
+            2. Si no existen empresas que cumplan TODO, busca las que fallen por el margen más pequeño posible.
+            3. NO inventes datos. Usa tu base de conocimiento financiera.
+            
+            SALIDA JSON OBLIGATORIA (Envolver entre etiquetas):
             <<<INICIO_JSON>>>
             [
-              {"ticker":"AAPL","name":"Apple Inc.","price":150.2,"per":25.4,"peg":2.1,"roi":35.0,"divYield":0.6,"pb":35.0,"debtEquity":1.5},
-              {"ticker":"MSFT","name":"Microsoft","price":300.5,"per":30.1,"peg":2.5,"roi":40.0,"divYield":0.9,"pb":12.0,"debtEquity":0.5}
+              {"ticker":"SYM","name":"Company","price":10.5,"per":12.1,"peg":0.9,"roi":15.5,"divYield":3.2,"pb":1.1,"debtEquity":0.5}
             ]
             <<<FIN_JSON>>>
             `;
@@ -1775,13 +1775,11 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
             const results = extractJSON(res);
             
             if (!results || !Array.isArray(results) || results.length === 0) {
-                // Log para ver qué devolvió exactamente si falla
-                console.warn("Respuesta iA cruda:", res);
-                throw new Error("La IA respondió texto pero no se pudo extraer el JSON. Inténtalo de nuevo.");
+                throw new Error("La IA no devolvió datos estructurados. Intenta relajar los filtros.");
             }
             setScreenerResults(results);
         } catch (e) {
-            setStatusModal({ isOpen: true, title: 'Sin Resultados', msg: e.message + "\n\n(Revisa la consola si necesitas ver la respuesta cruda)", type: 'warning' });
+            setStatusModal({ isOpen: true, title: 'Sin Resultados', msg: e.message, type: 'warning' });
         } finally { setLoading(false); }
     };
 
@@ -1943,12 +1941,13 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
                                                 <td className="p-5 font-black text-blue-400 text-sm">{r.ticker}</td>
                                                 <td className="p-5 text-slate-300 font-sans font-bold">{r.name}</td>
                                                 <td className="p-5 text-white font-bold">{formatN(r.price)}</td>
-                                                <td className="p-5 text-slate-400">{r.per}</td>
-                                                <td className="p-5 text-slate-400">{r.peg}</td>
-                                                <td className="p-5 text-green-400 font-bold">{r.roi}%</td>
-                                                <td className="p-5 text-blue-300 font-bold">{r.divYield}%</td>
-                                                <td className="p-5 text-slate-400">{r.pb}</td>
-                                                <td className="p-5 text-slate-400">{r.debtEquity}</td>
+                                                {/* CELDAS CON VALIDACIÓN VISUAL */}
+                                                <td className={`p-5 ${checkCriteria('per', r.per)}`}>{r.per}</td>
+                                                <td className={`p-5 ${checkCriteria('peg', r.peg)}`}>{r.peg}</td>
+                                                <td className={`p-5 ${checkCriteria('roi', r.roi)}`}>{r.roi}%</td>
+                                                <td className={`p-5 ${checkCriteria('divYield', r.divYield)}`}>{r.divYield}%</td>
+                                                <td className={`p-5 ${checkCriteria('pb', r.pb)}`}>{r.pb}</td>
+                                                <td className={`p-5 ${checkCriteria('debtEquity', r.debtEquity)}`}>{r.debtEquity}</td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -1961,7 +1960,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         </div>
     );
 };
-
 
 
       
