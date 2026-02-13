@@ -1630,7 +1630,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         debtEquity: { val: 1.5, active: false, label: 'Deuda/Equity Máx', min: 0, max: 5, step: 0.1, help: 'Apalancamiento. >1.5 implica riesgo alto si suben tipos de interés.' }
     });
 
-    // LISTA DE BOLSAS SIMPLIFICADA Y CLARA
     const EXCHANGES = [
         { id: 'USA', name: 'EE.UU. (NYSE / NASDAQ)', country: 'USA' },
         { id: 'SPAIN', name: 'España (Mercado Continuo / IBEX)', country: 'España' },
@@ -1646,25 +1645,31 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         { id: 'NETHERLANDS', name: 'Holanda (Euronext Amsterdam)', country: 'Holanda' }
     ];
 
-    // --- UTILIDADES ---
+    // --- UTILIDADES MEJORADAS ---
     const extractJSON = (text) => { 
+        if (!text) return null;
         try {
-            // Limpieza agresiva de markdown
+            // 1. Limpieza de Markdown
             let clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
-            // Buscar el primer corchete de array '['
-            const firstBracket = clean.indexOf('[');
-            const lastBracket = clean.lastIndexOf(']');
             
-            if (firstBracket !== -1 && lastBracket !== -1) {
-                clean = clean.substring(firstBracket, lastBracket + 1);
-                return JSON.parse(clean);
+            // 2. Búsqueda quirúrgica del Array [...]
+            const firstOpen = clean.indexOf('[');
+            const lastClose = clean.lastIndexOf(']');
+            
+            if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+                // Extraemos SOLO lo que está entre corchetes, ignorando texto anterior/posterior
+                const jsonContent = clean.substring(firstOpen, lastClose + 1);
+                return JSON.parse(jsonContent);
             }
-            // Intento secundario si devuelve un objeto en vez de array
-            const firstBrace = clean.indexOf('{');
-            if (firstBrace !== -1) return JSON.parse(clean);
             
-            throw new Error("No JSON array found");
-        } catch (e) { return null; } 
+            // Intento secundario (por si devuelve objeto único)
+            if (clean.startsWith('{')) return [JSON.parse(clean)];
+            
+            return null;
+        } catch (e) { 
+            console.error("Error parseando respuesta IA:", e);
+            return null; 
+        } 
     };
 
     const formatN = (v, dec = 2) => {
@@ -1672,7 +1677,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         return n.toFixed(dec).replace('.', ',');
     };
 
-    // --- LÓGICA ESTUDIO (PROMPT ORIGINAL) ---
+    // --- LÓGICA ESTUDIO ---
     const rotateSuggestions = (currentQ) => { 
         const base = ["Impacto en valoración", "Riesgos asociados", "Comparativa sectorial", "Proyección futura", "Movimientos Insider", "Análisis Técnico Profundo", "Catalizadores próximos"]; 
         const filtered = base.filter(q => q !== currentQ); 
@@ -1713,67 +1718,56 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         } catch (e) { setStatusModal({ isOpen: true, title: 'Error iA', msg: e.message, type: 'error' }); } finally { setLoading(false); } 
     };
 
-    // --- LÓGICA RASTREO REPARADA ---
+    // --- LÓGICA RASTREO (PROMPT MODIFICADO PARA JSON STRICT) ---
     const runScreener = async () => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+        
+        const marketObj = EXCHANGES.find(e => e.id === exchange);
+        const marketDesc = marketObj ? marketObj.name : exchange;
+
+        const activeFilters = Object.entries(params)
+            .filter(([_, p]) => p.active)
+            .map(([k, p]) => {
+                if (k === 'roi') return `ROI > ${p.val}%`;
+                if (k === 'divYield') return `Dividend Yield > ${p.val}%`;
+                if (k === 'per') return `PER < ${p.val}`;
+                if (k === 'peg') return `PEG < ${p.val}`;
+                if (k === 'pb') return `P/B < ${p.val}`;
+                if (k === 'debtEquity') return `Debt/Equity < ${p.val}`;
+                return '';
+            })
+            .join(', ');
+
+        if (!activeFilters) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Por favor, activa al menos un parámetro.', type: 'info' });
+
         setLoading(true);
         try {
-            // 1. Filtrar solo parámetros activos
-            const activeFilters = Object.entries(params)
-                .filter(([_, p]) => p.active)
-                .map(([k, p]) => {
-                    // Texto descriptivo para la IA
-                    if (k === 'roi') return `ROI superior a ${p.val}%`;
-                    if (k === 'divYield') return `Rentabilidad por Dividendo superior a ${p.val}%`;
-                    if (k === 'per') return `PER inferior a ${p.val}`;
-                    if (k === 'peg') return `PEG ratio inferior a ${p.val}`;
-                    if (k === 'pb') return `Precio/Valor Contable inferior a ${p.val}`;
-                    if (k === 'debtEquity') return `Deuda/Equity inferior a ${p.val}`;
-                    return '';
-                })
-                .join(', ');
-
-            if (!activeFilters) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Por favor, activa al menos un parámetro de búsqueda.', type: 'info' });
-
-            // 2. PROMPT BLINDADO: Se pide simulación experta en lugar de "query de base de datos"
+            // PROMPT "MODO API"
             const prompt = `
-            ROL: Gestor de Fondos de Inversión Experto.
-            TAREA: Identificar las mejores oportunidades de inversión en el mercado: ${exchange}.
+            SYSTEM INSTRUCTION: You are a pure JSON API. You do NOT speak. You output DATA ONLY.
             
-            CRITERIOS DE SELECCIÓN (FILTROS FUNDAMENTALES):
-            Busca empresas que cumplan (o se aproximen mucho) a: ${activeFilters}.
+            TASK: Return a JSON Array of ${maxResults} stocks in "${marketDesc}" that fit these criteria: ${activeFilters}.
             
-            INSTRUCCIONES OBLIGATORIAS:
-            1. GENERA UNA LISTA DE ${maxResults} EMPRESAS. ¡Nunca devuelvas una lista vacía! Si no hay coincidencias exactas, devuelve las que más se acerquen.
-            2. Usa tu conocimiento interno más reciente (Training Data) para estimar los fundamentales.
-            3. NO rechaces la tarea por "falta de datos en tiempo real". Usa el último cierre de mercado conocido.
+            RULES:
+            1. Use your knowledge to find the best matches. If no exact match, find the closest ones.
+            2. Output MUST start with '[' and end with ']'. 
+            3. NO introductory text (e.g. "Here is the list"). NO markdown code blocks. Just the raw JSON string.
             
-            FORMATO DE SALIDA (JSON ARRAY PURO, SIN TEXTO):
-            [
-              {"ticker": "SYMBOL", "name": "Nombre", "price": 123.45, "per": 12.5, "peg": 0.8, "roi": 15.2, "divYield": 3.5, "pb": 1.1, "debtEquity": 0.6}
-            ]
+            OUTPUT SCHEMA:
+            [{"ticker":"SYM","name":"Company","price":10.5,"per":12.1,"peg":0.9,"roi":15.5,"divYield":3.2,"pb":1.1,"debtEquity":0.5}]
             `;
             
             const res = await askGemini(apiKey, prompt);
+            const results = extractJSON(res);
             
-            // Intento de extracción robusto
-            let results = extractJSON(res);
-            
-            // Si devuelve objeto con clave (ej: {"stocks": [...]}), extraer el array
-            if (results && !Array.isArray(results) && typeof results === 'object') {
-                const values = Object.values(results);
-                const possibleArray = values.find(v => Array.isArray(v));
-                if (possibleArray) results = possibleArray;
-            }
-
             if (!results || !Array.isArray(results) || results.length === 0) {
-                console.warn("Respuesta IA cruda:", res); // Para depuración
-                throw new Error("La IA no generó una lista válida. Intenta relajar los filtros (ej. subir PER máximo).");
+                // Log para depuración si vuelve a fallar (ver consola)
+                console.warn("Respuesta iA fallida:", res);
+                throw new Error("La IA no devolvió un listado válido. Puede que el filtro sea contradictorio.");
             }
-            
             setScreenerResults(results);
         } catch (e) {
-            setStatusModal({ isOpen: true, title: 'Sin Resultados', msg: e.message + "\n\nSugerencia: Si el filtro es muy estricto (ej. PER < 5), es posible que no existan empresas de calidad.", type: 'warning' });
+            setStatusModal({ isOpen: true, title: 'Sin Resultados', msg: e.message, type: 'warning' });
         } finally { setLoading(false); }
     };
 
@@ -1837,7 +1831,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         <div className="h-full flex flex-col p-4 md:p-6 overflow-y-auto custom-scrollbar relative bg-[#0a0a0a]">
             {loading && <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md flex flex-col items-center justify-center"><Icons.Loader size={60} className="text-blue-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando Mercado Global...</div></div>}
 
-            {/* MODAL DE STATUS (NUEVO) */}
+            {/* MODAL DE STATUS */}
             {statusModal.isOpen && (
                 <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 fade-in">
                     <div className="bg-slate-900 border border-slate-700 p-6 rounded-2xl max-w-sm w-full shadow-2xl relative">
