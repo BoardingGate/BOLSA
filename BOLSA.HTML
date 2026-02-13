@@ -1068,16 +1068,29 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         let log = { success: [], fail: [] }, newUpdates = []; 
         
         try { 
+            // Procesamos en lotes o uno a uno (aquí uno a uno para máxima precisión con el prompt específico)
             for (const item of active) { 
-                // Prompt mejorado para evitar alucinaciones y nombres
-                const prompt = `Actúa como un terminal financiero de alta precisión. 
-                Busca los datos actuales del activo "${item.ticker}" en su moneda de origen (${item.stockCurrency}). 
-                Si es un índice (como IBEX, SP500, etc.), asegúrate de dar el valor del índice spot, no de un futuro.
+                // LÓGICA ESPECÍFICA PARA ÍNDICES VS ACCIONES
+                const assetType = item.isIndex ? "ÍNDICE BURSÁTIL (INDEX SPOT, NO ETF)" : "ACCIÓN / ETF";
                 
-                Responde EXCLUSIVAMENTE un objeto JSON con esta estructura exacta y valores numéricos (usa punto para decimales):
-                {"p": precio_actual, "fx": tasa_de_cambio_a_${baseCurrency}, "pe": ratio_per_actual}
+                const prompt = `Actúa como un terminal financiero de alta precisión (Bloomberg/Reuters).
+                OBJETIVO: Obtener datos de mercado en tiempo real.
                 
-                No incluyas texto, ni el nombre de la empresa, ni explicaciones. Solo el JSON.`; 
+                ACTIVO: "${item.ticker}"
+                NOMBRE: "${item.name}"
+                TIPO: ${assetType}
+                
+                REQUISITO CRÍTICO DE MONEDA:
+                Debes devolver el precio EXCLUSIVAMENTE en: ${item.stockCurrency}.
+                NO realices conversiones de divisa. Si el activo cotiza en otra moneda, busca su equivalente en ${item.stockCurrency} o el ticker correcto en esa divisa.
+                
+                Responde SOLO JSON:
+                {"p": precio_numérico_actual, "fx": tasa_cambio_1_${item.stockCurrency}_a_${baseCurrency}, "pe": ratio_per_numérico}
+                
+                Notas:
+                - "p": Usa punto decimal.
+                - "fx": Cuántos ${baseCurrency} vale 1 ${item.stockCurrency}. Si es la misma moneda, pon 1.
+                - "pe": Si es un índice o no tiene PER, pon 0.`; 
 
                 try { 
                     const res = await askGemini(apiKey, prompt); 
@@ -1102,14 +1115,13 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             if (newUpdates.length > 0) { 
                 setPortfolio(prev => prev.map(p => { 
                     const u = newUpdates.find(x => x.id === p.id); 
-                    // Mantenemos p.name intacto, solo actualizamos los 3 datos financieros
                     return u ? { ...p, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe } : p; 
                 })); 
                 setLastUpdate(new Date().toISOString()); 
             } 
             
             if (!isAuto && log.fail.length > 0) {
-                setInfoModal({ isOpen: true, title: 'Sincronización parcial', msg: `No se pudieron actualizar: ${log.fail.join(', ')}.`, type: 'warning' });
+                setInfoModal({ isOpen: true, title: 'Sincronización parcial', msg: `No se pudieron actualizar: ${log.fail.join(', ')}. Verifica que el Ticker coincida con la moneda solicitada.`, type: 'warning' });
             }
         } catch (e) { 
             if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); 
@@ -1117,6 +1129,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             setUpdating(false); 
         } 
     };
+
 
     // ANALISIS IA MEJORADO Y CORREGIDO
     const analyzePortfolio = async () => {
@@ -1588,106 +1601,282 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 };
 
 
-
-
 const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
-          const [ticker, setTicker] = useState(''); 
-          const [question, setQuestion] = useState(''); 
-          const [loading, setLoading] = useState(false); 
-          const [data, setData] = useState(null); 
-          const [specificAnswer, setSpecificAnswer] = useState(null); 
-          const [suggestedQuestions, setSuggestedQuestions] = useState(["Competencia directa", "Historial de dividendos", "Nivel de deuda", "Directivos y Salarios", "Escándalos recientes", "Previsión próximos resultados"]);
+    // --- NAVEGACIÓN ---
+    const [activeSubTab, setActiveSubTab] = useState('estudio');
 
-          // Lógica de limpieza JSON mejorada para evitar errores de parseo
-          const sanitizeAndParseJSON = (text) => { 
-              try {
-                  // Eliminamos posibles bloques de código markdown y espacios en blanco
-                  const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
-                  const match = cleanText.match(/(\{[\s\S]*\}|\[[\s\S]*\])/); 
-                  if (match) return JSON.parse(match[0]); 
-                  return JSON.parse(cleanText); 
-              } catch (e) { 
-                  console.error("Error parseando JSON:", text);
-                  throw new Error("La IA no devolvió un formato de datos válido. Inténtalo de nuevo."); 
-              } 
-          };
+    // --- ESTADOS PESTAÑA ESTUDIO ---
+    const [ticker, setTicker] = useState(''); 
+    const [question, setQuestion] = useState(''); 
+    const [loading, setLoading] = useState(false); 
+    const [data, setData] = useState(null); 
+    const [specificAnswer, setSpecificAnswer] = useState(null); 
+    const [suggestedQuestions, setSuggestedQuestions] = useState(["Competencia directa", "Historial de dividendos", "Nivel de deuda", "Directivos y Salarios", "Escándalos recientes", "Previsión próximos resultados"]);
 
-          const rotateSuggestions = (currentQ) => { 
-              const base = ["Impacto en valoración", "Riesgos asociados", "Comparativa sectorial", "Proyección futura", "Movimientos Insider", "Análisis Técnico Profundo", "Catalizadores próximos"]; 
-              const filtered = base.filter(q => q !== currentQ); 
-              const randomSelection = filtered.sort(() => 0.5 - Math.random()).slice(0, 4); 
-              setSuggestedQuestions(randomSelection); 
-          };
+    // --- ESTADOS PESTAÑA RASTREO ---
+    const [exchange, setExchange] = useState('USA');
+    const [maxResults, setMaxResults] = useState(10);
+    const [screenerResults, setScreenerResults] = useState([]);
+    const [screenerSort, setScreenerSort] = useState({ key: 'ticker', direction: 'asc' });
+    const [statusModal, setStatusModal] = useState({ isOpen: false, title: '', msg: '', type: 'info' });
 
-          const analyze = async () => { 
-              if (!apiKey) return alert("Falta API Key en Configuración"); 
-              if (!ticker) return alert("Introduce un Ticker"); 
-              setLoading(true); 
-              setSpecificAnswer(null); 
-              setData(null); 
-              try { 
-                  if (question.trim()) { 
-                      const prompt = `CRITICAL: Role=FinancialAnalyst. Output=HTML. Language=Spanish(Spain). Task: Answer "${question}" about "${ticker}". Constraints: NO PREAMBLE. NO "Hola". NO "Aquí tienes". Direct concise answer. Structure: Use <h3> for sections, <ul> for lists. Visually clean.`; 
-                      const res = await askGemini(apiKey, prompt); 
-                      setSpecificAnswer(res.replace(/```html/g, '').replace(/```/g, '').trim()); 
-                      rotateSuggestions(question); 
-                  } else { 
-                      const prompt = `ROLE: Senior Wall Street Analyst. TASK: Generate a comprehensive investment report for "${ticker}". OUTPUT: JSON ONLY. Strict format. LANGUAGE: Spanish (Spain). Translate ALL financial terms professionally (e.g., Yield -> Rentabilidad, Hold -> Mantener). JSON STRUCTURE: { "company": "Name", "current_price": number, "intrinsic_value": number, "forecast_1y": number, "forecast_5y": number, "valuation_status": "Infravalorada/Sobrevalorada/Justa", "investment_verdict": "Detailed professional verdict (approx 60 words).", "technical_analysis": { "trend_short": "Alcista/Bajista/Lateral", "trend_long": "Alcista/Bajista", "supports": ["Price 1", "Price 2"], "resistances": ["Price 1", "Price 2"], "commentary": "Brief technical insight" }, "dividend_data": { "yield_percent": "x.xx%", "amount": "currency x.xx", "payout_ratio": "x%", "ex_date": "YYYY-MM-DD", "payment_date": "YYYY-MM-DD", "growth_streak": "x Years", "safety": "Alta/Media/Baja" }, "financial_health": { "revenue_growth_3y": "x%", "net_margin": "x%", "roe": "x%", "debt_to_equity": number, "free_cash_flow": "String (e.g. 2B)" }, "management": {"ceo": "Name", "ownership": "% Held"}, "capital": {"market_cap": "String", "shares_outstanding": "String"}, "competitors": { "per": {"stock": num, "industry": num}, "yield": {"stock": num, "industry": num} }, "fundamentals": {"per": num, "eps": num, "beta": num}, "pros_cons": { "pros": ["txt1", "txt2"], "cons": ["txt1", "txt2"] }, "peers": ["TICKER1", "TICKER2"], "suggested_questions": ["q1","q2","q3"] }`; 
-                      const res = await askGemini(apiKey, prompt); 
-                      const json = sanitizeAndParseJSON(res); 
-                      setData(json); 
-                      if(json.suggested_questions) setSuggestedQuestions(json.suggested_questions); 
-                  } 
-              } catch (e) { 
-                  alert("Error: " + e.message); 
-              } finally { 
-                  setLoading(false); 
-              } 
-          };
+    // Configuración de Parámetros RASTREO
+    const [params, setParams] = useState({
+        per: { val: 25, active: true, label: 'PER Máximo', min: 5, max: 100, step: 1, help: 'Veces que el precio cubre el beneficio. <15: Barata, >25: Crecimiento/Cara.' },
+        peg: { val: 1.5, active: true, label: 'PEG Máximo', min: 0.1, max: 5, step: 0.1, help: 'PER ajustado al crecimiento. <1: Infravalorada, >2: Sobrevalorada.' },
+        roi: { val: 10, active: true, label: 'ROI Mínimo %', min: 1, max: 50, step: 1, help: 'Retorno sobre inversión. >15% indica gran ventaja competitiva (Moat).' },
+        divYield: { val: 2, active: true, label: 'Div. Yield Mín %', min: 0, max: 15, step: 0.5, help: 'Rentabilidad por dividendo. >4% suele ser defensiva o madura.' },
+        pb: { val: 3, active: false, label: 'P/B Máximo', min: 0.1, max: 10, step: 0.1, help: 'Precio/Valor Contable. <1: Cotiza bajo valor de liquidación teórico.' },
+        debtEquity: { val: 1.5, active: false, label: 'Deuda/Equity Máx', min: 0, max: 5, step: 0.1, help: 'Apalancamiento. >1.5 implica riesgo alto si suben tipos de interés.' }
+    });
 
-          const calcUpside = (t, c) => (!t || !c) ? 0 : ((t - c) / c) * 100; 
-          const getComparisonVerdict = (metric, sVal, iVal) => { 
-              if(!sVal || !iVal) return ""; 
-              if(metric === 'yield') return sVal > iVal ? "✅ Mejor" : "❌ Peor"; 
-              return sVal < iVal ? "✅ Mejor" : "❌ Peor"; 
-          };
+    const EXCHANGES = [
+        { id: 'USA', name: 'EE.UU. (NYSE / NASDAQ)', country: 'USA' },
+        { id: 'SPAIN', name: 'España (Mercado Continuo / IBEX)', country: 'España' },
+        { id: 'UK', name: 'Reino Unido (LSE)', country: 'UK' },
+        { id: 'GERMANY', name: 'Alemania (XETRA)', country: 'Alemania' },
+        { id: 'FRANCE', name: 'Francia (Euronext Paris)', country: 'Francia' },
+        { id: 'JAPAN', name: 'Japón (Tokyo Stock Exchange)', country: 'Japón' },
+        { id: 'CHINA_HK', name: 'China / Hong Kong (HKEX)', country: 'China' },
+        { id: 'CANADA', name: 'Canadá (TSX)', country: 'Canadá' },
+        { id: 'AUSTRALIA', name: 'Australia (ASX)', country: 'Australia' },
+        { id: 'ITALY', name: 'Italia (Borsa Italiana)', country: 'Italia' },
+        { id: 'SWITZERLAND', name: 'Suiza (SIX)', country: 'Suiza' },
+        { id: 'NETHERLANDS', name: 'Holanda (Euronext Amsterdam)', country: 'Holanda' }
+    ];
 
-          const handlePrint = () => { 
-              const printWindow = window.open('', '', 'height=800,width=800'); 
-              const time = new Date().toLocaleString(); 
-              let html = `<html><head><title>Estudio Valor</title><style>body{font-family:sans-serif;padding:20px;font-size:10px;} h1{border-bottom:2px solid #333;padding-bottom:5px;margin-bottom:10px;font-size:16px;} h3{color:#2563eb; border-bottom:1px solid #ccc; padding-bottom:2px; margin-top:15px; text-transform:uppercase; font-size:12px;} .grid{display:flex; gap:10px;} .col{flex:1;} ul{padding-left:15px; margin:5px 0;} li{margin-bottom:2px;} .label{font-weight:bold; color:#555;} .val{font-weight:bold;}</style></head><body>`; 
-              html += `<h1>ESTUDIO DEL VALOR: ${data ? data.company : ticker}</h1>`; 
-              if(specificAnswer && question) html += `<h3 style="color:#666;">[PREGUNTA: ${question}]</h3>`; 
-              html += `<div style="font-size:9px;margin-bottom:15px;color:#666;">EMITIDO: ${time}</div>`; 
-              if(specificAnswer) { 
-                  html += `<div style="font-size:11px;line-height:1.5;">${specificAnswer}</div>`; 
-              } else if(data) { 
-                  html += `<div style="margin-bottom:10px; border:1px solid #ddd; padding:10px; background:#f9f9f9;"> <div style="display:flex; justify-content:space-between; margin-bottom:5px;"> <span>PRECIO: <b>${formatN(data.current_price)}</b></span> <span>VALOR INTRÍNSECO: <b>${formatN(data.intrinsic_value)}</b></span> <span>ESTADO: <b>${data.valuation_status}</b></span> </div> <div><b>VEREDICTO PROFESIONAL:</b> ${data.investment_verdict}</div> </div>`; 
-                  html += `<div class="grid"><div class="col"><h3>Perfil y Directiva</h3><ul><li><span class="label">CEO:</span> ${data.management?.ceo} (${data.management?.ownership})</li><li><span class="label">Cap. Mercado:</span> ${data.capital?.market_cap}</li><li><span class="label">Acciones:</span> ${data.capital?.shares_outstanding}</li></ul></div><div class="col"><h3>Salud Financiera</h3><ul><li><span class="label">Crec. Ventas 3A:</span> ${data.financial_health?.revenue_growth_3y}</li><li><span class="label">Margen Neto:</span> ${data.financial_health?.net_margin}</li><li><span class="label">ROE:</span> ${data.financial_health?.roe}</li><li><span class="label">Deuda/Equity:</span> ${formatN(data.financial_health?.debt_to_equity)}</li><li><span class="label">Free Cash Flow:</span> ${data.financial_health?.free_cash_flow}</li></ul></div></div>`; 
-                  html += `<div class="grid"><div class="col"><h3>Datos de Dividendos</h3><ul><li><span class="label">Rentabilidad:</span> ${data.dividend_data?.yield_percent}</li><li><span class="label">Payout:</span> ${data.dividend_data?.payout_ratio}</li><li><span class="label">Ex-Date:</span> ${data.dividend_data?.ex_date}</li><li><span class="label">Crecimiento:</span> ${data.dividend_data?.growth_streak}</li></ul></div><div class="col"><h3>Análisis Técnico</h3><ul><li><span class="label">Tendencia CP/LP:</span> ${data.technical_analysis?.trend_short} / ${data.technical_analysis?.trend_long}</li><li><span class="label">Soportes:</span> ${(data.technical_analysis?.supports || []).join(', ')}</li><li><span class="label">Resistencias:</span> ${(data.technical_analysis?.resistances || []).join(', ')}</li></ul></div></div>`; 
-                  html += `<h3>Pros y Contras</h3><div class="grid"><div class="col"><b>PROS</b><ul>${(data.pros_cons?.pros || []).map(p=>`<li>${p}</li>`).join('')}</ul></div><div class="col"><b>CONTRAS</b><ul>${(data.pros_cons?.cons || []).map(p=>`<li>${p}</li>`).join('')}</ul></div></div>`; 
-                  html += `</body></html>`; 
-              } 
-              printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(()=>printWindow.print(),500); 
-          };
+    // --- UTILIDAD DE EXTRACCIÓN BLINDADA ---
+    const extractJSON = (text) => { 
+        if (!text) return null;
+        try {
+            // 1. Quitar posibles bloques de código markdown
+            let clean = text.replace(/```json/g, '').replace(/```/g, '');
+            
+            // 2. BUSCAR EL ARRAY: Encontrar el primer '[' y el último ']'
+            const firstBracket = clean.indexOf('[');
+            const lastBracket = clean.lastIndexOf(']');
+            
+            // Si encontramos un rango válido, CORTAMOS todo lo que sobre (el texto de la IA)
+            if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+                const jsonStr = clean.substring(firstBracket, lastBracket + 1);
+                return JSON.parse(jsonStr);
+            }
+            
+            // Fallback: Si devuelve un objeto único en vez de array
+            if (clean.trim().startsWith('{')) return [JSON.parse(clean)];
 
-          const clearAll = () => { setTicker(''); setQuestion(''); setData(null); setSpecificAnswer(null); };
+            throw new Error("No se detectó un Array JSON [] en la respuesta.");
+        } catch (e) { 
+            console.error("EXTRACT JSON ERROR. Raw Text:", text); // Para ver en Eruda
+            return null; 
+        } 
+    };
 
-          return (
-              <div className="h-full flex flex-col p-6 overflow-hidden relative">
-                  {loading && <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center fade-in"><Icons.Loader size={60} className="text-blue-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando Mercado...</div><div className="text-xs text-slate-400 mt-2">Consultando fuentes financieras</div></div>}
-                  <div className="flex flex-col gap-6 mb-6 shrink-0 bg-slate-900/50 p-4 rounded-xl border border-slate-800">
-                       <div className="flex gap-4"><div className="flex-1 relative"><Icons.Search className="absolute left-3 top-3 text-slate-500" size={18}/><input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} placeholder="Ticker (ej. MSFT)" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-white font-bold tracking-wider" /></div><button onClick={analyze} disabled={loading || !ticker} className="bg-blue-600 px-6 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-900/20 hover:bg-blue-500 transition-colors text-xs sm:text-sm">{loading ? <Icons.Loader/> : <Icons.Wand/>} <span className="hidden sm:inline">ANALIZAR</span></button><button onClick={clearAll} className="bg-slate-700 px-4 rounded-xl font-bold text-white hover:bg-slate-600 transition-colors text-xs">BORRAR</button></div>
-                       <div className="relative"><Icons.MessageCircle className="absolute left-3 top-3 text-slate-500" size={18}/><input type="text" value={question} onChange={e => setQuestion(e.target.value)} placeholder="¿Pregunta específica? (Dejar vacío para Análisis Completo)" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-xs text-white" /></div>
-                       <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">{suggestedQuestions.map((q,i) => ( <button key={i} onClick={()=>setQuestion(q)} className="whitespace-nowrap px-3 py-1 bg-slate-800 border border-slate-700 rounded-lg text-[10px] text-slate-400 hover:text-white hover:bg-slate-700 transition-colors">{q}</button> ))}</div>
-                  </div>
-                  <div className="flex-1 overflow-y-auto custom-scrollbar">
-                      {(specificAnswer || data) && (
-                          <div className="glass-panel p-6 rounded-2xl fade-in relative">
-                              <button onClick={handlePrint} className="absolute top-4 right-4 bg-slate-700 px-3 py-1 rounded text-xs font-bold text-white flex gap-2 items-center hover:bg-slate-600"><Icons.ExternalLink size={12}/> IMPRIMIR</button>
-                              {specificAnswer && ( <> <h3 className="text-lg font-bold text-blue-400 mb-4 flex items-center gap-2"><Icons.Target/> Respuesta iA</h3> <div className="prose-content" dangerouslySetInnerHTML={{__html: specificAnswer}}></div> </> )}
+    const formatN = (v, dec = 2) => {
+        let n = parseFloat(v) || 0;
+        return n.toFixed(dec).replace('.', ',');
+    };
+
+    const checkCriteria = (paramKey, value) => {
+        const p = params[paramKey];
+        if (!p.active) return "text-slate-400";
+        const val = parseFloat(value);
+        if (paramKey === 'roi' || paramKey === 'divYield') return val >= p.val ? "text-green-400 font-bold" : "text-red-400 font-bold";
+        return val <= p.val ? "text-green-400 font-bold" : "text-red-400 font-bold";
+    };
+
+    // --- LÓGICA ESTUDIO ---
+    const rotateSuggestions = (currentQ) => { 
+        const base = ["Impacto en valoración", "Riesgos asociados", "Comparativa sectorial", "Proyección futura", "Movimientos Insider", "Análisis Técnico Profundo", "Catalizadores próximos"]; 
+        const filtered = base.filter(q => q !== currentQ); 
+        const randomSelection = filtered.sort(() => 0.5 - Math.random()).slice(0, 4); 
+        setSuggestedQuestions(randomSelection); 
+    };
+
+    const analyze = async () => { 
+        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' }); 
+        if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' }); 
+        setLoading(true); setSpecificAnswer(null); setData(null); 
+        try { 
+            if (question.trim()) { 
+                const prompt = `CRITICAL: Role=FinancialAnalyst. Output=HTML. Language=Spanish(Spain). Task: Answer "${question}" about "${ticker}". Constraints: NO PREAMBLE. NO "Hola". NO "Aquí tienes". Direct concise answer. Structure: Use <h3> for sections, <ul> for lists. Visually clean.`; 
+                const res = await askGemini(apiKey, prompt); 
+                setSpecificAnswer(res.replace(/```html/g, '').replace(/```/g, '').trim()); 
+                rotateSuggestions(question); 
+            } else { 
+                const prompt = `ROLE: Senior Wall Street Analyst. TASK: Generate a comprehensive investment report for "${ticker}". OUTPUT: JSON ONLY. Strict format. LANGUAGE: Spanish (Spain). Translate ALL financial terms professionally (e.g., Yield -> Rentabilidad, Hold -> Mantener). 
+                JSON STRUCTURE: { 
+                    "company": "Name", "current_price": number, "intrinsic_value": number, "forecast_1y": number, "forecast_5y": number, "valuation_status": "Infravalorada/Sobrevalorada/Justa", "investment_verdict": "Detailed professional verdict (approx 60 words).", 
+                    "technical_analysis": { "trend_short": "Alcista/Bajista/Lateral", "trend_long": "Alcista/Bajista", "supports": ["Price 1", "Price 2"], "resistances": ["Price 1", "Price 2"], "commentary": "Brief technical insight" }, 
+                    "dividend_data": { "yield_percent": "x.xx%", "amount": "currency x.xx", "payout_ratio": "x%", "ex_date": "YYYY-MM-DD", "payment_date": "YYYY-MM-DD", "growth_streak": "x Years", "safety": "Alta/Media/Baja" }, 
+                    "financial_health": { "revenue_growth_3y": "x%", "net_margin": "x%", "roe": "x%", "debt_to_equity": number, "free_cash_flow": "String (e.g. 2B)" }, 
+                    "management": {"ceo": "Name", "ownership": "% Held"}, 
+                    "capital": {"market_cap": "String", "shares_outstanding": "String"}, 
+                    "competitors": { "per": {"stock": num, "industry": num}, "yield": {"stock": num, "industry": num} }, 
+                    "fundamentals": {"per": num, "eps": num, "beta": num}, 
+                    "pros_cons": { "pros": ["txt1", "txt2"], "cons": ["txt1", "txt2"] }, 
+                    "peers": ["TICKER1", "TICKER2"], "suggested_questions": ["q1","q2","q3"] 
+                }`; 
+                const res = await askGemini(apiKey, prompt); 
+                const json = extractJSON(res); 
+                if(!json) throw new Error("La IA no devolvió un JSON válido.");
+                setData(json); 
+                if(json.suggested_questions) setSuggestedQuestions(json.suggested_questions); 
+            } 
+        } catch (e) { setStatusModal({ isOpen: true, title: 'Error iA', msg: e.message, type: 'error' }); } finally { setLoading(false); } 
+    };
+
+    // --- LÓGICA RASTREO ---
+    const runScreener = async () => {
+        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+        
+        const marketObj = EXCHANGES.find(e => e.id === exchange);
+        const marketDesc = marketObj ? marketObj.name : exchange;
+
+        const activeFilters = Object.entries(params)
+            .filter(([_, p]) => p.active)
+            .map(([k, p]) => {
+                if (k === 'roi') return `ROI > ${p.val}%`;
+                if (k === 'divYield') return `Dividend Yield > ${p.val}%`;
+                if (k === 'per') return `PER < ${p.val}`;
+                if (k === 'peg') return `PEG < ${p.val}`;
+                if (k === 'pb') return `P/B < ${p.val}`;
+                if (k === 'debtEquity') return `Debt/Equity < ${p.val}`;
+                return '';
+            })
+            .join(', ');
+
+        if (!activeFilters) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Por favor, activa al menos un parámetro.', type: 'info' });
+
+        setLoading(true);
+        try {
+            // PROMPT ROBÓTICO: Se le prohíbe hablar
+            const prompt = `
+            YOU ARE A JSON GENERATOR MACHINE. YOU DO NOT SPEAK. YOU ONLY OUTPUT DATA.
+            
+            TASK: Generate a JSON Array of ${maxResults} stocks in "${marketDesc}" matching: ${activeFilters}.
+            
+            STRICT RULES:
+            1. Use your knowledge to estimate current data.
+            2. If exact matches are rare, include closest matches.
+            3. OUTPUT MUST START WITH '[' AND END WITH ']'.
+            4. NO PREAMBLE. NO EXPLANATIONS.
+            
+            OUTPUT FORMAT:
+            [{"ticker":"SYM","name":"Name","price":1.0,"per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0}]
+            `;
+            
+            const res = await askGemini(apiKey, prompt);
+            
+            // Logs para depuración (ver ERUDA si falla)
+            console.log("Raw AI Response:", res);
+
+            const results = extractJSON(res);
+            
+            if (!results || !Array.isArray(results) || results.length === 0) {
+                console.error("Failed to parse JSON array from:", res);
+                throw new Error("Error leyendo datos. La IA devolvió texto en lugar de datos estructurados.");
+            }
+            setScreenerResults(results);
+        } catch (e) {
+            setStatusModal({ isOpen: true, title: 'Error de Rastreo', msg: e.message, type: 'error' });
+        } finally { setLoading(false); }
+    };
+
+    const sortedScreenerResults = useMemo(() => {
+        return [...screenerResults].sort((a, b) => {
+            const dir = screenerSort.direction === 'asc' ? 1 : -1;
+            const valA = a[screenerSort.key] || 0; const valB = b[screenerSort.key] || 0;
+            if (typeof valA === 'string') return valA.localeCompare(valB) * dir;
+            return (valA - valB) * dir;
+        });
+    }, [screenerResults, screenerSort]);
+
+    const handlePrintScreener = () => {
+        const printWindow = window.open('', '', 'height=800,width=1100');
+        let html = `<html><head><title>Rastreo iA</title><style>body{font-family:sans-serif;padding:20px;font-size:10px;} h1{border-bottom:2px solid #333;} table{width:100%;border-collapse:collapse;margin-top:10px;} th,td{border:1px solid #ddd;padding:6px;text-align:right;} th{background:#f1f5f9;text-align:center;text-transform:uppercase;font-size:8px;} .left{text-align:left;}</style></head><body>`;
+        html += `<h1>RASTREO DE ACTIVOS: ${EXCHANGES.find(e=>e.id===exchange)?.name || exchange}</h1><p><b>Filtros Activos:</b> ${Object.entries(params).filter(([_,p])=>p.active).map(([_,p])=>`${p.label}(${p.val})`).join(' | ')}</p><p>Fecha: ${new Date().toLocaleString()}</p>`;
+        html += `<table><thead><tr><th>Ticker</th><th class="left">Nombre</th><th>Precio</th><th>PER</th><th>PEG</th><th>ROI</th><th>Yield</th><th>P/B</th><th>D/E</th></tr></thead><tbody>`;
+        sortedScreenerResults.forEach(r => { html += `<tr><td><b>${r.ticker}</b></td><td class="left">${r.name}</td><td>${formatN(r.price)}</td><td>${r.per}</td><td>${r.peg}</td><td>${r.roi}%</td><td>${r.divYield}%</td><td>${r.pb}</td><td>${r.debtEquity}</td></tr>`; });
+        html += `</tbody></table></body></html>`;
+        printWindow.document.write(html); printWindow.document.close(); printWindow.print();
+    };
+
+    const handlePrintEstudio = () => { 
+        const printWindow = window.open('', '', 'height=800,width=800'); 
+        let html = `<html><head><title>Estudio Valor</title><style>body{font-family:sans-serif;padding:20px;font-size:10px;} h1{border-bottom:2px solid #333;} .grid{display:flex; gap:10px;} .col{flex:1;} ul{padding-left:15px;} .label{font-weight:bold; color:#555;}</style></head><body>`; 
+        html += `<h1>ESTUDIO: ${data ? data.company : ticker}</h1>`; 
+        if(specificAnswer) html += `<div>${specificAnswer}</div>`; 
+        else if(data) { 
+            html += `<div style="border:1px solid #ddd; padding:10px; margin-bottom:10px;">PRECIO: <b>${data.current_price}</b> | VALOR: <b>${data.intrinsic_value}</b> | STATUS: <b>${data.valuation_status}</b><br/><br/>VEREDICTO: ${data.investment_verdict}</div>`; 
+            html += `<div class="grid"><div class="col"><h3>Fundamental</h3><ul><li>PER: ${data.fundamentals?.per}</li><li>EPS: ${data.fundamentals?.eps}</li><li>Beta: ${data.fundamentals?.beta}</li></ul></div><div class="col"><h3>Dividendo</h3><ul><li>Yield: ${data.dividend_data?.yield_percent}</li><li>Payout: ${data.dividend_data?.payout_ratio}</li></ul></div></div>`;
+            html += `<h3>Pros / Contras</h3><div class="grid"><div class="col"><ul>${(data.pros_cons?.pros||[]).map(p=>`<li>${p}</li>`).join('')}</ul></div><div class="col"><ul>${(data.pros_cons?.cons||[]).map(p=>`<li>${p}</li>`).join('')}</ul></div></div>`;
+        } 
+        html += `</body></html>`; 
+        printWindow.document.write(html); printWindow.document.close(); printWindow.print(); 
+    };
+
+    const ParamCard = ({ id, config }) => (
+        <div className={`flex flex-col gap-2 p-4 rounded-2xl border transition-all ${config.active ? 'bg-slate-900/60 border-blue-500/50 shadow-lg shadow-blue-900/10' : 'bg-slate-900/20 border-slate-800 opacity-60 grayscale'}`}>
+            <div className="flex justify-between items-center pb-2 border-b border-white/5">
+                <div className="flex items-center gap-2">
+                    <input type="checkbox" checked={config.active} onChange={() => setParams(prev => ({...prev, [id]: {...config, active: !config.active}}))} className="custom-checkbox w-4 h-4" />
+                    <span className={`text-[10px] font-black uppercase ${config.active ? 'text-blue-300' : 'text-slate-500'}`}>{config.label}</span>
+                </div>
+                {config.active && <span className="text-sm font-mono font-black text-white">{config.val}{config.label.includes('%') ? '%' : ''}</span>}
+            </div>
+            {config.active && (
+                <div className="flex items-center gap-3 my-1">
+                    <button onClick={() => setParams(prev => ({...prev, [id]: {...config, val: Math.max(config.min, Number((config.val - config.step).toFixed(2)))}}))} className="w-8 h-8 bg-slate-800 rounded-lg hover:bg-slate-700 text-white font-bold shadow-inner flex items-center justify-center">-</button>
+                    <input type="range" min={config.min} max={config.max} step={config.step} value={config.val} onChange={e => setParams(prev => ({...prev, [id]: {...config, val: parseFloat(e.target.value)}}))} className="flex-1 accent-blue-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" />
+                    <button onClick={() => setParams(prev => ({...prev, [id]: {...config, val: Math.min(config.max, Number((config.val + config.step).toFixed(2)))}}))} className="w-8 h-8 bg-slate-800 rounded-lg hover:bg-slate-700 text-white font-bold shadow-inner flex items-center justify-center">+</button>
+                </div>
+            )}
+            <p className="text-[9px] text-slate-500 italic leading-snug mt-1">{config.help}</p>
+        </div>
+    );
+
+    const calcUpside = (t, c) => (!t || !c) ? 0 : ((t - c) / c) * 100;
+    const getComparisonVerdict = (metric, sVal, iVal) => { if(!sVal || !iVal) return ""; if(metric === 'yield') return sVal > iVal ? "✅ Mejor" : "❌ Peor"; return sVal < iVal ? "✅ Mejor" : "❌ Peor"; };
+
+    return (
+        <div className="h-full flex flex-col p-4 md:p-6 overflow-y-auto custom-scrollbar relative bg-[#0a0a0a]">
+            {loading && <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md flex flex-col items-center justify-center"><Icons.Loader size={60} className="text-blue-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando Mercado Global...</div></div>}
+
+            {/* MODAL DE STATUS */}
+            {statusModal.isOpen && (
+                <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 fade-in">
+                    <div className="bg-slate-900 border border-slate-700 p-6 rounded-2xl max-w-sm w-full shadow-2xl relative">
+                        <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 mx-auto ${statusModal.type==='error'?'bg-red-500/20 text-red-500':statusModal.type==='warning'?'bg-yellow-500/20 text-yellow-500':'bg-blue-500/20 text-blue-400'}`}>
+                            {statusModal.type==='error'?<Icons.AlertCircle size={28}/>:<Icons.CheckCircle size={28}/>}
+                        </div>
+                        <h3 className="text-lg font-bold text-center text-white mb-2">{statusModal.title}</h3>
+                        <p className="text-sm text-slate-400 text-center mb-6 leading-relaxed whitespace-pre-wrap">{statusModal.msg}</p>
+                        <button onClick={() => setStatusModal({isOpen: false})} className="w-full bg-slate-800 hover:bg-slate-700 py-3 rounded-xl font-bold uppercase text-xs text-white transition-colors border border-slate-600">Cerrar</button>
+                    </div>
+                </div>
+            )}
+
+            {/* PESTAÑAS */}
+            <div className="flex gap-2 mb-6 bg-slate-900 p-1 rounded-xl border border-slate-800 w-fit shrink-0 shadow-lg">
+                <button onClick={() => setActiveSubTab('estudio')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'estudio' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Estudio Individual</button>
+                <button onClick={() => setActiveSubTab('rastreo')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'rastreo' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Rastreo de Mercado</button>
+            </div>
+
+            {activeSubTab === 'estudio' ? (
+                /* CONTENIDO ORIGINAL ESTUDIO */
+                <div className="flex flex-col gap-6 fade-in max-w-6xl mx-auto w-full pb-10">
+                    <div className="flex flex-col gap-6 shrink-0 bg-slate-900/50 p-6 rounded-2xl border border-slate-800 shadow-xl">
+                        <div className="flex gap-4"><div className="flex-1 relative"><Icons.Search className="absolute left-3 top-3.5 text-slate-500" size={18}/><input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} placeholder="Introduce Ticker (Ej: AAPL, SAN.MC, TSLA...)" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3.5 pl-10 pr-4 text-white font-bold tracking-widest text-sm" /></div><button onClick={analyze} disabled={loading || !ticker} className="bg-blue-600 px-8 rounded-xl font-black flex items-center gap-2 shadow-lg hover:bg-blue-500 transition-colors text-xs text-white">{loading ? <Icons.Loader/> : <Icons.Wand/>} ANALIZAR</button><button onClick={() => { setTicker(''); setQuestion(''); setData(null); setSpecificAnswer(null); }} className="bg-slate-700 px-4 rounded-xl font-bold text-white hover:bg-slate-600 transition-colors text-xs border border-slate-600">BORRAR</button></div>
+                        <div className="relative"><Icons.MessageCircle className="absolute left-3 top-3 text-slate-500" size={18}/><input type="text" value={question} onChange={e => setQuestion(e.target.value)} placeholder="¿Tienes alguna pregunta específica sobre este valor?" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-xs text-white" /></div>
+                        <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">{suggestedQuestions.map((q,i) => ( <button key={i} onClick={()=>setQuestion(q)} className="whitespace-nowrap px-4 py-2 bg-slate-800 border border-slate-700 rounded-full text-[10px] text-slate-400 hover:text-white hover:bg-slate-700 transition-colors">{q}</button> ))}</div>
+                    </div>
+                    {(specificAnswer || data) && (
+                        <div className="glass-panel p-6 rounded-2xl fade-in relative border-slate-700 bg-slate-900/30 shadow-2xl">
+                             <button onClick={handlePrintEstudio} className="absolute top-4 right-4 bg-slate-700 px-3 py-1 rounded text-xs font-bold text-white flex gap-2 items-center hover:bg-slate-600 border border-slate-600"><Icons.ExternalLink size={12}/> IMPRIMIR</button>
+                             {specificAnswer && ( <> <h3 className="text-lg font-bold text-blue-400 mb-4 flex items-center gap-2"><Icons.Target/> Respuesta iA</h3> <div className="prose-content" dangerouslySetInnerHTML={{__html: specificAnswer}}></div> </> )}
                               {data && !specificAnswer && (
-                                  <div className="space-y-6 pb-10">
+                                  <div className="space-y-6 pb-2">
                                       <div className="flex justify-between items-start mb-6"><div><h2 className="text-3xl font-display font-bold text-white mb-1">{data.company}</h2><div className={`inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${(data.valuation_status || '').includes('Infra') ? 'bg-green-500/20 text-green-400' : (data.valuation_status || '').includes('Sobre') ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'}`}>{data.valuation_status}</div></div><div className="text-right"><div className="text-[9px] text-slate-500 uppercase font-bold">Cotización Actual</div><div className="text-3xl font-black text-white font-mono">{formatN(data.current_price)}</div></div></div>
                                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4"><div className="bg-slate-900/60 p-4 rounded-xl border border-purple-500/30 relative overflow-hidden"><div className="absolute top-0 right-0 p-2 opacity-10"><Icons.Target size={40}/></div><div className="text-[9px] text-purple-300 uppercase font-bold mb-1">Valor Intrínseco (Hoy)</div><div className="flex items-baseline gap-2"><span className="text-2xl font-black text-purple-400 font-mono">{formatN(data.intrinsic_value)}</span><span className={`text-xs font-bold ${data.intrinsic_value > data.current_price ? 'text-green-400' : 'text-red-400'}`}>{calcUpside(data.intrinsic_value, data.current_price) > 0 ? '+' : ''}{formatN(calcUpside(data.intrinsic_value, data.current_price))}%</span></div></div><div className="bg-slate-900/40 p-4 rounded-xl border border-slate-700"><div className="text-[9px] text-slate-400 uppercase font-bold mb-1">Estimación 1 Año</div><div className="flex items-baseline gap-2"><span className="text-xl font-bold text-slate-200 font-mono">{formatN(data.forecast_1y)}</span><span className={`text-[10px] font-bold ${data.forecast_1y > data.current_price ? 'text-green-500' : 'text-red-500'}`}>{calcUpside(data.forecast_1y, data.current_price) > 0 ? '+' : ''}{formatN(calcUpside(data.forecast_1y, data.current_price))}%</span></div></div><div className="bg-slate-900/40 p-4 rounded-xl border border-slate-700"><div className="text-[9px] text-slate-400 uppercase font-bold mb-1">Estimación 5 Años</div><div className="flex items-baseline gap-2"><span className="text-xl font-bold text-slate-200 font-mono">{formatN(data.forecast_5y)}</span><span className={`text-[10px] font-bold ${data.forecast_5y > data.current_price ? 'text-green-500' : 'text-red-500'}`}>{calcUpside(data.forecast_5y, data.current_price) > 0 ? '+' : ''}{formatN(calcUpside(data.forecast_5y, data.current_price))}%</span></div></div></div>
                                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl"><h3 className="text-sm font-bold text-blue-400 mb-4 flex items-center gap-2"><Icons.DollarSign size={16}/> Dividendos y Rentabilidad</h3><div className="space-y-3"><div className="flex justify-between border-b border-slate-800 pb-2"><span className="text-xs text-slate-500 uppercase">Rentabilidad (Yield)</span><span className="text-xs font-bold text-green-400">{data.dividend_data?.yield_percent}</span></div><div className="flex justify-between border-b border-slate-800 pb-2"><span className="text-xs text-slate-500 uppercase">Importe Anual</span><span className="text-xs font-bold text-white">{data.dividend_data?.amount}</span></div><div className="flex justify-between border-b border-slate-800 pb-2"><span className="text-xs text-slate-500 uppercase">Payout Ratio</span><span className={`text-xs font-bold ${parseInt(data.dividend_data?.payout_ratio || 0)>80?'text-red-400':'text-white'}`}>{data.dividend_data?.payout_ratio}</span></div><div className="flex justify-between border-b border-slate-800 pb-2"><span className="text-xs text-slate-500 uppercase">Fecha Ex-Dividendo</span><span className="text-xs font-bold text-blue-300">{data.dividend_data?.ex_date}</span></div><div className="flex justify-between border-b border-slate-800 pb-2"><span className="text-xs text-slate-500 uppercase">Fecha de Pago</span><span className="text-xs font-bold text-slate-300">{data.dividend_data?.payment_date}</span></div><div className="flex justify-between"><span className="text-xs text-slate-500 uppercase">Racha Crecimiento</span><span className="text-xs font-bold text-yellow-500">{data.dividend_data?.growth_streak}</span></div></div></div><div className="space-y-4"><div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl"><h3 className="text-sm font-bold text-slate-300 mb-4 flex items-center gap-2"><Icons.Hash size={16}/> Salud Financiera</h3><div className="space-y-3"><div className="flex justify-between border-b border-slate-800 pb-2"><span className="text-xs text-slate-500 uppercase">Crec. Ventas (3Y CAGR)</span><span className={`text-xs font-bold ${String(data.financial_health?.revenue_growth_3y || '').includes('-')?'text-red-400':'text-green-400'}`}>{data.financial_health?.revenue_growth_3y}</span></div><div className="flex justify-between border-b border-slate-800 pb-2"><span className="text-xs text-slate-500 uppercase">Margen Neto</span><span className="text-xs font-bold text-white">{data.financial_health?.net_margin}</span></div><div className="flex justify-between border-b border-slate-800 pb-2"><span className="text-xs text-slate-500 uppercase">ROE</span><span className="text-xs font-bold text-blue-400">{data.financial_health?.roe}</span></div><div className="flex justify-between border-b border-slate-800 pb-2"><span className="text-xs text-slate-500 uppercase">Deuda / Equity</span><span className={`text-xs font-bold ${data.financial_health?.debt_to_equity > 1.5 ? 'text-red-400' : 'text-green-400'}`}>{formatN(data.financial_health?.debt_to_equity)}</span></div><div className="flex justify-between"><span className="text-xs text-slate-500 uppercase">Free Cash Flow</span><span className="text-xs font-bold text-white">{data.financial_health?.free_cash_flow}</span></div></div></div><div className="bg-blue-900/10 p-3 rounded-xl border border-blue-500/20"><div className="text-[9px] uppercase text-blue-400 font-bold mb-1">Análisis Técnico</div><div className="text-xs font-mono text-slate-200 leading-snug mb-1"><b>Tendencia:</b> CP {data.technical_analysis?.trend_short} | LP {data.technical_analysis?.trend_long}</div><div className="text-xs font-mono text-slate-200 leading-snug mb-1"><b>Soportes:</b> {(data.technical_analysis?.supports || []).join(' / ')}</div><div className="text-xs font-mono text-slate-200 leading-snug"><b>Resistencias:</b> {(data.technical_analysis?.resistances || []).join(' / ')}</div></div></div></div>
@@ -1696,12 +1885,83 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
                                       <div className="glass-panel p-6 rounded-2xl"><h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2"><Icons.Award size={18}/> Veredicto de Inversión</h3><p className="text-slate-300 text-sm leading-relaxed mb-6">{data.investment_verdict}</p><div className="border-t border-slate-700 pt-4"><h4 className="text-xs uppercase font-bold text-slate-500 mb-3">Comparar con Competencia</h4><div className="flex flex-wrap gap-2">{(data.peers || []).map((peer, i) => ( <button key={i} onClick={() => setTicker(peer)} className="px-3 py-1 bg-slate-800 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-bold text-blue-400 transition-colors border border-slate-700">{peer}</button> ))}</div></div></div>
                                   </div>
                               )}
-                          </div>
-                      )}
-                  </div>
-              </div>
-          );
-      };
+                        </div>
+                    )}
+                </div>
+            ) : (
+                /* CONTENIDO RASTREO */
+                <div className="flex flex-col gap-6 fade-in max-w-7xl mx-auto w-full pb-10">
+                    <div className="bg-slate-900/50 p-6 rounded-3xl border border-slate-800 space-y-8 shadow-2xl">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div className="flex flex-col gap-2">
+                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Bolsa de Valores (Mercado)</label>
+                                <select value={exchange} onChange={e=>setExchange(e.target.value)} className="w-full h-12 px-4 bg-slate-950 border border-slate-700 rounded-xl text-xs font-bold text-white">
+                                    {EXCHANGES.map(ex => <option key={ex.id} value={ex.id}>{ex.id} - {ex.name} ({ex.country})</option>)}
+                                </select>
+                                <span className="text-[9px] text-slate-500 italic">Define en qué mercado internacional la iA buscará los activos.</span>
+                            </div>
+                            <div className="flex flex-col gap-2">
+                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Nº Máximo Resultados</label>
+                                <select value={maxResults} onChange={e=>setMaxResults(parseInt(e.target.value))} className="w-full h-12 px-4 bg-slate-950 border border-slate-700 rounded-xl text-xs font-bold text-white">
+                                    {[5, 10, 15, 20].map(v => <option key={v} value={v}>{v} Registros</option>)}
+                                </select>
+                                <span className="text-[9px] text-slate-500 italic">Limita el tamaño del listado para un análisis más enfocado.</span>
+                            </div>
+                            <div className="flex items-end pb-1"><button onClick={runScreener} className="w-full h-12 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-2xl shadow-blue-900/40 border border-blue-400/20">Iniciar Rastreo Inteligente</button></div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                            {Object.entries(params).map(([id, config]) => <ParamCard key={id} id={id} config={config} />)}
+                        </div>
+                    </div>
+
+                    {screenerResults.length > 0 && (
+                        <div className="bg-slate-900/50 border border-slate-800 rounded-3xl overflow-hidden flex flex-col shadow-2xl">
+                            <div className="p-5 bg-slate-800/40 flex justify-between items-center border-b border-slate-700/50">
+                                <div className="flex flex-col">
+                                    <span className="text-xs font-black uppercase tracking-widest text-white">Oportunidades Localizadas</span>
+                                    <span className="text-[9px] text-slate-500 uppercase font-bold">Ordenado por {screenerSort.key} ({screenerSort.direction})</span>
+                                </div>
+                                <button onClick={handlePrintScreener} className="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-xl text-[10px] font-bold border border-slate-600 flex items-center gap-2 text-white transition-colors"><Icons.ExternalLink size={14}/> IMPRIMIR INFORME</button>
+                            </div>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left text-xs">
+                                    <thead className="bg-slate-950/80 text-slate-500 uppercase text-[9px] font-black sticky top-0">
+                                        <tr>
+                                            {['ticker', 'name', 'price', 'per', 'peg', 'roi', 'divYield', 'pb', 'debtEquity'].map(k => (
+                                                <th key={k} className="p-5 cursor-pointer hover:text-white transition-colors border-b border-slate-800" onClick={()=>setScreenerSort({key:k, direction: screenerSort.direction==='asc'?'desc':'asc'})}>
+                                                    <div className="flex items-center gap-1">{k === 'divYield' ? 'Yield' : k === 'debtEquity' ? 'D/E' : k} {screenerSort.key === k && (screenerSort.direction==='asc'?'▲':'▼')}</div>
+                                                </th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-800 font-mono">
+                                        {sortedScreenerResults.map((r, i) => (
+                                            <tr key={i} className="hover:bg-blue-600/5 transition-colors group">
+                                                <td className="p-5 font-black text-blue-400 text-sm">{r.ticker}</td>
+                                                <td className="p-5 text-slate-300 font-sans font-bold">{r.name}</td>
+                                                <td className="p-5 text-white font-bold">{formatN(r.price)}</td>
+                                                {/* CELDAS CON VALIDACIÓN VISUAL */}
+                                                <td className={`p-5 ${checkCriteria('per', r.per)}`}>{r.per}</td>
+                                                <td className={`p-5 ${checkCriteria('peg', r.peg)}`}>{r.peg}</td>
+                                                <td className={`p-5 ${checkCriteria('roi', r.roi)}`}>{r.roi}%</td>
+                                                <td className={`p-5 ${checkCriteria('divYield', r.divYield)}`}>{r.divYield}%</td>
+                                                <td className={`p-5 ${checkCriteria('pb', r.pb)}`}>{r.pb}</td>
+                                                <td className={`p-5 ${checkCriteria('debtEquity', r.debtEquity)}`}>{r.debtEquity}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
+
+
       
 const DividendTab = ({ portfolio, setPortfolio, baseCurrency, syncStatus, onManualSync }) => {
           const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
