@@ -2004,7 +2004,9 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
 
 const DividendTab = ({ portfolio, setPortfolio, baseCurrency, syncStatus, onManualSync }) => {
     const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-    const [showAllHistory, setShowAllHistory] = useState(false); // Estado para Modo Histórico
+    const [showAllHistory, setShowAllHistory] = useState(false);
+
+    const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
 
     const formatDateSimple = (d) => {
         if(!d) return '';
@@ -2012,33 +2014,24 @@ const DividendTab = ({ portfolio, setPortfolio, baseCurrency, syncStatus, onManu
         return `${date.getDate().toString().padStart(2,'0')}/${(date.getMonth()+1).toString().padStart(2,'0')}/${date.getFullYear().toString().slice(-2)}`;
     };
 
-    // Función de redondeo para evitar errores de coma flotante
-    const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
-
     const filtered = useMemo(() => {
-        const list = portfolio.filter(p => { 
-            if (showAllHistory) {
-                // En modo histórico mostramos cualquier valor que haya cobrado dividendos alguna vez
-                return (p.dividends && p.dividends.length > 0) || p.annualDividend > 0;
-            }
-            // Lógica original por año seleccionado
+        return portfolio.filter(p => { 
+            if (showAllHistory) return (p.dividends && p.dividends.length > 0) || p.annualDividend > 0;
             const paysDiv = p.annualDividend > 0;
             const hasDivsInYear = (p.dividends || []).some(d => d.year === selectedYear && d.net !== 0);
             const bY = new Date(p.buyDate).getFullYear(); 
             const sY = p.sellDate ? new Date(p.sellDate).getFullYear() : 9999; 
             return (paysDiv || hasDivsInYear) && bY <= selectedYear && sY >= selectedYear; 
-        });
-        return list.sort((a,b) => {
+        }).sort((a,b) => {
             const aClosed = !!a.sellDate; const bClosed = !!b.sellDate;
             if(aClosed !== bClosed) return aClosed ? 1 : -1;
-            if(!aClosed) return new Date(a.buyDate) - new Date(b.buyDate); 
-            return new Date(a.sellDate) - new Date(b.sellDate); 
+            return a.name.localeCompare(b.name);
         });
     }, [portfolio, selectedYear, showAllHistory]);
 
     const handleDivChange = (id, month, field, val) => { 
-        if (showAllHistory) return; // Bloqueo en modo acumulado
-        const numVal = parseFloat(val) || 0; 
+        if (showAllHistory) return;
+        const numVal = r2(val); 
         setPortfolio(prev => prev.map(p => { 
             if (p.id !== id) return p; 
             let divs = [...(p.dividends || [])]; 
@@ -2054,9 +2047,7 @@ const DividendTab = ({ portfolio, setPortfolio, baseCurrency, syncStatus, onManu
         const monthlyT = Array.from({ length: 12 }, () => ({ n: 0, o: 0, d: 0 }));
         
         const rows = filtered.map(p => {
-            // Filtrar dividendos: solo año seleccionado o TODOS
             const ds = (p.dividends || []).filter(d => showAllHistory ? true : d.year === selectedYear);
-            
             const n = r2(ds.reduce((a, b) => a + (b.net || 0), 0));
             const o = r2(ds.reduce((a, b) => a + (b.taxOrigin || 0), 0));
             const d = r2(ds.reduce((a, b) => a + (b.taxDest || 0), 0));
@@ -2067,38 +2058,28 @@ const DividendTab = ({ portfolio, setPortfolio, baseCurrency, syncStatus, onManu
             tNet = r2(tNet + n); tOrg = r2(tOrg + o); tDest = r2(tDest + d); 
             tBruto = r2(tBruto + b); tDIB = r2(tDIB + diBruto); tDI15 = r2(tDI15 + di15);
             
-            // Colapsar dividendos en meses (si es histórico, suma todos los Eneros, febreros...)
             const rowMonths = Array.from({ length: 12 }, () => ({ n: 0, o: 0, d: 0 }));
             ds.forEach(div => { 
                 if (div.month >= 0 && div.month < 12) { 
-                    rowMonths[div.month].n = r2(rowMonths[div.month].n + (div.net || 0));
-                    rowMonths[div.month].o = r2(rowMonths[div.month].o + (div.taxOrigin || 0));
-                    rowMonths[div.month].d = r2(rowMonths[div.month].d + (div.taxDest || 0));
-                    
-                    // Acumulados globales mensuales
+                    rowMonths[div.month].n = r2(rowMonths[div.month].n + (div.net || 0)); 
+                    rowMonths[div.month].o = r2(rowMonths[div.month].o + (div.taxOrigin || 0)); 
+                    rowMonths[div.month].d = r2(rowMonths[div.month].d + (div.taxDest || 0)); 
                     monthlyT[div.month].n = r2(monthlyT[div.month].n + (div.net || 0)); 
                     monthlyT[div.month].o = r2(monthlyT[div.month].o + (div.taxOrigin || 0)); 
                     monthlyT[div.month].d = r2(monthlyT[div.month].d + (div.taxDest || 0)); 
                 } 
             });
-
-            return { id: p.id, name: p.name || p.ticker, ticker: p.ticker, n, o, d, b, diBruto, di15, rowMonths };
+            return { id: p.id, name: p.name, ticker: p.ticker, n, o, d, b, diBruto, di15, rowMonths };
         });
         
-        const tickerChartData = rows
-            .filter(r => r.n > 0)
-            .map(r => ({ label: r.ticker, value: r.n }))
-            .sort((a,b) => b.value - a.value);
-
+        const tickerChartData = rows.filter(r => r.n > 0).map(r => ({ label: r.ticker, value: r.n })).sort((a,b) => b.value - a.value);
         const annualHistoryMap = {};
         portfolio.forEach(p => {
             (p.dividends || []).forEach(d => {
                 annualHistoryMap[d.year] = r2((annualHistoryMap[d.year] || 0) + d.net);
             });
         });
-        const annualChartData = Object.keys(annualHistoryMap)
-            .sort((a,b) => a - b)
-            .map(year => ({ label: year, value: annualHistoryMap[year] }));
+        const annualChartData = Object.keys(annualHistoryMap).sort((a,b) => a - b).map(year => ({ label: year, value: annualHistoryMap[year] }));
 
         return { rows, tNet, tOrg, tDest, tBruto, tDIB, tDI15, monthlyT, tickerChartData, annualChartData };
     }, [filtered, selectedYear, showAllHistory, portfolio]);
@@ -2107,163 +2088,121 @@ const DividendTab = ({ portfolio, setPortfolio, baseCurrency, syncStatus, onManu
 
     const handlePrint = () => {
         const printWindow = window.open('', '', 'height=800,width=1200');
-        const emissionTime = new Date().toLocaleString();
         const reportTitle = showAllHistory ? `INFORME HISTÓRICO ACUMULADO DE DIVIDENDOS` : `INFORME DE DIVIDENDOS AÑO: ${selectedYear}`;
-        
-        // Helper interno para formato de fecha dd-mm-aaaa
         const fDate = (d) => {
             if(!d) return '';
             const date = new Date(d);
             return `${date.getDate().toString().padStart(2,'0')}-${(date.getMonth()+1).toString().padStart(2,'0')}-${date.getFullYear()}`;
         };
 
-        let html = `<html><head><title>${reportTitle}</title><style>
-            @page { size: landscape; margin: 6mm; } 
-            body { font-family: sans-serif; color: #000; margin: 0; padding: 0; } 
-            h1 { font-size: 10px; margin-bottom: 2px; text-transform: uppercase; border-bottom: 0.8px solid #000; } 
-            table { width: 100%; border-collapse: collapse; margin-top: 4px; table-layout: fixed; } 
-            
-            /* Cabeceras ultra pequeñas */
-            th { background: #f1f5f9; text-align: center; padding: 1px; border: 0.2px solid #94a3b8; font-size: 3.2px; text-transform: uppercase; line-height: 1; } 
-            
-            /* Cifras del cuerpo: tamaño reducido (igual al ticker/fecha) */
-            td { padding: 1px; border: 0.2px solid #cbd5e1; text-align: right; font-size: 3.8px; overflow: hidden; white-space: nowrap; font-family: monospace; } 
-            
-            /* Columna Nombre/Ticker */
-            .name-col { text-align: left; font-weight: bold; width: 100px; font-family: sans-serif; white-space: normal; line-height: 1.1; font-size: 4.5px; } 
-            .ticker-sub { font-size: 3.5px; font-weight: normal; color: #555; display: block; margin-top: 0.5px; font-family: monospace; }
-            
-            /* Columna Acumulados */
-            .acum-col { font-size: 3.8px; text-align: center; width: 115px; background: #f8fafc; font-weight: bold; letter-spacing: -0.2px; }
-            
-            /* Celdas mensuales */
-            .sub-col { font-size: 3px; color: #666; background: #f8fafc; } 
-            .month-cell { width: 28px; }
-            
-            /* Totales del pie: misma escala reducida */
-            .total-row { background: #f1f5f9; font-weight: bold; } 
-            .total-row td { font-size: 3.8px; border-top: 0.5px solid #000; }
-            
-            .green { color: #16a34a; } .red { color: #dc2626; }
-            .footer-box { margin-top: 6px; border: 0.8px solid #333; padding: 4px; background: #f9f9f9; width: 35%; }
+        let html = `<html><head><title>Print</title><style>
+            @page { size: landscape; margin: 5mm; } 
+            body { font-family: sans-serif; color: #000; -webkit-print-color-adjust: exact; } 
+            h1 { font-size: 10px; border-bottom: 1px solid #000; text-transform: uppercase; margin-bottom: 4px; } 
+            table { width: 100%; border-collapse: collapse; table-layout: fixed; } 
+            th { background: #f1f5f9; border: 0.1pt solid #94a3b8; font-size: 3.5px; text-transform: uppercase; padding: 1px; } 
+            td { border: 0.1pt solid #cbd5e1; text-align: right; font-size: 3.8px; font-family: monospace; white-space: nowrap; padding: 1px; } 
+            .name-col { text-align: left; font-weight: bold; width: 90px; white-space: normal; font-size: 4.2px; line-height: 1; } 
+            .ticker-sub { font-size: 3.2px; color: #555; display: block; font-family: monospace; }
+            .acum-col { width: 100px; text-align: center; font-weight: bold; background: #fafafa; }
+            .month-cell { width: 33px; }
+            .alt-col { background: #f0f3f5 !important; }
+            .total-row { background: #e2e8f0; font-weight: bold; }
+            .total-row td { border-top: 0.5px solid #000; font-size: 4px; }
+            .footer-box { margin-top: 8px; border: 1px solid #333; padding: 5px; background: #f9f9f9; width: 35%; }
         </style></head><body>`;
         
-        html += `<div style="display:flex;justify-content:space-between;align-items:center;"><div><h1>${reportTitle}</h1></div><div style="font-size:6px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`;
-        html += `<table><thead><tr><th rowspan="2" style="width:100px;">Valor / Lote</th><th rowspan="2" style="width:115px;">ACUMULADO (N|O|D|B)</th>`;
-        MONTHS.forEach(m => html += `<th colspan="3" class="month-cell">${m.substring(0,3)}</th>`);
-        html += `<th rowspan="2" style="width:30px;">B.D.I.</th><th rowspan="2" style="width:30px;">15%</th></tr><tr>`;
-        MONTHS.forEach(() => html += `<th class="sub-col">N</th><th class="sub-col">O</th><th class="sub-col">D</th>`);
+        html += `<h1>${reportTitle} (EMISIÓN: ${new Date().toLocaleString()})</h1>`;
+        html += `<table><thead><tr><th rowspan="2" style="width:90px;">Valor / Lote</th><th rowspan="2" style="width:100px;">ACUMULADO (N|O|D|B)</th>`;
+        MONTHS.forEach((m, i) => html += `<th colspan="3" class="month-cell ${i % 2 === 0 ? 'alt-col' : ''}">${m.substring(0,3)}</th>`);
+        html += `<th rowspan="2" style="width:28px;">BDI</th><th rowspan="2" style="width:28px;">15%</th></tr><tr>`;
+        MONTHS.forEach((_, i) => html += `<th style="font-size:2.8px;" class="${i % 2 === 0 ? 'alt-col' : ''}">N</th><th style="font-size:2.8px;" class="${i % 2 === 0 ? 'alt-col' : ''}">O</th><th style="font-size:2.8px;" class="${i % 2 === 0 ? 'alt-col' : ''}">D</th>`);
         html += `</tr></thead><tbody>`;
         
         stats.rows.forEach(r => {
-            const p = portfolio.find(x => x.id === r.id); 
-            const isSold = !!p.sellDate; 
-            const dateStr = isSold ? `V:${fDate(p.sellDate)}` : `C:${fDate(p.buyDate)}`;
-            html += `<tr>
-                <td class="name-col"><span class="${isSold?'red':'green'}">${r.name}</span><span class="ticker-sub">${r.ticker} | ${dateStr}</span></td>
-                <td class="acum-col">${formatN(r.n)}|${formatN(r.o)}|${formatN(r.d)}|${formatN(r.b)}</td>`;
-            r.rowMonths.forEach(m => { 
-                html += `<td>${m.n ? formatN(m.n) : ''}</td><td>${m.o ? formatN(m.o) : ''}</td><td>${m.d ? formatN(m.d) : ''}</td>`; 
+            const p = portfolio.find(x => x.id === r.id);
+            const isS = !!p.sellDate;
+            html += `<tr><td class="name-col"><span>${r.name}</span><span class="ticker-sub">${r.ticker} | ${isS?'V':'C'}:${fDate(isS?p.sellDate:p.buyDate)}</span></td>`;
+            html += `<td class="acum-col">${formatN(r.n)}|${formatN(r.o)}|${formatN(r.d)}|${formatN(r.b)}</td>`;
+            r.rowMonths.forEach((m, i) => {
+                const c = i % 2 === 0 ? 'alt-col' : '';
+                html += `<td class="${c}">${m.n?formatN(m.n):''}</td><td class="${c}">${m.o?formatN(m.o):''}</td><td class="${c}">${m.d?formatN(m.d):''}</td>`;
             });
             html += `<td>${formatN(r.diBruto)}</td><td>${formatN(r.di15)}</td></tr>`;
         });
         
-        html += `<tr class="total-row"><td colspan="2" style="text-align:right; padding-right:4px;">TOTALES GENERALES →</td>`;
-        stats.monthlyT.forEach(m => { 
-            html += `<td>${formatN(m.n)}</td><td>${formatN(m.o)}</td><td>${formatN(m.d)}</td>`; 
+        html += `<tr class="total-row"><td colspan="2" style="text-align:right;">TOTALES GENERALES →</td>`;
+        stats.monthlyT.forEach((m, i) => {
+            const c = i % 2 === 0 ? 'alt-col' : '';
+            html += `<td class="${c}">${formatN(m.n)}</td><td class="${c}">${formatN(m.o)}</td><td class="${c}">${formatN(m.d)}</td>`;
         });
-        html += `<td>${formatN(stats.tDIB)}</td><td>${formatN(stats.tDI15)}</td></tr>`;
-        html += `</tbody></table>`;
+        html += `<td>${formatN(stats.tDIB)}</td><td>${formatN(stats.tDI15)}</td></tr></tbody></table>`;
         
-        html += `<div class="footer-box">
-            <div style="font-size:6px; font-weight:bold; margin-bottom:2px; border-bottom:0.4px solid #ccc; text-transform:uppercase;">Resumen Fiscal Consolidado</div>
-            <table style="width:100%; font-size:5px; border:none; margin:0; table-layout: auto;">
-                <tr><td style="border:none; text-align:left; padding:0.4px;">Dividendos Brutos Totales:</td><td style="border:none; font-weight:bold; padding:0.4px;">${formatMoney(stats.tBruto, baseCurrency)}</td></tr>
-                <tr><td style="border:none; text-align:left; padding:0.4px;">Retenciones en Origen:</td><td style="border:none; color:#dc2626; padding:0.4px;">${formatMoney(stats.tOrg, baseCurrency)}</td></tr>
-                <tr><td style="border:none; text-align:left; padding:0.4px;">Retenciones en Destino (España):</td><td style="border:none; color:#dc2626; padding:0.4px;">${formatMoney(stats.tDest, baseCurrency)}</td></tr>
-                <tr><td style="border:none; text-align:left; border-top:0.4px solid #aaa; padding:0.4px;"><b>Líquido Neto Percibido:</b></td><td style="border:none; border-top:0.4px solid #aaa; color:#16a34a; font-size:6px; padding:0.4px;"><b>${formatMoney(stats.tNet, baseCurrency)}</b></td></tr>
-            </table>
-        </div></body></html>`;
+        html += `<div class="footer-box"><div style="font-size:6px; font-weight:bold; border-bottom:0.5px solid #ccc; margin-bottom:2px;">RESUMEN FISCAL</div><table style="width:100%; font-size:5px; border:none; margin:0;"><tr><td style="border:none; text-align:left;">Bruto Total:</td><td style="border:none; font-weight:bold;">${formatMoney(stats.tBruto, baseCurrency)}</td></tr><tr><td style="border:none; text-align:left;">Retenciones Totales:</td><td style="border:none; color:red;">${formatMoney(stats.tOrg + stats.tDest, baseCurrency)}</td></tr><tr><td style="border:none; text-align:left; border-top:0.5px solid #aaa;"><b>Neto Percibido:</b></td><td style="border:none; border-top:0.5px solid #aaa; color:green; font-size:6.5px;"><b>${formatMoney(stats.tNet, baseCurrency)}</b></td></tr></table></div></body></html>`;
         
-        printWindow.document.write(html); 
-        printWindow.document.close(); 
-        printWindow.focus(); 
-        setTimeout(() => { printWindow.print(); }, 500);
+        printWindow.document.write(html); printWindow.document.close();
+        setTimeout(() => { printWindow.focus(); printWindow.print(); }, 500);
     };
-
 
     return (
         <div className="w-full p-4 md:p-6 flex flex-col gap-6">
-            
-            <div className="flex justify-between items-center mb-4 bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
+            <div className="flex justify-between items-center bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
                 <div className="flex items-center gap-6">
-                    <div className={`flex items-center gap-4 transition-opacity ${showAllHistory ? 'opacity-20 pointer-events-none' : 'opacity-100'}`}>
-                        <button onClick={() => setSelectedYear(y => y - 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">←</button>
+                    <div className={`flex items-center gap-4 transition-opacity ${showAllHistory ? 'opacity-20 pointer-events-none' : ''}`}>
+                        <button onClick={() => setSelectedYear(y => y - 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700">←</button>
                         <span className="text-xl font-bold font-display text-blue-400">{selectedYear}</span>
-                        <button onClick={() => setSelectedYear(y => y + 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700 transition-colors">→</button>
+                        <button onClick={() => setSelectedYear(y => y + 1)} className="p-2 bg-slate-800 rounded hover:bg-slate-700">→</button>
                     </div>
-
-                    <label className="flex items-center gap-3 cursor-pointer group bg-slate-800/50 px-4 py-2 rounded-lg border border-slate-700 hover:border-blue-500 transition-all">
+                    <label className="flex items-center gap-3 cursor-pointer bg-slate-800/50 px-4 py-2 rounded-lg border border-slate-700 hover:border-blue-500">
                         <input type="checkbox" checked={showAllHistory} onChange={(e) => setShowAllHistory(e.target.checked)} className="custom-checkbox w-5 h-5 accent-blue-600"/>
-                        <div className="flex flex-col">
-                            <span className="text-[9px] font-black uppercase text-white tracking-widest leading-none">Todos</span>
-                            <span className="text-[7px] text-slate-500 font-bold">(Histórico)</span>
-                        </div>
+                        <div className="flex flex-col"><span className="text-[9px] font-black text-white uppercase leading-none">Todos</span><span className="text-[7px] text-slate-500 font-bold">(Histórico)</span></div>
                     </label>
                 </div>
-
                 <div className="flex gap-4 items-center">
-                    <button onClick={onManualSync} className={`px-2 py-1.5 rounded-lg text-[9px] font-bold border flex items-center gap-2 transition-all ${syncStatus === 'unsaved' ? 'bg-orange-600 border-orange-500 text-white' : 'bg-slate-800 border-slate-600 text-green-400'}`}>
-                        <Icons.Upload size={14}/> {syncStatus === 'unsaved' ? 'GUARDAR' : 'SYNC OK'}
-                    </button>
-                    {/* FUENTES REDUCIDAS EN CABECERA PANTALLA */}
-                    <div className="flex gap-6 mr-4">
-                        <div className="text-right"><div className="text-[8px] text-slate-500 uppercase font-bold">Bruto {showAllHistory?'Total':''}</div><div className="text-base font-bold text-white">{formatMoney(stats.tBruto, baseCurrency)}</div></div>
-                        <div className="text-right border-l border-slate-700 pl-6">
-                            <div className="text-[8px] text-red-400 uppercase font-bold">Retenciones</div>
-                            <div className="text-base font-bold text-red-400">{formatMoney(stats.tOrg + stats.tDest, baseCurrency)}</div>
-                        </div>
-                        <div className="text-right border-l border-slate-700 pl-6"><div className="text-[8px] text-green-400 uppercase font-bold">Neto {showAllHistory?'Hist.':''}</div><div className="text-base font-bold text-green-400">{formatMoney(stats.tNet, baseCurrency)}</div></div>
+                    <button onClick={onManualSync} className={`px-2 py-1.5 rounded-lg text-[9px] font-bold border flex items-center gap-1.5 transition-all ${syncStatus === 'unsaved' ? 'bg-orange-600 border-orange-500 text-white' : 'bg-slate-800 border-slate-600 text-green-400'}`}><Icons.Upload size={12}/> {syncStatus === 'unsaved' ? 'GUARDAR' : 'SYNC OK'}</button>
+                    <div className="flex gap-4 mr-2">
+                        <div className="text-right"><div className="text-[8px] text-slate-500 uppercase font-bold">Bruto</div><div className="text-sm font-bold text-white">{formatMoney(stats.tBruto, baseCurrency)}</div></div>
+                        <div className="text-right border-l border-slate-700 pl-4"><div className="text-[8px] text-red-400 uppercase font-bold">Retenc.</div><div className="text-sm font-bold text-red-400">{formatMoney(stats.tOrg + stats.tDest, baseCurrency)}</div></div>
+                        <div className="text-right border-l border-slate-700 pl-4"><div className="text-[8px] text-green-400 uppercase font-bold">Neto</div><div className="text-sm font-bold text-green-400">{formatMoney(stats.tNet, baseCurrency)}</div></div>
                     </div>
-                    <button onClick={handlePrint} className="bg-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14}/> IMPRIMIR</button>
+                    <button onClick={handlePrint} className="bg-slate-700 px-3 py-1.5 rounded-lg text-[9px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14}/> IMPRIMIR</button>
                 </div>
             </div>
             
-            <div className="w-full overflow-x-auto custom-scrollbar border border-slate-800 rounded-xl bg-slate-950 mb-4">
-                <table className="w-full text-[10px] border-collapse min-w-[2200px]">
+            <div className="w-full overflow-x-auto custom-scrollbar border border-slate-800 rounded-xl bg-slate-950">
+                <table className="w-full text-[9px] border-collapse min-w-[2400px]">
                     <thead className="bg-slate-900 border-b border-slate-700 uppercase sticky top-0 z-20">
                         <tr>
-                            <th className="p-2 w-[180px] text-left sticky left-0 bg-slate-900 z-30 border-r border-slate-800">NOMBRE (TICKER)</th>
-                            <th className="p-2 w-[180px] bg-yellow-900/20 text-yellow-500 text-center">ACUM. {showAllHistory ? 'HISTÓRICO' : 'AÑO'}</th>
-                            {MONTHS.map(m => (
-                                <th key={m} className="p-1 border-l border-slate-800 w-[140px]">
+                            <th className="p-2 w-[220px] text-left sticky left-0 bg-slate-900 z-30 border-r border-slate-800">NOMBRE (TICKER)</th>
+                            <th className="p-2 w-[140px] bg-yellow-900/20 text-yellow-500 text-center">ACUMULADO</th>
+                            {MONTHS.map((m, i) => (
+                                <th key={m} className={`p-1 border-l border-slate-800 w-[155px] ${i % 2 === 0 ? 'bg-slate-800/60' : 'bg-slate-900'}`}>
                                     <div className="text-blue-300 mb-1 text-center">{m}</div>
-                                    <div className="grid grid-cols-3 gap-0.5 text-[7px] text-slate-500"><span>NETO</span><span>ORIG</span><span>DEST</span></div>
+                                    <div className="grid grid-cols-3 gap-0.5 text-[7px] text-slate-500 text-center"><span>NETO</span><span>ORIG</span><span>DEST</span></div>
                                 </th>
                             ))}
-                            <th className="p-2 w-[110px] bg-purple-900/30 border-l border-purple-500/50">BRUTO D.I.</th>
-                            <th className="p-2 w-[110px] bg-purple-900/30 border-l border-slate-800">15% D.I.</th>
+                            <th className="p-2 w-[90px] bg-purple-900/30 border-l border-slate-800">B.D.I.</th>
+                            <th className="p-2 w-[90px] bg-purple-900/30 border-l border-slate-800">15%</th>
                         </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-800">
+                    <tbody>
                         {stats.rows.map(r => { 
-                            const p = portfolio.find(x => x.id === r.id); const isSold = !!p.sellDate; 
+                            const p = portfolio.find(x => x.id === r.id); const isS = !!p.sellDate; 
                             return ( 
-                                <tr key={r.id} className="hover:bg-white/5">
+                                <tr key={r.id} className="hover:bg-white/5 border-b border-slate-800">
                                     <td className="p-2 sticky left-0 bg-slate-950 border-r border-slate-800">
-                                        {/* NOMBRE GRANDE / TICKER PEQUEÑO */}
-                                        <div className={`font-bold text-xs ${isSold ? 'text-red-400' : 'text-green-400'}`}>{r.name}</div>
-                                        <div className="text-[8px] text-slate-500 font-mono mt-0.5">{r.ticker} <span className="opacity-60">({formatDateSimple(isSold ? p.sellDate : p.buyDate)})</span></div>
+                                        <div className={`font-bold text-xs ${isS ? 'text-red-400' : 'text-green-400'}`}>{r.name}</div>
+                                        <div className="text-[8px] text-slate-500 font-mono mt-0.5">{r.ticker} <span className="opacity-60">({isS?'V':'C'}:{formatDateSimple(isS?p.sellDate:p.buyDate)})</span></div>
                                     </td>
                                     <td className="p-2 bg-yellow-900/5 text-right font-mono space-x-1.5 text-[9px]">
                                         <span className="text-green-300">{formatN(r.n)}</span>|<span className="text-slate-400">{formatN(r.o)}</span>|<span className="text-slate-400">{formatN(r.d)}</span>|<span className="text-white font-bold">{formatN(r.b)}</span>
                                     </td>
                                     {r.rowMonths.map((m, i) => ( 
-                                        <td key={i} className={`p-1 border-l border-slate-800 ${showAllHistory ? 'bg-slate-900/30' : ''}`}>
+                                        <td key={i} className={`p-1 border-l border-slate-800 ${i % 2 === 0 ? 'bg-white/[0.04]' : ''} ${showAllHistory ? 'bg-slate-900/30' : ''}`}>
                                             <div className="grid grid-cols-3 gap-1">
-                                                <input type="number" step="0.01" value={m.n || ''} onChange={e => handleDivChange(r.id, i, 'net', e.target.value)} disabled={showAllHistory} className={`w-full text-center text-green-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-green-500 ${showAllHistory ? 'opacity-40 cursor-not-allowed' : ''}`} />
-                                                <input type="number" step="0.01" value={m.o || ''} onChange={e => handleDivChange(r.id, i, 'taxOrigin', e.target.value)} disabled={showAllHistory} className={`w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500 ${showAllHistory ? 'opacity-40 cursor-not-allowed' : ''}`} />
-                                                <input type="number" step="0.01" value={m.d || ''} onChange={e => handleDivChange(r.id, i, 'taxDest', e.target.value)} disabled={showAllHistory} className={`w-full text-center text-slate-400 bg-black/40 border-none p-0 focus:ring-1 focus:ring-slate-500 ${showAllHistory ? 'opacity-40 cursor-not-allowed' : ''}`} />
+                                                <input type="number" step="0.01" value={m.n || ''} onChange={e => handleDivChange(r.id, i, 'net', e.target.value)} disabled={showAllHistory} className={`w-full text-center text-green-400 bg-transparent border-none p-0 focus:ring-1 focus:ring-green-500 ${showAllHistory ? 'opacity-30 cursor-not-allowed' : ''}`} />
+                                                <input type="number" step="0.01" value={m.o || ''} onChange={e => handleDivChange(r.id, i, 'taxOrigin', e.target.value)} disabled={showAllHistory} className={`w-full text-center text-slate-400 bg-transparent border-none p-0 focus:ring-1 focus:ring-slate-500 ${showAllHistory ? 'opacity-30 cursor-not-allowed' : ''}`} />
+                                                <input type="number" step="0.01" value={m.d || ''} onChange={e => handleDivChange(r.id, i, 'taxDest', e.target.value)} disabled={showAllHistory} className={`w-full text-center text-slate-400 bg-transparent border-none p-0 focus:ring-1 focus:ring-slate-500 ${showAllHistory ? 'opacity-30 cursor-not-allowed' : ''}`} />
                                             </div>
                                         </td> 
                                     ))}
@@ -2273,9 +2212,9 @@ const DividendTab = ({ portfolio, setPortfolio, baseCurrency, syncStatus, onManu
                             ); 
                         })}
                         <tr className="bg-slate-900 font-black text-white text-xs border-t-2 border-slate-700 sticky bottom-0 z-30 shadow-2xl">
-                            <td colSpan="2" className="p-3 text-right sticky left-0 bg-slate-900 uppercase tracking-widest border-r border-slate-700">TOTALES {showAllHistory?'HISTÓRICOS':'MENSUALES'} →</td>
+                            <td colSpan="2" className="p-3 text-right sticky left-0 bg-slate-900 uppercase tracking-widest border-r border-slate-700">TOTALES →</td>
                             {MONTHS.map((_, i) => ( 
-                                <td key={i} className="p-1 border-l border-slate-800 bg-[#0f121a]">
+                                <td key={i} className={`p-1 border-l border-slate-800 ${i % 2 === 0 ? 'bg-slate-800/90' : 'bg-[#0f121a]'}`}>
                                     <div className="grid grid-cols-3 gap-0.5 text-[7px] font-mono text-center">
                                         <span className="text-green-400">{formatN(stats.monthlyT[i].n)}</span>
                                         <span className="text-slate-500">{formatN(stats.monthlyT[i].o)}</span>
@@ -2290,30 +2229,9 @@ const DividendTab = ({ portfolio, setPortfolio, baseCurrency, syncStatus, onManu
                 </table>
             </div>
 
-            <div className="flex flex-col gap-6 shrink-0 mb-6">
-                <div className="bg-blue-900/20 p-4 rounded-xl border border-blue-500/30">
-                    <div className="flex justify-between items-center border-b border-blue-500/30 pb-2 mb-2">
-                        <div className="text-blue-400 font-display font-bold text-xs uppercase tracking-widest">Resumen Dividendos ({showAllHistory ? 'Histórico' : `Ejercicio ${selectedYear}`})</div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-4 text-center">
-                        <div><div className="text-[9px] uppercase font-bold text-blue-300">Total Bruto</div><div className="text-lg font-bold text-white">{formatMoney(stats.tBruto, baseCurrency)}</div></div>
-                        <div><div className="text-[9px] uppercase font-bold text-blue-300">Total Retenciones</div><div className="text-lg font-bold text-white">{formatMoney(stats.tOrg + stats.tDest, baseCurrency)}</div></div>
-                        <div className="bg-blue-600 rounded-lg shadow-lg shadow-blue-900/40 p-1">
-                            <div className="text-[8px] uppercase font-bold text-white/80">Neto {showAllHistory ? 'Percibido' : 'del Año'}</div>
-                            <div className="text-lg font-black text-white">{formatMoney(stats.tNet, baseCurrency)}</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="h-[400px] w-full">
-                    <SimpleChart type="bar" data={chartDataMonthly} title={showAllHistory ? "Mensual Acumulado (Histórico)" : `Cobro Mensual Dividendos ${selectedYear}`} height={400} color="#10b981" />
-                </div>
-                <div className="h-[400px] w-full">
-                    <SimpleChart type="bar" data={stats.tickerChartData} title={showAllHistory ? "Acumulado por Ticker (Toda la Vida)" : `Dividendos por Ticker ${selectedYear}`} height={400} color="#3b82f6" />
-                </div>
-                <div className="h-[400px] w-full">
-                    <SimpleChart type="bar" data={stats.annualChartData} title="Histórico de Dividendos Netos por Año" height={400} color="#a855f7" />
-                </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-6">
+                <div className="h-[350px]"><SimpleChart type="bar" data={chartDataMonthly} title={showAllHistory ? "Histórico Mensual" : `Dividendos Mensuales ${selectedYear}`} height={350} color="#10b981" /></div>
+                <div className="h-[350px]"><SimpleChart type="bar" data={stats.tickerChartData} title="Total por Ticker (Neto)" height={350} color="#3b82f6" /></div>
             </div>
         </div>
     );
