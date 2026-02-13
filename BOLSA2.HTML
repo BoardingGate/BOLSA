@@ -139,6 +139,8 @@
         CursorClick: (p) => <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18" {...p}><path fillRule="evenodd" d="M14.25 2.25a.75.75 0 0 1 .75.75v3.21l1.9-1.9a.75.75 0 1 1 1.06 1.06l-3.21 3.21h3.21a.75.75 0 0 1 .75.75v3.21l1.9-1.9a.75.75 0 1 1 1.06 1.06l-3.21 3.21h3.21a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1-.75-.75v-4.5a.75.75 0 0 1 .75-.75h3.21l-1.9-1.9a.75.75 0 0 1-.22-.53V5.46L14.78 4.06a.75.75 0 0 1 .53-.22H17.46l-1.9-1.9a.75.75 0 0 1-.22-.53V2.25Z" clipRule="evenodd" /><path d="M5.47 8.53a.75.75 0 0 1 0-1.06l3.5-3.5a.75.75 0 0 1 1.06 1.06L8.06 7.5h11.19a.75.75 0 0 1 0 1.5H8.06l1.97 1.97a.75.75 0 1 1-1.06 1.06l-3.5-3.5Z" /></svg> // Simplified
       };
 
+      const [globalNotes, setGlobalNotes] = usePersistentState('bg_global_notes', '');  
+
       const askGemini = async (apiKey, prompt) => {
           if (!apiKey) throw new Error("Falta API Key");
           const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
@@ -887,6 +889,7 @@ const StatsDashboard = ({ portfolio, baseCurrency, taxTotal }) => {
 
 const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady, _x_lim, _x_trig }) => {
 // --- ESTADOS PERSISTENTES PARA FILTROS ---
+    const [isNotesModalOpen, setIsNotesModalOpen] = useState(false);
     const [filterText, setFilterText] = usePersistentState('bg_port_filter_text', '');
     const [filterDateStart, setFilterDateStart] = usePersistentState('bg_port_filter_start', '');
     const [filterDateEnd, setFilterDateEnd] = usePersistentState('bg_port_filter_end', '');
@@ -1382,6 +1385,14 @@ const analyzePortfolio = async () => {
 
                     {/* PANEL TIPO */}
                     <div className="flex bg-slate-900 rounded border border-slate-700 h-8 p-0.5"><button onClick={() => setFilterType('all')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'all' ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white'}`}>TODO</button><button onClick={() => setFilterType('active')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'active' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>ACTIVAS</button><button onClick={() => setFilterType('sold')} className={`px-3 h-full rounded text-[10px] font-bold transition-all ${filterType === 'sold' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>VENTAS</button></div>
+
+                    <button 
+                        onClick={() => setIsNotesModalOpen(true)} 
+                        className="ml-auto h-8 px-4 bg-slate-800 hover:bg-slate-700 text-yellow-500 border border-slate-700 rounded text-[10px] font-black uppercase flex items-center gap-2 transition-all shadow-lg">
+                        <Icons.MessageCircle size={14}/> Block de Notas
+                    </button>
+
+
                 </div>
             </div>
             
@@ -1639,6 +1650,42 @@ const analyzePortfolio = async () => {
                     <button onClick={handlePrintAI} className="bg-slate-700 px-4 py-2 rounded-lg text-xs font-bold text-white flex items-center gap-2 hover:bg-slate-600"><Icons.ExternalLink size={14}/> IMPRIMIR</button> 
                 </div> 
             </Modal>
+
+            <Modal 
+                isOpen={isNotesModalOpen} 
+                title="Block de Notas de la Cartera" 
+                onClose={() => setIsNotesModalOpen(false)}
+                size="md"
+            >
+                <div className="flex flex-col gap-4">
+                    <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">
+                        Notas Generales, Estrategia o Recordatorios:
+                    </p>
+                    <textarea 
+                        value={globalNotes} 
+                        onChange={(e) => setGlobalNotes(e.target.value)} 
+                        placeholder="Escribe aquí tus notas..."
+                        className="w-full h-80 bg-slate-950 border border-slate-700 rounded-xl p-4 text-sm text-slate-200 font-sans leading-relaxed focus:border-yellow-500/50 focus:outline-none custom-scrollbar shadow-inner"
+                    />
+                    <div className="flex justify-between items-center bg-slate-800/30 p-3 rounded-lg border border-slate-700">
+                        <span className="text-[9px] text-slate-500 italic">
+                            * Estas notas se sincronizan automáticamente con tu copia en la nube.
+                        </span>
+                        <button 
+                            onClick={() => {
+                                onManualSync(); // Dispara la sincronización a GDrive
+                                setIsNotesModalOpen(false);
+                            }} 
+                            className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-bold text-[10px] uppercase transition-colors"
+                        >
+                            Guardar y Sincronizar
+                        </button>
+                    </div>
+                </div>
+            </Modal>
+
+
+
         </div>
     );
 };
@@ -2674,9 +2721,9 @@ const App = () => {
 
           const updateResultsData = (newVal) => { setResultsData(newVal); setLocalTimestamp(Date.now()); setSyncStatus('unsaved'); };
 
-          const uploadToCloud = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) return alert("Configura la URL de Google Script en Ajustes."); setSyncStatus('uploading'); setSyncMessage('Subiendo datos...'); try { const now = Date.now(); const payload = { timestamp: now, portfolio, resultsData, apiKey, baseCurrency, refreshInterval, version: 3, appPin }; await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); setLocalTimestamp(now); setSyncStatus('synced'); setSyncMessage('✅ Sincronizado'); setTimeout(() => setSyncMessage(''), 3000); } catch (e) { console.error(e); setSyncStatus('error'); setSyncMessage('❌ Error al subir'); } };
+          const uploadToCloud = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) return alert("Configura la URL de Google Script en Ajustes."); setSyncStatus('uploading'); setSyncMessage('Subiendo datos...'); try { const now = Date.now(); const payload = { timestamp: now, portfolio, resultsData, apiKey, baseCurrency, refreshInterval, version: 3, appPin, globalNotes }; await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); setLocalTimestamp(now); setSyncStatus('synced'); setSyncMessage('✅ Sincronizado'); setTimeout(() => setSyncMessage(''), 3000); } catch (e) { console.error(e); setSyncStatus('error'); setSyncMessage('❌ Error al subir'); } };
           const checkForCloudUpdates = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) { setIsAppReady(true); return; } setSyncStatus('checking'); try { const response = await fetch(url); const cloudData = await response.json(); const cloudTS = cloudData.timestamp || 0; const localTS = localTimestamp || 0; if (cloudTS > (localTS + 10000)) { setConflictModal({ isOpen: true, cloudData }); setSyncStatus('idle'); } else { setSyncStatus(localTS > cloudTS ? 'unsaved' : 'synced'); setIsAppReady(true); } } catch (e) { console.error("Error comprobando nube:", e); setSyncStatus('error'); setIsAppReady(true); } };
-          const handleApplyCloudData = () => { const data = conflictModal.cloudData; if (!data) return; if (data.portfolio) setPortfolio(data.portfolio); if (data.resultsData) setResultsData(data.resultsData); if (data.apiKey) setApiKey(data.apiKey); if (data.baseCurrency) setBaseCurrency(data.baseCurrency); if (data.appPin) setAppPin(data.appPin); setLocalTimestamp(data.timestamp); setConflictModal({ isOpen: false, cloudData: null }); setSyncStatus('synced'); setSyncMessage('✅ Datos descargados'); setIsAppReady(true); setTimeout(() => setSyncMessage(''), 3000); };
+          const handleApplyCloudData = () => { const data = conflictModal.cloudData; if (!data) return; if (data.globalNotes) setGlobalNotes(data.globalNotes); if (data.portfolio) setPortfolio(data.portfolio); if (data.resultsData) setResultsData(data.resultsData); if (data.apiKey) setApiKey(data.apiKey); if (data.baseCurrency) setBaseCurrency(data.baseCurrency); if (data.appPin) setAppPin(data.appPin); setLocalTimestamp(data.timestamp); setConflictModal({ isOpen: false, cloudData: null }); setSyncStatus('synced'); setSyncMessage('✅ Datos descargados'); setIsAppReady(true); setTimeout(() => setSyncMessage(''), 3000); };
           const handleKeepLocalData = () => { setLocalTimestamp(Date.now()); setConflictModal({ isOpen: false, cloudData: null }); setSyncStatus('unsaved'); setIsAppReady(true); };
 
           useEffect(() => { if (gScriptUrl) { checkForCloudUpdates(); } else { setIsAppReady(true); } }, []);
@@ -2717,7 +2764,7 @@ const App = () => {
                   {!isAppReady && !conflictModal.isOpen && <div className="fixed inset-0 z-[250] bg-black flex flex-col items-center justify-center"><Icons.Loader size={40} className="text-blue-500 animate-spin mb-4"/><div className="text-slate-400 text-xs uppercase font-bold tracking-widest animate-pulse">Sincronizando con la Nube...</div></div>}
                   <header className="shrink-0 bg-slate-900 border-b border-slate-800 px-6 py-4 flex justify-between items-center z-50"><div><h1 className="text-2xl font-display font-bold">Boarding<span className="text-blue-600">Gate</span></h1><p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Gestor de Cartera de Valores iA</p></div><nav className="flex bg-slate-800 rounded-lg p-1 gap-1 border border-slate-700 overflow-x-auto whitespace-nowrap custom-scrollbar"><button onClick={() => setActiveTab('portfolio')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'portfolio' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Briefcase size={14}/> Cartera</button><button onClick={() => setActiveTab('dividends')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'dividends' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.DollarSign size={14}/> Dividendos</button><button onClick={() => setActiveTab('results')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'results' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.ChartBar size={14}/> Resultados</button><button onClick={() => setActiveTab('analysis')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'analysis' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Search size={14}/> Estudio</button><button onClick={() => setActiveTab('settings')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'settings' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Settings size={14}/> Ajustes</button></nav></header>
                   <main className="flex-1 overflow-y-auto bg-[#0a0a0a] relative custom-scrollbar">
-                      {activeTab === 'portfolio' && <PortfolioTab portfolio={portfolio} setPortfolio={updatePortfolio} apiKey={apiKey} baseCurrency={baseCurrency} refreshInterval={refreshInterval} lastUpdate={lastUpdate} setLastUpdate={setLastUpdate} resultsData={resultsData} syncStatus={syncStatus} onManualSync={uploadToCloud} isAppReady={isAppReady} _x_lim={_0xCap} _x_trig={setBlockAction} />}
+                      {activeTab === 'portfolio' && <PortfolioTab portfolio={portfolio} setPortfolio={updatePortfolio} apiKey={apiKey} baseCurrency={baseCurrency} refreshInterval={refreshInterval} lastUpdate={lastUpdate} setLastUpdate={setLastUpdate} resultsData={resultsData} syncStatus={syncStatus} onManualSync={uploadToCloud} isAppReady={isAppReady} _x_lim={_0xCap} _x_trig={setBlockAction} globalNotes={globalNotes} setGlobalNotes={setGlobalNotes}/>}
                       {activeTab === 'dividends' && <DividendTab portfolio={portfolio} setPortfolio={updatePortfolio} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} />}
                       {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={updateResultsData} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} />}
                       {activeTab === 'analysis' && <AnalysisTab apiKey={apiKey} baseCurrency={baseCurrency} setPortfolio={updatePortfolio} />}
