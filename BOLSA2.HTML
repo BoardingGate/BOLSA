@@ -1645,29 +1645,37 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         { id: 'NETHERLANDS', name: 'Holanda (Euronext Amsterdam)', country: 'Holanda' }
     ];
 
-    // --- UTILIDADES MEJORADAS ---
+    // --- UTILIDADES MEJORADAS (ESTRATEGIA DE ENVOLTORIO) ---
     const extractJSON = (text) => { 
         if (!text) return null;
         try {
-            // 1. Limpieza de Markdown
-            let clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
+            // 1. Estrategia de Delimitadores (Prioritaria)
+            // Busca <<<INICIO_JSON>>> ... <<<FIN_JSON>>>
+            const delimiterRegex = /<<<INICIO_JSON>>>([\s\S]*?)<<<FIN_JSON>>>/;
+            const match = text.match(delimiterRegex);
             
-            // 2. Búsqueda quirúrgica del Array [...]
-            const firstOpen = clean.indexOf('[');
-            const lastClose = clean.lastIndexOf(']');
-            
-            if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
-                // Extraemos SOLO lo que está entre corchetes, ignorando texto anterior/posterior
-                const jsonContent = clean.substring(firstOpen, lastClose + 1);
-                return JSON.parse(jsonContent);
+            if (match && match[1]) {
+                const cleanContent = match[1].trim();
+                return JSON.parse(cleanContent);
             }
+
+            // 2. Estrategia de Corchetes (Fallback)
+            // Busca el primer '[' y el último ']'
+            const firstBracket = text.indexOf('[');
+            const lastBracket = text.lastIndexOf(']');
             
-            // Intento secundario (por si devuelve objeto único)
-            if (clean.startsWith('{')) return [JSON.parse(clean)];
-            
+            if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+                const potentialJson = text.substring(firstBracket, lastBracket + 1);
+                return JSON.parse(potentialJson);
+            }
+
+            // 3. Intento Objeto simple
+            if (text.trim().startsWith('{')) return JSON.parse(text.trim());
+
+            console.warn("Fallo Extracción JSON. Texto crudo:", text);
             return null;
         } catch (e) { 
-            console.error("Error parseando respuesta IA:", e);
+            console.error("Error parseando JSON:", e, "Texto:", text);
             return null; 
         } 
     };
@@ -1677,7 +1685,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         return n.toFixed(dec).replace('.', ',');
     };
 
-    // --- LÓGICA ESTUDIO ---
+    // --- LÓGICA ESTUDIO (PROMPT ORIGINAL) ---
     const rotateSuggestions = (currentQ) => { 
         const base = ["Impacto en valoración", "Riesgos asociados", "Comparativa sectorial", "Proyección futura", "Movimientos Insider", "Análisis Técnico Profundo", "Catalizadores próximos"]; 
         const filtered = base.filter(q => q !== currentQ); 
@@ -1718,7 +1726,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         } catch (e) { setStatusModal({ isOpen: true, title: 'Error iA', msg: e.message, type: 'error' }); } finally { setLoading(false); } 
     };
 
-    // --- LÓGICA RASTREO (PROMPT MODIFICADO PARA JSON STRICT) ---
+    // --- LÓGICA RASTREO (NUEVO PROMPT CON ENVOLTORIO) ---
     const runScreener = async () => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
         
@@ -1742,32 +1750,38 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
 
         setLoading(true);
         try {
-            // PROMPT "MODO API"
+            // PROMPT BLINDADO CON ETIQUETAS
             const prompt = `
-            SYSTEM INSTRUCTION: You are a pure JSON API. You do NOT speak. You output DATA ONLY.
+            ROL: Stock Screener API.
+            MERCADO: ${marketDesc}.
+            FILTROS: ${activeFilters}.
+            CANTIDAD: ${maxResults} resultados.
             
-            TASK: Return a JSON Array of ${maxResults} stocks in "${marketDesc}" that fit these criteria: ${activeFilters}.
+            INSTRUCCIONES OBLIGATORIAS:
+            1. Genera una lista basada en tu conocimiento financiero de empresas que CUMPLAN o se aproximen a estos criterios.
+            2. NO escribas introducciones, ni conclusiones, ni texto explicativo.
+            3. Envuelve el JSON estrictamente entre las etiquetas <<<INICIO_JSON>>> y <<<FIN_JSON>>>.
             
-            RULES:
-            1. Use your knowledge to find the best matches. If no exact match, find the closest ones.
-            2. Output MUST start with '[' and end with ']'. 
-            3. NO introductory text (e.g. "Here is the list"). NO markdown code blocks. Just the raw JSON string.
-            
-            OUTPUT SCHEMA:
-            [{"ticker":"SYM","name":"Company","price":10.5,"per":12.1,"peg":0.9,"roi":15.5,"divYield":3.2,"pb":1.1,"debtEquity":0.5}]
+            EJEMPLO DE SALIDA EXACTA:
+            <<<INICIO_JSON>>>
+            [
+              {"ticker":"AAPL","name":"Apple Inc.","price":150.2,"per":25.4,"peg":2.1,"roi":35.0,"divYield":0.6,"pb":35.0,"debtEquity":1.5},
+              {"ticker":"MSFT","name":"Microsoft","price":300.5,"per":30.1,"peg":2.5,"roi":40.0,"divYield":0.9,"pb":12.0,"debtEquity":0.5}
+            ]
+            <<<FIN_JSON>>>
             `;
             
             const res = await askGemini(apiKey, prompt);
             const results = extractJSON(res);
             
             if (!results || !Array.isArray(results) || results.length === 0) {
-                // Log para depuración si vuelve a fallar (ver consola)
-                console.warn("Respuesta iA fallida:", res);
-                throw new Error("La IA no devolvió un listado válido. Puede que el filtro sea contradictorio.");
+                // Log para ver qué devolvió exactamente si falla
+                console.warn("Respuesta iA cruda:", res);
+                throw new Error("La IA respondió texto pero no se pudo extraer el JSON. Inténtalo de nuevo.");
             }
             setScreenerResults(results);
         } catch (e) {
-            setStatusModal({ isOpen: true, title: 'Sin Resultados', msg: e.message, type: 'warning' });
+            setStatusModal({ isOpen: true, title: 'Sin Resultados', msg: e.message + "\n\n(Revisa la consola si necesitas ver la respuesta cruda)", type: 'warning' });
         } finally { setLoading(false); }
     };
 
@@ -1947,6 +1961,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         </div>
     );
 };
+
 
 
       
