@@ -1068,84 +1068,67 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
  
 
-const updatePrices = async (isAuto = false) => { 
-        const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); 
-        if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); 
-        if (!isAuto && active.length === 0) return; 
-        
-        setUpdating(true); 
-        let log = { success: [], fail: [] }, newUpdates = []; 
-        
-        try { 
-            // Agrupamos peticiones para optimizar, pero mantenemos lógica individual por precisión
-            for (const item of active) { 
-                // DETECCIÓN DE TIPO PARA EVITAR ETFs EN ÍNDICES
-                const isIndex = item.isIndex || item.ticker.startsWith('^') || item.ticker.includes('INDEX');
-                const assetDesc = isIndex ? "MARKET INDEX (SPOT VALUE)" : "STOCK/EQUITY";
-                
-                // PROMPT REPARADO: 
-                // 1. Busca el precio.
-                // 2. Si la moneda del mercado difiere de 'stockCurrency', convierte el PRECIO ('p') a 'stockCurrency'.
-                // 3. Calcula el FX independientemente ('stockCurrency' -> 'baseCurrency').
-                const prompt = `
-                ROLE: Financial Data API.
-                TASK: Get data for asset: "${item.name}" (Ticker: ${item.ticker}).
-                TYPE: ${assetDesc} (If Index, return SPOT value, NOT ETF).
-                
-                CONFIGURATION:
-                - The user holds this asset in: ${item.stockCurrency} (This is CRITICAL).
-                - The portfolio base currency is: ${baseCurrency}.
-                
-                REQUIREMENTS:
-                1. "p": Current Price in ${item.stockCurrency}. 
-                   (IF market price is in USD but user has ${item.stockCurrency}=EUR, CONVERT PRICE TO EUR).
-                2. "fx": Exchange rate: 1 ${item.stockCurrency} = ? ${baseCurrency}.
-                   (If currencies are same, fx = 1).
-                3. "pe": TTM P/E Ratio (0 if Index).
-                
-                RETURN JSON ONLY: {"p": number, "fx": number, "pe": number}`; 
 
-                try { 
-                    const res = await askGemini(apiKey, prompt); 
-                    const json = extractJSON(res); 
-                    
-                    if (json && (json.p || json.p === 0)) { 
-                        // Corrección de seguridad para FX si las monedas coinciden
-                        const safeFx = (item.stockCurrency === baseCurrency) ? 1 : cleanVal(json.fx);
-                        
-                        newUpdates.push({ 
-                            id: item.id, 
-                            p: cleanVal(json.p), 
-                            fx: safeFx,
-                            pe: cleanVal(json.pe) 
-                        }); 
-                        log.success.push(item.ticker); 
-                    } else { 
-                        log.fail.push(item.ticker); 
-                    } 
-                } catch (e) { 
-                    log.fail.push(item.ticker); 
-                } 
-            } 
+const updatePrices = async (isAuto = false) => {
+    const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
+    if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' });
+    if (active.length === 0) return;
 
-            if (newUpdates.length > 0) { 
-                setPortfolio(prev => prev.map(p => { 
-                    const u = newUpdates.find(x => x.id === p.id); 
-                    return u ? { ...p, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe } : p; 
-                }), false); // <--- ESTE 'false' ES LA CLAVE
-                
-                setLastUpdate(new Date().toISOString()); 
-            } 
-            
-            if (!isAuto && log.fail.length > 0) {
-                setInfoModal({ isOpen: true, title: 'Sincronización parcial', msg: `Fallos en: ${log.fail.join(', ')}.`, type: 'warning' });
-            }
-        } catch (e) { 
-            if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); 
-        } finally { 
-            setUpdating(false); 
-        } 
-    };
+    setUpdating(true);
+    try {
+        // 1. Preparamos la lista de activos para la IA
+        const assetsList = active.map(p => ({
+            ticker: p.ticker,
+            nombre: p.name,
+            divisa_del_valor: p.stockCurrency,
+            es_indice: p.isIndex || p.ticker.startsWith('^')
+        }));
+
+        // 2. Prompt Único para garantizar consistencia en los tipos de cambio (FX)
+        const prompt = `
+        Actúa como una API de datos financieros. Necesito actualizar los siguientes activos:
+        ${JSON.stringify(assetsList)}
+
+        DIVISA BASE DE LA CARTERA: ${baseCurrency}
+
+        REGLAS CRÍTICAS:
+        1. "p": Es el PRECIO ACTUAL del activo en su propia moneda (${baseCurrency} si es nacional, o su divisa correspondiente). 
+           - Si es una ACCIÓN de USA, "p" debe ser el precio en USD.
+           - Si es un ÍNDICE (ej: INDEXSP) asociado a un fondo en EUR, "p" debe ser el valor del índice expresado en la moneda del valor (EUR).
+        2. "fx": Es el tipo de cambio para convertir 1 unidad de "divisa_del_valor" a "${baseCurrency}".
+           - DEBE ser el mismo para todos los valores que compartan la misma moneda.
+           - Si la divisa es ${baseCurrency}, el fx es 1.
+        3. "pe": Ratio PER actual (0 si es índice).
+
+        Responde exclusivamente un Array JSON con este formato:
+        [{"ticker": "TICKER", "p": valor_num, "fx": valor_num, "pe": valor_num}]
+        `;
+
+        const res = await askGemini(apiKey, prompt);
+        const results = extractJSON(res);
+
+        if (results && Array.isArray(results)) {
+            setPortfolio(prev => prev.map(p => {
+                const update = results.find(u => u.ticker === p.ticker);
+                if (update) {
+                    return {
+                        ...p,
+                        currentPrice: cleanVal(update.p),
+                        currentFx: cleanVal(update.fx),
+                        currentPE: cleanVal(update.pe)
+                    };
+                }
+                return p;
+            }));
+            setLastUpdate(new Date().toISOString());
+        }
+    } catch (e) {
+        if (!isAuto) setInfoModal({ isOpen: true, title: 'Error de Actualización', msg: e.message, type: 'error' });
+    } finally {
+        setUpdating(false);
+    }
+};
+
 
    
 
