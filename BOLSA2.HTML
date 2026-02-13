@@ -1684,29 +1684,20 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
         { id: 'NETHERLANDS', name: 'Holanda (Euronext Amsterdam)', country: 'Holanda' }
     ];
 
-    // --- UTILIDAD DE EXTRACCIÓN BLINDADA ---
+    // --- UTILIDAD DE EXTRACCIÓN MEJORADA (REGEX ROBUSTO) ---
+    // Esta función busca explícitamente un bloque { ... } o [ ... ] ignorando todo lo demás
     const extractJSON = (text) => { 
         if (!text) return null;
         try {
-            // 1. Quitar posibles bloques de código markdown
-            let clean = text.replace(/```json/g, '').replace(/```/g, '');
-            
-            // 2. BUSCAR EL ARRAY: Encontrar el primer '[' y el último ']'
-            const firstBracket = clean.indexOf('[');
-            const lastBracket = clean.lastIndexOf(']');
-            
-            // Si encontramos un rango válido, CORTAMOS todo lo que sobre (el texto de la IA)
-            if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
-                const jsonStr = clean.substring(firstBracket, lastBracket + 1);
-                return JSON.parse(jsonStr);
+            // Regex: Busca un bloque que empiece por { y termine por } O empiece por [ y termine por ]
+            // [\s\S]* permite capturar saltos de línea dentro del JSON
+            const match = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+            if (match && match[0]) {
+                return JSON.parse(match[0]);
             }
-            
-            // Fallback: Si devuelve un objeto único en vez de array
-            if (clean.trim().startsWith('{')) return [JSON.parse(clean)];
-
-            throw new Error("No se detectó un Array JSON [] en la respuesta.");
+            throw new Error("No se encontró una estructura JSON válida en la respuesta.");
         } catch (e) { 
-            console.error("EXTRACT JSON ERROR. Raw Text:", text); // Para ver en Eruda
+            console.error("EXTRACT JSON ERROR. Raw Text:", text);
             return null; 
         } 
     };
@@ -1758,7 +1749,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
                 }`; 
                 const res = await askGemini(apiKey, prompt); 
                 const json = extractJSON(res); 
-                if(!json) throw new Error("La IA no devolvió un JSON válido.");
+                if(!json) throw new Error("La IA no devolvió un JSON válido. Revisa la consola para ver el texto crudo.");
                 setData(json); 
                 if(json.suggested_questions) setSuggestedQuestions(json.suggested_questions); 
             } 
@@ -1806,10 +1797,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio }) => {
             `;
             
             const res = await askGemini(apiKey, prompt);
-            
-            // Logs para depuración (ver ERUDA si falla)
-            console.log("Raw AI Response:", res);
-
             const results = extractJSON(res);
             
             if (!results || !Array.isArray(results) || results.length === 0) {
