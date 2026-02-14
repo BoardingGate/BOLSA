@@ -1936,6 +1936,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
 
 const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
+    // --- ESTADOS NAVEGACIÓN Y DATOS ---
     const [activeSubTab, setActiveSubTab] = useState('estudio');
     const [ticker, setTicker] = useState(initialTicker || ''); 
     const [question, setQuestion] = useState(''); 
@@ -1949,6 +1950,8 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
     const [maxResults, setMaxResults] = useState(10);
     const [screenerResults, setScreenerResults] = useState([]);
     const [screenerSort, setScreenerSort] = useState({ key: 'ticker', direction: 'asc' });
+    
+    // --- ESTADO MODAL DE AVISOS/ERRORES ---
     const [statusModal, setStatusModal] = useState({ isOpen: false, title: '', msg: '', type: 'info' });
 
     // Configuración de Parámetros RASTREO
@@ -1978,172 +1981,19 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
 
     useEffect(() => { if (initialTicker) setTicker(initialTicker); }, [initialTicker]);
 
-    // --- INSTRUCCIONES MAESTRAS ---
-    const getSystemPrompt = () => {
-        const now = new Date().toLocaleString('es-ES');
-        return `
-        ACTÚA COMO: Analista Financiero Senior de Wall Street.
-        IDIOMA: Español (España).
-        FECHA REPORTE: ${now}.
-        
-        REGLAS DE ORO (OBLIGATORIAS):
-        1. **BÚSQUEDA WEB REAL:** Usa google_search para encontrar el dato exacto más reciente.
-        2. **FUENTE Y FECHA:** CADA dato numérico debe llevar al lado: *(Fuente: X, Fecha: YYYY-MM-DD)*. Si no hay fecha exacta, pon el Trimestre (ej: Q3 2024).
-        3. **FALLBACK:** Si la búsqueda falla, usa tu conocimiento interno pero escribe *(Estimación propia)*. NUNCA dejes un campo vacío ni digas "No disponible".
-        4. **SIN CORTESÍA:** Empieza DIRECTAMENTE con el HTML. Nada de "Hola", "Aquí tienes".
-        5. **FORMATO:** Usa etiquetas HTML reales: <h3>, <ul>, <li>, <b>, <table>.
-        
-        ENCABEZADO OBLIGATORIO AL INICIO DEL HTML:
-        <div style="text-align:right; font-size:10px; color:#666; border-bottom:1px solid #ccc; padding-bottom:5px; margin-bottom:15px; font-family:monospace;">EMISIÓN: ${now} | DATOS EN TIEMPO REAL</div>
-        `;
-    };
-
+    // --- TEXTOS EXACTOS DE LOS PROMPTS SOLICITADOS (ORIGINALES) ---
     const PREDEFINED_PROMPTS = {
-        FULL_ANALYSIS: `
-            TAREA: Análisis 360º de [TICKER].
-            
-            FORMATO HTML REQUERIDO:
-            <h3>1. PERFIL Y MODELO (Resumen Ejecutivo)</h3>
-            <ul>
-                <li><b>Negocio:</b> [Descripción breve].</li>
-                <li><b>Ingresos por Segmento:</b> [Datos %] (Fuente/Fecha).</li>
-                <li><b>Ventaja Competitiva:</b> [Frase clave].</li>
-            </ul>
-            <h3>2. FINANZAS ACTUALES (Busca el último reporte)</h3>
-            <ul>
-                <li><b>Ingresos TTM:</b> [Cifra] (Fuente/Fecha).</li>
-                <li><b>BPA (EPS):</b> [Cifra] (Fuente/Fecha).</li>
-                <li><b>Deuda Neta:</b> [Cifra] (Fuente/Fecha).</li>
-                <li><b>PER Actual:</b> [Cifra]x (Fuente/Fecha).</li>
-            </ul>
-            <h3>3. RENDIMIENTO MERCADO</h3>
-            <ul>
-                <li><b>Retorno 1 Año:</b> [Cifra]% (Fuente/Fecha).</li>
-                <li><b>Máx/Min 52 Semanas:</b> [Precio]-[Precio] (Fuente/Fecha).</li>
-            </ul>
-            <h3>4. CONSENSO ANALISTAS</h3>
-            <ul>
-                <li><b>Recomendación Media:</b> [Comprar/Mantener/Vender] (Fuente).</li>
-                <li><b>Precio Objetivo Medio:</b> [Cifra] (Fuente).</li>
-            </ul>
-        `,
+        FULL_ANALYSIS: `Dame un análisis completo de [TICKER / NOMBRE DE LA EMPRESA]. Paso 1 — Descripción General de la Empresa: → Qué hace la empresa en lenguaje sencillo → Modelo de negocio y todas las fuentes de ingresos desglosadas como porcentaje del total → Principal ventaja competitiva en una sola frase. Paso 2 — Datos Financieros Clave (citar fuente y fecha para cada cifra): → Ingresos (TTM y último trimestre reportado) → Ingreso neto y BPA (EPS) → Ratio P/E, P/E forward, P/S, ratio PEG → Ratio deuda-capital y deuda total → Flujo de caja libre (TTM) → Comparación interanual vs. el mismo trimestre del año anterior. Paso 3 — Rendimiento de la Acción: → Movimiento del precio: 1 mes, 3 meses, 6 meses, 1 año, YTD (con % exacto) → Máximo y mínimo de 52 semanas → Rendimiento vs. S&P 500 en los mismos periodos. Paso 4 — Consenso de Wall Street: → Número de analistas que cubren la acción → Distribución Buy / Hold / Sell → Precio objetivo promedio, más alto y más bajo → Última mejora o rebaja de recomendación (con nombre de la firma y fecha). Paso 5 — Actividad Institucional: → Top 5 inversores institucionales y cambios en sus posiciones el último trimestre → Actividad destacada de hedge funds (nuevas posiciones o salidas). Formato con encabezados claros en markdown, tablas cuando corresponda y citas de fuente después de cada métrica. Señala cualquier dato que pueda tener más de 30 días de antigüedad`,
         
-        FINANCIALS: `
-            TAREA: Análisis Profundo de Estados Financieros de [TICKER].
-            
-            FORMATO HTML REQUERIDO:
-            <h3>1. CUENTA DE RESULTADOS (Tendencia)</h3>
-            <ul>
-                <li><b>Ingresos Último Q:</b> [Cifra] (+/- % vs año anterior) (Fuente/Fecha).</li>
-                <li><b>Margen Neto:</b> [Cifra]% (Fuente/Fecha). ¿Mejora o empeora?</li>
-                <li><b>Gastos Operativos:</b> Tendencia reciente.</li>
-            </ul>
-            <h3>2. BALANCE GENERAL (Solidez)</h3>
-            <ul>
-                <li><b>Caja y Equivalentes:</b> [Cifra] (Fuente/Fecha).</li>
-                <li><b>Deuda Total:</b> [Cifra] (Fuente/Fecha).</li>
-                <li><b>Ratio de Liquidez (Current Ratio):</b> [Cifra] (Fuente/Fecha).</li>
-            </ul>
-            <h3>3. FLUJO DE CAJA (La Verdad)</h3>
-            <ul>
-                <li><b>Flujo Caja Operativo:</b> [Cifra] (Fuente/Fecha).</li>
-                <li><b>Free Cash Flow (FCF):</b> [Cifra] (Fuente/Fecha).</li>
-                <li><b>CAPEX:</b> [Cifra] (Fuente/Fecha).</li>
-            </ul>
-            <h3>4. DIAGNÓSTICO</h3>
-            <p>Resumen breve: ¿Balance fuerte o débil? Justifica con los datos anteriores.</p>
-        `,
+        FINANCIALS: `Analiza los estados financieros más recientes de [NOMBRE DE LA EMPRESA / TICKER]. Paso 1 — Análisis del Estado de Resultados: → Ingresos de los últimos 4 trimestres con cifras exactas y tasas de crecimiento interanual (YoY) → Margen bruto, margen operativo y margen neto para cada trimestre → Dirección de la tendencia: ¿Los márgenes se están expandiendo, manteniendo estables o contrayéndose? ¿En cuánto? → Gasto en I+D como porcentaje de los ingresos (si aplica). Paso 2 — Salud del Balance General: → Activos totales vs. pasivos totales → Ratio corriente y ratio rápido → Efectivo e inversiones a corto plazo disponibles → Deuda total y calendario de vencimientos (¿cuándo vence la deuda?) → Fondo de comercio (goodwill) como porcentaje de los activos totales (señalar si >30%). Paso 3 — Verificación del Flujo de Caja: → Flujo de caja operativo (TTM) → Gastos de capital (TTM) → Flujo de caja libre (TTM) y margen de FCF → En qué están gastando el efectivo: recompras, dividendos, adquisiciones, pago de deuda, I+D → ¿El flujo de caja está creciendo o disminuyendo frente al año anterior? Paso 4 — Señales de Alerta (verificar cada una explícitamente): → ¿Ingresos creciendo pero flujo de caja disminuyendo? → ¿Deuda creciendo más rápido que los ingresos? → ¿Cuentas por cobrar creciendo más rápido que los ingresos? → ¿Acumulación de inventario sin crecimiento de ingresos? → ¿Cargos extraordinarios frecuentes o ganancias ajustadas que difieren significativamente de GAAP? → ¿Cambios de auditor o dictámenes con salvedades? Paso 5 — Señales Positivas: → Márgenes mejorando trimestre a trimestre → Flujo de caja libre en crecimiento → Reducción de deuda o aumento de reservas de efectivo → Consistencia entre ganancias GAAP y no-GAAP. Paso 6 — Contexto Competitivo: → Comparar todos los márgenes y ratios clave con los 3 principales competidores de la empresa en una tabla. Finaliza con un resumen en lenguaje sencillo: ¿Qué historia cuentan estos estados financieros? ¿La empresa está fortaleciéndose o debilitándose? Usa un formato de tabla con encabezados claros y cita la fuente de cada número.`,
         
-        EARNINGS: `
-            TAREA: Análisis de los Últimos Resultados (Earnings) de [TICKER].
-            
-            FORMATO HTML REQUERIDO:
-            <h3>1. RESULTADOS vs EXPECTATIVAS</h3>
-            <ul>
-                <li><b>Ingresos Reportados:</b> [Cifra] vs Esperado: [Cifra] (Fuente/Fecha).</li>
-                <li><b>EPS Reportado:</b> [Cifra] vs Esperado: [Cifra] (Fuente/Fecha).</li>
-                <li><b>Sorpresa:</b> [Beat/Miss] por [Cifra]%.</li>
-            </ul>
-            <h3>2. GUIDANCE (Proyecciones)</h3>
-            <ul>
-                <li><b>Próximo Trimestre:</b> Rango dado por la empresa [Cifras] (Fuente).</li>
-                <li><b>Comentario Directiva:</b> Tono general (Optimista/Cauto).</li>
-            </ul>
-            <h3>3. REACCIÓN MERCADO</h3>
-            <ul>
-                <li><b>Movimiento Post-Earnings:</b> [Subida/Bajada]% (Fecha).</li>
-                <li><b>Ajustes Analistas:</b> Menciona 1 o 2 cambios de precio objetivo recientes.</li>
-            </ul>
-        `,
+        EARNINGS: `Analiza el informe de resultados más reciente de [NOMBRE DE LA EMPRESA / TICKER]. Paso 1 — Los Números: → Ingresos: estimación vs. real, superación o incumplimiento, y por cuánto ($ y %) → BPA (EPS): estimación vs. real, superación o incumplimiento, y por cuánto → ¿Hubo partidas extraordinarias que inflaron o redujeron las cifras? ¿Cuáles fueron las cifras ajustadas vs. GAAP? Paso 2 — Guía Futura: → ¿La dirección elevó, redujo o mantuvo la guía? → Guía para el próximo trimestre: rango de ingresos y BPA → Guía para el año completo: ¿cambios respecto al trimestre anterior? → Lenguaje exacto utilizado por la dirección (optimista, cauteloso, incierto). Paso 3 — Desglose por Segmentos: → Desempeño por segmento: cuál creció, cuál cayó y en cuánto → Nuevos segmentos, líneas de producto o mercados geográficos destacados → Segmento que más contribuyó a la superación o incumplimiento. Paso 4 — Comentarios de la Dirección (citar del transcript real de la llamada de resultados): → Mensaje clave del CEO en 1-2 frases → Mensaje clave del CFO sobre perspectivas financieras en 1-2 frases → Nuevas prioridades estratégicas, cambios de rumbo o riesgos mencionados → Evaluación del tono: ¿Confiado, cauteloso, defensivo o evasivo? Paso 5 — Reacción del Mercado y Analistas: → Movimiento del precio de la acción en after-hours y al día siguiente (con % exacto) → Analistas que mejoraron o rebajaron la calificación tras resultados (firma, calificación anterior → nueva, nuevo precio objetivo) → Temas clave de las preguntas de analistas durante el Q&A. Paso 6 — El Veredicto: → El número más importante del informe y por qué → ¿Fue un trimestre genuinamente bueno o solo ópticamente bueno? Explica → Qué observar el próximo trimestre según lo dicho por la dirección. Formato con encabezados claros en markdown y citas de fuentes. Señala si el transcript de la llamada aún no está disponible.`,
         
-        COMPETITION: `
-            TAREA: Comparativa Directa de [TICKER] vs 3 Competidores.
-            
-            FORMATO HTML REQUERIDO:
-            <h3>1. TABLA FUNDAMENTAL</h3>
-            <table border="1" cellpadding="5" style="border-collapse: collapse; width: 100%;">
-                <tr style="background:#f0f0f0;"><th>Empresa</th><th>Market Cap</th><th>PER</th><th>Yield %</th></tr>
-                <tr><td><b>[TICKER]</b></td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td></tr>
-                <tr><td>[Competidor 1]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td></tr>
-                <tr><td>[Competidor 2]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td></tr>
-                <tr><td>[Competidor 3]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td></tr>
-            </table>
-            <div style="font-size:10px; color:#666; margin-top:5px;">(Fuente de datos: Google Finance/Yahoo Finance - Fecha: Hoy)</div>
-
-            <h3>2. ANÁLISIS RELATIVO</h3>
-            <ul>
-                <li><b>Valoración:</b> ¿Quién está más barata?</li>
-                <li><b>Calidad:</b> ¿Quién tiene mejores márgenes?</li>
-                <li><b>Dividendos:</b> ¿Quién paga más?</li>
-            </ul>
-            <h3>3. GANADOR DEL SECTOR</h3>
-            <p>Elección del analista y por qué.</p>
-        `,
+        COMPETITION: `Compara [ACCIÓN 1] vs [ACCIÓN 2] vs [ACCIÓN 3] en el sector [INDUSTRIA/SECTOR]. (Nota: La IA identificará los competidores principales si no se especifican). Paso 1 — Construye una tabla comparativa con estas columnas para cada empresa: → Capitalización de mercado → Ingresos TTM y tasa de crecimiento interanual (YoY) → Margen bruto, margen operativo, margen neto → P/E, P/E forward, P/S, EV/EBITDA, ratio PEG → Ratio deuda-capital y deuda neta → Flujo de caja libre y rendimiento FCF → Métrica clave de crecimiento del sector (ej. suscriptores, usuarios, reservas, unidades vendidas). Paso 2 — Posicionamiento Competitivo: → ¿Cuál es la ventaja competitiva (moat) principal de cada empresa? → Ranking de cuota de mercado (con fuente si está disponible) → ¿Qué empresa está ganando cuota y cuál la está perdiendo? Paso 3 — Comparación de Riesgos: → Mayor riesgo individual para cada empresa en los próximos 12 meses → ¿Qué empresa tiene mayor riesgo por deuda? → ¿Qué empresa tiene mayor riesgo competitivo? Paso 4 — El Ranking: → Mejor valor (más barata en múltiplos clave en relación con su crecimiento) → Mayor potencial de crecimiento (trayectoria más fuerte de ingresos y ganancias) → Opción más segura (balance más sólido y negocio más predecible) → Ganador general y por qué — haz una recomendación clara. Formato en tabla estructurada en markdown con todas las cifras citadas y fechadas. Señala cualquier métrica con más de un trimestre de antigüedad.`,
         
-        VALUATION: `
-            TAREA: Valoración de [TICKER] (Modelos y Múltiplos).
-            
-            FORMATO HTML REQUERIDO:
-            <h3>1. MÚLTIPLOS DE MERCADO</h3>
-            <ul>
-                <li><b>PER Actual:</b> [Cifra] vs Media Histórica 5 años: [Cifra] (Fuente/Fecha).</li>
-                <li><b>EV/EBITDA:</b> [Cifra] (Fuente/Fecha).</li>
-                <li><b>Precio/Ventas:</b> [Cifra] (Fuente/Fecha).</li>
-            </ul>
-            <h3>2. DESCUENTO DE FLUJOS (Estimación DCF Rápida)</h3>
-            <ul>
-                <li><b>Tasa Libre Riesgo (10Y Bond):</b> [Cifra]% (Fuente).</li>
-                <li><b>Crecimiento Estimado:</b> [Cifra]% anual.</li>
-                <li><b>Valor Razonable Estimado:</b> $[Cifra] (Explica brevemente el cálculo).</li>
-            </ul>
-            <h3>3. OBJETIVOS ANALISTAS</h3>
-            <ul>
-                <li><b>Precio Objetivo Medio:</b> $[Cifra] (Fuente: FactSet/Bloomberg/Yahoo).</li>
-                <li><b>Potencial:</b> [Cifra]% de subida/bajada.</li>
-            </ul>
-            <h3>4. VEREDICTO</h3>
-            <p><b>[INFRAVALORADA / PRECIO JUSTO / SOBREVALORADA]</b></p>
-        `,
+        VALUATION: `Construye un análisis de valoración para [NOMBRE DE LA EMPRESA / TICKER]. Paso 1 — Flujo de Caja Descontado (DCF): → Flujo de caja libre inicial (citar fuente: 10-K o 10-Q más reciente) → Supuestos de crecimiento de ingresos para Años 1-5 (citar cada uno: consenso de analistas, guía de la empresa o tendencia histórica) → Supuesto de margen FCF (citar promedio histórico y cambios esperados) → Tasa de crecimiento terminal: indicar la tasa y justificarla (normalmente 2-3%) → Tasa de descuento (WACC): mostrar el cálculo con costo de capital propio, costo de deuda y estructura de capital (citar fuentes para beta, tasa libre de riesgo y prima de riesgo de mercado) → Calcular el precio implícito por acción según el DCF → Tabla de sensibilidad: mostrar cómo cambia el valor justo con 3 tasas de WACC × 3 tasas de crecimiento terminal. Paso 2 — Análisis de Empresas Comparables: → Seleccionar 5 competidores más cercanos (justificar la selección) → Comparar múltiplos actuales P/E, P/S y EV/EBITDA → Calcular cuánto valdría la acción si cotizara al promedio, mediana y con prima/descuento respecto a pares → Indicar si la acción cotiza con prima o descuento y por qué podría merecerlo. Paso 3 — Valoración Histórica: → P/E actual vs. promedio P/E de 5 años de la empresa → ¿Cotiza por encima o por debajo de su rango histórico? → ¿Qué causó los picos y valles anteriores de valoración? Paso 4 — Precios Objetivo de Analistas: → Precio objetivo más alto, más bajo y mediano (con nombre de firma y fecha) → ¿Cuántos analistas actualizaron objetivos en los últimos 90 días? Paso 5 — Tres Escenarios: → Caso alcista: valor justo si el crecimiento se acelera (indicar supuestos exactos) → Caso base: valor justo bajo supuestos de consenso → Caso bajista: valor justo si el crecimiento se desacelera o se materializan riesgos → Precio actual vs. cada escenario (mostrar % de subida/bajada). Veredicto Final: Sobrevalorada / Valoración Justa / Infravalorada — ¿por cuánto y con qué nivel de confianza (Alto/Medio/Bajo)? Explica la variable más importante que podría cambiar este veredicto. Formato con encabezados claros, tablas etiquetadas y todos los supuestos citados.`,
         
-        RISKS: `
-            TAREA: Informe de Riesgos y Alertas para [TICKER].
-            
-            FORMATO HTML REQUERIDO:
-            <h3>1. MAPA DE RIESGOS</h3>
-            <ul>
-                <li><b>Riesgo Principal:</b> [Descripción] (Impacto: Alto/Medio).</li>
-                <li><b>Riesgo Regulatorio/Legal:</b> [Descripción].</li>
-                <li><b>Riesgo Competitivo:</b> [Descripción].</li>
-            </ul>
-            <h3>2. SEÑALES DE ALERTA (Red Flags)</h3>
-            <ul>
-                <li><b>Short Interest:</b> [Cifra]% del float (Fuente/Fecha). ¿Es alto?</li>
-                <li><b>Ventas de Insiders:</b> ¿Han vendido directivos recientemente? (Fuente).</li>
-                <li><b>Deuda:</b> ¿Ratio Deuda/EBITDA preocupante? [Dato].</li>
-            </ul>
-            <h3>3. CONCLUSIÓN DE SEGURIDAD</h3>
-            <p>Nivel de Riesgo Global: <b>[BAJO / MEDIO / ALTO / ESPECULATIVO]</b>.</p>
-        `
+        RISKS: `Publica un informe formal de inicio de cobertura sobre [NOMBRE DE LA EMPRESA / TICKER]. SECCIÓN 1 — Resumen Ejecutivo: → Tesis de inversión en 3 frases: ¿Por qué alguien debería interesarse por esta acción ahora mismo? → Recomendación general: Strong Buy / Buy / Hold / Sell → Precio objetivo a 12 meses y metodología utilizada para calcularlo → La principal razón para poseer esta acción y el mayor riesgo. SECCIÓN 2 — Descripción del Negocio: → Qué hace la empresa en lenguaje sencillo → Desglose de ingresos por segmento, producto y geografía (con porcentajes) → Modelo de negocio: cómo gana dinero y qué impulsa los ingresos recurrentes → Ventaja competitiva (moat): ¿qué hace que esta empresa sea difícil de replicar? SECCIÓN 3 — Análisis Financiero Profundo: → Tabla de métricas clave: Ingresos, ingreso neto, BPA (EPS), márgenes, FCF, deuda — últimos 4 trimestres y TTM → Tasas de crecimiento interanual para todas las métricas clave → Salud del balance: efectivo, deuda, ratio corriente, deuda/capital → Calidad del flujo de caja: ratio flujo de caja operativo vs. ingreso neto (señalar si hay diferencias significativas) → Asignación de capital: ¿Cómo está utilizando el dinero la dirección? ¿Recompras, dividendos, fusiones y adquisiciones, I+D? SECCIÓN 4 — Análisis de Crecimiento: → Mercado total direccionable (TAM) con fuente → Cuota de mercado actual y tendencia → Principales motores de crecimiento para los próximos 3-5 años → Guía de la dirección vs. consenso de analistas — ¿quién es más optimista? → ¿El crecimiento es orgánico o depende de adquisiciones? SECCIÓN 5 — Valoración: → Análisis DCF con todos los supuestos claramente etiquetados y citados → Tabla de análisis de empresas comparables (mínimo 5 competidores) → Rango histórico de valoración (banda P/E de 5 años) → Precios objetivo en escenarios Alcista / Base / Bajista con supuestos para cada uno → Precio actual vs. cada objetivo — % de potencial de subida o bajada. SECCIÓN 6 — Análisis de Riesgos: → Top 5 riesgos materiales clasificados por probabilidad e impacto → Para cada riesgo: qué lo activaría, qué tan grave sería y qué señales vigilar → Datos de short interest y actividad de insiders (citar fuente) → Señales de alerta contable (si existen). SECCIÓN 7 — Calendario de Catalizadores: → Próxima fecha de resultados → Lanzamientos de productos, decisiones regulatorias o eventos estratégicos próximos → Eventos macro que impacten específicamente esta acción → Cronograma de posibles catalizadores en los próximos 12 meses. SECCIÓN 8 — El Veredicto: → Caso alcista: precio objetivo y qué debe salir bien (con estimación de probabilidad) → Caso base: precio objetivo y escenario más probable (con estimación de probabilidad) → Caso bajista: precio objetivo y qué podría salir mal (con estimación de probabilidad) → Cálculo del valor esperado: precio objetivo ponderado por probabilidad entre los tres escenarios → Recomendación final con nivel de convicción: Alto / Medio / Bajo → Elevator pitch de 30 segundos: si tuvieras un párrafo para presentar esta acción a un gestor de cartera, ¿qué dirías? Finaliza con una sección de fuentes que liste todas las fuentes de datos utilizadas en el informe.`
     };
 
     const extractJSON = (text) => { 
@@ -2191,13 +2041,10 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
     };
 
-    // --- FUNCIÓN DE LIMPIEZA CORREGIDA (NO CORTA EL TEXTO) ---
+    // --- FUNCIÓN DE LIMPIEZA SEGURA (NO CORTA CONTENIDO) ---
     const cleanAIResponse = (text) => {
         if (!text) return "";
-        // Eliminar bloques de código markdown ```html y ```
         let clean = text.replace(/```html/g, '').replace(/```/g, '').trim();
-        // NO HACEMOS SLICING BASADO EN TAGS para evitar borrar tablas o encabezados inesperados.
-        // Confiamos en que el prompt 'SIN CORTESÍA' funcione, y si queda algo de texto, el navegador lo renderizará.
         return clean;
     };
 
@@ -2207,12 +2054,21 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         setLoading(true); setSpecificAnswer(null); setData(null); 
         try { 
             if (question.trim()) { 
-                const prompt = `${getSystemPrompt()} TAREA: Responde a esta pregunta sobre [TICKER]: "${question}".`.replace('[TICKER]', ticker);
+                const today = new Date().toLocaleString('es-ES');
+                const prompt = `
+                CRITICAL INSTRUCTION: ACT AS A SENIOR ANALYST. CURRENT DATE: ${today}.
+                TASK: Answer "${question}" about "${ticker}".
+                RULES:
+                1. SEARCH THE WEB.
+                2. NO PREAMBLE. NO COURTESY.
+                3. USE HTML FORMAT (<h3>, <ul>, <b>).
+                4. CITE SOURCES AND DATES FOR FACTS.
+                `;
                 const res = await askGemini(apiKey, prompt); 
                 setSpecificAnswer(cleanAIResponse(res)); 
                 rotateSuggestions(question); 
             } else { 
-                // Análisis JSON original (mantenido para compatibilidad visual con las fichas)
+                // Mantenemos el Análisis JSON original para la ficha básica
                 const today = new Date().toLocaleDateString('es-ES');
                 const prompt = `ROLE: Senior Wall Street Analyst. DATE: ${today}. TASK: Generate a comprehensive investment report for "${ticker}". SEARCH WEB FOR REAL TIME DATA. OUTPUT: JSON ONLY. Strict format. LANGUAGE: Spanish (Spain).
                 JSON STRUCTURE: { 
@@ -2236,16 +2092,58 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         } catch (e) { setStatusModal({ isOpen: true, title: 'Error iA', msg: e.message, type: 'error' }); } finally { setLoading(false); } 
     };
 
+    // --- MANEJADOR DE INFORMES FIJOS REFORZADO ---
     const handleFixedAnalysis = async (promptId) => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' }); 
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' }); 
         setLoading(true); setSpecificAnswer(null); setData(null);
         try {
-            const basePrompt = PREDEFINED_PROMPTS[promptId];
-            const fullPrompt = `${getSystemPrompt()} ${basePrompt}`.replace(/\[TICKER\]/g, ticker);
+            const today = new Date().toLocaleString('es-ES');
+            
+            // 1. Recuperar el Prompt Original
+            const userPromptText = PREDEFINED_PROMPTS[promptId];
+            
+            // 2. Construir el "Wrapper" Técnico
+            const fullPrompt = `
+            ROL: Analista Financiero Senior de Banca de Inversión (Goldman Sachs/JP Morgan).
+            FECHA Y HORA ACTUAL: ${today}.
+            IDIOMA DE SALIDA: Español (España) OBLIGATORIO.
+            
+            INSTRUCCIONES DE SISTEMA CRÍTICAS (NO IGNORAR):
+            1. **BÚSQUEDA WEB OBLIGATORIA:** Debes usar la herramienta de búsqueda para encontrar los datos MÁS RECIENTES (Últimos Resultados Trimestrales, Precio de Hoy, Noticias de la última semana).
+            2. **CITAS OBLIGATORIAS:** CADA DATO numérico o afirmación debe ir seguido de: *(Fuente: [Nombre Fuente], Fecha: [YYYY-MM-DD])*. EJEMPLO: "Ingresos: $50B (Fuente: Bloomberg, Fecha: 2024-02-10)".
+            3. **PROHIBIDO INVENTAR:** Si tras buscar en internet NO encuentras un dato específico, escribe "Dato no disponible públicamente". NO uses estimaciones internas ni placeholders como "$X".
+            4. **FORMATO HTML PURO:** 
+               - Empieza la respuesta con: <div style="text-align:right; font-size:10px; color:#666; border-bottom:1px solid #ccc; padding-bottom:5px; margin-bottom:15px; font-family:monospace;">INFORME GENERADO: ${today} | FUENTE: LIVE DATA WEB</div>
+               - Usa <h3> (estilo azul) para títulos.
+               - Usa <ul> y <li> para listas.
+               - Usa <table> para datos comparativos.
+               - NO uses bloques de texto plano sin formato.
+            5. **CERO CORTESÍA:** NO escribas "Hola", "Claro", "Aquí tienes". Empieza DIRECTAMENTE con el <div> de la fecha.
+
+            TAREA DEL USUARIO:
+            "${userPromptText}"
+            `.replace(/\[TICKER \/ NOMBRE DE LA EMPRESA\]/g, ticker)
+             .replace(/\[NOMBRE DE LA EMPRESA \/ TICKER\]/g, ticker)
+             .replace(/\[TICKER\]/g, ticker)
+             .replace(/\[ACCIÓN 1\]/g, ticker) // Para comparativa
+             .replace(/\[ACCIÓN 2\]/g, "Competidor Principal 1")
+             .replace(/\[ACCIÓN 3\]/g, "Competidor Principal 2");
+
             const res = await askGemini(apiKey, fullPrompt);
-            setSpecificAnswer(cleanAIResponse(res)); 
-        } catch (e) { setStatusModal({ isOpen: true, title: 'Error iA', msg: e.message, type: 'error' }); } finally { setLoading(false); }
+            const cleanHtml = cleanAIResponse(res);
+
+            // 3. Validación de Respuesta Vacía o Fallida
+            if (!cleanHtml || cleanHtml.length < 100 || cleanHtml.includes("no puedo buscar")) {
+                throw new Error("La IA no ha podido recuperar datos frescos de internet en este momento. Por favor, inténtalo de nuevo en unos minutos.");
+            }
+
+            setSpecificAnswer(cleanHtml); 
+        } catch (e) { 
+            setStatusModal({ isOpen: true, title: 'Error de Análisis', msg: e.message, type: 'error' }); 
+        } finally { 
+            setLoading(false); 
+        }
     };
 
     const runScreener = async () => {
@@ -2363,14 +2261,12 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
                         
                         <div className="relative"><Icons.MessageCircle className="absolute left-3 top-3 text-slate-500" size={18}/><input type="text" value={question} onChange={e => setQuestion(e.target.value)} placeholder="¿Tienes alguna pregunta específica sobre este valor?" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-xs text-white" /></div>
                         
-                        {/* RESTAURADO: CARRUSEL DE PREGUNTAS SUGERIDAS */}
                         <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
                             {suggestedQuestions.map((q, i) => (
                                 <button key={i} onClick={() => setQuestion(q)} className="whitespace-nowrap px-4 py-2 bg-slate-800 border border-slate-700 rounded-full text-[10px] text-slate-400 hover:text-white hover:bg-slate-700 transition-colors shadow-sm">{q}</button>
                             ))}
                         </div>
                         
-                        {/* SUBAPARTADO: PREGUNTAS ESPECÍFICAS FIJAS */}
                         <div className="mt-4 pt-4 border-t border-slate-800">
                              <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Análisis Profundo (Búsqueda Activa en Web)</h4>
                              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
