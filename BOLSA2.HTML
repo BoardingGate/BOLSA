@@ -2063,6 +2063,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         } 
     };
 
+
     const formatN = (v, dec = 2) => {
         let n = parseFloat(v) || 0;
         return n.toFixed(dec).replace('.', ',');
@@ -2129,32 +2130,28 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
 
     // INFORMES FIJOS (NUEVA FUNCIONALIDAD CON BLINDAJE DE IDIOMA Y DATOS)
 
-
-const handleFixedAnalysis = async (promptId) => {
+    const handleFixedAnalysis = async (promptId) => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' }); 
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' }); 
+        
+        // ACCESO SEGURO AL PROMPT PARA EVITAR EL ERROR DE 'REPLACE'
+        const promptTemplate = PREDEFINED_PROMPTS && PREDEFINED_PROMPTS[promptId];
+        
+        if (!promptTemplate) {
+            return setStatusModal({ isOpen: true, title: 'Error', msg: 'No se pudo acceder a la plantilla: ' + promptId, type: 'error' });
+        }
+
         setLoading(true); setSpecificAnswer(null); setData(null);
         try {
             const today = new Date().toLocaleString('es-ES');
-
-            //--- ARREGLO QUIRÚRGICO AQUÍ ---
-            const template = PREDEFINED_PROMPTS[promptId];
-            if (!template) throw new Error(`No se encontró la plantilla: ${promptId}`);
             
-            let specificInstructions = template.replace(/\[TICKER\]/g, ticker)
-                                               .replace(/\[NOMBRE DE LA EMPRESA \/ TICKER\]/g, ticker)
-                                               .replace(/\[ACCIÓN 1\]/g, ticker);
-            // -------------------------------
+            // Reemplazos originales
+            let specificInstructions = promptTemplate.replace(/\[TICKER\]/g, ticker)
+                                                       .replace(/\[NOMBRE DE LA EMPRESA \/ TICKER\]/g, ticker)
+                                                       .replace(/\[ACCIÓN 1\]/g, ticker);
 
-            
-            // 1. Obtener precio "ancla" en ESPAÑOL
-            const priceFetchPrompt = `SEARCH ONLINE. Return ONLY the current price of ${ticker}, the date and the source in SPANISH. Format: "PRECIO ACTUAL DE LA ACCIÓN: [Precio] a fecha [Fecha] (Fuente: [X])". DO NOT WRITE IN ENGLISH.`;
-            const priceInfo = await askGemini(apiKey, priceFetchPrompt);
-
-            // 2. Preparar el prompt final con la premisa inyectada y el texto original
-            const basePromptText = PREDEFINED_PROMPTS[promptId];
-            
-            const fullPrompt = `
+            // Tu Wrapper de SISTEMA original tal cual lo pediste
+          const fullPrompt = `
                 ROL: Analista Financiero Senior. IDIOMA: ESPAÑOL (Castellano) OBLIGATORIO.
                 FECHA INFORME: ${today}.
                 
@@ -2167,16 +2164,18 @@ const handleFixedAnalysis = async (promptId) => {
                 4. CITA SIEMPRE: (Fuente: X, Fecha: Y).
                 5. ESTRUCTURA: Usa <h3>, <ul>, <table>. NO uses texto corrido.
 
-                TAREA:
-                "${specificInstructions}"
+            TAREA:
+            "${specificInstructions}"
             `;
 
             const res = await askGemini(apiKey, fullPrompt);
             const cleanHtml = cleanAIResponse(res);
 
-            if (!cleanHtml || cleanHtml.length < 150) {
-                throw new Error("No se pudieron obtener datos frescos. Reintente en unos minutos.");
+            // Verificación de seguridad de la respuesta
+            if (!cleanHtml || cleanHtml.length < 50 || cleanHtml.toLowerCase().includes("no puedo buscar")) {
+                throw new Error("La IA no ha podido conectar con los datos en tiempo real. Por favor, inténtalo de nuevo.");
             }
+
             setSpecificAnswer(cleanHtml); 
         } catch (e) { 
             setStatusModal({ isOpen: true, title: 'Error de Análisis', msg: e.message, type: 'error' }); 
@@ -2184,6 +2183,8 @@ const handleFixedAnalysis = async (promptId) => {
             setLoading(false); 
         }
     };
+
+
 
     // --- RASTREO (SCREENER) RESTAURADO AL ORIGINAL ---
     const runScreener = async () => {
