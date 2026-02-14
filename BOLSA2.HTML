@@ -2129,51 +2129,55 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
     };
 
     // INFORMES FIJOS (NUEVA FUNCIONALIDAD CON BLINDAJE DE IDIOMA Y DATOS)
-
     const handleFixedAnalysis = async (promptId) => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' }); 
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' }); 
         
-        // ACCESO SEGURO AL PROMPT PARA EVITAR EL ERROR DE 'REPLACE'
-        const promptTemplate = PREDEFINED_PROMPTS && PREDEFINED_PROMPTS[promptId];
-        
-        if (!promptTemplate) {
-            return setStatusModal({ isOpen: true, title: 'Error', msg: 'No se pudo acceder a la plantilla: ' + promptId, type: 'error' });
-        }
-
         setLoading(true); setSpecificAnswer(null); setData(null);
+        
         try {
             const today = new Date().toLocaleString('es-ES');
             
-            // Reemplazos originales
-            let specificInstructions = promptTemplate.replace(/\[TICKER\]/g, ticker)
+            // --- CORRECCIÓN DE SEGURIDAD ---
+            let rawPrompt = PREDEFINED_PROMPTS[promptId];
+            
+            // Si por alguna razón el prompt no existe, lanzamos error controlado en lugar de romper la app
+            if (!rawPrompt) {
+                throw new Error(`No se encontró la plantilla para el análisis: ${promptId}`);
+            }
+
+            let specificInstructions = rawPrompt.replace(/\[TICKER\]/g, ticker)
                                                        .replace(/\[NOMBRE DE LA EMPRESA \/ TICKER\]/g, ticker)
                                                        .replace(/\[ACCIÓN 1\]/g, ticker);
+            // --------------------------------
 
-            // Tu Wrapper de SISTEMA original tal cual lo pediste
-          const fullPrompt = `
-                ROL: Analista Financiero Senior. IDIOMA: ESPAÑOL (Castellano) OBLIGATORIO.
-                FECHA INFORME: ${today}.
-                
-                PREMISA DE DATOS: TÉNGASE EN CUENTA QUE EL PRECIO ACTUAL DE COTIZACIÓN ES: ${priceInfo}. Utilice esta referencia para todos los cálculos.
-                
-                INSTRUCCIONES DE FORMATO:
-                1. EMPIEZA DIRECTAMENTE con: <div style="text-align:right; font-size:10px; color:#666; border-bottom:1px solid #ccc; padding-bottom:5px; margin-bottom:15px; font-family:monospace;">EMISIÓN: ${today} | FUENTE: LIVE DATA</div>
-                2. TU PRIMER APARTADO DEL INFORME DEBE SER: <h3>PRECIO ACTUAL DE LA ACCIÓN</h3> <p><b>${priceInfo}</b></p>
-                3. REGLA DE ORO: Si buscas información y los resultados están en inglés, TRADÚCELOS al español.
-                4. CITA SIEMPRE: (Fuente: X, Fecha: Y).
-                5. ESTRUCTURA: Usa <h3>, <ul>, <table>. NO uses texto corrido.
+            // Creamos el Wrapper de SISTEMA "Blindado"
+            const fullPrompt = `
+            ROL: Analista Financiero Senior de Banca de Inversión (Goldman Sachs/JP Morgan).
+            FECHA Y HORA ACTUAL: ${today}.
+            IDIOMA DE SALIDA: Español (España) OBLIGATORIO.
+            
+            INSTRUCCIONES DE SISTEMA CRÍTICAS (NO IGNORAR):
+            1. **BÚSQUEDA WEB OBLIGATORIA:** Usa la herramienta de búsqueda para encontrar los datos MÁS RECIENTES (Earnings, Precio Hoy, Noticias).
+            2. **COMPLETITUD AGRESIVA:** Si no encuentras el dato de hoy exacto, usa el último dato confirmado (ej: "Dato del Q3 2024"). NO DEJES CAMPOS VACÍOS con "No disponible" a menos que sea información confidencial. ESFUÉRZATE EN LLENAR EL INFORME.
+            3. **CITAS Y FECHAS:** En CADA sección o dato numérico clave, añade: *(Fuente: [Nombre], Fecha: [YYYY-MM-DD])*. Si es un dato calculado, pon *(Estimación propia basada en [Fuente])*
+            4. **FORMATO HTML:** - Empieza con: <div style="text-align:right; font-size:10px; color:#666; border-bottom:1px solid #ccc; padding-bottom:5px; margin-bottom:15px; font-family:monospace;">EMISIÓN: ${today}</div>
+               - Usa <h3> (estilo azul) para títulos.
+               - Usa <ul> y <li> para listas.
+               - Usa <table> para datos comparativos.
+               - NO uses bloques de texto plano.
+            5. **CERO CORTESÍA:** NO escribas "Hola". Empieza DIRECTAMENTE con el <div> de la fecha.
 
-            TAREA:
+            TAREA ESPECÍFICA DETALLADA:
             "${specificInstructions}"
             `;
 
             const res = await askGemini(apiKey, fullPrompt);
             const cleanHtml = cleanAIResponse(res);
 
-            // Verificación de seguridad de la respuesta
-            if (!cleanHtml || cleanHtml.length < 50 || cleanHtml.toLowerCase().includes("no puedo buscar")) {
-                throw new Error("La IA no ha podido conectar con los datos en tiempo real. Por favor, inténtalo de nuevo.");
+            // Validación de respuesta vacía o error de búsqueda
+            if (!cleanHtml || cleanHtml.length < 50 || cleanHtml.toLowerCase().includes("no puedo buscar") || cleanHtml.toLowerCase().includes("no tengo acceso")) {
+                throw new Error("La IA no ha podido conectar con los datos en tiempo real. Por favor, inténtalo de nuevo en unos minutos.");
             }
 
             setSpecificAnswer(cleanHtml); 
@@ -2183,7 +2187,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
             setLoading(false); 
         }
     };
-
 
 
     // --- RASTREO (SCREENER) RESTAURADO AL ORIGINAL ---
