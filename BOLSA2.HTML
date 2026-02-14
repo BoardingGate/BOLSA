@@ -1703,21 +1703,69 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const updatePrices = async (isAuto = false) => { const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); if (!isAuto && active.length === 0) return; setUpdating(true); let log = { success: [], fail: [] }, newUpdates = []; try { for (const item of active) { const assetDesc = item.isIndex ? "MARKET INDEX (SPOT VALUE)" : "STOCK/EQUITY"; const prompt = `ROLE: Financial Data API. TASK: Get data for Ticker: "${item.ticker}". TYPE: ${assetDesc}. REQUIREMENTS: 1. "p": Current Price in its NATIVE currency (${item.stockCurrency}). STRICT RULE: DO NOT convert the price to ${baseCurrency}. Return it as it quotes in the market. 2. "fx": Exchange rate to convert from ${item.stockCurrency} to ${baseCurrency}. (Example: 1 ${item.stockCurrency} = X ${baseCurrency}). If same, fx = 1. 3. "pe": TTM P/E Ratio (0 if Index). RETURN JSON ONLY: {"p": number, "fx": number, "pe": number}`; try { const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json && (json.p || json.p === 0)) { const safeFx = (item.stockCurrency === baseCurrency) ? 1 : cleanVal(json.fx); newUpdates.push({ id: item.id, p: cleanVal(json.p), fx: safeFx, pe: cleanVal(json.pe) }); log.success.push(item.ticker); } else { log.fail.push(item.ticker); } } catch (e) { log.fail.push(item.ticker); } } if (newUpdates.length > 0) { setPortfolio(prev => prev.map(p => { const u = newUpdates.find(x => x.id === p.id); if (u) { return { ...p, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe }; } return p; }), false); setLastUpdate(new Date().toISOString()); } if (!isAuto && log.fail.length > 0) { setInfoModal({ isOpen: true, title: 'Sincronización parcial', msg: `No se pudieron actualizar: ${log.fail.join(', ')}.`, type: 'warning' }); } } catch (e) { if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); } finally { setUpdating(false); } };
     
     // ANALISIS IA MEJORADO Y CORREGIDO
-    const analyzePortfolio = async () => {
+const analyzePortfolio = async () => {
       const dataToAnalyze = visiblePortfolio;
       if (dataToAnalyze.length === 0) return setInfoModal({ isOpen: true, title: 'Info', msg: 'No hay datos visibles para analizar.', type: 'info' });
+      
       setAnalyzing(true);
       try {
-        const activePos = dataToAnalyze.filter(p => !p.sellDate).map(p => ({ ticker: p.ticker, empresa: p.name, precio_compra: p.buyPrice, precio_actual: p.currentPrice, per_actual: p.currentPE, divisa: p.stockCurrency, fx_actual: p.currentFx }));
-        const soldPos = dataToAnalyze.filter(p => !!p.sellDate).map(p => ({ ticker: p.ticker, resultado: (((p.sellPrice * p.shares * p.sellFx) - (p.sellFeesIncludedInPrice ? 0 : p.sellFees) - (p.sellAdjustments || 0)) - ((p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : p.fees) + (p.adjustments || 0))).toFixed(2) }));
-        const tickers = activePos.map(p => p.ticker).join(', ');
-        const prompt = `ROL: Analista Financiero Senior. TAREA: Generar un informe de estrategia de inversión profesional para esta cartera. IDIOMA: Español (España). FORMATO: HTML puro. CRÍTICO: Tu respuesta debe empezar DIRECTAMENTE con <h3>. PROHIBIDO incluir saludos. ESTILOS REQUERIDOS EN HTML: - Títulos <h3>: style="color:#2563eb; border-bottom:1px solid #ccc; padding-bottom:5px; margin-top:20px; text-transform:uppercase;" - Texto <p> y <li>: style="color:#334155; margin-bottom:5px;" - Tablas: style="width:100%; border-collapse:collapse; margin:10px 0; font-size:12px; color:#000;" - Celdas tabla: style="border:1px solid #ddd; padding:8px; text-align:left;" - Cabecera tabla: style="background-color:#f1f5f9; font-weight:bold;" DATOS DE CARTERA: - POSICIONES ACTIVAS: ${JSON.stringify(activePos)} - HISTORIAL VENTAS (P&L): ${JSON.stringify(soldPos)} SECCIONES OBLIGATORIAS: 1. <h3>RESUMEN EJECUTIVO</h3> 2. <h3>ESTADO ACTUAL CARTERA (ACTIVE POSITIONS)</h3> Genera TABLA HTML. 3. <h3>RECOMENDACIONES DE REBALANCEO</h3> 4. <h3>ANÁLISIS DE VENTAS (HISTÓRICO)</h3> 5. <h3>SITUACIÓN DE MERCADO</h3> (Buscar web para ${tickers}). 6. <h3>CONCLUSIÓN FINAL</h3>.`;
+        const today = new Date().toLocaleString('es-ES');
+        
+        // Mapeo de datos visibles para el contexto de la IA
+        const portfolioContext = dataToAnalyze.map(p => {
+            const isS = !!p.sellDate;
+            const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
+            const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+            const val = (curP * p.shares * (isS ? p.sellFx : p.currentFx)) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+            const yieldVal = val - cost;
+            const yieldPct = cost !== 0 ? (yieldVal / cost) * 100 : 0;
+
+            return `Valor: ${p.name} (${p.ticker}) | Títulos: ${p.shares} | P.Compra: ${p.buyPrice} | P.Actual/Venta: ${curP} | Coste Tot: ${cost.toFixed(2)} ${baseCurrency} | Valoración: ${val.toFixed(2)} ${baseCurrency} | Rendimiento: ${yieldVal.toFixed(2)} (${yieldPct.toFixed(2)}%)`;
+        }).join('\n');
+
+        const prompt = `
+        <div style="text-align:right; font-size:10px; color:#666; border-bottom:1px solid #ccc; padding-bottom:5px; margin-bottom:15px; font-family:monospace;">EMISIÓN INFORME: ${today} | ANALISTA: BOARDINGGATE AI MANAGER</div>
+        
+        Actúa como un Senior Portfolio Manager y Analista de Estrategia de Inversión con 20 años de experiencia en Wall Street.
+        Tu objetivo: Realizar un análisis exhaustivo y crítico de mi cartera de inversión basándote en los datos que te proporcionaré a continuación.
+        
+        FECHA ACTUAL DE REFERENCIA: ${today}.
+        
+        Contexto de los Datos de mi Cartera:
+        ${portfolioContext}
+        
+        Instrucciones de Análisis:
+         * Diagnóstico de Salud: Analiza la diversificación real (por sector, geografía y capitalización). Identifica si hay una sobreexposición peligrosa en algún activo o industria.
+         * Análisis de Performance: Calcula (o estima basado en datos actuales de mercado que busques) el rendimiento latente. Identifica cuáles son los "ganadores" que debo vigilar y los "perdedores" que podrían ser una trampa de valor.
+         * Evaluación de Riesgo: Determina el perfil de riesgo de la cartera (Conservador, Moderado, Agresivo). Menciona la correlación entre los activos; ¿caería toda mi cartera si el sector tecnológico corrige?
+         * Estimaciones y Perspectivas: Utiliza tus datos actualizados sobre el mercado (búscalos en internet) para proyectar cómo podrían comportarse estos activos en el entorno macro actual (tasas de interés, inflación, crecimiento del PIB). CITA FUENTES Y FECHAS.
+         * Recomendaciones Estratégicas: 
+            * Dime qué activos consideras "Mantener", "Aumentar" o "Cerrar posición" (Vender).
+            * Sugiere 2 o 3 activos para reequilibrar la cartera si fuera necesario.
+        
+        Formato del Informe (HTML OBLIGATORIO):
+         * Usa etiquetas <h3> con style="color:#2563eb; border-bottom:1px solid #ccc; margin-top:20px; text-transform:uppercase;" para encabezados profesionales.
+         * Incluye una Tabla de Resumen Ejecutivo (<table> con bordes).
+         * Termina con una sección de "Riesgos de Cola" (eventos poco probables pero catastróficos para esta cartera específica).
+         * PROHIBIDO texto corrido sin formato. Usa <ul> y <li>.
+        
+        Tono: Profesional, directo, crítico y altamente analítico. No seas genérico; busca ineficiencias en mis inversiones.
+        `;
+
         const res = await askGemini(apiKey, prompt);
-        const cleanHtml = res.replace(/```html/g, '').replace(/```/g, '').replace(/^[\s\S]*?(<h[1-6])/i, '$1').trim();
+        const cleanHtml = res.replace(/```html/g, '').replace(/```/g, '').trim();
+        
+        if (!cleanHtml || cleanHtml.length < 200) throw new Error("La IA no pudo procesar el informe de cartera. Reintente.");
+
         setAnalysisResult(cleanHtml);
         setIsAnalysisModalOpen(true);
-      } catch (e) { alert(e.message); } finally { setAnalyzing(false); }
+      } catch (e) {
+        alert(e.message);
+      } finally {
+        setAnalyzing(false);
+      }
     };
+
 
     const handleSave = () => { if (!editingId && portfolio.length >= _x_lim) { _x_trig(true); return; } const e = { ...form, name: form.name || form.ticker }; if (editingId) setPortfolio(prev => prev.map(p => p.id === editingId ? { ...p, ...e } : p)); else setPortfolio(prev => [...prev, { ...e, id: Date.now(), currentPrice: form.buyPrice, currentFx: form.buyFx, isActive: true, dividends: [] }]); setIsModalOpen(false); }; 
     const handleSellSubmit = () => { const soldR = { ...sellItem, id: Date.now(), shares: sellForm.sharesToSell, isActive: true, sellDate: sellForm.sellDate, sellPrice: sellForm.sellPrice, sellFx: sellForm.sellFx, sellFees: sellForm.sellFees, sellAdjustments: sellForm.sellAdjustments, sellFeesIncludedInPrice: sellForm.sellFeesIncludedInPrice, dividends: [...(sellItem.dividends || [])] }; const updatedP = portfolio.map(p => p.id === sellItem.id ? { ...p, isActive: false, dividends: [] } : p); setPortfolio([...updatedP, soldR]); setIsSellModalOpen(false); };
