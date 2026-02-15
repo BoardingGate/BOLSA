@@ -1691,12 +1691,19 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const taxSum = useMemo(() => { if(!resultsData) return 0; return Object.values(resultsData).reduce((acc, y) => acc + (y.tax || 0), 0); }, [resultsData]);
 
     useEffect(() => { 
-        if (!isAppReady) return;
-        if (apiKey && portfolio.length > 0) updatePrices(true); 
-        if (!refreshInterval || refreshInterval < 1) return; 
-        const interval = setInterval(() => updatePrices(true), refreshInterval * 60 * 1000); 
-        return () => clearInterval(interval); 
-    }, [apiKey, refreshInterval, isAppReady]);
+    if (!isAppReady) return;
+    const now = Date.now();
+    const last = lastUpdate ? new Date(lastUpdate).getTime() : 0;
+    const intervalMs = (refreshInterval || 10) * 60 * 1000;
+    
+    if (apiKey && portfolio.length > 0 && (now - last > intervalMs)) {
+        updatePrices(true);
+    }
+   
+    if (!refreshInterval || refreshInterval < 1) return; 
+    const interval = setInterval(() => updatePrices(true), refreshInterval * 60 * 1000); 
+    return () => clearInterval(interval); 
+}, [apiKey, refreshInterval, isAppReady]);     
 
     const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
 
