@@ -2038,6 +2038,15 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         { id: 'NETHERLANDS', name: 'Holanda (Euronext Amsterdam)', country: 'Holanda' }
     ];
 
+    const REPORT_TITLES = {
+        ITEM_1: "ANÁLISIS FINANCIERO INTEGRAL 360º",
+        ITEM_2: "ANÁLISIS DE ESTADOS FINANCIEROS (BALANCE Y CUENTA)",
+        ITEM_3: "REVISIÓN DE RESULTADOS TRIMESTRALES (EARNINGS)",
+        ITEM_4: "COMPARATIVA SECTORIAL Y COMPETENCIA",
+        ITEM_5: "MODELOS DE VALORACIÓN (DCF Y MÚLTIPLOS)",
+        ITEM_6: "INFORME DE RIESGOS, ALERTAS Y CATALIZADORES"
+    };
+
     useEffect(() => { if (initialTicker) setTicker(initialTicker); }, [initialTicker]);
 
     const PREDEFINED_PROMPTS = {
@@ -2155,25 +2164,13 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         setSuggestedQuestions(randomSelection); 
     };
 
-   
     const cleanAIResponse = (text) => {
         if (!text) return "";
-        let clean = text.trim();
-        
-        clean = clean.replace(/```html/g, '').replace(/```/g, '');
-        
-        const startIdx = clean.indexOf('<');
-        const endIdx = clean.lastIndexOf('>');
-        
-        if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-            clean = clean.substring(startIdx, endIdx + 1);
-        } else {
-            clean = clean.replace(/^Here is the report:|^Aquí tienes el informe:/i, '');
-        }
-        
+        let clean = text.replace(/```html/g, '').replace(/```/g, '').trim();
         return clean;
     };
-  
+   
+    
     // ANÁLISIS SIMPLE Y PREGUNTA LIBRE (RESTAURADA LÓGICA ORIGINAL)
     const analyze = async () => { 
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' }); 
@@ -2218,39 +2215,64 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         try {
             const today = new Date().toLocaleString('es-ES');
             
-            // 1. Obtención de precio ancla
-            const priceFetchPrompt = `SEARCH ONLINE. Return ONLY current price of ${ticker} in SPANISH. Format: "PRECIO ACTUAL: [Precio] (Fecha: [Fecha])".`;
-            const priceInfo = await askGemini(apiKey, priceFetchPrompt);
+            // 1. Obtener precio fresco (pequeña llamada rápida)
+            const priceFetchPrompt = `SEARCH ONLINE. Return ONLY current price of ${ticker} in SPANISH. Format: "Precio: [Precio] [Divisa] | Fecha: [Fecha] | Fuente: [Fuente]". Keep it very short.`;
+            let priceInfo = "Buscando precio...";
+            try {
+                 priceInfo = await askGemini(apiKey, priceFetchPrompt);
+            } catch(e) { priceInfo = "Precio no disponible momentáneamente"; }
 
-            // 2. Construcción del Prompt Maestro
+            // 2. Pedir el cuerpo del informe
             const basePromptText = PREDEFINED_PROMPTS[promptId];
-            
             const fullPrompt = `
-                ROL: Analista Financiero Senior. IDIOMA: ESPAÑOL. FECHA: ${today}.
-                CONTEXTO: El precio actual aproximado es ${priceInfo}.
+                ROL: Analista Financiero. IDIOMA: ESPAÑOL. FECHA: ${today}.
+                TAREA: Generar el cuerpo de un informe sobre ${ticker}.
+                CONTEXTO DE PRECIO (ÚSALO EN TUS CÁLCULOS PERO NO LO REPITAS AL INICIO): ${priceInfo}
                 
-                TAREA:
+                DETALLE TAREA:
                 ${basePromptText.replace(/\[TICKER\]/g, ticker)}
                 
-                REGLAS DE FORMATO ESTRICTAS:
-                1. DEVUELVE HTML PURO. NO USES BLOQUES DE CÓDIGO MARKDOWN (\`\`\`html).
-                2. NO REPITAS ESTE PROMPT NI LA PREGUNTA.
-                3. EMPIEZA DIRECTAMENTE CON: <div style="text-align:right; font-size:10px; color:#666; border-bottom:1px solid #ccc;">EMISIÓN: ${today}</div>
-                4. SI NO HAY DATOS, PON "N/A" O "NO DISPONIBLE". NO INVENTES.
+                REGLAS DE FORMATO:
+                1. SOLO HTML (<h3>, <ul>, <p>, <table>).
+                2. NO incluyas título principal ni precio al principio (ya lo pongo yo).
+                3. Asegúrate de cerrar todas las etiquetas HTML.
+                4. NO cortes la respuesta. Sé conciso pero completo.
             `;
 
             const res = await askGemini(apiKey, fullPrompt);
-            const cleanHtml = cleanAIResponse(res); // Usamos la nueva función de limpieza
+            const cleanBody = cleanAIResponse(res); 
 
-            if (!cleanHtml || cleanHtml.length < 100) throw new Error("Respuesta IA insuficiente.");
+            if (!cleanBody || cleanBody.length < 50) throw new Error("Respuesta IA vacía.");
             
-            setSpecificAnswer(cleanHtml); 
+            // 3. CONSTRUCCIÓN MANUAL DEL HTML FINAL (HEADER + BODY)
+            // Esto garantiza que el título y el precio salgan siempre y con el formato correcto.
+            const reportTitle = REPORT_TITLES[promptId] || "INFORME FINANCIERO";
+            
+            const finalHtml = `
+                <div style="border-bottom: 2px solid #3b82f6; padding-bottom: 10px; margin-bottom: 20px;">
+                    <h2 style="color: #60a5fa; margin: 0; font-size: 1.5rem; text-transform: uppercase; font-family: 'Orbitron', sans-serif;">${reportTitle}</h2>
+                    <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 8px;">
+                        <div>
+                            <span style="font-size: 1.2rem; font-weight: bold; color: #white;">${ticker}</span>
+                        </div>
+                        <div style="text-align: right; font-size: 0.75rem; color: #94a3b8; font-family: monospace;">
+                            <div>${priceInfo}</div>
+                            <div>EMISIÓN: ${today}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="report-body">
+                    ${cleanBody}
+                </div>
+            `;
+            
+            setSpecificAnswer(finalHtml); 
         } catch (e) { 
             setStatusModal({ isOpen: true, title: 'Error Análisis', msg: e.message, type: 'error' }); 
         } finally { 
             setLoading(false); 
         }
-    };   
+    };    
 
     // --- RASTREO (SCREENER) RESTAURADO AL ORIGINAL ---
     const runScreener = async () => {
