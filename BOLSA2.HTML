@@ -2115,9 +2115,13 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         
         clean = clean.replace(/```html/g, '').replace(/```/g, '');
 
-        const firstTagIndex = clean.indexOf('<');
-        if (firstTagIndex !== -1) {
-            clean = clean.substring(firstTagIndex);
+        const headerIndex = clean.indexOf('<h');
+        const anyTagIndex = clean.indexOf('<');
+
+        if (headerIndex !== -1) {
+            return clean.substring(headerIndex);
+        } else if (anyTagIndex !== -1) {
+            return clean.substring(anyTagIndex);
         }
 
         return clean;
@@ -2163,46 +2167,62 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
     };
 
     // INFORMES FIJOS (NUEVA FUNCIONALIDAD CON BLINDAJE DE IDIOMA Y DATOS)
-    const handleFixedAnalysis = async (promptId) => {
+     const handleFixedAnalysis = async (promptId) => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' }); 
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' }); 
-        setLoading(true); setSpecificAnswer(null); setData(null);
+        
+        setLoading(true); 
+        setSpecificAnswer(null); 
+        setData(null);
+
         try {
             const today = new Date().toLocaleString('es-ES');
             
-            // 1. Obtener precio fresco (pequeña llamada rápida)
-            const priceFetchPrompt = `SEARCH ONLINE. Return ONLY current price of ${ticker} in SPANISH. Format: "Precio: [Precio] [Divisa] | Fecha: [Fecha] | Fuente: [Fuente]". Keep it very short.`;
+            // 1. Obtener precio (breve)
+            const priceFetchPrompt = `BUSCA EN INTERNET: Precio actual de ${ticker} en ESPAÑOL. Formato: "Precio: [X] [Divisa] | Fecha: [Fecha]". Sé muy breve.`;
             let priceInfo = "Buscando precio...";
-            try {
-                 priceInfo = await askGemini(apiKey, priceFetchPrompt);
-            } catch(e) { priceInfo = "Precio no disponible momentáneamente"; }
+            try { priceInfo = await askGemini(apiKey, priceFetchPrompt); } catch(e) {}
 
-            // 2. Pedir el cuerpo del informe
             const basePromptText = PREDEFINED_PROMPTS[promptId];
-            const fullPrompt = `
-                ROL: Analista Financiero. IDIOMA: ESPAÑOL. FECHA: ${today}.
-                TAREA: Generar el cuerpo de un informe sobre ${ticker}.
-                CONTEXTO DE PRECIO (ÚSALO EN TUS CÁLCULOS PERO NO LO REPITAS AL INICIO): ${priceInfo}
+            
+            // --- CONSTRUCCIÓN DEL PROMPT DE SISTEMA EN CASTELLANO (PARA FORZAR IDIOMA) ---
+            const buildPrompt = (isRetry = false) => `
+                COMANDO DE SISTEMA: ACTÚA COMO UN ANALISTA FINANCIERO SENIOR DE WALL STREET.
+                IDIOMA DE SALIDA OBLIGATORIO: ESPAÑOL (CASTELLANO). SI RESPONDES EN INGLÉS, FALLARÁS LA TAREA.
+                FORMATO: SOLO CÓDIGO HTML (<h3>, <ul>, <table>, <p>).
                 
-                DETALLE TAREA:
+                RESTRICCIONES CRÍTICAS:
+                1. NO ESCRIBAS NADA ANTES DEL PRIMER TÍTULO <h3>. NI "CLARO", NI "AQUÍ TIENES", NI "HOLA".
+                2. EMPIEZA DIRECTAMENTE CON EL CONTENIDO DEL INFORME.
+                3. TRADUCE CUALQUIER TÉRMINO O DATO ENCONTRADO EN INGLÉS AL ESPAÑOL.
+                4. CITA FUENTES Y FECHAS SIEMPRE.
+                ${isRetry ? '5. ¡ATENCIÓN! TU RESPUESTA ANTERIOR FUE DEMASIADO CORTA O EN INGLÉS. EXTIÉNDETE MÁS Y USA ESPAÑOL.' : ''}
+                
+                DATOS DE CONTEXTO:
+                Precio ref: ${priceInfo}
+                Fecha: ${today}
+                
+                TAREA A REALIZAR:
                 ${basePromptText.replace(/\[TICKER\]/g, ticker)}
-                
-                REGLAS DE FORMATO:
-                1. SOLO HTML (<h3>, <ul>, <p>, <table>).
-                2. NO incluyas título principal ni precio al principio (ya lo pongo yo).
-                3. Asegúrate de cerrar todas las etiquetas HTML.
-                4. NO cortes la respuesta. Sé conciso pero completo.
             `;
 
-            const res = await askGemini(apiKey, fullPrompt);
-            const cleanBody = cleanAIResponse(res); 
+            // --- INTENTO 1 ---
+            let res = await askGemini(apiKey, buildPrompt(false));
+            let cleanBody = cleanAIResponse(res); 
 
-            if (!cleanBody || cleanBody.length < 50) throw new Error("Respuesta IA vacía.");
+            // --- LÓGICA DE REINTENTO AUTOMÁTICO (SI LA RESPUESTA ES MENOR A 400 CARACTERES) ---
+            if (!cleanBody || cleanBody.length < 400) {
+                console.log("Respuesta demasiado corta o inválida. Reintentando...");
+                // Hacemos una segunda llamada forzando la extensión
+                res = await askGemini(apiKey, buildPrompt(true));
+                cleanBody = cleanAIResponse(res);
+            }
+
+            if (!cleanBody || cleanBody.length < 100) throw new Error("La IA no ha podido generar un informe válido tras dos intentos.");
             
-            // 3. CONSTRUCCIÓN MANUAL DEL HTML FINAL (HEADER + BODY)
-            // Esto garantiza que el título y el precio salgan siempre y con el formato correcto.
             const reportTitle = REPORT_TITLES[promptId] || "INFORME FINANCIERO";
             
+            // Construcción manual de la cabecera para asegurar que siempre está
             const finalHtml = `
                 <div style="border-bottom: 2px solid #3b82f6; padding-bottom: 10px; margin-bottom: 20px;">
                     <h2 style="color: #60a5fa; margin: 0; font-size: 1.5rem; text-transform: uppercase; font-family: 'Orbitron', sans-serif;">${reportTitle}</h2>
@@ -2227,7 +2247,9 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         } finally { 
             setLoading(false); 
         }
-    };    
+    };
+
+
 
     // --- RASTREO (SCREENER) RESTAURADO AL ORIGINAL ---
     const runScreener = async () => {
