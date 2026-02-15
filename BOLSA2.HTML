@@ -2073,7 +2073,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
     useEffect(() => { if (initialTicker) setTicker(initialTicker); }, [initialTicker]);
 
   // --- PROMPTS ORIGINALES COMPLETOS (RESTAURADOS ÍNTEGRAMENTE) ---
-  const HTML_TEMPLATES = {
+const HTML_TEMPLATES = {
         ITEM_1: `
             <div style="font-family: sans-serif; line-height: 1.5;">
                 <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-bottom: 10px;">1. Descripción General del Negocio</h3>
@@ -2228,6 +2228,8 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
             </div>`
     };
 
+
+
 // --- FUNCIONES DE SOPORTE ---
     const askGemini = async (key, prompt) => {
         if (!key) throw new Error("Falta API Key");
@@ -2331,6 +2333,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         } catch (e) { setStatusModal({ isOpen: true, title: 'Error iA', msg: e.message, type: 'error' }); } finally { setLoading(false); } 
     };
 
+   
 const handleFixedAnalysis = async (promptId) => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' }); 
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' }); 
@@ -2342,45 +2345,50 @@ const handleFixedAnalysis = async (promptId) => {
         try {
             const today = new Date().toLocaleString('es-ES');
             
-            // 1. Obtener precio (Llamada rápida)
-            const priceFetchPrompt = `BUSCA EN INTERNET: Precio real actual de ${ticker}. Responde solo: "Precio: [X] [Divisa] | Fecha: [Fecha]"`;
-            let priceInfo = "Buscando precio actualizado...";
+            // Prompt de contexto inicial para la cabecera
+            const priceFetchPrompt = `BUSCA EN INTERNET: Precio actual de ${ticker} en ESPAÑOL. Formato exacto: "Precio: [X] [Divisa] | Fecha: [Fecha]". Sé muy breve.`;
+            let priceInfo = "Buscando precio...";
             try { 
-                const pRes = await askGemini(apiKey, priceFetchPrompt);
-                priceInfo = pRes || "Precio no disponible";
-            } catch(e) { priceInfo = "Error al conectar con el servidor de precios"; }
+                const pRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: [{ parts: [{ text: priceFetchPrompt }] }], tools: [{ google_search: {} }] })
+                });
+                const pData = await pRes.json();
+                priceInfo = pData.candidates?.[0]?.content?.parts?.[0]?.text || "Precio no disponible";
+            } catch(e) {}
 
             const templateCode = HTML_TEMPLATES[promptId];
             
-            // 2. Informe con Protocolo de Integridad
             const prompt = `
-                SISTEMA: ROL ANALISTA FINANCIERO SENIOR. MODELO: GEMINI 3 FLASH PREVIEW.
-                OBJETIVO: RELLENAR PLANTILLA HTML CON DATOS REALES DE ${ticker}.
+                SISTEMA: Eres un Analista Financiero de élite. Estás usando GEMINI 3 FLASH PREVIEW.
+                FECHA ACTUAL: ${today}. Ticker analizado: ${ticker}.
                 
-                --- LISTA DE FUENTES AUTORIZADAS (ELIGE LA MEJOR PARA CADA DATO) ---
-                1. FUENTE PRIMARIA: Investor Relations (Web oficial de la empresa).
-                2. SEC.gov (EDGAR), StockAnalysis.com, Macrotrends.net.
-                3. MarketWatch Financials, Investing.com, Yahoo Finance.
-                4. SeekingAlpha, MarketScreener, Morningstar, Finviz, Koyfin.
+                INSTRUCCIONES DE BÚSQUEDA CRÍTICAS:
+                1. FUENTE PRIMARIA (OBLIGATORIA): Accede a la sección "Investor Relations" de la PÁGINA WEB OFICIAL de ${ticker}. Extrae datos del último informe trimestral.
+                2. FUENTES DE RESPALDO: Google Finance, SEC.gov, StockAnalysis.com, Macrotrends.net, Yahoo Finance, Seeking Alpha, MarketScreener, Morningstar, Finviz y Koyfin.
                 
-                --- PROTOCOLO DE INTEGRIDAD (ESTRICTO) ---
-                1. PROHIBICIÓN DE SIMULAR: No inventes números. No uses promedios si no hay datos.
-                2. SI NO HAY DATOS: Escribe exactamente "N/A (Fecha: sin determinar)" y deja el marcador [Fuente] vacío.
-                3. RELLENAR FUENTE: Reemplaza cada marcador [Fuente] con el nombre de la web de la lista anterior de donde has extraído el dato real.
-                4. FORMATO: Mantén la estructura de tablas y listas del HTML.
+                REGLAS DE RESPUESTA:
+                - PROHIBIDO usar datos de ejemplo o marcadores vacíos.
+                - CADA DATO debe ir acompañado de su (Fuente y Fecha). 
+                - Si un dato no existe en las fuentes tras buscarlo, escribe EXACTAMENTE: "N/A (Fecha: sin determinar)".
+                - Mantén el formato HTML de la plantilla. No respondas con párrafos corridos.
                 
-                --- PLANTILLA A RELLENAR ---
+                PLANTILLA HTML A RELLENAR:
                 ${templateCode}
             `;
 
-            const res = await askGemini(apiKey, prompt);
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }] })
+            });
+            const dataRes = await response.json();
+            const res = dataRes.candidates?.[0]?.content?.parts?.[0]?.text || "";
             
             const cleanBody = res.trim().replace(/```html/g, '').replace(/```/g, ''); 
             if (!cleanBody || cleanBody.length < 50) throw new Error("La IA no devolvió un informe válido.");
 
             const reportTitle = REPORT_TITLES[promptId] || "INFORME FINANCIERO";
             
-            // Construcción del HTML final con cabecera blindada
             const finalHtml = `
                 <div style="border-bottom: 2px solid #3b82f6; padding-bottom: 10px; margin-bottom: 20px;">
                     <h2 style="color: #60a5fa; margin: 0; font-size: 1.5rem; text-transform: uppercase; font-family: 'Orbitron', sans-serif;">${reportTitle}</h2>
@@ -2390,7 +2398,7 @@ const handleFixedAnalysis = async (promptId) => {
                         </div>
                         <div style="text-align: right; font-size: 0.75rem; color: #94a3b8; font-family: monospace;">
                             <div>${priceInfo}</div>
-                            <div>GENERADO EL: ${today}</div>
+                            <div>EMISIÓN INFORME: ${today}</div>
                         </div>
                     </div>
                 </div>
