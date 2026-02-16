@@ -1709,9 +1709,8 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     const updatePrices = async (isAuto = false) => { const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); if (!isAuto && active.length === 0) return; setUpdating(true); let log = { success: [], fail: [] }, newUpdates = []; try { for (const item of active) { const assetDesc = item.isIndex ? "MARKET INDEX (SPOT VALUE)" : "STOCK/EQUITY"; const prompt = `ROLE: Financial Data API. TASK: Get data for Ticker: "${item.ticker}". TYPE: ${assetDesc}. REQUIREMENTS: 1. "p": Current Price in its NATIVE currency (${item.stockCurrency}). STRICT RULE: DO NOT convert the price to ${baseCurrency}. Return it as it quotes in the market. 2. "fx": Exchange rate to convert from ${item.stockCurrency} to ${baseCurrency}. (Example: 1 ${item.stockCurrency} = X ${baseCurrency}). If same, fx = 1. 3. "pe": TTM P/E Ratio (0 if Index). RETURN JSON ONLY: {"p": number, "fx": number, "pe": number}`; try { const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json && (json.p || json.p === 0)) { const safeFx = (item.stockCurrency === baseCurrency) ? 1 : cleanVal(json.fx); newUpdates.push({ id: item.id, p: cleanVal(json.p), fx: safeFx, pe: cleanVal(json.pe) }); log.success.push(item.ticker); } else { log.fail.push(item.ticker); } } catch (e) { log.fail.push(item.ticker); } } if (newUpdates.length > 0) { setPortfolio(prev => prev.map(p => { const u = newUpdates.find(x => x.id === p.id); if (u) { return { ...p, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe }; } return p; }), false); setLastUpdate(new Date().toISOString()); } if (!isAuto && log.fail.length > 0) { setInfoModal({ isOpen: true, title: 'Sincronización parcial', msg: `No se pudieron actualizar: ${log.fail.join(', ')}.`, type: 'warning' }); } } catch (e) { if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); } finally { setUpdating(false); } };
     
-    // ANALISIS IA MEJORADO Y CORREGIDO
-// ANALISIS IA MEJORADO Y CORREGIDO (VERSIÓN BLINDADA)
-    const analyzePortfolio = async () => {
+ // ANALISIS IA MEJORADO Y CORREGIDO (VERSIÓN BLINDADA)
+   const analyzePortfolio = async () => {
       const dataToAnalyze = visiblePortfolio;
       if (dataToAnalyze.length === 0) return setInfoModal({ isOpen: true, title: 'Info', msg: 'No hay datos visibles para analizar.', type: 'info' });
       
@@ -1719,40 +1718,88 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
       try {
         const today = new Date().toLocaleString('es-ES');
         
-        // Contexto reducido para evitar sobrecarga de tokens si la cartera es enorme
-        const portfolioContext = dataToAnalyze.map(p => {
-            const isS = !!p.sellDate;
-            const yieldPct = p.buyPrice > 0 ? (((p.currentPrice - p.buyPrice)/p.buyPrice)*100).toFixed(1) : 0;
-            return `- ${p.ticker} (${p.name}): ${isS ? 'VENDIDA' : 'ACTIVA'}. ${p.shares} acc. Rend: ${yieldPct}%.`;
-        }).join('\n');
+        // 1. Preparación de Datos y Cálculo de Métricas Matemáticas Reales
+        let winningTrades = 0, losingTrades = 0;
+        let grossProfit = 0, grossLoss = 0;
+        let totalReturn = 0, totalInvested = 0;
+        let operations = [];
+        let firstDate = new Date(); 
 
-        // --- CAMBIO: Prompt mucho más estricto y estructurado para evitar errores de generación ---
+        dataToAnalyze.forEach(p => {
+             const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+             const isS = !!p.sellDate;
+             const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
+             const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
+             const value = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+             const divs = (p.dividends || []).reduce((a,b)=>a+b.net, 0);
+             
+             const netPL = (value - cost) + divs;
+             
+             if (netPL > 0) { winningTrades++; grossProfit += netPL; }
+             else { losingTrades++; grossLoss += Math.abs(netPL); }
+             
+             totalReturn += netPL;
+             totalInvested += cost;
+
+             if(new Date(p.buyDate) < firstDate) firstDate = new Date(p.buyDate);
+
+             operations.push(`- ${p.ticker} (${p.name}): ${isS ? 'CERRADA' : 'ABIERTA'}. ${isS ? 'Venta' : 'Actual'}: ${curP} ${p.stockCurrency}. Yield: ${cost>0 ? ((netPL/cost)*100).toFixed(2) : 0}%. Grp: ${p.group || 'N/A'}`);
+        });
+
+        const totalTrades = winningTrades + losingTrades;
+        const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
+        const profitFactor = grossLoss > 0 ? (grossProfit / grossLoss) : grossProfit;
+        const totalROI = totalInvested > 0 ? (totalReturn / totalInvested) * 100 : 0;
+        const yearsActive = Math.max(0.5, (new Date() - firstDate) / (1000 * 60 * 60 * 24 * 365));
+
+        const contextData = `
+        METRICAS CALCULADAS (REALES):
+        - Total Operaciones: ${totalTrades}
+        - Win Rate: ${winRate.toFixed(1)}%
+        - Profit Factor: ${profitFactor.toFixed(2)}
+        - ROI Total Cartera: ${totalROI.toFixed(2)}%
+        - Periodo Actividad: ${yearsActive.toFixed(1)} años (aprox)
+        - Listado de Operaciones:
+        ${operations.join('\n')}
+        `;
+
         const prompt = `
-        ROL: Senior Portfolio Manager (Wall Street, 20 años exp). IDIOMA: ESPAÑOL.
-        FECHA: ${today}.
+        Contexto: Actúa como un Senior Portfolio Manager de un Hedge Fund en Wall Street. Tu misión es realizar una auditoría técnica y psicológica de mi cartera de inversión basándote en mis operaciones abiertas y cerradas.
+        Premisas: da el informe en castellano y sin mensajes de cortesía iniciales (ve al grano). Debes tener en cuenta el contexto actual del mercado a la fecha de emisión (${today}) para las distintas cuestiones a analizar.
+
+        DATOS MATEMÁTICOS PROPORCIONADOS (No los recalcules, úsalos):
+        ${contextData}
+
+        INSTRUCCIONES DE ANÁLISIS:
+        1. Atribución de Retornos: Identifica qué sectores o activos específicos están "cargando" con el rendimiento de la cartera y cuáles son "lastres" (Análisis de Pareto).
+        2. Análisis de Riesgo: Evalúa la exposición por sectores y detecta si hay una correlación excesiva (ej. exceso de tecnología o crecimiento). Calcula un Drawdown estimado cualitativo.
+        3. Auditoría de Sesgos: Analiza mis operaciones cerradas en pérdida. ¿Mantuve las pérdidas más tiempo que las ganancias? Determina si existe "sesgo de disposición" o falta de disciplina en el Stop-Loss.
+        4. Costo de Oportunidad: Compara mi rendimiento (ROI: ${totalROI.toFixed(2)}%) contra el S&P 500 (SPY) estimado en el mismo periodo de tiempo.
+
+        ESTRUCTURA OBLIGATORIA DEL INFORME (Formato HTML puro sin markdown):
+        <h3>1. EXECUTIVE SUMMARY</h3>
+        <p>Diagnóstico de salud financiera en 2 párrafos directos y cínicos (estilo Wall Street).</p>
+
+        <h3>2. DASHBOARD DE MÉTRICAS</h3>
+        <table border="1" style="width:100%; border-collapse: collapse;">
+         <tr><td><b>ROI Total</b></td><td>${totalROI.toFixed(2)}%</td></tr>
+         <tr><td><b>Win Rate</b></td><td>${winRate.toFixed(1)}%</td></tr>
+         <tr><td><b>Profit Factor</b></td><td>${profitFactor.toFixed(2)}</td></tr>
+         <tr><td><b>Expectativa Matemática</b></td><td>(Calcula tú una frase cualitativa basada en los datos)</td></tr>
+        </table>
+
+        <h3>3. SEÑALES DE ALERTA</h3>
+        <ul>
+         <li>Riesgo 1: ...</li>
+         <li>Riesgo 2: ...</li>
+         <li>Riesgo 3: ...</li>
+        </ul>
+
+        <h3>4. PROPUESTAS TÁCTICAS</h3>
+        <p>5 pasos tácticos para optimizar el ratio riesgo/beneficio y mejorar la eficiencia del capital.</p>
         
-        TAREA: Auditar la siguiente cartera de inversión.
-        DATOS:
-        ${portfolioContext}
-        
-        INSTRUCCIONES OBLIGATORIAS:
-        1. NO INVENTES DATOS DE MERCADO. Si no sabes un dato macro actual, di "Dato macro no disponible en contexto".
-        2. NO REPITAS ESTE PROMPT EN LA RESPUESTA.
-        3. FORMATO DE SALIDA: HTML PURO (Sin bloques markdown \`\`\`html).
-        4. ESTRUCTURA VISUAL: Usa <h3> para títulos, <ul> para listas. No hagas párrafos gigantes.
-        
-        SECCIONES DEL INFORME:
-        <h3>1. DIAGNÓSTICO EJECUTIVO</h3>
-        (Resumen de diversificación y riesgo latente. ¿Es una cartera equilibrada o suicida?)
-        
-        <h3>2. ANÁLISIS DE ACTIVOS (Check de Salud)</h3>
-        (Menciona 2 activos fuertes y 2 débiles basándote en los rendimientos provistos. No inventes precios nuevos, usa los % dados).
-        
-        <h3>3. ESTRATEGIA Y RECOMENDACIÓN</h3>
-        (Sugerencia de rebalanceo: ¿Vender ganadores? ¿Promediar perdedores? Danos una táctica).
-        
-        <h3>4. RIESGOS DE COLA (Black Swan)</h3>
-        (¿Qué evento macro específico destrozaría esta cartera concreta? Ej: Subida de tipos, crash tecnológico, etc).
+        <h3>5. REVISIÓN DE POSICIONES ACTIVAS</h3>
+        <p>Lista las posiciones activas más relevantes y da un veredicto (VENDER / MANTENER / AMPLIAR) con una frase de motivo.</p>
         `;
 
         const res = await askGemini(apiKey, prompt);
@@ -1781,6 +1828,30 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const handleClone = (p) => { if (portfolio.length >= _x_lim) { _x_trig(true); return; } const clone = { ...p, id: Date.now(), isActive: false, dividends: [] }; setPortfolio(prev => [...prev, clone]); setInfoModal({ isOpen: true, title: 'Éxito', msg: `Copia creada.`, type: 'info' }); };
     const resetFilters = () => { setFilterText(''); setFilterDateStart(''); setFilterDateEnd(''); setFilterType('active'); setSortConfig({ key: 'date', direction: 'desc' }); };
     const handlePrintAI = () => { const printWindow = window.open('', '', 'height=800,width=800'); const time = new Date().toLocaleString(); let html = `<html><head><title>Informe IA</title><style>body{font-family:sans-serif;padding:20px;} h1{border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:20px;} h3{color:#2563eb; border-bottom:1px solid #ccc; padding-bottom:5px; margin-top:20px; text-transform:uppercase;} table{width:100%; border-collapse:collapse; margin:10px 0; font-size:12px;} th, td{border:1px solid #ddd; padding:8px; text-align:left;} th{background-color:#f2f2f2;} </style></head><body>`; html += `<h1>INFORME iA de SITUACIÓN CARTERA</h1><div style="margin-bottom:20px;font-size:12px;color:#666;"><strong>TIPO:</strong> ${filterType.toUpperCase() === 'ACTIVE' ? 'CARTERA ACTIVA' : filterType.toUpperCase() === 'SOLD' ? 'POSICIONES CERRADAS' : 'CARTERA GLOBAL'}<br/><strong>FECHA:</strong> ${time}</div>`; html += `<div style="font-size:14px;line-height:1.6;">${analysisResult}</div></body></html>`; printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(()=>printWindow.print(),500); };
+    
+    // HANDLE PRINT MEJORADO
+   const handlePrintAI = () => { 
+        const printWindow = window.open('', '', 'height=800,width=800'); 
+        const time = new Date().toLocaleString(); 
+        let html = `<html><head><title>INFORME ESTADO CARTERA</title><style>
+        body{font-family:sans-serif;padding:30px; font-size:12px; line-height:1.5;} 
+        h1{border-bottom:3px solid #333; padding-bottom:10px; margin-bottom:20px; text-transform:uppercase;} 
+        h3{color:#2563eb; border-bottom:1px solid #ccc; padding-bottom:5px; margin-top:25px; text-transform:uppercase; font-size:14px;} 
+        table{width:100%; border-collapse:collapse; margin:15px 0; font-size:12px;} 
+        th, td{border:1px solid #ddd; padding:8px; text-align:left;} 
+        th{background-color:#f1f5f9; font-weight:bold;} 
+        .meta {font-size:10px; color:#666; margin-bottom:30px;}
+        </style></head><body>`; 
+        
+        html += `<h1>INFORME ESTADO CARTERA</h1>`;
+        html += `<div class="meta"><strong>EMISIÓN:</strong> ${time}<br/><strong>AUDITORIA:</strong> iA Hedge Fund Manager (Wall Street Mode)</div>`; 
+        html += `<div style="font-size:12px;">${analysisResult}</div></body></html>`; 
+        
+        printWindow.document.write(html); 
+        printWindow.document.close(); 
+        printWindow.focus(); 
+        setTimeout(()=>printWindow.print(), 500); 
+    };
     
     // HANDLE PRINT MEJORADO
     const handlePrint = () => { 
