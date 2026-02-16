@@ -2144,12 +2144,8 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         { id: 'GERMANY', name: 'Alemania (XETRA)', country: 'Alemania' },
         { id: 'FRANCE', name: 'Francia (Euronext Paris)', country: 'Francia' },
         { id: 'JAPAN', name: 'Japón (Tokyo Stock Exchange)', country: 'Japón' },
-        { id: 'CHINA_HK', name: 'China / Hong Kong (HKEX)', country: 'China' },
         { id: 'CANADA', name: 'Canadá (TSX)', country: 'Canadá' },
-        { id: 'AUSTRALIA', name: 'Australia (ASX)', country: 'Australia' },
-        { id: 'ITALY', name: 'Italia (Borsa Italiana)', country: 'Italia' },
-        { id: 'SWITZERLAND', name: 'Suiza (SIX)', country: 'Suiza' },
-        { id: 'NETHERLANDS', name: 'Holanda (Euronext Amsterdam)', country: 'Holanda' }
+        { id: 'AUSTRALIA', name: 'Australia (ASX)', country: 'Australia' }
     ];
 
     const REPORT_TITLES = {
@@ -2161,117 +2157,84 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         ITEM_6: "INFORME DE INICIO DE COBERTURA PROFESIONAL"
     };
 
-    // --- FUNCIONES DE SOPORTE ---
-    const askGemini = async (key, prompt) => {
-        if (!key) throw new Error("Falta API Key");
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${key}`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }] })
-        });
-        const data = await response.json();
-        if (data.error) throw new Error(data.error.message);
-        return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    };
+    // --- COMPONENTE AUXILIAR PARAMCARD (CORREGIDO) ---
+    const ParamCard = ({ id, config }) => (
+        <div className={`flex flex-col gap-2 p-4 rounded-2xl border transition-all ${config.active ? 'bg-slate-900/60 border-blue-500/50 shadow-lg shadow-blue-900/10' : 'bg-slate-900/20 border-slate-800 opacity-60 grayscale'}`}>
+            <div className="flex justify-between items-center pb-2 border-b border-white/5">
+                <div className="flex items-center gap-2">
+                    <input type="checkbox" checked={config.active} onChange={() => setParams(prev => ({...prev, [id]: {...config, active: !config.active}}))} className="custom-checkbox w-4 h-4" />
+                    <span className={`text-[10px] font-black uppercase ${config.active ? 'text-blue-300' : 'text-slate-500'}`}>{config.label}</span>
+                </div>
+                {config.active && <span className="text-sm font-mono font-black text-white">{config.val}{config.label.includes('%') ? '%' : ''}</span>}
+            </div>
+            {config.active && (
+                <div className="flex items-center gap-3 my-1">
+                    <button onClick={() => setParams(prev => ({...prev, [id]: {...config, val: Math.max(config.min, Number((config.val - config.step).toFixed(2)))}}))} className="w-8 h-8 bg-slate-800 rounded-lg hover:bg-slate-700 text-white font-bold flex items-center justify-center">-</button>
+                    <input type="range" min={config.min} max={config.max} step={config.step} value={config.val} onChange={e => setParams(prev => ({...prev, [id]: {...config, val: parseFloat(e.target.value)}}))} className="flex-1 accent-blue-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" />
+                    <button onClick={() => setParams(prev => ({...prev, [id]: {...config, val: Math.min(config.max, Number((config.val + config.step).toFixed(2)))}}))} className="w-8 h-8 bg-slate-800 rounded-lg hover:bg-slate-700 text-white font-bold flex items-center justify-center">+</button>
+                </div>
+            )}
+            <p className="text-[9px] text-slate-500 italic leading-snug mt-1">{config.help}</p>
+        </div>
+    );
 
-    const extractJSON = (text) => { 
-        if (!text) return null;
-        try {
-            const match = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
-            if (match && match[0]) return JSON.parse(match[0]);
-            throw new Error("No JSON found");
-        } catch (e) { return null; } 
-    };
-
-    const formatN = (v, dec = 2) => { let n = parseFloat(v) || 0; return n.toFixed(dec).replace('.', ','); };
-    
-    const checkCriteria = (paramKey, value) => {
-        const p = params[paramKey];
-        if (!p.active) return "text-slate-400";
-        const val = parseFloat(value);
-        if (paramKey === 'roi' || paramKey === 'divYield') return val >= p.val ? "text-green-600 font-bold" : "text-red-500 font-bold";
-        return val <= p.val ? "text-green-600 font-bold" : "text-red-500 font-bold";
-    };
-
-    const cleanAIResponse = (text) => {
-        if (!text) return "";
-        let clean = text.trim().replace(/```html/g, '').replace(/```/g, '');
-        const headerIndex = clean.indexOf('<h');
-        const anyTagIndex = clean.indexOf('<');
-        if (headerIndex !== -1) return clean.substring(headerIndex);
-        if (anyTagIndex !== -1) return clean.substring(anyTagIndex);
-        return clean;
-    };
-
-    // --- TEMPLATES COMPLETOS (RESTAURADOS Y MEJORADOS) ---
+    // --- TEMPLATES EXTENDIDOS (RESTAURADOS) ---
     const getTemplate = (id, currentTicker) => {
-        const didacticNote = "INSTRUCCIÓN DIDÁCTICA: Para ayudar a usuarios no expertos, cuando menciones conceptos técnicos (PER, WACC, Moat, Beta, etc.), añade debajo una breve nota explicativa indicando qué es y cuál es el rango estándar.";
+        const didacticInstruction = `NOTA DIDÁCTICA: Inmediatamente después o debajo de cada cifra técnica (PER, PEG, ROI, FCF, WACC, etc.), añade una línea usando la etiqueta <small style="font-size: 0.85em; color: #475569; display: block; margin-bottom: 5px;"> definiendo el concepto y su rango ideal.`;
         
         const templates = {
-            ITEM_1: `Dame un análisis completo de ${currentTicker}.
-                REGLA DE ORO: Si no encuentras un dato exacto y reciente (últimos 30 días), escribe "DATOS NO DISPONIBLES". NO ESTIMES NI INVENTES.
-                ESTRUCTURA REQUERIDA (Usa etiquetas <h3> para cada paso):
-                1. Descripción General (Modelo de negocio y ventaja competitiva/Moat).
-                2. Datos Financieros Clave (CITA FUENTE Y FECHA PARA CADA CIFRA: Ingresos, BPA, P/E, Deuda).
-                3. Rendimiento de la Acción (1 año, YTD, vs S&P500).
-                4. Consenso Wall Street (Precio objetivo promedio y recomendación).
-                5. Actividad Institucional (Si hay datos disponibles).
-                ${didacticNote}`,
+            ITEM_1: `Análisis completo de ${currentTicker}. REGLA DE ORO: Si no hay datos de los últimos 30 días, pon "DATOS NO DISPONIBLES".
+                1. Descripción General (Negocio y Moat).
+                2. Datos Financieros (Ingresos, BPA, P/E, Deuda). CITA FUENTE Y FECHA.
+                3. Rendimiento (1A, YTD, vs S&P500).
+                4. Consenso Wall Street.
+                5. Actividad Institucional.
+                ${didacticInstruction}`,
 
-            ITEM_2: `Analiza los estados financieros de ${currentTicker}.
-                PREMISA: Basa tu análisis SOLO en los reportes trimestrales (10-Q) o anuales (10-K) más recientes. CITA LA FECHA DEL REPORTE.
-                ESTRUCTURA REQUERIDA (Usa <h3>):
-                1. Estado de Resultados (Tendencia de márgenes y crecimiento).
-                2. Balance General (Activos vs Pasivos, Deuda vs Caja).
-                3. Flujo de Caja (¿Está quemando caja o generando FCF?).
-                4. Señales de Alerta (Divergencias contables, aumento de inventarios sospechoso).
+            ITEM_2: `Analiza estados financieros de ${currentTicker}. Solo 10-Q o 10-K recientes. CITA FECHAS.
+                1. Estado de Resultados (Márgenes y crecimiento).
+                2. Balance General (Activos/Pasivos, Deuda/Caja).
+                3. Flujo de Caja (FCF).
+                4. Señales de Alerta.
                 5. Señales Positivas.
-                6. Comparativa rápida con 2 competidores.
-                ${didacticNote}`,
+                6. Comparativa con 2 rivales.
+                ${didacticInstruction}`,
 
-            ITEM_3: `Analiza el ÚLTIMO informe de resultados (Earnings Call) de ${currentTicker}.
-                IMPORTANTE: Si no se han presentado resultados en los últimos 90 días, indícalo claramente.
-                ESTRUCTURA REQUERIDA (Usa <h3>):
-                1. Los Números (Beat/Miss en Ingresos y EPS).
-                2. Guía Futura (Guidance dada por la directiva).
-                3. Desglose por Segmentos (Qué funcionó y qué falló).
-                4. Mensaje de la Directiva (Tono del CEO/CFO, citas textuales si es posible).
-                5. Reacción del Mercado (Movimiento after-hours o día siguiente).
-                6. Veredicto (¿Fue un buen trimestre realmente?).
-                ${didacticNote}`,
+            ITEM_3: `Último informe de resultados (Earnings) de ${currentTicker}.
+                1. Números (Beat/Miss en Rev y EPS).
+                2. Guidance (Previsión directiva).
+                3. Segmentos.
+                4. Mensaje Directiva (Citas CEO/CFO).
+                5. Reacción Mercado.
+                6. Veredicto trimestre.
+                ${didacticInstruction}`,
 
-            ITEM_4: `Comparativa Sectorial para ${currentTicker}.
-                INSTRUCCIÓN: Compara con sus 2 o 3 competidores más directos.
-                ESTRUCTURA REQUERIDA (Usa <h3>):
-                1. Tabla Comparativa (Crea una tabla HTML <table> con columnas: Cap. Mercado, PER, Margen Neto, Deuda/EBITDA).
-                2. Posicionamiento (¿Quién tiene el 'Moat' más ancho?).
-                3. Riesgos Comparados (¿Quién está más apalancado?).
-                4. El Ganador (¿Cuál es la mejor compra a precios actuales y por qué?).
-                ${didacticNote}`,
+            ITEM_4: `Comparativa Sectorial para ${currentTicker} contra sus 3 rivales directos.
+                1. Tabla HTML (Cap. Mercado, PER, Margen Neto, Deuda/EBITDA).
+                2. Posicionamiento (Moat).
+                3. Riesgos Comparados (Apalancamiento).
+                4. El Ganador y por qué.
+                ${didacticInstruction}`,
 
-            ITEM_5: `Valoración de ${currentTicker} (Modelos DCF y Múltiplos).
-                ADVERTENCIA: Indica claramente que son ESTIMACIONES teóricas.
-                ESTRUCTURA REQUERIDA (Usa <h3>):
-                1. Flujo de Caja Descontado (Supuestos de crecimiento y WACC utilizados).
-                2. Comparables (Valoración relativa vs Sector).
-                3. Histórico (¿Está barata respecto a su propia media de 5 años?).
-                4. Escenarios (Precio objetivo en caso Alcista, Base y Bajista).
-                5. Conclusión de Valoración (Infravalorada / Justa / Sobrevalorada).
-                ${didacticNote}`,
+            ITEM_5: `Valoración de ${currentTicker} (DCF y Múltiplos). ADVERTENCIA: Son ESTIMACIONES.
+                1. DCF (Supuestos y WACC).
+                2. Comparables (vs Sector).
+                3. Histórico (vs media 5 años).
+                4. Escenarios (Bull, Base, Bear).
+                5. Conclusión (Infra/Sobrevalorada).
+                ${didacticInstruction}`,
 
-            ITEM_6: `Informe de Inicio de Cobertura para ${currentTicker}.
-                TONO: Profesional, Institucional.
-                ESTRUCTURA REQUERIDA (Usa <h3>):
-                1. Resumen Ejecutivo (Elevator Pitch).
-                2. Tesis de Inversión (Por qué comprar o no ahora).
-                3. Análisis de Riesgos (Top 5 factores de riesgo críticos).
-                4. Catalizadores Próximos (Eventos que moverán la acción).
-                5. Mercado Total (TAM) y Motores de Crecimiento.
-                ${didacticNote}`
+            ITEM_6: `Informe Inicio Cobertura ${currentTicker}. Tono Institucional.
+                1. Resumen Ejecutivo.
+                2. Tesis de Inversión.
+                3. Top 5 Riesgos Críticos.
+                4. Catalizadores Próximos.
+                5. TAM y Crecimiento.
+                ${didacticInstruction}`
         };
         return templates[id] || "";
     };
 
-    // --- MANEJO DE ANÁLISIS ---
     const handleFixedAnalysis = async (promptId) => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' }); 
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' }); 
@@ -2279,19 +2242,22 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         setLoading(true); setSpecificAnswer(null); setData(null);
         try {
             const today = new Date().toLocaleString('es-ES');
-            const priceFetch = await askGemini(apiKey, `Precio real hoy de "${ticker}". Responde solo: "Precio: X [Divisa] | Fecha: [Fecha]"`);
             const detailedPrompt = getTemplate(promptId, ticker); 
             
             const prompt = `
-                ROL: Analista Senior de Inversiones y Profesor.
-                TAREA: Generar un informe exhaustivo para "${ticker}" basándote en esta instrucción: ${detailedPrompt}.
-                FECHA: ${today}.
+                SISTEMA: ROL ANALISTA SENIOR Y PROFESOR. MODELO: gemini 3 pro preview.
+                EMPRESA: "${ticker}". FECHA: ${today}.
                 
-                PROTOCOLO DE RESPUESTA:
-                1. FORMATO: HTML limpio (h3, ul, li, p, table, tr, td, strong). 
-                2. COLORES: NO USES ESTILOS DE COLOR EN EL HTML. El frontend se encargará del estilo.
-                3. DIDÁCTICA: Cumple estrictamente la instrucción de añadir notas explicativas a los tecnicismos.
-                4. IMPORTANTE: Empieza directamente con el contenido HTML. Sin preámbulos.
+                PROTOCOLO DE INTEGRIDAD (OBLIGATORIO):
+                1. JAMÁS inventes datos. Si no los localizas, escribe "Dato no disponible".
+                2. FUENTES PRIMARIAS: Busca en Investor Relations de la empresa, SEC.gov (10-K/10-Q), MarketWatch, Yahoo Finance, Google Finance, Reuters y SeekingAlpha.
+                3. EXIGENCIA DE DATOS: Cada cifra financiera debe ir acompañada de su fuente y la fecha del dato.
+                
+                TAREA: ${detailedPrompt}.
+                
+                FORMATO: HTML limpio. Usa etiquetas <h3> para títulos, <ul> para listas y <table> para datos.
+                COLORES: El texto debe ser Negro (#000) y los títulos Azul (#1e40af).
+                DIDÁCTICA: Usa la etiqueta <small> para las explicaciones de términos.
             `;
 
             const res = await askGemini(apiKey, prompt);
@@ -2304,170 +2270,73 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
                         <h2>${reportTitle}</h2>
                         <div class="report-meta">
                             <span class="report-ticker">${ticker}</span>
-                            <div class="report-dates">
-                                <div>${priceFetch}</div>
-                                <div>GENERADO: ${today}</div>
-                            </div>
+                            <div class="report-dates">GENERADO: ${today}</div>
                         </div>
                     </div>
                     <div class="report-content-body">${cleanBody}</div>
                 </div>
             `;
             setSpecificAnswer(finalHtml); 
-        } catch (e) { setStatusModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); } finally { setLoading(false); }
+        } catch (e) { setStatusModal({ isOpen: true, title: 'Error Análisis', msg: e.message, type: 'error' }); } finally { setLoading(false); }
     };
 
-    const analyze = async () => { 
-        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' }); 
-        if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' }); 
-        setLoading(true); setSpecificAnswer(null); setData(null); 
-        try { 
-            if (question.trim()) { 
-                const today = new Date().toLocaleString('es-ES');
-                const prompt = `ROL: ANALISTA BURSÁTIL. LENGUAJE: ESPAÑOL. FECHA: ${today}. TAREA: Responder "${question}" sobre "${ticker}". FORMATO: HTML.`; 
-                const res = await askGemini(apiKey, prompt); 
-                setSpecificAnswer(`<div class="report-content-body">${cleanAIResponse(res)}</div>`); 
-            } else { 
-                // Lógica legacy JSON (Si se usa el botón Analizar simple)
-                const prompt = `ROLE: Senior Analyst. TASK: Generate investment report for "${ticker}". OUTPUT: JSON.`; 
-                const res = await askGemini(apiKey, prompt); 
-                const json = extractJSON(res); 
-                if(!json) throw new Error("Error en respuesta JSON.");
-                setData(json); 
-            } 
-        } catch (e) { setStatusModal({ isOpen: true, title: 'Error iA', msg: e.message, type: 'error' }); } finally { setLoading(false); } 
-    };
-
+    // --- LOGICA DE RASTREO Y OTROS ---
     const runScreener = async () => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
         const marketObj = EXCHANGES.find(e => e.id === exchange);
-        const marketDesc = marketObj ? marketObj.name : exchange;
         const activeFilters = Object.entries(params).filter(([_, p]) => p.active).map(([k, p]) => `${p.label} ${k==='roi'||k==='divYield'?'>':'<'} ${p.val}`).join(', ');
-        if (!activeFilters) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Activa filtros.', type: 'info' });
-
         setLoading(true);
         try {
-            const prompt = `TASK: Generate JSON Array of ${maxResults} stocks in "${marketDesc}" matching: ${activeFilters}. OUTPUT: [{"ticker":"SYM","name":"Name","price":1.0,"per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0}]. NO PREAMBLE.`;
+            const prompt = `Stocks en "${marketObj.name}" que cumplen: ${activeFilters}. Devuelve SOLO Array JSON: [{"ticker":"SYM","name":"Name","price":1.0,"per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0}]`;
             const res = await askGemini(apiKey, prompt);
             const results = extractJSON(res);
-            if (!results || !Array.isArray(results)) throw new Error("Error leyendo datos.");
+            if (!results || !Array.isArray(results)) throw new Error("Respuesta inválida de la IA.");
             setScreenerResults(results);
         } catch (e) { setStatusModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); } finally { setLoading(false); }
     };
 
-    const handleScreenerClick = (rowTicker) => {
-        const prefixMap = { 'USA': 'NYSE:', 'SPAIN': 'BME:' }; // Simplificado, la IA suele entenderlo
-        const cleanTicker = rowTicker.includes(':') ? rowTicker : `${prefixMap[exchange]||''}${rowTicker}`;
-        setTicker(cleanTicker); setActiveSubTab('estudio'); setSpecificAnswer(null); setData(null);
-    };
+    const handleScreenerClick = (t) => { setTicker(t); setActiveSubTab('estudio'); setSpecificAnswer(null); };
 
-    const sortedScreenerResults = useMemo(() => {
-        return [...screenerResults].sort((a, b) => {
-            const dir = screenerSort.direction === 'asc' ? 1 : -1;
-            const valA = a[screenerSort.key] || 0; const valB = b[screenerSort.key] || 0;
-            if (typeof valA === 'string') return valA.localeCompare(valB) * dir;
-            return (valA - valB) * dir;
-        });
-    }, [screenerResults, screenerSort]);
-
-    // --- IMPRESIÓN (CSS NEGRO/BLANCO) ---
     const handlePrintEstudio = () => { 
         const printWindow = window.open('', '', 'height=800,width=800'); 
         printWindow.document.write(`<html><head><title>Informe</title><style>
-            body { font-family: sans-serif; padding: 30px; color: #000 !important; background: #fff !important; }
-            h2 { color: #1e3a8a !important; border-bottom: 2px solid #000; margin-bottom: 20px; text-transform: uppercase; }
-            h3 { color: #1e40af !important; border-bottom: 1px solid #94a3b8; padding-bottom: 5px; margin-top: 25px; text-transform: uppercase; font-size: 14px; }
+            body { font-family: sans-serif; padding: 30px; color: #000; background: #fff; }
+            h2, h3 { color: #1e40af; border-bottom: 1px solid #94a3b8; }
             table { width: 100%; border-collapse: collapse; margin: 15px 0; border: 1px solid #000; }
-            th, td { border: 1px solid #64748b; padding: 8px; text-align: left; color: #000 !important; }
-            th { background: #f1f5f9 !important; font-weight: bold; }
-            p, li { line-height: 1.5; margin-bottom: 8px; color: #000 !important; }
-            strong { color: #000 !important; font-weight: bold; }
-            /* Cajas de veredicto o notas */
-            div[style*="background"] { background-color: #f8fafc !important; border: 1px solid #000 !important; color: #000 !important; }
-            .report-meta { display: flex; justify-content: space-between; margin-bottom: 20px; font-family: monospace; border-bottom: 1px solid #ccc; padding-bottom: 10px; }
+            th, td { border: 1px solid #94a3b8; padding: 8px; text-align: left; color: #000; }
+            th { background: #f1f5f9; }
+            small { color: #475569; display: block; font-style: italic; }
         </style></head><body>${specificAnswer}</body></html>`);
-        printWindow.document.close();
-        setTimeout(() => { printWindow.focus(); printWindow.print(); }, 500);
-    };
-
-    const handlePrintScreener = () => {
-        const printWindow = window.open('', '', 'height=800,width=1100');
-        let html = `<html><head><title>Rastreo</title><style>body{font-family:sans-serif;padding:20px;font-size:10px;} h1{border-bottom:2px solid #333;} table{width:100%;border-collapse:collapse;} th,td{border:1px solid #ddd;padding:6px;text-align:right;} th{background:#f1f5f9;text-align:center;} .left{text-align:left;}</style></head><body>`;
-        html += `<h1>RASTREO: ${EXCHANGES.find(e=>e.id===exchange)?.name || exchange}</h1>`;
-        html += `<table><thead><tr><th>Ticker</th><th class="left">Nombre</th><th>Precio</th><th>PER</th><th>PEG</th><th>ROI</th><th>Yield</th><th>P/B</th><th>D/E</th></tr></thead><tbody>`;
-        sortedScreenerResults.forEach(r => { html += `<tr><td><b>${r.ticker}</b></td><td class="left">${r.name}</td><td>${formatN(r.price)}</td><td>${r.per}</td><td>${r.peg}</td><td>${r.roi}%</td><td>${r.divYield}%</td><td>${r.pb}</td><td>${r.debtEquity}</td></tr>`; });
-        html += `</tbody></table></body></html>`;
-        printWindow.document.write(html); printWindow.document.close(); printWindow.print();
+        printWindow.document.close(); setTimeout(() => { printWindow.focus(); printWindow.print(); }, 500);
     };
 
     return (
         <div className="h-full flex flex-col p-4 md:p-6 overflow-y-auto custom-scrollbar relative bg-[#0a0a0a]">
-            {loading && <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md flex flex-col items-center justify-center"><Icons.Loader size={60} className="text-blue-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando Mercado Global...</div></div>}
-            
-            {statusModal.isOpen && (
-                <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 fade-in">
-                    <div className="bg-slate-900 border border-slate-700 p-6 rounded-2xl max-w-sm w-full shadow-2xl relative">
-                        <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 mx-auto ${statusModal.type==='error'?'bg-red-500/20 text-red-500':statusModal.type==='warning'?'bg-yellow-500/20 text-yellow-500':'bg-blue-500/20 text-blue-400'}`}>{statusModal.type==='error'?<Icons.AlertCircle size={28}/>:<Icons.CheckCircle size={28}/>}</div>
-                        <h3 className="text-lg font-bold text-center text-white mb-2">{statusModal.title}</h3>
-                        <p className="text-sm text-slate-400 text-center mb-6 leading-relaxed whitespace-pre-wrap">{statusModal.msg}</p>
-                        <button onClick={() => setStatusModal({isOpen: false})} className="w-full bg-slate-800 hover:bg-slate-700 py-3 rounded-xl font-bold uppercase text-xs text-white transition-colors border border-slate-600">Cerrar</button>
-                    </div>
-                </div>
-            )}
+            {loading && <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md flex flex-col items-center justify-center"><Icons.Loader size={60} className="text-blue-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando Mercado...</div></div>}
 
-            <div className="flex gap-2 mb-6 bg-slate-900 p-1 rounded-xl border border-slate-800 w-fit shrink-0 shadow-lg">
-                <button onClick={() => setActiveSubTab('estudio')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'estudio' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Estudio Individual</button>
-                <button onClick={() => setActiveSubTab('rastreo')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'rastreo' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Rastreo de Mercado</button>
+            <div className="flex gap-2 mb-6 bg-slate-900 p-1 rounded-xl border border-slate-800 w-fit shrink-0">
+                <button onClick={() => setActiveSubTab('estudio')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'estudio' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-white'}`}>Estudio Individual</button>
+                <button onClick={() => setActiveSubTab('rastreo')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'rastreo' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-white'}`}>Rastreo de Mercado</button>
             </div>
 
             {activeSubTab === 'estudio' ? (
                 <div className="flex flex-col gap-6 fade-in max-w-6xl mx-auto w-full pb-10">
-                    <div className="flex flex-col gap-6 shrink-0 bg-slate-900/50 p-6 rounded-2xl border border-slate-800 shadow-xl">
-                        <div className="flex gap-4"><div className="flex-1 relative"><Icons.Search className="absolute left-3 top-3.5 text-slate-500" size={18}/><input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} placeholder="Introduce Ticker (Ej: AAPL, SAN.MC, TSLA...)" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3.5 pl-10 pr-4 text-white font-bold tracking-widest text-sm" /></div><button onClick={analyze} disabled={loading || !ticker} className="bg-blue-600 px-8 rounded-xl font-black flex items-center gap-2 shadow-lg hover:bg-blue-500 transition-colors text-xs text-white">{loading ? <Icons.Loader/> : <Icons.Wand/>} ANALIZAR</button><button onClick={() => { setTicker(''); setQuestion(''); setData(null); setSpecificAnswer(null); }} className="bg-slate-700 px-4 rounded-xl font-bold text-white hover:bg-slate-600 transition-colors text-xs border border-slate-600">BORRAR</button></div>
-                        <div className="relative"><Icons.MessageCircle className="absolute left-3 top-3 text-slate-500" size={18}/><input type="text" value={question} onChange={e => setQuestion(e.target.value)} placeholder="¿Tienes alguna pregunta específica sobre este valor?" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-xs text-white" /></div>
-                        <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">{suggestedQuestions.map((q, i) => ( <button key={i} onClick={() => setQuestion(q)} className="whitespace-nowrap px-4 py-2 bg-slate-800 border border-slate-700 rounded-full text-[10px] text-slate-400 hover:text-white hover:bg-slate-700 transition-colors shadow-sm">{q}</button> ))}</div>
+                    <div className="flex flex-col gap-6 bg-slate-900/50 p-6 rounded-2xl border border-slate-800">
+                        <div className="flex gap-4"><div className="flex-1 relative"><Icons.Search className="absolute left-3 top-3.5 text-slate-500" size={18}/><input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} placeholder="Introduce Ticker (Ej: AAPL, SAN.MC...)" className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3.5 pl-10 pr-4 text-white font-bold" /></div><button onClick={() => handleFixedAnalysis('ITEM_1')} disabled={!ticker} className="bg-blue-600 px-8 rounded-xl font-black text-xs hover:bg-blue-500 transition-colors">ANÁLISIS RÁPIDO</button></div>
                         <div className="mt-4 pt-4 border-t border-slate-800">
-                             <div className="flex justify-between items-end mb-3"><h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Informes Profesionales (Con Guía Didáctica)</h4><span className="text-[9px] text-orange-500 font-bold italic">(*) Datos en tiempo real vía Web Search</span></div>
+                             <div className="flex justify-between items-end mb-3"><h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Informes Profesionales (Didácticos)</h4><span className="text-[9px] text-orange-500 font-bold italic">(*) Si el informe es inconsistente, reintente en 1 minuto.</span></div>
                              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                 <button onClick={() => handleFixedAnalysis('ITEM_1')} className="bg-slate-800 hover:bg-blue-900/40 text-slate-300 hover:text-white border border-slate-700 p-3 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"><Icons.ChartBar size={14}/> Análisis Completo</button>
-                                 <button onClick={() => handleFixedAnalysis('ITEM_2')} className="bg-slate-800 hover:bg-blue-900/40 text-slate-300 hover:text-white border border-slate-700 p-3 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"><Icons.PieChart size={14}/> Estados Financieros</button>
-                                 <button onClick={() => handleFixedAnalysis('ITEM_3')} className="bg-slate-800 hover:bg-blue-900/40 text-slate-300 hover:text-white border border-slate-700 p-3 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"><Icons.TrendingUp size={14}/> Resultados Trimestrales</button>
-                                 <button onClick={() => handleFixedAnalysis('ITEM_4')} className="bg-slate-800 hover:bg-blue-900/40 text-slate-300 hover:text-white border border-slate-700 p-3 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"><Icons.Target size={14}/> Comparativa Sector</button>
-                                 <button onClick={() => handleFixedAnalysis('ITEM_5')} className="bg-slate-800 hover:bg-blue-900/40 text-slate-300 hover:text-white border border-slate-700 p-3 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"><Icons.DollarSign size={14}/> Valoración (DCF)</button>
-                                 <button onClick={() => handleFixedAnalysis('ITEM_6')} className="bg-slate-800 hover:bg-blue-900/40 text-slate-300 hover:text-white border border-slate-700 p-3 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"><Icons.AlertCircle size={14}/> Riesgos y Alertas</button>
+                                 {Object.keys(REPORT_TITLES).map(id => (
+                                     <button key={id} onClick={() => handleFixedAnalysis(id)} className="bg-slate-800 hover:bg-blue-900/40 text-slate-300 border border-slate-700 p-3 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"><Icons.ChartBar size={14}/> {REPORT_TITLES[id]}</button>
+                                 ))}
                              </div>
                         </div>
                     </div>
 
-                    {(specificAnswer || data) && (
+                    {specificAnswer && (
                         <div className="mt-8 bg-white rounded-xl shadow-2xl p-8 fade-in max-w-5xl mx-auto w-full border border-slate-300 relative">
-                             <div className="absolute top-6 right-8">
-                                <button onClick={handlePrintEstudio} className="bg-slate-800 text-white px-6 py-2 rounded-lg font-bold flex gap-2 items-center hover:bg-slate-700 border border-slate-600 shadow-lg text-xs">
-                                   <Icons.ExternalLink size={14}/> IMPRIMIR
-                                </button>
-                             </div>
-                             
-                             <div className="prose-white-report">
-                                {specificAnswer ? (
-                                    <div dangerouslySetInnerHTML={{__html: specificAnswer}}></div>
-                                ) : (
-                                    /* RENDERING DE JSON LEGACY SI APLICA */
-                                    <div className="text-black">
-                                        <div style={{borderBottom:'2px solid #000', paddingBottom:'10px', marginBottom:'20px'}}>
-                                            <h2 style={{color:'#1e3a8a', fontSize:'1.8rem', fontWeight:'800', margin:0}}>{data.company}</h2>
-                                            <div style={{display:'flex', justifyContent:'space-between', marginTop:'10px'}}>
-                                                <span style={{fontSize:'1.2rem', fontWeight:'bold'}}>{formatN(data.current_price)}</span>
-                                                <span style={{fontWeight:'bold', color: data.valuation_status.includes('Infra') ? '#16a34a' : '#dc2626'}}>{data.valuation_status}</span>
-                                            </div>
-                                        </div>
-                                        <p style={{fontStyle:'italic', background:'#f8fafc', padding:'10px', borderLeft:'4px solid #1e3a8a'}}>{data.investment_verdict}</p>
-                                        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'20px', marginTop:'20px'}}>
-                                            <div><h3 style={{color:'#1e40af', borderBottom:'1px solid #ccc'}}>Fundamental</h3><ul style={{listStyle:'none', padding:0}}><li>PER: {data.fundamentals?.per}</li><li>EPS: {data.fundamentals?.eps}</li><li>Beta: {data.fundamentals?.beta}</li></ul></div>
-                                            <div><h3 style={{color:'#1e40af', borderBottom:'1px solid #ccc'}}>Dividendos</h3><ul style={{listStyle:'none', padding:0}}><li>Yield: {data.dividend_data?.yield_percent}</li><li>Payout: {data.dividend_data?.payout_ratio}</li></ul></div>
-                                        </div>
-                                    </div>
-                                )}
-                             </div>
+                             <div className="absolute top-6 right-8"><button onClick={handlePrintEstudio} className="bg-slate-800 text-white px-4 py-2 rounded-lg font-bold flex gap-2 items-center text-xs"><Icons.ExternalLink size={14}/> IMPRIMIR</button></div>
+                             <div className="prose-white-report" dangerouslySetInnerHTML={{__html: specificAnswer}}></div>
                         </div>
                     )}
                 </div>
@@ -2475,41 +2344,32 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
                 <div className="flex flex-col gap-6 max-w-7xl mx-auto w-full pb-10">
                     <div className="bg-slate-900/50 p-6 rounded-3xl border border-slate-800 space-y-8 shadow-2xl">
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <div className="flex flex-col gap-2">
-                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Bolsa de Valores (Mercado)</label>
-                                <select value={exchange} onChange={e=>setExchange(e.target.value)} className="w-full h-12 px-4 bg-slate-950 border border-slate-700 rounded-xl text-xs font-bold text-white">
-                                    {EXCHANGES.map(ex => <option key={ex.id} value={ex.id}>{ex.name}</option>)}
-                                </select>
-                            </div>
-                            <div className="flex flex-col gap-2">
-                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Nº Máximo Resultados</label>
-                                <select value={maxResults} onChange={e=>setMaxResults(parseInt(e.target.value))} className="w-full h-12 px-4 bg-slate-950 border border-slate-700 rounded-xl text-xs font-bold text-white">
-                                    {[5, 10, 20, 30, 40, 60, 80, 100].map(v => <option key={v} value={v}>{v} Registros</option>)}
-                                </select>
-                            </div>
-                            <div className="flex items-end pb-1"><button onClick={runScreener} className="w-full h-12 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-2xl shadow-blue-900/40 border border-blue-400/20">Iniciar Rastreo Inteligente</button></div>
+                            <div className="flex flex-col gap-2"><label className="text-[10px] font-black text-slate-500 uppercase">Mercado</label><select value={exchange} onChange={e=>setExchange(e.target.value)} className="w-full h-12 bg-slate-950 border border-slate-700 rounded-xl text-xs font-bold text-white px-4">{EXCHANGES.map(ex => <option key={ex.id} value={ex.id}>{ex.name}</option>)}</select></div>
+                            <div className="flex flex-col gap-2"><label className="text-[10px] font-black text-slate-500 uppercase">Máx Resultados</label><select value={maxResults} onChange={e=>setMaxResults(parseInt(e.target.value))} className="w-full h-12 bg-slate-950 border border-slate-700 rounded-xl text-xs font-bold text-white px-4">{[5, 10, 25, 50].map(v => <option key={v} value={v}>{v} Registros</option>)}</select></div>
+                            <div className="flex items-end pb-1"><button onClick={runScreener} className="w-full h-12 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase text-xs tracking-widest transition-all">Iniciar Rastreo Inteligente</button></div>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
                             {Object.entries(params).map(([id, config]) => <ParamCard key={id} id={id} config={config} />)}
                         </div>
                     </div>
-
                     {screenerResults.length > 0 && (
-                        <div className="bg-slate-900/50 border border-slate-800 rounded-3xl overflow-hidden flex flex-col shadow-2xl">
-                            <div className="p-5 bg-slate-800/40 flex justify-between items-center border-b border-slate-700/50">
-                                <div className="flex flex-col"><span className="text-xs font-black uppercase tracking-widest text-white">Oportunidades Localizadas</span><span className="text-[9px] text-slate-500 uppercase font-bold">Ordenado por {screenerSort.key} ({screenerSort.direction})</span></div>
-                                <button onClick={handlePrintScreener} className="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-xl text-[10px] font-bold border border-slate-600 flex items-center gap-2 text-white transition-colors"><Icons.ExternalLink size={14}/> IMPRIMIR INFORME</button>
-                            </div>
+                        <div className="bg-slate-900/50 border border-slate-800 rounded-3xl overflow-hidden flex flex-col">
+                            <div className="p-5 bg-slate-800/40 flex justify-between items-center"><span className="text-xs font-black uppercase text-white">Oportunidades Localizadas</span></div>
                             <div className="overflow-x-auto">
                                 <table className="w-full text-left text-xs">
-                                    <thead className="bg-slate-950/80 text-slate-500 uppercase text-[9px] font-black sticky top-0">
-                                        <tr>{['ticker', 'name', 'price', 'per', 'peg', 'roi', 'divYield', 'pb', 'debtEquity'].map(k => ( <th key={k} className="p-5 cursor-pointer hover:text-white transition-colors border-b border-slate-800" onClick={()=>setScreenerSort({key:k, direction: screenerSort.direction==='asc'?'desc':'asc'})}><div className="flex items-center gap-1">{k === 'divYield' ? 'Yield' : k === 'debtEquity' ? 'D/E' : k} {screenerSort.key === k && (screenerSort.direction==='asc'?'▲':'▼')}</div></th> ))}</tr>
+                                    <thead className="bg-slate-950/80 text-slate-500 uppercase text-[9px] font-black">
+                                        <tr>{['ticker', 'name', 'price', 'per', 'peg', 'roi', 'divYield'].map(k => ( <th key={k} className="p-5">{k}</th> ))}</tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-800 font-mono">
-                                        {sortedScreenerResults.map((r, i) => (
-                                            <tr key={i} onClick={() => handleScreenerClick(r.ticker)} className="hover:bg-blue-600/20 transition-colors group cursor-pointer border-l-4 border-transparent hover:border-blue-500">
-                                                <td className="p-5 font-black text-blue-400 text-sm group-hover:text-white transition-colors">{r.ticker} <Icons.Search size={10} className="inline ml-1 opacity-0 group-hover:opacity-100"/></td>
-                                                <td className="p-5 text-slate-300 font-sans font-bold">{r.name}</td><td className="p-5 text-white font-bold">{formatN(r.price)}</td><td className={`p-5 ${checkCriteria('per', r.per)}`}>{r.per}</td><td className={`p-5 ${checkCriteria('peg', r.peg)}`}>{r.peg}</td><td className={`p-5 ${checkCriteria('roi', r.roi)}`}>{r.roi}%</td><td className={`p-5 ${checkCriteria('divYield', r.divYield)}`}>{r.divYield}%</td><td className={`p-5 ${checkCriteria('pb', r.pb)}`}>{r.pb}</td><td className={`p-5 ${checkCriteria('debtEquity', r.debtEquity)}`}>{r.debtEquity}</td>
+                                        {screenerResults.map((r, i) => (
+                                            <tr key={i} onClick={() => handleScreenerClick(r.ticker)} className="hover:bg-blue-600/20 cursor-pointer transition-colors">
+                                                <td className="p-5 font-black text-blue-400">{r.ticker}</td>
+                                                <td className="p-5 text-slate-300 font-sans">{r.name}</td>
+                                                <td className="p-5 text-white">{formatN(r.price)}</td>
+                                                <td className={`p-5 ${checkCriteria('per', r.per)}`}>{r.per}</td>
+                                                <td className={`p-5 ${checkCriteria('peg', r.peg)}`}>{r.peg}</td>
+                                                <td className={`p-5 ${checkCriteria('roi', r.roi)}`}>{r.roi}%</td>
+                                                <td className={`p-5 ${checkCriteria('divYield', r.divYield)}`}>{r.divYield}%</td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -2520,24 +2380,23 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
                 </div>
             )}
 
-            {/* ESTILOS DE "HOJA BLANCA" PARA PANTALLA Y RENDER */}
             <style>{`
                 .prose-white-report { font-family: 'Inter', sans-serif; color: #000; }
-                .prose-white-report h2 { color: #1e40af; border-bottom: 2px solid #000; margin-bottom: 20px; text-transform: uppercase; font-weight: 800; font-size: 1.8rem; margin-top: 0; }
-                .prose-white-report h3 { color: #1e40af; border-bottom: 1px solid #94a3b8; padding-bottom: 5px; margin-top: 25px; text-transform: uppercase; font-size: 1.1rem; font-weight: 700; }
-                .prose-white-report p, .prose-white-report li { line-height: 1.6; margin-bottom: 10px; color: #1a202c; }
+                .prose-white-report h2 { color: #1e40af; border-bottom: 2px solid #000; margin-bottom: 20px; text-transform: uppercase; font-weight: 800; font-size: 1.6rem; }
+                .prose-white-report h3 { color: #1e40af; border-bottom: 1px solid #94a3b8; padding-bottom: 5px; margin-top: 25px; text-transform: uppercase; font-size: 1.1rem; }
+                .prose-white-report p, .prose-white-report li { line-height: 1.6; margin-bottom: 10px; color: #1a202c; font-size: 14px; }
                 .prose-white-report table { width: 100%; border-collapse: collapse; margin: 15px 0; border: 1px solid #94a3b8; }
-                .prose-white-report th { background: #f1f5f9; color: #0f172a; padding: 10px; text-align: left; border: 1px solid #cbd5e1; font-weight: 700; }
-                .prose-white-report td { padding: 8px; border: 1px solid #cbd5e1; color: #334155; }
-                .prose-white-report strong { color: #000; font-weight: 800; }
-                .prose-white-report .report-header { border-bottom: 3px solid #1e40af; padding-bottom: 15px; margin-bottom: 25px; }
-                .prose-white-report .report-meta { display: flex; justify-content: space-between; margin-top: 10px; }
-                .prose-white-report .report-ticker { font-size: 1.4rem; font-weight: bold; color: #000; }
-                .prose-white-report .report-dates { text-align: right; font-size: 0.8rem; color: #475569; font-family: monospace; }
+                .prose-white-report th { background: #f1f5f9; color: #000; padding: 10px; border: 1px solid #cbd5e1; }
+                .prose-white-report td { padding: 10px; border: 1px solid #cbd5e1; color: #334155; }
+                .prose-white-report small { color: #475569 !important; display: block; margin-top: 2px; font-style: italic; line-height: 1.2; }
+                .report-header { border-bottom: 3px solid #1e40af; padding-bottom: 15px; margin-bottom: 25px; }
+                .report-meta { display: flex; justify-content: space-between; align-items: baseline; }
+                .report-ticker { font-size: 1.4rem; font-weight: 900; color: #000; }
             `}</style>
         </div>
     );
 };
+
 
 
 const App = () => {
