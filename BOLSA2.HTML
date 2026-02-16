@@ -1709,9 +1709,8 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     const updatePrices = async (isAuto = false) => { const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); if (!isAuto && active.length === 0) return; setUpdating(true); let log = { success: [], fail: [] }, newUpdates = []; try { for (const item of active) { const assetDesc = item.isIndex ? "MARKET INDEX (SPOT VALUE)" : "STOCK/EQUITY"; const prompt = `ROLE: Financial Data API. TASK: Get data for Ticker: "${item.ticker}". TYPE: ${assetDesc}. REQUIREMENTS: 1. "p": Current Price in its NATIVE currency (${item.stockCurrency}). STRICT RULE: DO NOT convert the price to ${baseCurrency}. Return it as it quotes in the market. 2. "fx": Exchange rate to convert from ${item.stockCurrency} to ${baseCurrency}. (Example: 1 ${item.stockCurrency} = X ${baseCurrency}). If same, fx = 1. 3. "pe": TTM P/E Ratio (0 if Index). RETURN JSON ONLY: {"p": number, "fx": number, "pe": number}`; try { const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json && (json.p || json.p === 0)) { const safeFx = (item.stockCurrency === baseCurrency) ? 1 : cleanVal(json.fx); newUpdates.push({ id: item.id, p: cleanVal(json.p), fx: safeFx, pe: cleanVal(json.pe) }); log.success.push(item.ticker); } else { log.fail.push(item.ticker); } } catch (e) { log.fail.push(item.ticker); } } if (newUpdates.length > 0) { setPortfolio(prev => prev.map(p => { const u = newUpdates.find(x => x.id === p.id); if (u) { return { ...p, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe }; } return p; }), false); setLastUpdate(new Date().toISOString()); } if (!isAuto && log.fail.length > 0) { setInfoModal({ isOpen: true, title: 'Sincronización parcial', msg: `No se pudieron actualizar: ${log.fail.join(', ')}.`, type: 'warning' }); } } catch (e) { if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); } finally { setUpdating(false); } };
     
-    // ANALISIS IA MEJORADO Y CORREGIDO
-// ANALISIS IA MEJORADO Y CORREGIDO (VERSIÓN BLINDADA)
-    const analyzePortfolio = async () => {
+ // ANALISIS IA MEJORADO Y CORREGIDO (VERSIÓN BLINDADA)
+const analyzePortfolio = async () => {
       const dataToAnalyze = visiblePortfolio;
       if (dataToAnalyze.length === 0) return setInfoModal({ isOpen: true, title: 'Info', msg: 'No hay datos visibles para analizar.', type: 'info' });
       
@@ -1719,40 +1718,88 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
       try {
         const today = new Date().toLocaleString('es-ES');
         
-        // Contexto reducido para evitar sobrecarga de tokens si la cartera es enorme
-        const portfolioContext = dataToAnalyze.map(p => {
-            const isS = !!p.sellDate;
-            const yieldPct = p.buyPrice > 0 ? (((p.currentPrice - p.buyPrice)/p.buyPrice)*100).toFixed(1) : 0;
-            return `- ${p.ticker} (${p.name}): ${isS ? 'VENDIDA' : 'ACTIVA'}. ${p.shares} acc. Rend: ${yieldPct}%.`;
-        }).join('\n');
+        // 1. Preparación de Datos y Cálculo de Métricas Matemáticas Reales
+        let winningTrades = 0, losingTrades = 0;
+        let grossProfit = 0, grossLoss = 0;
+        let totalReturn = 0, totalInvested = 0;
+        let operations = [];
+        let firstDate = new Date(); 
 
-        // --- CAMBIO: Prompt mucho más estricto y estructurado para evitar errores de generación ---
+        dataToAnalyze.forEach(p => {
+             const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+             const isS = !!p.sellDate;
+             const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
+             const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
+             const value = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+             const divs = (p.dividends || []).reduce((a,b)=>a+b.net, 0);
+             
+             const netPL = (value - cost) + divs;
+             
+             if (netPL > 0) { winningTrades++; grossProfit += netPL; }
+             else { losingTrades++; grossLoss += Math.abs(netPL); }
+             
+             totalReturn += netPL;
+             totalInvested += cost;
+
+             if(new Date(p.buyDate) < firstDate) firstDate = new Date(p.buyDate);
+
+             operations.push(`- ${p.ticker} (${p.name}): ${isS ? 'CERRADA' : 'ABIERTA'}. ${isS ? 'Venta' : 'Actual'}: ${curP} ${p.stockCurrency}. Yield: ${cost>0 ? ((netPL/cost)*100).toFixed(2) : 0}%. Grp: ${p.group || 'N/A'}`);
+        });
+
+        const totalTrades = winningTrades + losingTrades;
+        const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
+        const profitFactor = grossLoss > 0 ? (grossProfit / grossLoss) : grossProfit;
+        const totalROI = totalInvested > 0 ? (totalReturn / totalInvested) * 100 : 0;
+        const yearsActive = Math.max(0.5, (new Date() - firstDate) / (1000 * 60 * 60 * 24 * 365));
+
+        const contextData = `
+        METRICAS CALCULADAS (REALES):
+        - Total Operaciones: ${totalTrades}
+        - Win Rate: ${winRate.toFixed(1)}%
+        - Profit Factor: ${profitFactor.toFixed(2)}
+        - ROI Total Cartera: ${totalROI.toFixed(2)}%
+        - Periodo Actividad: ${yearsActive.toFixed(1)} años (aprox)
+        - Listado de Operaciones:
+        ${operations.join('\n')}
+        `;
+
         const prompt = `
-        ROL: Senior Portfolio Manager (Wall Street, 20 años exp). IDIOMA: ESPAÑOL.
-        FECHA: ${today}.
+        Contexto: Actúa como un Senior Portfolio Manager de un Hedge Fund en Wall Street. Tu misión es realizar una auditoría técnica y psicológica de mi cartera de inversión basándote en mis operaciones abiertas y cerradas.
+        Premisas: da el informe en castellano y sin mensajes de cortesía iniciales (ve al grano). Debes tener en cuenta el contexto actual del mercado a la fecha de emisión (${today}) para las distintas cuestiones a analizar.
+
+        DATOS MATEMÁTICOS PROPORCIONADOS (No los recalcules, úsalos):
+        ${contextData}
+
+        INSTRUCCIONES DE ANÁLISIS:
+        1. Atribución de Retornos: Identifica qué sectores o activos específicos están "cargando" con el rendimiento de la cartera y cuáles son "lastres" (Análisis de Pareto).
+        2. Análisis de Riesgo: Evalúa la exposición por sectores y detecta si hay una correlación excesiva (ej. exceso de tecnología o crecimiento). Calcula un Drawdown estimado cualitativo.
+        3. Auditoría de Sesgos: Analiza mis operaciones cerradas en pérdida. ¿Mantuve las pérdidas más tiempo que las ganancias? Determina si existe "sesgo de disposición" o falta de disciplina en el Stop-Loss.
+        4. Costo de Oportunidad: Compara mi rendimiento (ROI: ${totalROI.toFixed(2)}%) contra el S&P 500 (SPY) estimado en el mismo periodo de tiempo.
+
+        ESTRUCTURA OBLIGATORIA DEL INFORME (Formato HTML puro sin markdown):
+        <h3>1. EXECUTIVE SUMMARY</h3>
+        <p>Diagnóstico de salud financiera en 2 párrafos directos y cínicos (estilo Wall Street).</p>
+
+        <h3>2. DASHBOARD DE MÉTRICAS</h3>
+        <table border="1" style="width:100%; border-collapse: collapse;">
+         <tr><td><b>ROI Total</b></td><td>${totalROI.toFixed(2)}%</td></tr>
+         <tr><td><b>Win Rate</b></td><td>${winRate.toFixed(1)}%</td></tr>
+         <tr><td><b>Profit Factor</b></td><td>${profitFactor.toFixed(2)}</td></tr>
+         <tr><td><b>Expectativa Matemática</b></td><td>(Calcula tú una frase cualitativa basada en los datos)</td></tr>
+        </table>
+
+        <h3>3. SEÑALES DE ALERTA</h3>
+        <ul>
+         <li>Riesgo 1: ...</li>
+         <li>Riesgo 2: ...</li>
+         <li>Riesgo 3: ...</li>
+        </ul>
+
+        <h3>4. PROPUESTAS TÁCTICAS</h3>
+        <p>5 pasos tácticos para optimizar el ratio riesgo/beneficio y mejorar la eficiencia del capital.</p>
         
-        TAREA: Auditar la siguiente cartera de inversión.
-        DATOS:
-        ${portfolioContext}
-        
-        INSTRUCCIONES OBLIGATORIAS:
-        1. NO INVENTES DATOS DE MERCADO. Si no sabes un dato macro actual, di "Dato macro no disponible en contexto".
-        2. NO REPITAS ESTE PROMPT EN LA RESPUESTA.
-        3. FORMATO DE SALIDA: HTML PURO (Sin bloques markdown \`\`\`html).
-        4. ESTRUCTURA VISUAL: Usa <h3> para títulos, <ul> para listas. No hagas párrafos gigantes.
-        
-        SECCIONES DEL INFORME:
-        <h3>1. DIAGNÓSTICO EJECUTIVO</h3>
-        (Resumen de diversificación y riesgo latente. ¿Es una cartera equilibrada o suicida?)
-        
-        <h3>2. ANÁLISIS DE ACTIVOS (Check de Salud)</h3>
-        (Menciona 2 activos fuertes y 2 débiles basándote en los rendimientos provistos. No inventes precios nuevos, usa los % dados).
-        
-        <h3>3. ESTRATEGIA Y RECOMENDACIÓN</h3>
-        (Sugerencia de rebalanceo: ¿Vender ganadores? ¿Promediar perdedores? Danos una táctica).
-        
-        <h3>4. RIESGOS DE COLA (Black Swan)</h3>
-        (¿Qué evento macro específico destrozaría esta cartera concreta? Ej: Subida de tipos, crash tecnológico, etc).
+        <h3>5. REVISIÓN DE POSICIONES ACTIVAS</h3>
+        <p>Lista las posiciones activas más relevantes y da un veredicto (VENDER / MANTENER / AMPLIAR) con una frase de motivo.</p>
         `;
 
         const res = await askGemini(apiKey, prompt);
@@ -1776,6 +1823,8 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
       }
     };
 
+
+
     const handleSave = () => { if (!editingId && portfolio.length >= _x_lim) { _x_trig(true); return; } const e = { ...form, name: form.name || form.ticker }; if (editingId) setPortfolio(prev => prev.map(p => p.id === editingId ? { ...p, ...e } : p)); else setPortfolio(prev => [...prev, { ...e, id: Date.now(), currentPrice: form.buyPrice, currentFx: form.buyFx, isActive: true, dividends: [] }]); setIsModalOpen(false); }; 
     const handleSellSubmit = () => { const soldR = { ...sellItem, id: Date.now(), shares: sellForm.sharesToSell, isActive: true, sellDate: sellForm.sellDate, sellPrice: sellForm.sellPrice, sellFx: sellForm.sellFx, sellFees: sellForm.sellFees, sellAdjustments: sellForm.sellAdjustments, sellFeesIncludedInPrice: sellForm.sellFeesIncludedInPrice, dividends: [...(sellItem.dividends || [])] }; const updatedP = portfolio.map(p => p.id === sellItem.id ? { ...p, isActive: false, dividends: [] } : p); setPortfolio([...updatedP, soldR]); setIsSellModalOpen(false); };
     const handleClone = (p) => { if (portfolio.length >= _x_lim) { _x_trig(true); return; } const clone = { ...p, id: Date.now(), isActive: false, dividends: [] }; setPortfolio(prev => [...prev, clone]); setInfoModal({ isOpen: true, title: 'Éxito', msg: `Copia creada.`, type: 'info' }); };
@@ -1783,7 +1832,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const handlePrintAI = () => { const printWindow = window.open('', '', 'height=800,width=800'); const time = new Date().toLocaleString(); let html = `<html><head><title>Informe IA</title><style>body{font-family:sans-serif;padding:20px;} h1{border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:20px;} h3{color:#2563eb; border-bottom:1px solid #ccc; padding-bottom:5px; margin-top:20px; text-transform:uppercase;} table{width:100%; border-collapse:collapse; margin:10px 0; font-size:12px;} th, td{border:1px solid #ddd; padding:8px; text-align:left;} th{background-color:#f2f2f2;} </style></head><body>`; html += `<h1>INFORME iA de SITUACIÓN CARTERA</h1><div style="margin-bottom:20px;font-size:12px;color:#666;"><strong>TIPO:</strong> ${filterType.toUpperCase() === 'ACTIVE' ? 'CARTERA ACTIVA' : filterType.toUpperCase() === 'SOLD' ? 'POSICIONES CERRADAS' : 'CARTERA GLOBAL'}<br/><strong>FECHA:</strong> ${time}</div>`; html += `<div style="font-size:14px;line-height:1.6;">${analysisResult}</div></body></html>`; printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(()=>printWindow.print(),500); };
     
     // HANDLE PRINT MEJORADO
-    const handlePrint = () => { 
+const handlePrint = () => { 
         const printWindow = window.open('', '', 'height=800,width=1200'); 
         const typeMap = { 'active': 'CARTERA ACTIVA', 'sold': 'HISTÓRICO VENTAS', 'all': 'INFORME GLOBAL' }; 
         const emissionTime = new Date().toLocaleString(); 
@@ -1817,6 +1866,9 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         html += `</tbody></table>`; html += `<div style="display:flex; justify-content:flex-end; margin-top:20px;">${historyCardHTML}</div>`; html += `</body></html>`; 
         printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(() => printWindow.print(), 500); 
     };
+
+
+
 
     const toggleAllActive = () => { const allActive = filteredPortfolio.every(p => p.isActive !== false); setPortfolio(prev => prev.map(p => { const isVisible = filteredPortfolio.some(fp => fp.id === p.id); return isVisible ? { ...p, isActive: !allActive } : p; })); };
     const yieldOnCost = form.buyPrice > 0 ? (form.annualDividend / form.buyPrice) * 100 : 0;
@@ -2041,221 +2093,204 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         ITEM_6: "INFORME DE RIESGOS, ALERTAS Y CATALIZADORES"
     };
 
-    const handleScreenerClick = (rowTicker) => {
-        // Mapeo de prefijos según el ID del exchange seleccionado en el estado 'exchange'
-        const prefixMap = {
-            'USA': 'NYSE:', // Por defecto para USA, Gemini suele entenderlo o corregirlo a NASDAQ si es necesario
-            'SPAIN': 'BME:',
-            'UK': 'LSE:',
-            'GERMANY': 'XETRA:',
-            'FRANCE': 'EPA:',
-            'JAPAN': 'TYO:',
-            'CHINA_HK': 'HKG:',
-            'CANADA': 'TSE:',
-            'AUSTRALIA': 'ASX:',
-            'ITALY': 'BIT:',
-            'SWITZERLAND': 'SWX:',
-            'NETHERLANDS': 'AMS:'
+    // FUNCIÓN PARA OBTENER EL TEMPLATE CON EL TICKER INYECTADO AL VUELO
+    const getTemplate = (id, currentTicker) => {
+        const templates = {
+            ITEM_1: `
+                <div style="font-family: sans-serif; line-height: 1.4;">
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase;">1. Descripción General y Modelo de Negocio de ${currentTicker}</h3>
+                    <p><strong>Actividad Principal:</strong> [Dato Real] (Fuente: [Fuente], Fecha: [Dato])</p>
+                    <p><strong>Segmentos de Ingresos (%):</strong> [Dato Real] (Fuente: [Fuente], Fecha: [Dato])</p>
+                    <p><strong>Ventaja Competitiva (Moat):</strong> [Dato Real] (Fuente: [Fuente], Fecha: [Dato])</p>
+
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">2. Datos Financieros Clave (Cifras TTM y Último Reporte)</h3>
+                    <table style="width:100%; border-collapse: collapse; font-size: 11px;">
+                        <tr style="background:#1e293b; color:white;">
+                            <th style="border:1px solid #334155; padding:4px; text-align:left;">Métrica Financiera</th>
+                            <th style="border:1px solid #334155; padding:4px; text-align:right;">Valor Real</th>
+                            <th style="border:1px solid #334155; padding:4px; text-align:left;">Fuente / Fecha</th>
+                        </tr>
+                        <tr><td style="border:1px solid #334155; padding:4px;">Ingresos (Revenue) TTM</td><td style="border:1px solid #334155; padding:4px; text-align:right; font-weight:bold;">[Dato Real]</td><td style="border:1px solid #334155; padding:4px;">[Fuente/Fecha]</td></tr>
+                        <tr><td style="border:1px solid #334155; padding:4px;">Ingreso Neto / BPA (EPS)</td><td style="border:1px solid #334155; padding:4px; text-align:right; font-weight:bold;">[Dato Real]</td><td style="border:1px solid #334155; padding:4px;">[Fuente/Fecha]</td></tr>
+                        <tr><td style="border:1px solid #334155; padding:4px;">Ratio P/E / P/E Forward</td><td style="border:1px solid #334155; padding:4px; text-align:right; font-weight:bold;">[Dato Real]</td><td style="border:1px solid #334155; padding:4px;">[Fuente/Fecha]</td></tr>
+                        <tr><td style="border:1px solid #334155; padding:4px;">Ratio P/S / Ratio PEG</td><td style="border:1px solid #334155; padding:4px; text-align:right; font-weight:bold;">[Dato Real]</td><td style="border:1px solid #334155; padding:4px;">[Fuente/Fecha]</td></tr>
+                        <tr><td style="border:1px solid #334155; padding:4px;">Deuda Total / Ratio D-E</td><td style="border:1px solid #334155; padding:4px; text-align:right; font-weight:bold;">[Dato Real]</td><td style="border:1px solid #334155; padding:4px;">[Fuente/Fecha]</td></tr>
+                        <tr><td style="border:1px solid #334155; padding:4px;">Flujo de Caja Libre (FCF)</td><td style="border:1px solid #334155; padding:4px; text-align:right; font-weight:bold;">[Dato Real]</td><td style="border:1px solid #334155; padding:4px;">[Fuente/Fecha]</td></tr>
+                    </table>
+
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">3. Rendimiento de la Acción vs Índices</h3>
+                    <ul>
+                        <li><strong>Precio: 1m / 3m / 6m:</strong> [Dato Real %] (Fuente: [Fuente])</li>
+                        <li><strong>Precio: 1 año / YTD:</strong> [Dato Real %] (Fuente: [Fuente])</li>
+                        <li><strong>Vs S&P 500 (Mismos periodos):</strong> [Dato Real %] (Fuente: [Fuente])</li>
+                        <li><strong>Máximo / Mínimo 52 semanas:</strong> [Dato Real] (Fecha: [Dato])</li>
+                    </ul>
+
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">4. Consenso y Actividad Institucional</h3>
+                    <p><strong>Analistas (Buy/Hold/Sell):</strong> [Distribución Real] (Fuente: [Fuente], Fecha: [Dato])</p>
+                    <p><strong>Precio Objetivo (Medio/Alto/Bajo):</strong> [Dato Real] (Fuente: [Fuente], Fecha: [Dato])</p>
+                    <p><strong>Top 5 Inversores Institucionales:</strong> [Lista Real y cambios] (Fuente: [Fuente], Fecha: [Dato])</p>
+                </div>`,
+
+            ITEM_2: `
+                <div style="font-family: sans-serif; line-height: 1.4;">
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase;">1. Análisis del Estado de Resultados de ${currentTicker}</h3>
+                    <table style="width:100%; border-collapse: collapse; font-size: 10px; margin-bottom: 10px;">
+                        <tr style="background:#1e293b; color:white;">
+                            <th>Trimestre</th><th>Ingresos</th><th>Crec. YoY</th><th>Margen Bruto</th><th>Margen Neto</th>
+                        </tr>
+                        <tr><td>[Q-Reciente]</td><td>[Dato]</td><td>[Dato %]</td><td>[Dato %]</td><td>[Dato %]</td></tr>
+                        <tr><td>[Q-Previo 1]</td><td>[Dato]</td><td>[Dato %]</td><td>[Dato %]</td><td>[Dato %]</td></tr>
+                        <tr><td>[Q-Previo 2]</td><td>[Dato]</td><td>[Dato %]</td><td>[Dato %]</td><td>[Dato %]</td></tr>
+                        <tr><td>[Q-Previo 3]</td><td>[Dato]</td><td>[Dato %]</td><td>[Dato %]</td><td>[Dato %]</td></tr>
+                    </table>
+                    <p><strong>Tendencia de Márgenes:</strong> [Análisis Real] (Fuente: [Fuente])</p>
+
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">2. Salud del Balance General</h3>
+                    <ul>
+                        <li><strong>Activos vs Pasivos Totales:</strong> [Cifras Reales] (Fuente: [Fuente])</li>
+                        <li><strong>Ratio Corriente / Rápido:</strong> [Cifras Reales] (Fuente: [Fuente])</li>
+                        <li><strong>Efectivo e Inversiones CP:</strong> [Dato Real] (Fuente: [Fuente], Fecha: [Dato])</li>
+                        <li><strong>Calendario de Vencimiento de Deuda:</strong> [Detalle Real] (Fuente: [Fuente])</li>
+                        <li><strong>Fondo de Comercio (Goodwill):</strong> [Dato Real % sobre Activos] (Fuente: [Fuente])</li>
+                    </ul>
+
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">3. Verificación de Flujo de Caja (Cash Flow)</h3>
+                    <p><strong>Flujo Operativo vs Gastos Capital (CapEx):</strong> [Cifras Reales] (Fuente: [Fuente])</p>
+                    <p><strong>Free Cash Flow (TTM):</strong> [Dato Real] (Margen FCF: [Dato %])</p>
+                    <p><strong>Uso del Efectivo:</strong> [¿Recompras, Dividendos o Deuda?] (Fuente: [Fuente])</p>
+
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">4. Señales de Alerta y Comparativa</h3>
+                    <p><strong>Red Flags (Cuentas por cobrar, Inventarios):</strong> [Análisis Real] (Fuente: [Fuente])</p>
+                    <p><strong>Comparativa Márgenes vs 3 Competidores:</strong> [Tabla o Lista Real] (Fuente: [Fuente])</p>
+                    <div style="background:#1e293b; padding:10px; border-radius:6px; color:white; font-size:11px;">
+                        <strong>VEREDICTO FINANCIERO:</strong> [¿Fortaleciéndose o Debilitándose? Resumen Real]
+                    </div>
+                </div>`,
+
+            ITEM_3: `
+                <div style="font-family: sans-serif; line-height: 1.4;">
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase;">1. Análisis de Resultados Recientes (Earnings) de ${currentTicker}</h3>
+                    <table style="width:100%; border-collapse: collapse; font-size: 11px;">
+                        <tr style="background:#1e293b; color:white;">
+                            <th>Concepto</th><th>Cifra Real</th><th>Estimación</th><th>Sorpresa (%)</th>
+                        </tr>
+                        <tr><td>Ingresos</td><td>[Dato]</td><td>[Dato]</td><td>[Dato %]</td></tr>
+                        <tr><td>BPA (EPS)</td><td>[Dato]</td><td>[Dato]</td><td>[Dato %]</td></tr>
+                    </table>
+                    <p><strong>Partidas Extraordinarias / Ajustes GAAP:</strong> [Detalle Real] (Fuente: [Fuente])</p>
+
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">2. Guía Futura (Guidance) y Segmentos</h3>
+                    <p><strong>Guía Próximo Trimestre / Año Completo:</strong> [Cifras y Rangos] (Fuente: [Fuente])</p>
+                    <p><strong>Tono de la Dirección:</strong> [Cita u Opinión Real] (Fuente: [Fuente])</p>
+                    <p><strong>Desempeño por Segmentos/Geografía:</strong> [Detalle de crecimiento real] (Fuente: [Fuente])</p>
+
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">3. Reacción del Mercado y Catalizadores</h3>
+                    <ul>
+                        <li><strong>Movimiento del Precio (Post-After Hours):</strong> [Dato Real %]</li>
+                        <li><strong>Cambios de Recomendación (Post-Earnings):</strong> [Firma y Nuevo Objetivo] (Fuente: [Fuente])</li>
+                        <li><strong>Temas Clave Q&A Analistas:</strong> [Resumen de 2 puntos reales] (Fuente: [Fuente])</li>
+                    </ul>
+                    <div style="border-left: 4px solid #3b82f6; padding-left:10px; margin-top:10px;">
+                        <strong>EL VEREDICTO:</strong> [Número más importante y por qué] (Fecha: [Dato])
+                    </div>
+                </div>`,
+
+            ITEM_4: `
+                <div style="font-family: sans-serif; line-height: 1.4;">
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase;">1. Tabla Comparativa del Sector</h3>
+                    <table style="width:100%; border-collapse: collapse; font-size: 10px;">
+                        <tr style="background:#1e293b; color:white;">
+                            <th>Empresa</th><th>Market Cap</th><th>Crec. Rev.</th><th>PER / PEG</th><th>Margen Neto</th><th>Deuda/Eq.</th>
+                        </tr>
+                        <tr style="background:#0f172a;"><td><strong>${currentTicker}</strong></td><td>[Dato]</td><td>[Dato %]</td><td>[Dato]</td><td>[Dato %]</td><td>[Dato]</td></tr>
+                        <tr><td>[Competidor 1]</td><td>[Dato]</td><td>[Dato %]</td><td>[Dato]</td><td>[Dato %]</td><td>[Dato]</td></tr>
+                        <tr><td>[Competidor 2]</td><td>[Dato]</td><td>[Dato %]</td><td>[Dato]</td><td>[Dato %]</td><td>[Dato]</td></tr>
+                    </table>
+
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">2. Posicionamiento y Cuota de Mercado</h3>
+                    <p><strong>Ventaja Competitiva vs Pares:</strong> [Análisis Real] (Fuente: [Fuente])</p>
+                    <p><strong>Ranking de Cuota de Mercado:</strong> [Posición Real] (Fuente: [Fuente], Fecha: [Dato])</p>
+
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">3. Análisis de Riesgos Comparados</h3>
+                    <p><strong>Mayor Riesgo Individual:</strong> [Dato Real por empresa] (Fuente: [Fuente])</p>
+                    <p><strong>¿Quién tiene mejor Balance?:</strong> [Nombre y Razón Real] (Fuente: [Fuente])</p>
+
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">4. El Ranking Final</h3>
+                    <p><strong>Mejor Valor / Crecimiento / Seguridad:</strong> [Elección Real del Analista] (Fuente: [Fuente])</p>
+                </div>`,
+
+            ITEM_5: `
+                <div style="font-family: sans-serif; line-height: 1.4;">
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase;">1. Valoración por Flujo de Caja Descontado (DCF) para ${currentTicker}</h3>
+                    <ul>
+                        <li><strong>FCF Inicial y Tasa Crecimiento (5A):</strong> [Dato Real %] (Fuente: [Fuente])</li>
+                        <li><strong>Tasa de Descuento (WACC):</strong> [Dato Real %] (Fuente: [Fuente])</li>
+                        <li><strong>Valor Intrínseco calculado:</strong> [Precio Real] (Fuente: [Fuente])</li>
+                    </ul>
+                    <p><strong>Sensibilidad (WACC vs Crecimiento):</strong> [Resumen de sensibilidad Real] (Fecha: [Dato])</p>
+
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">2. Valoración por Múltiplos Históricos</h3>
+                    <p><strong>P/E Actual vs Media 5 Años:</strong> [Dato Real] (Fuente: [Fuente])</p>
+                    <p><strong>Comparativa EV/EBITDA y P/S:</strong> [Cifras Reales] (Fuente: [Fuente])</p>
+
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">3. Precios Objetivo de Analistas</h3>
+                    <p><strong>Mediano / Alto / Bajo (Últimos 90 días):</strong> [Precios Reales] (Fuente: [Fuente])</p>
+
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">4. Tres Escenarios de Inversión</h3>
+                    <table style="width:100%; border-collapse: collapse; font-size: 11px;">
+                        <tr style="background:#1e293b; color:white;"><th>Escenario</th><th>Precio Estimado</th><th>Upside/Downside (%)</th></tr>
+                        <tr style="color:#16a34a;"><td>Caso Alcista (Bull)</td><td>[Precio]</td><td>[Dato %]</td></tr>
+                        <tr style="color:#3b82f6;"><td>Caso Base (Base)</td><td>[Precio]</td><td>[Dato %]</td></tr>
+                        <tr style="color:#dc2626;"><td>Caso Bajista (Bear)</td><td>[Precio]</td><td>[Dato %]</td></tr>
+                    </table>
+                    <div style="background:#111827; padding:15px; border-radius:8px; text-align:center; margin-top:10px; border:1px solid #fbbf24;">
+                        <strong style="color:#fbbf24;">VEREDICTO: [Infravalorada / Justa / Sobrevalorada]</strong>
+                    </div>
+                </div>`,
+
+            ITEM_6: `
+                <div style="font-family: sans-serif; line-height: 1.4;">
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase;">1. Resumen Ejecutivo de Tesis para ${currentTicker}</h3>
+                    <p><strong>Elevator Pitch:</strong> [Resumen de 30 segundos basado en datos reales] (Fuente: [Fuente])</p>
+                    <p><strong>Recomendación y Convicción:</strong> [Strong Buy/Buy/Hold/Sell] (Nivel: [Alto/Medio])</p>
+
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">2. Análisis Profundo de Riesgos (Top 5)</h3>
+                    <ul>
+                        <li><strong>Riesgo 1 (Probabilidad/Impacto):</strong> [Detalle Real] (Fuente: [Fuente])</li>
+                        <li><strong>Riesgo 2 (Probabilidad/Impacto):</strong> [Detalle Real] (Fuente: [Fuente])</li>
+                        <li><strong>Riesgo 3 (Específico Sector):</strong> [Detalle Real] (Fuente: [Fuente])</li>
+                        <li><strong>Short Interest y Actividad Insiders:</strong> [Dato Real] (Fuente: [Fuente])</li>
+                    </ul>
+
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">3. Calendario de Catalizadores (Próximos 12 meses)</h3>
+                    <table style="width:100%; border-collapse: collapse; font-size: 11px;">
+                        <tr style="background:#1e293b; color:white;"><th>Fecha Estimada</th><th>Evento / Catalizador</th><th>Fuente</th></tr>
+                        <tr><td>[Fecha]</td><td>Próximo Informe Resultados (Q)</td><td>[Fuente]</td></tr>
+                        <tr><td>[Fecha]</td><td>Lanzamiento Producto / Evento</td><td>[Fuente]</td></tr>
+                        <tr><td>[Fecha]</td><td>Decisión Regulatoria / Otros</td><td>[Fuente]</td></tr>
+                    </table>
+
+                    <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">4. Análisis de Crecimiento (TAM y Cuota)</h3>
+                    <p><strong>Mercado Total Direccionable (TAM):</strong> [Cifra Real] (Fuente: [Fuente])</p>
+                    <p><strong>Motores de Crecimiento 3-5 años:</strong> [Detalle Real] (Fuente: [Fuente])</p>
+                </div>`
         };
+        return templates[id] || "";
+    };
 
+    const handleScreenerClick = (rowTicker) => {
+        const prefixMap = { 'USA': 'NYSE:', 'SPAIN': 'BME:', 'UK': 'LSE:', 'GERMANY': 'XETRA:', 'FRANCE': 'EPA:', 'JAPAN': 'TYO:', 'CHINA_HK': 'HKG:', 'CANADA': 'TSE:', 'AUSTRALIA': 'ASX:', 'ITALY': 'BIT:', 'SWITZERLAND': 'SWX:', 'NETHERLANDS': 'AMS:' };
         const prefix = prefixMap[exchange] || ''; 
-        // Si el ticker ya trae dos puntos (raro en este output pero posible), no ponemos prefijo
         const cleanTicker = rowTicker.includes(':') ? rowTicker : `${prefix}${rowTicker}`;
-
-        setTicker(cleanTicker); // Actualiza el input del buscador en la pestaña Estudio
-        setActiveSubTab('estudio'); // Cambia la vista automáticamente
-        
-        // Opcional: Limpiar resultados previos de estudio para forzar una nueva búsqueda limpia
+        setTicker(cleanTicker); 
+        setActiveSubTab('estudio'); 
         setSpecificAnswer(null);
         setData(null);
     };
 
     useEffect(() => { if (initialTicker) setTicker(initialTicker); }, [initialTicker]);
 
-  // --- PROMPTS ORIGINALES COMPLETOS (RESTAURADOS ÍNTEGRAMENTE) ---
-    const HTML_TEMPLATES = {
-        ITEM_1: `
-            <div style="font-family: sans-serif; line-height: 1.4;">
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase;">1. Descripción General y Modelo de Negocio</h3>
-                <p><strong>Actividad Principal:</strong> [Dato Real] (Fuente: [Fuente], Fecha: [Dato])</p>
-                <p><strong>Segmentos de Ingresos (%):</strong> [Dato Real] (Fuente: [Fuente], Fecha: [Dato])</p>
-                <p><strong>Ventaja Competitiva (Moat):</strong> [Dato Real] (Fuente: [Fuente], Fecha: [Dato])</p>
-
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">2. Datos Financieros Clave (Cifras TTM y Último Reporte)</h3>
-                <table style="width:100%; border-collapse: collapse; font-size: 11px;">
-                    <tr style="background:#1e293b; color:white;">
-                        <th style="border:1px solid #334155; padding:4px; text-align:left;">Métrica Financiera</th>
-                        <th style="border:1px solid #334155; padding:4px; text-align:right;">Valor Real</th>
-                        <th style="border:1px solid #334155; padding:4px; text-align:left;">Fuente / Fecha</th>
-                    </tr>
-                    <tr><td style="border:1px solid #334155; padding:4px;">Ingresos (Revenue) TTM</td><td style="border:1px solid #334155; padding:4px; text-align:right; font-weight:bold;">[Dato Real]</td><td style="border:1px solid #334155; padding:4px;">[Fuente/Fecha]</td></tr>
-                    <tr><td style="border:1px solid #334155; padding:4px;">Ingreso Neto / BPA (EPS)</td><td style="border:1px solid #334155; padding:4px; text-align:right; font-weight:bold;">[Dato Real]</td><td style="border:1px solid #334155; padding:4px;">[Fuente/Fecha]</td></tr>
-                    <tr><td style="border:1px solid #334155; padding:4px;">Ratio P/E / P/E Forward</td><td style="border:1px solid #334155; padding:4px; text-align:right; font-weight:bold;">[Dato Real]</td><td style="border:1px solid #334155; padding:4px;">[Fuente/Fecha]</td></tr>
-                    <tr><td style="border:1px solid #334155; padding:4px;">Ratio P/S / Ratio PEG</td><td style="border:1px solid #334155; padding:4px; text-align:right; font-weight:bold;">[Dato Real]</td><td style="border:1px solid #334155; padding:4px;">[Fuente/Fecha]</td></tr>
-                    <tr><td style="border:1px solid #334155; padding:4px;">Deuda Total / Ratio D-E</td><td style="border:1px solid #334155; padding:4px; text-align:right; font-weight:bold;">[Dato Real]</td><td style="border:1px solid #334155; padding:4px;">[Fuente/Fecha]</td></tr>
-                    <tr><td style="border:1px solid #334155; padding:4px;">Flujo de Caja Libre (FCF)</td><td style="border:1px solid #334155; padding:4px; text-align:right; font-weight:bold;">[Dato Real]</td><td style="border:1px solid #334155; padding:4px;">[Fuente/Fecha]</td></tr>
-                </table>
-
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">3. Rendimiento de la Acción vs Índices</h3>
-                <ul>
-                    <li><strong>Precio: 1m / 3m / 6m:</strong> [Dato Real %] (Fuente: [Fuente])</li>
-                    <li><strong>Precio: 1 año / YTD:</strong> [Dato Real %] (Fuente: [Fuente])</li>
-                    <li><strong>Vs S&P 500 (Mismos periodos):</strong> [Dato Real %] (Fuente: [Fuente])</li>
-                    <li><strong>Máximo / Mínimo 52 semanas:</strong> [Dato Real] (Fecha: [Dato])</li>
-                </ul>
-
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">4. Consenso y Actividad Institucional</h3>
-                <p><strong>Analistas (Buy/Hold/Sell):</strong> [Distribución Real] (Fuente: [Fuente], Fecha: [Dato])</p>
-                <p><strong>Precio Objetivo (Medio/Alto/Bajo):</strong> [Dato Real] (Fuente: [Fuente], Fecha: [Dato])</p>
-                <p><strong>Top 5 Inversores Institucionales:</strong> [Lista Real y cambios] (Fuente: [Fuente], Fecha: [Dato])</p>
-            </div>`,
-
-        ITEM_2: `
-            <div style="font-family: sans-serif; line-height: 1.4;">
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase;">1. Análisis del Estado de Resultados (Últimos 4 Trimestres)</h3>
-                <table style="width:100%; border-collapse: collapse; font-size: 10px; margin-bottom: 10px;">
-                    <tr style="background:#1e293b; color:white;">
-                        <th>Trimestre</th><th>Ingresos</th><th>Crec. YoY</th><th>Margen Bruto</th><th>Margen Neto</th>
-                    </tr>
-                    <tr><td>[Q-Reciente]</td><td>[Dato]</td><td>[Dato %]</td><td>[Dato %]</td><td>[Dato %]</td></tr>
-                    <tr><td>[Q-Previo 1]</td><td>[Dato]</td><td>[Dato %]</td><td>[Dato %]</td><td>[Dato %]</td></tr>
-                    <tr><td>[Q-Previo 2]</td><td>[Dato]</td><td>[Dato %]</td><td>[Dato %]</td><td>[Dato %]</td></tr>
-                    <tr><td>[Q-Previo 3]</td><td>[Dato]</td><td>[Dato %]</td><td>[Dato %]</td><td>[Dato %]</td></tr>
-                </table>
-                <p><strong>Tendencia de Márgenes:</strong> [Análisis Real] (Fuente: [Fuente])</p>
-
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">2. Salud del Balance General</h3>
-                <ul>
-                    <li><strong>Activos vs Pasivos Totales:</strong> [Cifras Reales] (Fuente: [Fuente])</li>
-                    <li><strong>Ratio Corriente / Rápido:</strong> [Cifras Reales] (Fuente: [Fuente])</li>
-                    <li><strong>Efectivo e Inversiones CP:</strong> [Dato Real] (Fuente: [Fuente], Fecha: [Dato])</li>
-                    <li><strong>Calendario de Vencimiento de Deuda:</strong> [Detalle Real] (Fuente: [Fuente])</li>
-                    <li><strong>Fondo de Comercio (Goodwill):</strong> [Dato Real % sobre Activos] (Fuente: [Fuente])</li>
-                </ul>
-
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">3. Verificación de Flujo de Caja (Cash Flow)</h3>
-                <p><strong>Flujo Operativo vs Gastos Capital (CapEx):</strong> [Cifras Reales] (Fuente: [Fuente])</p>
-                <p><strong>Free Cash Flow (TTM):</strong> [Dato Real] (Margen FCF: [Dato %])</p>
-                <p><strong>Uso del Efectivo:</strong> [¿Recompras, Dividendos o Deuda?] (Fuente: [Fuente])</p>
-
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">4. Señales de Alerta y Comparativa</h3>
-                <p><strong>Red Flags (Cuentas por cobrar, Inventarios):</strong> [Análisis Real] (Fuente: [Fuente])</p>
-                <p><strong>Comparativa Márgenes vs 3 Competidores:</strong> [Tabla o Lista Real] (Fuente: [Fuente])</p>
-                <div style="background:#1e293b; padding:10px; border-radius:6px; color:white; font-size:11px;">
-                    <strong>VEREDICTO FINANCIERO:</strong> [¿Fortaleciéndose o Debilitándose? Resumen Real]
-                </div>
-            </div>`,
-
-        ITEM_3: `
-            <div style="font-family: sans-serif; line-height: 1.4;">
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase;">1. Análisis de Resultados Recientes (Earnings Report)</h3>
-                <table style="width:100%; border-collapse: collapse; font-size: 11px;">
-                    <tr style="background:#1e293b; color:white;">
-                        <th>Concepto</th><th>Cifra Real</th><th>Estimación</th><th>Sorpresa (%)</th>
-                    </tr>
-                    <tr><td>Ingresos</td><td>[Dato]</td><td>[Dato]</td><td>[Dato %]</td></tr>
-                    <tr><td>BPA (EPS)</td><td>[Dato]</td><td>[Dato]</td><td>[Dato %]</td></tr>
-                </table>
-                <p><strong>Partidas Extraordinarias / Ajustes GAAP:</strong> [Detalle Real] (Fuente: [Fuente])</p>
-
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">2. Guía Futura (Guidance) y Segmentos</h3>
-                <p><strong>Guía Próximo Trimestre / Año Completo:</strong> [Cifras y Rangos] (Fuente: [Fuente])</p>
-                <p><strong>Tono de la Dirección:</strong> [Cita u Opinión Real] (Fuente: [Fuente])</p>
-                <p><strong>Desempeño por Segmentos/Geografía:</strong> [Detalle de crecimiento real] (Fuente: [Fuente])</p>
-
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">3. Reacción del Mercado y Catalizadores</h3>
-                <ul>
-                    <li><strong>Movimiento del Precio (Post-After Hours):</strong> [Dato Real %]</li>
-                    <li><strong>Cambios de Recomendación (Post-Earnings):</strong> [Firma y Nuevo Objetivo] (Fuente: [Fuente])</li>
-                    <li><strong>Temas Clave Q&A Analistas:</strong> [Resumen de 2 puntos reales] (Fuente: [Fuente])</li>
-                </ul>
-                <div style="border-left: 4px solid #3b82f6; padding-left:10px; margin-top:10px;">
-                    <strong>EL VEREDICTO:</strong> [Número más importante y por qué] (Fecha: [Dato])
-                </div>
-            </div>`,
-
-        ITEM_4: `
-            <div style="font-family: sans-serif; line-height: 1.4;">
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase;">1. Tabla Comparativa del Sector</h3>
-                <table style="width:100%; border-collapse: collapse; font-size: 10px;">
-                    <tr style="background:#1e293b; color:white;">
-                        <th>Empresa</th><th>Market Cap</th><th>Crec. Rev.</th><th>PER / PEG</th><th>Margen Neto</th><th>Deuda/Eq.</th>
-                    </tr>
-                    <tr style="background:#0f172a;"><td><strong>${ticker}</strong></td><td>[Dato]</td><td>[Dato %]</td><td>[Dato]</td><td>[Dato %]</td><td>[Dato]</td></tr>
-                    <tr><td>[Competidor 1]</td><td>[Dato]</td><td>[Dato %]</td><td>[Dato]</td><td>[Dato %]</td><td>[Dato]</td></tr>
-                    <tr><td>[Competidor 2]</td><td>[Dato]</td><td>[Dato %]</td><td>[Dato]</td><td>[Dato %]</td><td>[Dato]</td></tr>
-                </table>
-
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">2. Posicionamiento y Cuota de Mercado</h3>
-                <p><strong>Ventaja Competitiva vs Pares:</strong> [Análisis Real] (Fuente: [Fuente])</p>
-                <p><strong>Ranking de Cuota de Mercado:</strong> [Posición Real] (Fuente: [Fuente], Fecha: [Dato])</p>
-
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">3. Análisis de Riesgos Comparados</h3>
-                <p><strong>Mayor Riesgo Individual:</strong> [Dato Real por empresa] (Fuente: [Fuente])</p>
-                <p><strong>¿Quién tiene mejor Balance?:</strong> [Nombre y Razón Real] (Fuente: [Fuente])</p>
-
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">4. El Ranking Final</h3>
-                <p><strong>Mejor Valor / Crecimiento / Seguridad:</strong> [Elección Real del Analista] (Fuente: [Fuente])</p>
-            </div>`,
-
-        ITEM_5: `
-            <div style="font-family: sans-serif; line-height: 1.4;">
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase;">1. Valoración por Flujo de Caja Descontado (DCF)</h3>
-                <ul>
-                    <li><strong>FCF Inicial y Tasa Crecimiento (5A):</strong> [Dato Real %] (Fuente: [Fuente])</li>
-                    <li><strong>Tasa de Descuento (WACC):</strong> [Dato Real %] (Fuente: [Fuente])</li>
-                    <li><strong>Valor Intrínseco calculado:</strong> [Precio Real] (Fuente: [Fuente])</li>
-                </ul>
-                <p><strong>Sensibilidad (WACC vs Crecimiento):</strong> [Resumen de sensibilidad Real] (Fecha: [Dato])</p>
-
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">2. Valoración por Múltiplos Históricos</h3>
-                <p><strong>P/E Actual vs Media 5 Años:</strong> [Dato Real] (Fuente: [Fuente])</p>
-                <p><strong>Comparativa EV/EBITDA y P/S:</strong> [Cifras Reales] (Fuente: [Fuente])</p>
-
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">3. Precios Objetivo de Analistas</h3>
-                <p><strong>Mediano / Alto / Bajo (Últimos 90 días):</strong> [Precios Reales] (Fuente: [Fuente])</p>
-
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">4. Tres Escenarios de Inversión</h3>
-                <table style="width:100%; border-collapse: collapse; font-size: 11px;">
-                    <tr style="background:#1e293b; color:white;"><th>Escenario</th><th>Precio Estimado</th><th>Upside/Downside (%)</th></tr>
-                    <tr style="color:#16a34a;"><td>Caso Alcista (Bull)</td><td>[Precio]</td><td>[Dato %]</td></tr>
-                    <tr style="color:#3b82f6;"><td>Caso Base (Base)</td><td>[Precio]</td><td>[Dato %]</td></tr>
-                    <tr style="color:#dc2626;"><td>Caso Bajista (Bear)</td><td>[Precio]</td><td>[Dato %]</td></tr>
-                </table>
-                <div style="background:#111827; padding:15px; border-radius:8px; text-align:center; margin-top:10px; border:1px solid #fbbf24;">
-                    <strong style="color:#fbbf24;">VEREDICTO: [Infravalorada / Justa / Sobrevalorada]</strong>
-                </div>
-            </div>`,
-
-        ITEM_6: `
-            <div style="font-family: sans-serif; line-height: 1.4;">
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase;">1. Resumen Ejecutivo de Tesis</h3>
-                <p><strong>Elevator Pitch:</strong> [Resumen de 30 segundos basado en datos reales] (Fuente: [Fuente])</p>
-                <p><strong>Recomendación y Convicción:</strong> [Strong Buy/Buy/Hold/Sell] (Nivel: [Alto/Medio])</p>
-
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">2. Análisis Profundo de Riesgos (Top 5)</h3>
-                <ul>
-                    <li><strong>Riesgo 1 (Probabilidad/Impacto):</strong> [Detalle Real] (Fuente: [Fuente])</li>
-                    <li><strong>Riesgo 2 (Probabilidad/Impacto):</strong> [Detalle Real] (Fuente: [Fuente])</li>
-                    <li><strong>Riesgo 3 (Específico Sector):</strong> [Detalle Real] (Fuente: [Fuente])</li>
-                    <li><strong>Short Interest y Actividad Insiders:</strong> [Dato Real] (Fuente: [Fuente])</li>
-                </ul>
-
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">3. Calendario de Catalizadores (Próximos 12 meses)</h3>
-                <table style="width:100%; border-collapse: collapse; font-size: 11px;">
-                    <tr style="background:#1e293b; color:white;"><th>Fecha Estimada</th><th>Evento / Catalizador</th><th>Fuente</th></tr>
-                    <tr><td>[Fecha]</td><td>Próximo Informe Resultados (Q)</td><td>[Fuente]</td></tr>
-                    <tr><td>[Fecha]</td><td>Lanzamiento Producto / Evento</td><td>[Fuente]</td></tr>
-                    <tr><td>[Fecha]</td><td>Decisión Regulatoria / Otros</td><td>[Fuente]</td></tr>
-                </table>
-
-                <h3 style="color: #60a5fa; border-bottom: 1px solid #334155; text-transform: uppercase; margin-top: 15px;">4. Análisis de Crecimiento (TAM y Cuota)</h3>
-                <p><strong>Mercado Total Direccionable (TAM):</strong> [Cifra Real] (Fuente: [Fuente])</p>
-                <p><strong>Motores de Crecimiento 3-5 años:</strong> [Detalle Real] (Fuente: [Fuente])</p>
-            </div>`
-    };
-
-    // --- FUNCIONES DE SOPORTE ---
     const askGemini = async (key, prompt) => {
         if (!key) throw new Error("Falta API Key");
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${key}`, {
@@ -2267,7 +2302,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
     };
 
-    // UTILIDAD DE EXTRACCIÓN (RESTAURADA ORIGINAL PARA EVITAR ERRORES EN SCREENER)
     const extractJSON = (text) => { 
         if (!text) return null;
         try {
@@ -2305,22 +2339,17 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
     const cleanAIResponse = (text) => {
         if (!text) return "";
         let clean = text.trim();
-        
         clean = clean.replace(/```html/g, '').replace(/```/g, '');
-
         const headerIndex = clean.indexOf('<h');
         const anyTagIndex = clean.indexOf('<');
-
         if (headerIndex !== -1) {
             return clean.substring(headerIndex);
         } else if (anyTagIndex !== -1) {
             return clean.substring(anyTagIndex);
         }
-
         return clean;
     };
     
-    // ANÁLISIS SIMPLE Y PREGUNTA LIBRE (RESTAURADA LÓGICA ORIGINAL)
     const analyze = async () => { 
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' }); 
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' }); 
@@ -2358,8 +2387,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         } catch (e) { setStatusModal({ isOpen: true, title: 'Error iA', msg: e.message, type: 'error' }); } finally { setLoading(false); } 
     };
 
-     
-const handleFixedAnalysis = async (promptId) => {
+    const handleFixedAnalysis = async (promptId) => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' }); 
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' }); 
         
@@ -2369,8 +2397,6 @@ const handleFixedAnalysis = async (promptId) => {
 
         try {
             const today = new Date().toLocaleString('es-ES');
-            
-            // 1. Obtener precio (Llamada rápida)
             const priceFetchPrompt = `BUSCA EN INTERNET: Precio real actual de ${ticker}. Responde solo: "Precio: [X] [Divisa] | Fecha: [Fecha]"`;
             let priceInfo = "Buscando precio actualizado...";
             try { 
@@ -2378,9 +2404,9 @@ const handleFixedAnalysis = async (promptId) => {
                 priceInfo = pRes || "Precio no disponible";
             } catch(e) { priceInfo = "Error al conectar con el servidor de precios"; }
 
-            const templateCode = HTML_TEMPLATES[promptId];
+            // AQUI ESTÁ LA CLAVE DE LA CORRECCIÓN: Usamos el ticker del estado (ticker) en la función
+            const templateCode = getTemplate(promptId, ticker); 
             
-            // 2. Informe con Protocolo de Integridad
             const prompt = `
             SISTEMA: ROL ANALISTA SENIOR. MODELO: gemini 3 pro preview.
             TAREA: Auditar la cartera basándote en DATOS REALES DE HOY (${today}).
@@ -2406,7 +2432,6 @@ const handleFixedAnalysis = async (promptId) => {
 
             const reportTitle = REPORT_TITLES[promptId] || "INFORME FINANCIERO";
             
-            // Construcción del HTML final con cabecera blindada
             const finalHtml = `
                 <div style="border-bottom: 2px solid #3b82f6; padding-bottom: 10px; margin-bottom: 20px;">
                     <h2 style="color: #60a5fa; margin: 0; font-size: 1.5rem; text-transform: uppercase; font-family: 'Orbitron', sans-serif;">${reportTitle}</h2>
@@ -2433,8 +2458,6 @@ const handleFixedAnalysis = async (promptId) => {
         }
     };
 
-
-    // --- RASTREO (SCREENER) RESTAURADO AL ORIGINAL ---
     const runScreener = async () => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
         
