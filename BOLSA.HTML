@@ -1743,7 +1743,11 @@ const analyzePortfolio = async () => {
 
              if(new Date(p.buyDate) < firstDate) firstDate = new Date(p.buyDate);
 
-             operations.push(`- ${p.ticker} (${p.name}): ${isS ? 'CERRADA' : 'ABIERTA'}. ${isS ? 'Venta' : 'Actual'}: ${curP} ${p.stockCurrency}. Yield: ${cost>0 ? ((netPL/cost)*100).toFixed(2) : 0}%. Grp: ${p.group || 'N/A'}`);
+             // DATOS ENRIQUECIDOS PARA LA IA: Coste, Valor y Fechas
+             const bDate = new Date(p.buyDate).toISOString().split('T')[0];
+             const sDate = isS ? new Date(p.sellDate).toISOString().split('T')[0] : 'Actualidad';
+             
+             operations.push(`- ${p.ticker} (${p.name}): ${isS ? 'CERRADA' : 'ACTIVA'}. Invertido: ${cost.toFixed(0)}. Valor/Liq: ${value.toFixed(0)}. Res: ${netPL.toFixed(0)} (${divs>0?`incl ${divs.toFixed(0)} div`:''}). Fechas: ${bDate} a ${sDate}. Grp: ${p.group || 'N/A'}`);
         });
 
         const totalTrades = winningTrades + losingTrades;
@@ -1759,22 +1763,23 @@ const analyzePortfolio = async () => {
         - Profit Factor: ${profitFactor.toFixed(2)}
         - ROI Total Cartera: ${totalROI.toFixed(2)}%
         - Periodo Actividad: ${yearsActive.toFixed(1)} años (aprox)
-        - Listado de Operaciones:
+        - Listado de Operaciones (Incluye Coste e Importes para ponderar peso en cartera):
         ${operations.join('\n')}
         `;
 
         const prompt = `
         Contexto: Actúa como un Senior Portfolio Manager de un Hedge Fund en Wall Street. Tu misión es realizar una auditoría técnica y psicológica de mi cartera de inversión basándote en mis operaciones abiertas y cerradas.
-        Premisas: da el informe en castellano y sin mensajes de cortesía iniciales (ve al grano). Debes tener en cuenta el contexto actual del mercado a la fecha de emisión (${today}) para las distintas cuestiones a analizar.
+        Premisas: da el informe en castellano y sin mensajes de cortesía iniciales (ve al grano). Debes tener en cuenta el contexto actual del mercado a la fecha de emisión (${today}).
 
         DATOS MATEMÁTICOS PROPORCIONADOS (No los recalcules, úsalos):
         ${contextData}
 
         INSTRUCCIONES DE ANÁLISIS:
-        1. Atribución de Retornos: Identifica qué sectores o activos específicos están "cargando" con el rendimiento de la cartera y cuáles son "lastres" (Análisis de Pareto).
-        2. Análisis de Riesgo: Evalúa la exposición por sectores y detecta si hay una correlación excesiva (ej. exceso de tecnología o crecimiento). Calcula un Drawdown estimado cualitativo.
-        3. Auditoría de Sesgos: Analiza mis operaciones cerradas en pérdida. ¿Mantuve las pérdidas más tiempo que las ganancias? Determina si existe "sesgo de disposición" o falta de disciplina en el Stop-Loss.
-        4. Costo de Oportunidad: Compara mi rendimiento (ROI: ${totalROI.toFixed(2)}%) contra el S&P 500 (SPY) estimado en el mismo periodo de tiempo.
+        1. Atribución de Retornos: Identifica qué sectores o activos específicos están "cargando" con el rendimiento (considera el capital invertido, no solo el %).
+        2. Análisis de Riesgo: Evalúa la exposición y correlación. Calcula un Drawdown estimado cualitativo.
+        3. Auditoría de Sesgos: Analiza operaciones cerradas. ¿Sesgo de disposición? ¿Falta de Stop-Loss?
+        4. Costo de Oportunidad: Compara mi ROI (${totalROI.toFixed(2)}%) contra el S&P 500 (SPY) estimado.
+        5. Análisis Temporal (Horizonte): Clasifica las inversiones en Corto/Medio vs Largo Plazo (asume > 1 año como Largo Plazo). Evalúa si la estrategia de largo plazo ("Buy & Hold") está siendo exitosa frente al trading de corto plazo.
 
         ESTRUCTURA OBLIGATORIA DEL INFORME (Formato HTML puro sin markdown):
         <h3>1. EXECUTIVE SUMMARY</h3>
@@ -1782,24 +1787,35 @@ const analyzePortfolio = async () => {
 
         <h3>2. DASHBOARD DE MÉTRICAS</h3>
         <table border="1" style="width:100%; border-collapse: collapse;">
-         <tr><td><b>ROI Total</b></td><td>${totalROI.toFixed(2)}%</td></tr>
-         <tr><td><b>Win Rate</b></td><td>${winRate.toFixed(1)}%</td></tr>
-         <tr><td><b>Profit Factor</b></td><td>${profitFactor.toFixed(2)}</td></tr>
-         <tr><td><b>Expectativa Matemática</b></td><td>(Calcula tú una frase cualitativa basada en los datos)</td></tr>
+         <tr>
+            <td><b>ROI Total</b><br/><span style="font-size:10px;color:#555">Retorno sobre capital invertido</span></td>
+            <td>${totalROI.toFixed(2)}%</td>
+         </tr>
+         <tr>
+            <td><b>Win Rate</b><br/><span style="font-size:10px;color:#555">% Operaciones ganadoras</span></td>
+            <td>${winRate.toFixed(1)}%</td>
+         </tr>
+         <tr>
+            <td><b>Profit Factor</b><br/><span style="font-size:10px;color:#555">Ganancia Bruta / Pérdida Bruta (>1 es rentable)</span></td>
+            <td>${profitFactor.toFixed(2)}</td>
+         </tr>
+         <tr>
+            <td><b>Expectativa Matemática</b><br/><span style="font-size:10px;color:#555">Promedio ganado/perdido por operación</span></td>
+            <td>(Calcula tú una frase cualitativa basada en los datos)</td>
+         </tr>
         </table>
 
-        <h3>3. SEÑALES DE ALERTA</h3>
+        <h3>3. ANÁLISIS TEMPORAL Y ESTRATEGIA (CP vs LP)</h3>
+        <p>Desglose de la eficiencia de la estrategia según horizonte temporal (Valores >1 año en cartera vs Recientes).</p>
+
+        <h3>4. SEÑALES DE ALERTA Y RIESGOS</h3>
         <ul>
          <li>Riesgo 1: ...</li>
          <li>Riesgo 2: ...</li>
-         <li>Riesgo 3: ...</li>
         </ul>
 
-        <h3>4. PROPUESTAS TÁCTICAS</h3>
-        <p>5 pasos tácticos para optimizar el ratio riesgo/beneficio y mejorar la eficiencia del capital.</p>
-        
-        <h3>5. REVISIÓN DE POSICIONES ACTIVAS</h3>
-        <p>Lista las posiciones activas más relevantes y da un veredicto (VENDER / MANTENER / AMPLIAR) con una frase de motivo.</p>
+        <h3>5. PROPUESTAS TÁCTICAS Y REVISIÓN DE ACTIVOS</h3>
+        <p>5 pasos para optimizar. Luego, lista las posiciones activas más relevantes con veredicto (VENDER / MANTENER / AMPLIAR) y motivo.</p>
         `;
 
         const res = await askGemini(apiKey, prompt);
