@@ -142,19 +142,14 @@
     
       const askGemini = async (apiKey, prompt) => {
           if (!apiKey) throw new Error("Falta API Key");
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview?key=${apiKey}`, {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }] })
           });
           const data = await response.json();
           if (data.error) throw new Error(data.error.message);
           return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      };
-
-      const Modal = ({ isOpen, title, onClose, children, size = "md" }) => {
-          if (!isOpen) return null;
-          return (
-              <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[100] p-4 fade-in backdrop-blur-sm" onClick={onClose}>
+   k/80 flex items-center justify-center z-[100] p-4 fade-in backdrop-blur-sm" onClick={onClose}>
                   <div className={`bg-slate-900 border border-slate-700 w-full ${size === 'lg' ? 'max-w-6xl' : 'max-w-xl'} rounded-2xl flex flex-col max-h-[90vh] shadow-2xl fade-in`} onClick={e => e.stopPropagation()}>
                       <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50 rounded-t-2xl">
                           <h3 className="text-lg font-bold font-display text-white">{title}</h3>
@@ -1709,71 +1704,57 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     const updatePrices = async (isAuto = false) => { const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); if (!isAuto && active.length === 0) return; setUpdating(true); let log = { success: [], fail: [] }, newUpdates = []; try { for (const item of active) { const assetDesc = item.isIndex ? "MARKET INDEX (SPOT VALUE)" : "STOCK/EQUITY"; const prompt = `ROLE: Financial Data API. TASK: Get data for Ticker: "${item.ticker}". TYPE: ${assetDesc}. REQUIREMENTS: 1. "p": Current Price in its NATIVE currency (${item.stockCurrency}). STRICT RULE: DO NOT convert the price to ${baseCurrency}. Return it as it quotes in the market. 2. "fx": Exchange rate to convert from ${item.stockCurrency} to ${baseCurrency}. (Example: 1 ${item.stockCurrency} = X ${baseCurrency}). If same, fx = 1. 3. "pe": TTM P/E Ratio (0 if Index). RETURN JSON ONLY: {"p": number, "fx": number, "pe": number}`; try { const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json && (json.p || json.p === 0)) { const safeFx = (item.stockCurrency === baseCurrency) ? 1 : cleanVal(json.fx); newUpdates.push({ id: item.id, p: cleanVal(json.p), fx: safeFx, pe: cleanVal(json.pe) }); log.success.push(item.ticker); } else { log.fail.push(item.ticker); } } catch (e) { log.fail.push(item.ticker); } } if (newUpdates.length > 0) { setPortfolio(prev => prev.map(p => { const u = newUpdates.find(x => x.id === p.id); if (u) { return { ...p, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe }; } return p; }), false); setLastUpdate(new Date().toISOString()); } if (!isAuto && log.fail.length > 0) { setInfoModal({ isOpen: true, title: 'Sincronización parcial', msg: `No se pudieron actualizar: ${log.fail.join(', ')}.`, type: 'warning' }); } } catch (e) { if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); } finally { setUpdating(false); } };
     
-    // ANALISIS IA MEJORADO Y CORREGIDO
-// ANALISIS IA MEJORADO Y CORREGIDO (VERSIÓN BLINDADA)
-    const analyzePortfolio = async () => {
-      const dataToAnalyze = visiblePortfolio;
-      if (dataToAnalyze.length === 0) return setInfoModal({ isOpen: true, title: 'Info', msg: 'No hay datos visibles para analizar.', type: 'info' });
-      
-      setAnalyzing(true);
-      try {
-        const today = new Date().toLocaleString('es-ES');
+ // ANALISIS IA MEJORADO Y CORREGIDO (VERSIÓN BLINDADA)
+   const analyzePortfolio = async () => {
+        const dataToAnalyze = visiblePortfolio;
+        if (dataToAnalyze.length === 0) return setInfoModal({ isOpen: true, title: 'Info', msg: 'No hay datos visibles para analizar.', type: 'info' });
         
-        // Contexto reducido para evitar sobrecarga de tokens si la cartera es enorme
-        const portfolioContext = dataToAnalyze.map(p => {
-            const isS = !!p.sellDate;
-            const yieldPct = p.buyPrice > 0 ? (((p.currentPrice - p.buyPrice)/p.buyPrice)*100).toFixed(1) : 0;
-            return `- ${p.ticker} (${p.name}): ${isS ? 'VENDIDA' : 'ACTIVA'}. ${p.shares} acc. Rend: ${yieldPct}%.`;
-        }).join('\n');
+        setAnalyzing(true);
+        try {
+            const today = new Date().toLocaleString('es-ES');
+            const portfolioContext = dataToAnalyze.map(p => {
+                const isS = !!p.sellDate;
+                const yieldPct = p.buyPrice > 0 ? (((p.currentPrice - p.buyPrice)/p.buyPrice)*100).toFixed(1) : 0;
+                return `- ${p.ticker} (${p.name}): ${isS ? 'CERRADA' : 'ACTIVA'}. ${p.shares} acc. Rend: ${yieldPct}%.`;
+            }).join('\n');
 
-        // --- CAMBIO: Prompt mucho más estricto y estructurado para evitar errores de generación ---
-        const prompt = `
-        ROL: Senior Portfolio Manager (Wall Street, 20 años exp). IDIOMA: ESPAÑOL.
-        FECHA: ${today}.
-        
-        TAREA: Auditar la siguiente cartera de inversión.
-        DATOS:
-        ${portfolioContext}
-        
-        INSTRUCCIONES OBLIGATORIAS:
-        1. NO INVENTES DATOS DE MERCADO. Si no sabes un dato macro actual, di "Dato macro no disponible en contexto".
-        2. NO REPITAS ESTE PROMPT EN LA RESPUESTA.
-        3. FORMATO DE SALIDA: HTML PURO (Sin bloques markdown \`\`\`html).
-        4. ESTRUCTURA VISUAL: Usa <h3> para títulos, <ul> para listas. No hagas párrafos gigantes.
-        
-        SECCIONES DEL INFORME:
-        <h3>1. DIAGNÓSTICO EJECUTIVO</h3>
-        (Resumen de diversificación y riesgo latente. ¿Es una cartera equilibrada o suicida?)
-        
-        <h3>2. ANÁLISIS DE ACTIVOS (Check de Salud)</h3>
-        (Menciona 2 activos fuertes y 2 débiles basándote en los rendimientos provistos. No inventes precios nuevos, usa los % dados).
-        
-        <h3>3. ESTRATEGIA Y RECOMENDACIÓN</h3>
-        (Sugerencia de rebalanceo: ¿Vender ganadores? ¿Promediar perdedores? Danos una táctica).
-        
-        <h3>4. RIESGOS DE COLA (Black Swan)</h3>
-        (¿Qué evento macro específico destrozaría esta cartera concreta? Ej: Subida de tipos, crash tecnológico, etc).
-        `;
+            const prompt = `
+            SISTEMA: ROL ANALISTA SENIOR.
+            FECHA ACTUAL: ${today}.
+            
+            INSTRUCCIONES DE BÚSQUEDA OBLIGATORIAS:
+            1. FUENTE PRIMARIA: Busca en la sección "Investor Relations" de las webs oficiales de las empresas.
+            2. FUENTES DE RESPALDO: MarketWatch, Google Finance y SEC.gov.
+            3. PROHIBICIÓN: Está TERMINANTEMENTE PROHIBIDO inventar datos o usar valores de ejemplo. Si un dato no se localiza, escribe "N/A (Fecha: sin determinar)".
+            
+            DATOS DE LA CARTERA:
+            ${portfolioContext}
+            
+            FORMATO DE SALIDA: Responde EXCLUSIVAMENTE con código HTML usando <h3> para títulos, <ul> y <li> para listas. No incluyas bloques markdown.
 
-        const res = await askGemini(apiKey, prompt);
-        
-        let cleanHtml = res.trim();
-        cleanHtml = cleanHtml.replace(/```html/g, '').replace(/```/g, '');
-        const startIdx = cleanHtml.indexOf('<');
-        const endIdx = cleanHtml.lastIndexOf('>');
-        if (startIdx !== -1 && endIdx !== -1) {
-            cleanHtml = cleanHtml.substring(startIdx, endIdx + 1);
+            ESTRUCTURA:
+            <h3>1. Diagnóstico Ejecutivo</h3>
+            <p>[Diagnóstico basado en datos reales de mercado de hoy]</p>
+            <h3>2. Análisis de Activos (Check de Salud)</h3>
+            <ul>
+                <li><strong>Fortaleza:</strong> [Cita dato real del último trimestre]</li>
+                <li><strong>Riesgo:</strong> [Cita noticia real de Investor Relations]</li>
+            </ul>
+            <h3>3. Estrategia y Riesgos</h3>
+            <p>[Sugerencia táctica basada en el contexto actual]</p>
+            `;
+
+            // Usamos la función askGemini que ya tienes definida para evitar errores de rediseño
+            const res = await askGemini(apiKey, prompt);
+            
+            let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
+            setAnalysisResult(cleanHtml);
+            setIsAnalysisModalOpen(true);
+        } catch (e) {
+            setInfoModal({ isOpen: true, title: 'Error de Análisis', msg: `Fallo al generar informe: ${e.message}.`, type: 'error' });
+        } finally {
+            setAnalyzing(false);
         }
-
-        if (!cleanHtml || cleanHtml.length < 50) throw new Error("La IA devolvió una respuesta vacía o inválida. Inténtalo de nuevo.");
-
-        setAnalysisResult(cleanHtml);
-        setIsAnalysisModalOpen(true);
-      } catch (e) {
-        setInfoModal({ isOpen: true, title: 'Error de Análisis', msg: `Fallo al generar informe: ${e.message}. \n\nConsejo: Verifica tu API Key o reduce el número de activos visibles filtrando la lista.`, type: 'error' });
-      } finally {
-        setAnalyzing(false);
-      }
     };
 
     const handleSave = () => { if (!editingId && portfolio.length >= _x_lim) { _x_trig(true); return; } const e = { ...form, name: form.name || form.ticker }; if (editingId) setPortfolio(prev => prev.map(p => p.id === editingId ? { ...p, ...e } : p)); else setPortfolio(prev => [...prev, { ...e, id: Date.now(), currentPrice: form.buyPrice, currentFx: form.buyFx, isActive: true, dividends: [] }]); setIsModalOpen(false); }; 
@@ -2358,7 +2339,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         } catch (e) { setStatusModal({ isOpen: true, title: 'Error iA', msg: e.message, type: 'error' }); } finally { setLoading(false); } 
     };
 
-     
+
 const handleFixedAnalysis = async (promptId) => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' }); 
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' }); 
@@ -2381,7 +2362,7 @@ const handleFixedAnalysis = async (promptId) => {
             const templateCode = HTML_TEMPLATES[promptId];
             
             // 2. Informe con Protocolo de Integridad
-            const prompt = `
+           const prompt = `
             SISTEMA: ROL ANALISTA SENIOR. MODELO: GEMINI 3 FLASH PREVIEW.
             TAREA: Auditar la cartera basándote en DATOS REALES DE HOY (${today}).
             
@@ -2432,6 +2413,7 @@ const handleFixedAnalysis = async (promptId) => {
             setLoading(false); 
         }
     };
+
 
 
     // --- RASTREO (SCREENER) RESTAURADO AL ORIGINAL ---
