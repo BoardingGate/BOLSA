@@ -2480,62 +2480,67 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         try {
             const today = new Date().toLocaleString('es-ES');
             
-            // 1. Obtener precio (Llamada rápida)
-            const priceFetchPrompt = `BUSCA EN INTERNET: Precio real actual de ${ticker}. Responde solo: "Precio: [X] [Divisa] | Fecha: [Fecha]"`;
+            // 1. Obtener precio (Llamada rápida de contexto)
+            const priceFetchPrompt = `BUSCA EN INTERNET: Precio real actual de "${ticker}". Responde solo: "Precio: [X] [Divisa] | Fecha: [Fecha]"`;
             let priceInfo = "Buscando precio actualizado...";
             try { 
                 const pRes = await askGemini(apiKey, priceFetchPrompt);
                 priceInfo = pRes || "Precio no disponible";
             } catch(e) { priceInfo = "Error al conectar con el servidor de precios"; }
 
-            // Usamos la función corregida getTemplate
+            // Obtenemos el template inyectando el ticker actual
             const templateCode = getTemplate(promptId, ticker); 
             
-            // 2. Informe con Protocolo de Integridad Y MODO DIDÁCTICO
+            // 2. Informe con Protocolo de Integridad y Ticker forzado
             const prompt = `
-            SISTEMA: ROL ANALISTA SENIOR Y PROFESOR DE FINANZAS. MODELO: gemini 3 pro preview.
-            TAREA: Auditar la cartera basándote en DATOS REALES DE HOY (${today}).
+            SISTEMA: ROL ANALISTA SENIOR Y PROFESOR DE FINANZAS.MODELO: gemini 3 pro preview.
+            OBJETIVO: Auditar y analizar la empresa con ticker: "${ticker}".
+            FECHA ACTUAL: ${today}.
+            
+            --- INSTRUCCIÓN DE IDENTIDAD (CRÍTICO) ---
+            Debes realizar la búsqueda y el análisis EXCLUSIVAMENTE para la empresa: "${ticker}". 
+            No respondas con mensajes genéricos. Si el ticker es "${ticker}", busca sus datos financieros reales.
             
             --- FUENTES DE BÚSQUEDA ---
-            Investor Relations (Webs oficiales), MarketWatch, Google Finance, SEC.gov, Yahoo Finance y SeekingAlpha.
+            Investor Relations, MarketWatch, Google Finance, SEC.gov, Yahoo Finance y SeekingAlpha.
             
-            --- PROTOCOLO DE INTEGRIDAD ---
-            1. PROHIBIDO INVENTAR: No uses valores de ejemplo.
-            2. SI UN DATO NO SE LOCALIZA: Escribe "N/A (Fecha: sin determinar)".
-            3. TRADUCCIÓN: Todo el informe debe estar en ESPAÑOL.
+            --- PROTOCOLO DE INTEGRIDAD Y DIDÁCTICA ---
+            1. PROHIBIDO INVENTAR: No uses valores de ejemplo. Usa datos reales de "${ticker}".
+            2. SI UN DATO NO SE LOCALIZA: Escribe "N/A (No localizado)".
+            3. IDIOMA: Todo el informe debe estar en ESPAÑOL.
             4. MODO DIDÁCTICO (OBLIGATORIO): El usuario es principiante.
                - En los huecos del template donde pida "Explicación" o "Definición", DEBES rellenarlos.
                - Si aparece un término técnico (PER, WACC, Beta, Moat, etc.) explica brevemente en 1 frase qué es y cuál es el rango "normal" o "bueno".
                - Usa un lenguaje claro pero profesional.
-            
-            DATOS CARTERA (Template a rellenar):
+          
+            DATOS A RELLENAR (Sigue esta estructura HTML):
             ${templateCode}
             
-            FORMATO: Responde solo con código HTML (h3, ul, li, p, table, tr, td). Mantén los estilos CSS proporcionados en el template.
+            FORMATO: Responde solo con código HTML (h3, ul, li, p, table, tr, td). No uses bloques de código markdown.
         `;
 
             const res = await askGemini(apiKey, prompt);
             
             const cleanBody = res.trim().replace(/```html/g, '').replace(/```/g, ''); 
-            if (!cleanBody || cleanBody.length < 50) throw new Error("La IA no devolvió un informe válido.");
+            if (!cleanBody || cleanBody.length < 50) throw new Error("La IA devolvió una respuesta demasiado corta o inválida.");
 
             const reportTitle = REPORT_TITLES[promptId] || "INFORME FINANCIERO";
             
-            // Construcción del HTML final con cabecera blindada
+            // Construcción del HTML final con colores oscuros para impresión
             const finalHtml = `
                 <div style="border-bottom: 2px solid #3b82f6; padding-bottom: 10px; margin-bottom: 20px;">
-                    <h2 style="color: #60a5fa; margin: 0; font-size: 1.5rem; text-transform: uppercase; font-family: 'Orbitron', sans-serif;">${reportTitle}</h2>
+                    <h2 style="color: #1e40af; margin: 0; font-size: 1.5rem; text-transform: uppercase; font-family: sans-serif;">${reportTitle}</h2>
                     <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 8px;">
                         <div>
-                            <span style="font-size: 1.2rem; font-weight: bold; color: white;">${ticker}</span>
+                            <span style="font-size: 1.2rem; font-weight: bold; color: #000;">${ticker}</span>
                         </div>
-                        <div style="text-align: right; font-size: 0.75rem; color: #94a3b8; font-family: monospace;">
+                        <div style="text-align: right; font-size: 0.75rem; color: #444; font-family: monospace;">
                             <div>${priceInfo}</div>
                             <div>GENERADO EL: ${today}</div>
                         </div>
                     </div>
                 </div>
-                <div class="report-body">
+                <div class="report-body" style="color: #000 !important;">
                     ${cleanBody}
                 </div>
             `;
@@ -2547,7 +2552,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
             setLoading(false); 
         }
     };
-
    
 
     const runScreener = async () => {
