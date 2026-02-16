@@ -2358,7 +2358,8 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         } catch (e) { setStatusModal({ isOpen: true, title: 'Error iA', msg: e.message, type: 'error' }); } finally { setLoading(false); } 
     };
 
-     const handleFixedAnalysis = async (promptId) => {
+     
+const handleFixedAnalysis = async (promptId) => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' }); 
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' }); 
         
@@ -2369,61 +2370,53 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         try {
             const today = new Date().toLocaleString('es-ES');
             
-            const priceFetchPrompt = `BUSCA EN INTERNET: Precio actual de ${ticker} en ESPAÑOL. Formato: "Precio: [X] [Divisa] | Fecha: [Fecha]". Sé muy breve.`;
-            let priceInfo = "Buscando precio...";
-            try { priceInfo = await askGemini(apiKey, priceFetchPrompt); } catch(e) {}
+            // 1. Obtener precio (Llamada rápida)
+            const priceFetchPrompt = `BUSCA EN INTERNET: Precio real actual de ${ticker}. Responde solo: "Precio: [X] [Divisa] | Fecha: [Fecha]"`;
+            let priceInfo = "Buscando precio actualizado...";
+            try { 
+                const pRes = await askGemini(apiKey, priceFetchPrompt);
+                priceInfo = pRes || "Precio no disponible";
+            } catch(e) { priceInfo = "Error al conectar con el servidor de precios"; }
 
-            const basePromptText = PREDEFINED_PROMPTS[promptId];
+            const templateCode = HTML_TEMPLATES[promptId];
             
-            // --- CONSTRUCCIÓN DEL PROMPT DE SISTEMA EN CASTELLANO (PARA FORZAR IDIOMA) ---
-            const buildPrompt = (isRetry = false) => `
-                COMANDO DE SISTEMA: ACTÚA COMO UN ANALISTA FINANCIERO SENIOR DE WALL STREET.
-                IDIOMA DE SALIDA OBLIGATORIO: ESPAÑOL (CASTELLANO). SI RESPONDES EN INGLÉS, FALLARÁS LA TAREA.
-                FORMATO: SOLO CÓDIGO HTML (<h3>, <ul>, <table>, <p>).
-                
-                RESTRICCIONES CRÍTICAS:
-                1. NO ESCRIBAS NADA ANTES DEL PRIMER TÍTULO <h3>. NI "CLARO", NI "AQUÍ TIENES", NI "HOLA".
-                2. EMPIEZA DIRECTAMENTE CON EL CONTENIDO DEL INFORME.
-                3. TRADUCE CUALQUIER TÉRMINO O DATO ENCONTRADO EN INGLÉS AL ESPAÑOL.
-                4. CITA FUENTES Y FECHAS SIEMPRE.
-                5. TÓMATE TU TIEMPO Y USA UNA BÚSQUEDA PROFESIONAL EN INTERNET PARA UNA ELABORACIÓN LO MÁS COMPLETA POSIBLE CONFORME A TU ROL DE ANALISTA EXPERTO.
-                ${isRetry ? '5. ¡ATENCIÓN! TU RESPUESTA ANTERIOR FUE DEMASIADO CORTA O EN INGLÉS. EXTIÉNDETE MÁS Y USA ESPAÑOL.' : ''}
-                
-                DATOS DE CONTEXTO:
-                Precio ref: ${priceInfo}
-                Fecha: ${today}
-                
-                TAREA A REALIZAR:
-                ${basePromptText.replace(/\[TICKER\]/g, ticker)}
-            `;
-
-            // --- INTENTO 1 ---
-            let res = await askGemini(apiKey, buildPrompt(false));
-            let cleanBody = cleanAIResponse(res); 
-
-            // --- LÓGICA DE REINTENTO AUTOMÁTICO (SI LA RESPUESTA ES MENOR A 400 CARACTERES) ---
-            if (!cleanBody || cleanBody.length < 400) {
-                console.log("Respuesta demasiado corta o inválida. Reintentando...");
-                // Hacemos una segunda llamada forzando la extensión
-                res = await askGemini(apiKey, buildPrompt(true));
-                cleanBody = cleanAIResponse(res);
-            }
-
-            if (!cleanBody || cleanBody.length < 100) throw new Error("La IA no ha podido generar un informe válido tras dos intentos.");
+            // 2. Informe con Protocolo de Integridad
+            const prompt = `
+            SISTEMA: ROL ANALISTA SENIOR. MODELO: GEMINI 3 FLASH PREVIEW.
+            TAREA: Auditar la cartera basándote en DATOS REALES DE HOY (${today}).
             
+            --- FUENTES DE BÚSQUEDA ---
+            Investor Relations (Webs oficiales), MarketWatch, Google Finance, SEC.gov, Yahoo Finance y SeekingAlpha.
+            
+            --- PROTOCOLO DE INTEGRIDAD ---
+            1. PROHIBIDO INVENTAR: No uses valores de ejemplo.
+            2. SI UN DATO NO SE LOCALIZA: Escribe "N/A (Fecha: sin determinar)".
+            3. TRADUCCIÓN: Todo el informe debe estar en ESPAÑOL.
+            
+            DATOS CARTERA:
+            ${portfolioContext}
+            
+            FORMATO: Responde solo con código HTML (h3, ul, li, p).
+        `;
+
+            const res = await askGemini(apiKey, prompt);
+            
+            const cleanBody = res.trim().replace(/```html/g, '').replace(/```/g, ''); 
+            if (!cleanBody || cleanBody.length < 50) throw new Error("La IA no devolvió un informe válido.");
+
             const reportTitle = REPORT_TITLES[promptId] || "INFORME FINANCIERO";
             
-            // Construcción manual de la cabecera para asegurar que siempre está
+            // Construcción del HTML final con cabecera blindada
             const finalHtml = `
                 <div style="border-bottom: 2px solid #3b82f6; padding-bottom: 10px; margin-bottom: 20px;">
                     <h2 style="color: #60a5fa; margin: 0; font-size: 1.5rem; text-transform: uppercase; font-family: 'Orbitron', sans-serif;">${reportTitle}</h2>
                     <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 8px;">
                         <div>
-                            <span style="font-size: 1.2rem; font-weight: bold; color: #white;">${ticker}</span>
+                            <span style="font-size: 1.2rem; font-weight: bold; color: white;">${ticker}</span>
                         </div>
                         <div style="text-align: right; font-size: 0.75rem; color: #94a3b8; font-family: monospace;">
                             <div>${priceInfo}</div>
-                            <div>EMISIÓN: ${today}</div>
+                            <div>GENERADO EL: ${today}</div>
                         </div>
                     </div>
                 </div>
@@ -2439,7 +2432,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
             setLoading(false); 
         }
     };
-
 
 
     // --- RASTREO (SCREENER) RESTAURADO AL ORIGINAL ---
