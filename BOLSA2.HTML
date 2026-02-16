@@ -1585,6 +1585,74 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     const visiblePortfolio = useMemo(() => filteredPortfolio.filter(p => p.isActive !== false), [filteredPortfolio]);
 
+    const [analyzingNews, setAnalyzingNews] = useState(false);
+    const [newsResult, setNewsResult] = useState(null);
+    const [isNewsModalOpen, setIsNewsModalOpen] = useState(false);
+
+    // FUNCIÓN PARA OBTENER NOTICIAS
+    const fetchNews = async () => {
+        const activeTickers = activeFilteredPortfolio
+            .filter(p => !p.sellDate && p.isActive !== false)
+            .map(p => `${p.ticker} (${p.name})`);
+
+        if (activeTickers.length === 0) {
+            return setInfoModal({ isOpen: true, title: 'Aviso', msg: 'No hay acciones activas para buscar noticias.', type: 'info' });
+        }
+
+        setAnalyzingNews(true);
+        try {
+            const today = new Date().toLocaleDateString('es-ES');
+            const prompt = `
+                ROL: Analista de Inteligencia de Mercados.
+                TAREA: Buscar y resumir las noticias financieras más relevantes de los ÚLTIMOS 7 DÍAS.
+                EMPRESAS A INVESTIGAR: ${activeTickers.join(', ')}.
+                
+                REQUISITOS DEL INFORME:
+                1. Idioma: Castellano.
+                2. Estructura: Agrupar por TICKER.
+                3. Por cada noticia: Fecha exacta, Titular, Resumen de extensión mediana y Fuente con enlace URL accesible.
+                4. Si no hay noticias relevantes de una empresa en los últimos 7 días, indícalo como "Sin novedades destacadas esta semana".
+                
+                FORMATO DE SALIDA: HTML puro (sin markdown). 
+                Usa <h3> para los tickers, <div style="margin-bottom:15px;"> para cada noticia, y <a href="..." target="_blank"> para los enlaces. 
+                Estilo visual: Limpio y profesional.
+            `;
+
+            const res = await askGemini(apiKey, prompt);
+            const cleanHtml = res.replace(/```html/g, '').replace(/```/g, '').trim();
+            setNewsResult(cleanHtml);
+            setIsNewsModalOpen(true);
+        } catch (e) {
+            setInfoModal({ isOpen: true, title: 'Error', msg: 'No se pudieron obtener las noticias: ' + e.message, type: 'error' });
+        } finally {
+            setAnalyzingNews(false);
+        }
+    };
+
+    // FUNCIÓN PARA IMPRIMIR NOTICIAS
+    const handlePrintNews = () => {
+        const printWindow = window.open('', '', 'height=800,width=800');
+        const time = new Date().toLocaleString();
+        let html = `<html><head><title>Noticias Semanales</title><style>
+            body { font-family: sans-serif; padding: 30px; color: #000; }
+            h1 { border-bottom: 3px solid #1e3a8a; color: #1e3a8a; text-transform: uppercase; }
+            h3 { color: #1e3a8a; border-bottom: 1px solid #ccc; margin-top: 25px; padding-bottom: 5px; }
+            .news-item { margin-bottom: 15px; border-left: 3px solid #eee; padding-left: 10px; }
+            .date { font-size: 0.8rem; color: #666; font-weight: bold; }
+            .source { font-size: 0.8rem; color: #2563eb; }
+            a { text-decoration: none; color: #2563eb; }
+        </style></head><body>
+            <h1>Radar de Noticias: Últimos 7 Días</h1>
+            <p>Emisión: ${time}</p>
+            <div>${newsResult}</div>
+        </body></html>`;
+        printWindow.document.write(html);
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(() => printWindow.print(), 500);
+    };
+
+
     const gridTotals = useMemo(() => {
         let tFx = 0, tCost = 0, tVal = 0, tRes = 0;
         let sumBuyPE = 0, countBuyPE = 0;
@@ -1962,6 +2030,10 @@ const handlePrint = () => {
                       {syncStatus === 'unsaved' ? 'GUARDAR' : syncStatus === 'uploading' ? 'SUBIENDO...' : syncStatus === 'downloading' ? 'BAJANDO...' : 'SYNC OK'}
                   </button>
                   <button onClick={analyzePortfolio} className="bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 transition-colors flex items-center gap-2"><Icons.Wand/> INFORME iA</button>
+                  <button onClick={fetchNews} disabled={analyzingNews} className="bg-blue-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-blue-500/50 hover:bg-blue-600 transition-colors flex items-center gap-2">
+                        {analyzingNews ? <Icons.Loader/> : <Icons.Globe size={14}/>} NOTICIAS
+                  </button>
+
                   <button onClick={handlePrint} className="bg-slate-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button></div><button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', group: '', notes: '', customOrder:'', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, feesIncludedInPrice: false, buyPE:0, annualDividend:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, sellFeesIncludedInPrice: false, currentPE:0, dividends: [] }); setIsModalOpen(true); }} className="bg-blue-600 px-4 h-9 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg hover:bg-blue-500"><Icons.Plus size={14}/> NUEVA POSICIÓN</button></div>
                 
                 <div className="flex flex-wrap gap-2 items-center bg-slate-950/50 p-2 rounded-lg border border-slate-800/50">
@@ -2105,6 +2177,33 @@ const handlePrint = () => {
             <Modal isOpen={isNotesModalOpen} title="Block de Notas de la Cartera" onClose={() => setIsNotesModalOpen(false)} size="md">
                 <div className="flex flex-col gap-4"><p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Notas Generales, Estrategia o Recordatorios:</p><textarea value={globalNotes} onChange={(e) => setGlobalNotes(e.target.value)} placeholder="Escribe aquí tus notas..." className="w-full h-80 bg-slate-950 border border-slate-700 rounded-xl p-4 text-sm text-slate-200 font-sans leading-relaxed focus:border-yellow-500/50 focus:outline-none custom-scrollbar shadow-inner"/><div className="flex justify-between items-center bg-slate-800/30 p-3 rounded-lg border border-slate-700"><span className="text-[9px] text-slate-500 italic">* Estas notas se sincronizan automáticamente con tu copia en la nube.</span><button onClick={() => { onManualSync(); setIsNotesModalOpen(false); }} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-bold text-[10px] uppercase transition-colors">Guardar y Sincronizar</button></div></div>
             </Modal>
+
+             {/* --- MODAL DE NOTICIAS --- */}
+            <Modal isOpen={isNewsModalOpen} title="Radar de Noticias (Últimos 7 días)" onClose={() => setIsNewsModalOpen(false)} size="lg">
+                <div className="space-y-4 p-2 max-h-[70vh] overflow-y-auto custom-scrollbar">
+                    <div 
+                        className="prose-content text-sm leading-relaxed font-sans text-slate-200 
+                                   [&_h3]:text-blue-400 [&_h3]:mt-6 [&_h3]:border-slate-700 
+                                   [&_a]:text-blue-400 [&_a]:underline"
+                        dangerouslySetInnerHTML={{__html: newsResult}}
+                    ></div>
+                </div>
+                <div className="flex justify-end pt-4 border-t border-slate-700 mt-4">
+                    <button onClick={handlePrintNews} className="bg-slate-700 px-4 py-2 rounded-lg text-xs font-bold text-white flex items-center gap-2 hover:bg-slate-600">
+                        <Icons.ExternalLink size={14}/> IMPRIMIR NOTICIAS
+                    </button>
+                </div>
+            </Modal>
+            
+            {/* --- OVERLAY DE CARGA PARA NOTICIAS --- */}
+            {analyzingNews && (
+                <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center fade-in">
+                    <Icons.Globe size={60} className="text-blue-500 mb-4 animate-spin" />
+                    <div className="text-xl font-bold text-white animate-pulse">Rastreando noticias globales...</div>
+                    <div className="text-xs text-slate-400 mt-2">Buscando eventos de los últimos 7 días en la red</div>
+                </div>
+            )}
+   
         </div>
     );
 };
