@@ -1576,6 +1576,18 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           if (sortConfig.key === 'customOrder') { const aOrd = a.customOrder || ''; const bOrd = b.customOrder || ''; return aOrd.localeCompare(bOrd, undefined, { numeric: true, sensitivity: 'base' }) * (sortConfig.direction === 'asc' ? 1 : -1); }
           if (sortConfig.key === 'yield') { const getPL = (p) => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); return vF - cost; }; return (getPL(a) - getPL(b)) * dir; } 
           if (sortConfig.key === 'percent') { const getPct = (p) => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); const ds = (p.dividends || []).reduce((acc,d)=>acc+d.net,0); const days = calculateDays(p.buyDate, p.sellDate || new Date()); return calcReturns(cost, vF + ds, days).simple; }; return (getPct(a) - getPct(b)) * dir; } 
+          
+          if (sortConfig.key === 'intraday') { 
+              const getIntra = (p) => {
+                  if (p.sellDate || !p.previousClose) return 0;
+                  const curP = p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice;
+                  const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
+                  const curF = p.isIndex ? p.buyFx : p.currentFx;
+                  return (curP - prevP) * p.shares * curF;
+              };
+              return (getIntra(a) - getIntra(b)) * dir; 
+          }
+
           if (sortConfig.key === 'value') { return a.ticker.localeCompare(b.ticker) * dir; } 
           if (filterType === 'all') { const aSold = !!a.sellDate; const bSold = !!b.sellDate; if (aSold !== bSold) return (aSold ? 1 : -1) * dir; if (!aSold) return (new Date(b.buyDate) - new Date(a.buyDate)) * dir; else return (new Date(b.sellDate) - new Date(a.sellDate)) * dir; } 
           if (filterType === 'active') return (new Date(b.buyDate) - new Date(a.buyDate)) * dir; 
@@ -1595,9 +1607,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         setIsNewsSelectionModalOpen(false); 
         
         const now = new Date();
-        // Formato: "17 de febrero de 2026"
         const todayStr = now.toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
-        // Formato para límites: "15/02/2026"
         const limit48h = new Date(now.getTime() - (48 * 60 * 60 * 1000)).toLocaleDateString('es-ES');
         const limit7d = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000)).toLocaleDateString('es-ES');
 
@@ -2161,21 +2171,26 @@ const handlePrint = () => {
                 </div>
             </div>
 
-
-            {visibleSections.table && (
+           {visibleSections.table && (
                 <div className="w-full overflow-x-auto bg-slate-900/50 border border-slate-800 rounded-xl fade-in">
                     <table className="w-full text-left min-w-[1700px] text-sm"><thead className="bg-slate-800 text-slate-400 text-[10px] uppercase font-bold sticky top-0 z-20">
                     <tr>
                     <th className="p-3 w-10 text-center sticky left-0 z-30 bg-slate-900 border-r border-slate-800"><button onClick={toggleAllActive} title="Marcar/Desmarcar Todo"><Icons.CursorClick size={16} className="text-blue-400"/></button></th>
-                    <th className={`p-3 cursor-pointer select-none hover:text-white transition-colors group bg-slate-900 border-r border-slate-800 min-w-[180px] sticky left-10 z-30 ${sortConfig.key==='value'?'bg-slate-800 text-white':''}`} onClick={()=>requestSort('value')}><div className="flex items-center gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='value'?'opacity-100':''}`}/> Valor {sortConfig.key==='value' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
+                    
+                    {/* MODIFICADO: Ancho aumentado a min-w-[210px] */}
+                    <th className={`p-3 cursor-pointer select-none hover:text-white transition-colors group bg-slate-900 border-r border-slate-800 min-w-[210px] sticky left-10 z-30 ${sortConfig.key==='value'?'bg-slate-800 text-white':''}`} onClick={()=>requestSort('value')}><div className="flex items-center gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='value'?'opacity-100':''}`}/> Valor {sortConfig.key==='value' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
+                    
                     <th className={`p-3 w-14 text-center cursor-pointer select-none hover:text-white border-r border-slate-800 ${sortConfig.key==='customOrder'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('customOrder')}>Ord {sortConfig.key==='customOrder' && (sortConfig.direction==='asc'?'▲':'▼')}</th>
                     <th className={`p-3 text-center cursor-pointer select-none hover:text-white hover:bg-slate-700 transition-colors group ${sortConfig.key==='date'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('date')}><div className="flex items-center justify-center gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='date'?'opacity-100':''}`}/> Fechas / Días {sortConfig.key==='date' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
                     <th className="p-3 text-right">Títulos</th>
                     <th className="p-3 text-right">Precios (Inv/Act)</th>
                     
-                    {/* MODIFICADO: NUEVA COLUMNA INTRADÍA CON TOTALIZADOR EN CABECERA */}
-                    <th className="p-3 text-right bg-slate-900/50 border-l border-r border-slate-700">
-                        <div>INTRADÍA</div>
+                    {/* MODIFICADO: Header Intradía ordenable */}
+                    <th className={`p-3 text-right cursor-pointer select-none hover:text-white bg-slate-900/50 border-l border-r border-slate-700 transition-colors group ${sortConfig.key==='intraday'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('intraday')}>
+                        <div className="flex items-center justify-end gap-1">
+                            <Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='intraday'?'opacity-100':''}`}/>
+                            <div>INTRADÍA {sortConfig.key==='intraday' && (sortConfig.direction==='asc'?'▲':'▼')}</div>
+                        </div>
                         <div className={`text-[9px] font-mono mt-1 ${gridTotals.tIntra >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                             {formatMoney(gridTotals.tIntra, baseCurrency)}
                         </div>
@@ -2189,7 +2204,13 @@ const handlePrint = () => {
                     <th className={`p-3 text-right cursor-pointer select-none hover:text-white bg-[#161b25] border-r border-slate-700 transition-colors group ${sortConfig.key==='yield'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('yield')}><div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='yield'?'opacity-100':''}`}/> RENDIMIENTO {sortConfig.key==='yield' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
                     <th className={`p-3 text-right cursor-pointer select-none hover:text-white hover:bg-slate-700 transition-colors group ${sortConfig.key==='percent'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('percent')}><div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='percent'?'opacity-100':''}`}/> % Ben/Pérd {sortConfig.key==='percent' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
                     <th className="p-3 text-center">PER (I/A)</th>
-                    <th className="p-3 text-center">Acciones</th>
+                    
+                    {/* MODIFICADO: Descripción acciones */}
+                    <th className="p-3 text-center">
+                        <div>Acciones</div>
+                        <div className="text-[7px] text-slate-500 font-normal mt-0.5 normal-case tracking-tight">(iA, Venta, Edita, Clona, Borra)</div>
+                    </th>
+
                     </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800">
@@ -2204,7 +2225,7 @@ const handlePrint = () => {
                     const days = calculateDays(p.buyDate, p.sellDate || new Date()); 
                     const rs = calcReturns(cost, vF + ds, days); 
 
-                    // MODIFICADO: Lógica para valor Intradía individual
+                    // CÁLCULO INTRADÍA INDIVIDUAL
                     let intraVal = 0;
                     let hasIntra = false;
                     if (!isS && p.previousClose) {
@@ -2216,10 +2237,12 @@ const handlePrint = () => {
                     return ( 
                         <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''}`} onClick={() => p.notes && setNoteToast(p.notes)}>
                             <td className="p-3 text-center sticky left-0 z-20 bg-slate-900 border-r border-slate-800" onClick={(e) => { e.stopPropagation(); setPortfolio(prev => prev.map(x => x.id === p.id ? {...x, isActive: !x.isActive} : x)); }}><input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" /></td>
-                            <td className="p-3 sticky left-10 z-20 bg-slate-900 border-r border-slate-800 min-w-[180px]">
-                                <div className="w-[160px] whitespace-normal break-words leading-tight flex flex-col">
-                                    {/* MODIFICADO: Flecha Intradía junto al nombre */}
+                            
+                            {/* MODIFICADO: Ancho sticky aumentado (coincide con cabecera) */}
+                            <td className="p-3 sticky left-10 z-20 bg-slate-900 border-r border-slate-800 min-w-[210px]">
+                                <div className="w-[190px] whitespace-normal break-words leading-tight flex flex-col">
                                     <div className="flex items-start gap-1">
+                                        {/* FLECHA INDICADORA */}
                                         {hasIntra && intraVal !== 0 && (
                                             <span className={`text-[10px] mt-0.5 ${intraVal > 0 ? 'text-green-500' : 'text-red-500'}`}>
                                                 {intraVal > 0 ? '▲' : '▼'}
@@ -2239,7 +2262,7 @@ const handlePrint = () => {
                             <td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td>
                             <td className="p-3 text-right text-xs font-mono">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td>
                             
-                            {/* MODIFICADO: Celda Intradía en Body */}
+                            {/* CELDA INTRADÍA */}
                             <td className="p-3 text-right font-mono text-xs border-l border-r border-slate-800 bg-slate-900/20">
                                 {hasIntra ? (
                                     <span className={intraVal >= 0 ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>
@@ -2271,7 +2294,7 @@ const handlePrint = () => {
                         <td className="p-2 sticky left-10 z-40 bg-slate-900 border-r border-slate-800 text-right uppercase tracking-wider text-slate-400">TOTALES:</td>
                         <td colSpan="4"></td>
                         
-                        {/* MODIFICADO: TOTAL INTRADÍA AL PIÉ */}
+                        {/* TOTAL INTRADÍA AL PIÉ */}
                         <td className="p-2 text-right bg-slate-900/50 border-l border-r border-slate-700">
                              <span className={gridTotals.tIntra >= 0 ? 'text-green-400' : 'text-red-400'}>
                                  {formatMoney(gridTotals.tIntra, baseCurrency)}
@@ -2294,9 +2317,8 @@ const handlePrint = () => {
                     </tbody>
                     </table>
                 </div>
-            )}
-
-
+            )} 
+           
 
             {visibleSections.diverging && (<div className="fade-in"><DivergingBarChart data={divergingData} baseCurrency={baseCurrency} /></div>)}
             {visibleSections.stats && (<div className="fade-in"><StatsDashboard portfolio={portfolio} baseCurrency={baseCurrency} taxTotal={taxSum} /></div>)}
