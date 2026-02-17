@@ -142,7 +142,7 @@
     
       const askGemini = async (apiKey, prompt) => {
           if (!apiKey) throw new Error("Falta API Key");
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${apiKey}`, {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }] })
           });
@@ -1585,6 +1585,118 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     const visiblePortfolio = useMemo(() => filteredPortfolio.filter(p => p.isActive !== false), [filteredPortfolio]);
 
+    const [analyzingNews, setAnalyzingNews] = useState(false);
+    const [newsResult, setNewsResult] = useState(null);
+    const [isNewsModalOpen, setIsNewsModalOpen] = useState(false);
+    const [isNewsSelectionModalOpen, setIsNewsSelectionModalOpen] = useState(false);
+
+    // FUNCIÓN PARA OBTENER NOTICIAS
+    const fetchNews = async (type) => {
+        setIsNewsSelectionModalOpen(false); 
+        
+        const now = new Date();
+        // Formato: "17 de febrero de 2026"
+        const todayStr = now.toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
+        // Formato para límites: "15/02/2026"
+        const limit48h = new Date(now.getTime() - (48 * 60 * 60 * 1000)).toLocaleDateString('es-ES');
+        const limit7d = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000)).toLocaleDateString('es-ES');
+
+        let prompt = "";
+
+        if (type === 'portfolio') {
+            const activeTickers = activeFilteredPortfolio
+                .filter(p => !p.sellDate && p.isActive !== false)
+                .map(p => `${p.ticker} (${p.name})`);
+
+            if (activeTickers.length === 0) {
+                return setInfoModal({ isOpen: true, title: 'Aviso', msg: 'No hay acciones activas para buscar noticias.', type: 'info' });
+            }
+
+            prompt = `
+                SISTEMA: ROL ANALISTA DE INTELIGENCIA FINANCIERA.
+                FECHA ACTUAL DE REFERENCIA: ${todayStr}.
+                INSTRUCCIÓN DE BÚSQUEDA: Busca activamente en Internet noticias publicadas ÚNICAMENTE entre el ${limit7d} y HOY (${todayStr}).
+                
+                TAREA: Resumir noticias relevantes para estos valores: ${activeTickers.join(', ')}.
+                
+                REQUISITOS ESTRICTOS:
+                1. Idioma: Castellano.
+                2. AGNOSIA TEMPORAL: Ignora cualquier noticia anterior al ${limit7d}. Si no hay nada nuevo, indica "Sin noticias recientes".
+                3. ESTRUCTURA: Agrupar por TICKER (usar <h3> para el ticker).
+                4. CADA NOTICIA: Fecha exacta, Titular, Resumen de 3 frases y enlace URL directo a la fuente.
+              
+                
+                FORMATO: Responde solo con etiquetas HTML (h3, div, p, a).
+            `;
+        } else {
+            prompt = `
+                SISTEMA: ROL ANALISTA MACROECONÓMICO SENIOR.
+                FECHA ACTUAL DE REFERENCIA: ${todayStr}.
+                INSTRUCCIÓN DE BÚSQUEDA: Busca en Internet noticias de Bolsa y Economía Global publicadas en las ÚLTIMAS 48 HORAS (desde el ${limit48h} hasta hoy ${todayStr}).
+                
+                REQUISITOS ESTRICTOS:
+                1. Idioma: Castellano.
+                2. FILTRO DE ACTUALIDAD: No menciones nada que tenga más de 48 horas de antigüedad.
+                3. ESTRUCTURA: Agrupar por CATEGORÍAS (Macro, Tecnología, Banca, etc. Usar <h3>).
+                4. CADA NOTICIA: Hora/Fecha, Titular, Resumen del impacto esperado en los mercados y enlace URL a la fuente.
+                
+                FORMATO: Responde solo con etiquetas HTML (h3, div, p, a).
+            `;
+        }
+
+        setAnalyzingNews(true);
+        try {
+            const res = await askGemini(apiKey, prompt);
+            // Limpieza y validación de respuesta
+            let cleanHtml = res.trim();
+            cleanHtml = cleanHtml.replace(/```html/g, '').replace(/```/g, '');
+            const startIdx = cleanHtml.indexOf('<');
+            const endIdx = cleanHtml.lastIndexOf('>');
+            if (startIdx !== -1 && endIdx !== -1) {
+                cleanHtml = cleanHtml.substring(startIdx, endIdx + 1);
+            }
+
+            if (!cleanHtml || cleanHtml.length < 50) throw new Error("La IA no encontró resultados válidos.");
+
+            setNewsResult(cleanHtml);
+            setIsNewsModalOpen(true);
+        } catch (e) {
+            setInfoModal({ 
+                isOpen: true, 
+                title: 'Error de Rastreo', 
+                msg: 'Fallo al obtener noticias: ' + e.message + '\n\nInténtalo de nuevo en unos segundos.', 
+                type: 'error' 
+            });
+        } finally {
+            setAnalyzingNews(false);
+        }
+    };    
+
+  
+    // FUNCIÓN PARA IMPRIMIR NOTICIAS
+    const handlePrintNews = () => {
+        const printWindow = window.open('', '', 'height=800,width=800');
+        const time = new Date().toLocaleString();
+        let html = `<html><head><title>Noticias Semanales</title><style>
+            body { font-family: sans-serif; padding: 30px; color: #000; }
+            h1 { border-bottom: 3px solid #1e3a8a; color: #1e3a8a; text-transform: uppercase; }
+            h3 { color: #1e3a8a; border-bottom: 1px solid #ccc; margin-top: 25px; padding-bottom: 5px; }
+            .news-item { margin-bottom: 15px; border-left: 3px solid #eee; padding-left: 10px; }
+            .date { font-size: 0.8rem; color: #666; font-weight: bold; }
+            .source { font-size: 0.8rem; color: #2563eb; }
+            a { text-decoration: none; color: #2563eb; }
+        </style></head><body>
+            <h1>Radar de Noticias: Últimos 7 Días</h1>
+            <p>Emisión: ${time}</p>
+            <div>${newsResult}</div>
+        </body></html>`;
+        printWindow.document.write(html);
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(() => printWindow.print(), 500);
+    };
+
+
     const gridTotals = useMemo(() => {
         let tFx = 0, tCost = 0, tVal = 0, tRes = 0;
         let sumBuyPE = 0, countBuyPE = 0;
@@ -1962,6 +2074,10 @@ const handlePrint = () => {
                       {syncStatus === 'unsaved' ? 'GUARDAR' : syncStatus === 'uploading' ? 'SUBIENDO...' : syncStatus === 'downloading' ? 'BAJANDO...' : 'SYNC OK'}
                   </button>
                   <button onClick={analyzePortfolio} className="bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 transition-colors flex items-center gap-2"><Icons.Wand/> INFORME iA</button>
+                  <button onClick={() => setIsNewsSelectionModalOpen(true)} className="bg-blue-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-blue-500/50 hover:bg-blue-600 transition-colors flex items-center gap-2">
+                        <Icons.Globe size={14}/> NOTICIAS
+                  </button>  
+
                   <button onClick={handlePrint} className="bg-slate-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button></div><button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', group: '', notes: '', customOrder:'', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, feesIncludedInPrice: false, buyPE:0, annualDividend:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, sellFeesIncludedInPrice: false, currentPE:0, dividends: [] }); setIsModalOpen(true); }} className="bg-blue-600 px-4 h-9 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg hover:bg-blue-500"><Icons.Plus size={14}/> NUEVA POSICIÓN</button></div>
                 
                 <div className="flex flex-wrap gap-2 items-center bg-slate-950/50 p-2 rounded-lg border border-slate-800/50">
@@ -2105,6 +2221,77 @@ const handlePrint = () => {
             <Modal isOpen={isNotesModalOpen} title="Block de Notas de la Cartera" onClose={() => setIsNotesModalOpen(false)} size="md">
                 <div className="flex flex-col gap-4"><p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Notas Generales, Estrategia o Recordatorios:</p><textarea value={globalNotes} onChange={(e) => setGlobalNotes(e.target.value)} placeholder="Escribe aquí tus notas..." className="w-full h-80 bg-slate-950 border border-slate-700 rounded-xl p-4 text-sm text-slate-200 font-sans leading-relaxed focus:border-yellow-500/50 focus:outline-none custom-scrollbar shadow-inner"/><div className="flex justify-between items-center bg-slate-800/30 p-3 rounded-lg border border-slate-700"><span className="text-[9px] text-slate-500 italic">* Estas notas se sincronizan automáticamente con tu copia en la nube.</span><button onClick={() => { onManualSync(); setIsNotesModalOpen(false); }} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-bold text-[10px] uppercase transition-colors">Guardar y Sincronizar</button></div></div>
             </Modal>
+
+             {/* --- MODAL DE NOTICIAS --- */}
+            <Modal isOpen={isNewsModalOpen} title="Radar de Noticias (Últimos 7 días)" onClose={() => setIsNewsModalOpen(false)} size="lg">
+                <div className="space-y-4 p-2 max-h-[70vh] overflow-y-auto custom-scrollbar">
+                    <div 
+                        className="prose-content text-sm leading-relaxed font-sans text-slate-200 
+                                   [&_h3]:text-blue-400 [&_h3]:mt-6 [&_h3]:border-slate-700 
+                                   [&_a]:text-blue-400 [&_a]:underline"
+                        dangerouslySetInnerHTML={{__html: newsResult}}
+                    ></div>
+                </div>
+                <div className="flex justify-end pt-4 border-t border-slate-700 mt-4">
+                    <button onClick={handlePrintNews} className="bg-slate-700 px-4 py-2 rounded-lg text-xs font-bold text-white flex items-center gap-2 hover:bg-slate-600">
+                        <Icons.ExternalLink size={14}/> IMPRIMIR NOTICIAS
+                    </button>
+                </div>
+            </Modal>
+            
+            {/* --- OVERLAY DE CARGA PARA NOTICIAS --- */}
+            {analyzingNews && (
+                <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center fade-in">
+                    <Icons.Globe size={60} className="text-blue-500 mb-4 animate-spin" />
+                    <div className="text-xl font-bold text-white animate-pulse">Rastreando noticias globales...</div>
+                    <div className="text-xs text-slate-400 mt-2">Buscando eventos de los últimos 7 días en la red</div>
+                </div>
+            )}
+
+
+            <Modal isOpen={isNewsSelectionModalOpen} title="¿Qué noticias deseas consultar?" onClose={() => setIsNewsSelectionModalOpen(false)} size="sm">
+            <div className="flex flex-col gap-4 p-2">
+                <button 
+                    onClick={() => fetchNews('portfolio')}
+                    className="group flex items-center gap-4 p-4 bg-slate-800 hover:bg-blue-900/40 border border-slate-700 rounded-xl transition-all text-left"
+                >
+                    <div className="p-3 bg-blue-500/20 rounded-lg text-blue-400 group-hover:scale-110 transition-transform"><Icons.Briefcase size={24}/></div>
+                    <div>
+                        <div className="text-sm font-bold text-white uppercase">Activos en Cartera</div>
+                        <div className="text-[10px] text-slate-400">Rastreo específico de tus valores (Últimos 7 días)</div>
+                    </div>
+                </button>
+        
+                <button 
+                    onClick={() => fetchNews('general')}
+                    className="group flex items-center gap-4 p-4 bg-slate-800 hover:bg-purple-900/40 border border-slate-700 rounded-xl transition-all text-left"
+                >
+                    <div className="p-3 bg-purple-500/20 rounded-lg text-purple-400 group-hover:scale-110 transition-transform"><Icons.TrendingUp size={24}/></div>
+                    <div>
+                        <div className="text-sm font-bold text-white uppercase">Mercado General (48h)</div>
+                        <div className="text-[10px] text-slate-400">Noticias macro, economía y bolsa mundial reciente</div>
+                    </div>
+                </button>
+            </div>
+        </Modal>
+
+{/* --- MODAL DE RESULTADOS DE NOTICIAS --- */}
+<Modal isOpen={isNewsModalOpen} title="Radar de Noticias iA" onClose={() => setIsNewsModalOpen(false)} size="lg">
+    <div className="space-y-4 p-2 max-h-[70vh] overflow-y-auto custom-scrollbar">
+        <div 
+            className="prose-content text-sm leading-relaxed font-sans text-slate-200 
+                       [&_h3]:text-blue-400 [&_h3]:mt-6 [&_h3]:border-slate-700 [&_h3]:uppercase [&_h3]:text-xs [&_h3]:tracking-widest
+                       [&_a]:text-blue-400 [&_a]:underline [&_a]:font-bold"
+            dangerouslySetInnerHTML={{__html: newsResult}}
+        ></div>
+    </div>
+    <div className="flex justify-end pt-4 border-t border-slate-700 mt-4">
+        <button onClick={handlePrintNews} className="bg-slate-700 px-4 py-2 rounded-lg text-xs font-bold text-white flex items-center gap-2 hover:bg-slate-600">
+            <Icons.ExternalLink size={14}/> IMPRIMIR INFORME
+        </button>
+    </div>
+</Modal>
+   
         </div>
     );
 };
@@ -2152,13 +2339,15 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         { id: 'NETHERLANDS', name: 'Holanda (Euronext Amsterdam)', country: 'Holanda' }
     ];
 
-    const REPORT_TITLES = {
+    
+     const REPORT_TITLES = {
         ITEM_1: "ANÁLISIS FINANCIERO INTEGRAL 360º",
         ITEM_2: "ANÁLISIS DE ESTADOS FINANCIEROS (BALANCE Y CUENTA)",
         ITEM_3: "REVISIÓN DE RESULTADOS TRIMESTRALES (EARNINGS)",
         ITEM_4: "COMPARATIVA SECTORIAL Y COMPETENCIA",
         ITEM_5: "MODELOS DE VALORACIÓN (DCF Y MÚLTIPLOS)",
-        ITEM_6: "INFORME DE RIESGOS, ALERTAS Y CATALIZADORES"
+        ITEM_6: "INFORME DE RIESGOS, ALERTAS Y CATALIZADORES",
+        ITEM_7: "INFORME INSTITUCIONAL COMPLETO (SENIOR ANALYST)" // <--- NUEVO
     };
 
     const handleScreenerClick = (rowTicker) => {
@@ -2370,6 +2559,155 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
                 <h3 style="color: #1e3a8a; border-bottom: 1px solid #ccc; text-transform: uppercase; margin-top: 15px;">4. Análisis de Crecimiento (TAM y Cuota)</h3>
                 <p><strong>Mercado Total Direccionable (TAM):</strong> [Cifra Real] (Fuente: [Fuente])</p>
                 <p><strong>Motores de Crecimiento 3-5 años:</strong> [Detalle Real] (Fuente: [Fuente])</p>
+            </div>`,
+
+            ITEM_7: `
+            <div style="color: #000000; font-family: 'Times New Roman', serif;">
+                <!-- ENCABEZADO TIPO INFORME BANCA INVERSION -->
+                <div style="border-bottom: 4px solid #1e3a8a; padding-bottom: 10px; margin-bottom: 20px;">
+                    <h1 style="color: #1e3a8a; font-size: 24px; text-transform: uppercase; margin: 0;">Equity Research: Coverage Initiation</h1>
+                    <p style="font-size: 12px; color: #555; margin-top: 5px;"><strong>ANALISTA SENIOR:</strong> iA Hedge Fund Manager | <strong>FUENTES:</strong> SEC Filings, Earnings Call, Market Data</p>
+                </div>
+
+                <!-- SECCIÓN 1: RESUMEN EJECUTIVO Y TESIS -->
+                <div style="background-color: #f8fafc; border: 1px solid #1e3a8a; padding: 15px; margin-bottom: 20px;">
+                    <h3 style="color: #1e3a8a; margin-top: 0; border-bottom: 1px solid #ccc;">1. RESUMEN EJECUTIVO Y TESIS DE INVERSIÓN</h3>
+                    <p><strong>Recomendación:</strong> [Strong Buy / Buy / Hold / Sell] | <strong>Convicción:</strong> [Alta/Media/Baja]</p>
+                    <p><strong>Precio Objetivo (12 meses):</strong> [Precio] (Upside/Downside: [%])</p>
+                    <p><strong>Elevator Pitch (La Tesis en 3 frases):</strong> [Resumen contundente]</p>
+                    <p><strong>Catalizador Principal:</strong> [Motivo principal de compra]</p>
+                    <p><strong>Riesgo Principal (Bear Case):</strong> [Motivo principal de venta]</p>
+                </div>
+
+                <!-- SECCIÓN 2: DESCRIPCIÓN DEL NEGOCIO -->
+                <h3 style="color: #1e3a8a; border-bottom: 2px solid #ccc; text-transform: uppercase; margin-top: 25px;">2. FUNDAMENTOS DEL NEGOCIO</h3>
+                <p><strong>Modelo de Negocio:</strong> [Explicación sencilla]</p>
+                <p><strong>Desglose de Ingresos (%):</strong> [Segmentos / Geografía]</p>
+                <p><strong>Ventaja Competitiva (Moat):</strong> [Frase única definitoria]</p>
+
+                <!-- SECCIÓN 3: DATOS FINANCIEROS CLAVE -->
+                <h3 style="color: #1e3a8a; border-bottom: 2px solid #ccc; text-transform: uppercase; margin-top: 25px;">3. SNAPSHOT FINANCIERO (TTM y Último Q)</h3>
+                <table style="width:100%; border-collapse: collapse; font-size: 11px; border: 1px solid #999;">
+                    <tr style="background:#e2e8f0; font-weight:bold;"><th>Métrica</th><th>Valor Real</th><th>Fuente/Fecha</th></tr>
+                    <tr><td>Ingresos (Revenue)</td><td>[Dato] (Crecimiento YoY: [%])</td><td>[Cita]</td></tr>
+                    <tr><td>Ingreso Neto & EPS</td><td>[Dato]</td><td>[Cita]</td></tr>
+                    <tr><td>Ratios Valoración (P/E, Forward P/E, PEG)</td><td>[Datos]</td><td>[Cita]</td></tr>
+                    <tr><td>Deuda Total & Ratio D/E</td><td>[Datos]</td><td>[Cita]</td></tr>
+                    <tr><td>Free Cash Flow (TTM)</td><td>[Dato]</td><td>[Cita]</td></tr>
+                </table>
+
+                <!-- SECCIÓN 4: RENDIMIENTO Y CONSENSO -->
+                <h3 style="color: #1e3a8a; border-bottom: 2px solid #ccc; text-transform: uppercase; margin-top: 25px;">4. MERCADO Y CONSENSO</h3>
+                <div style="display: flex; gap: 15px;">
+                    <div style="flex: 1;">
+                        <strong>Performance vs S&P 500:</strong>
+                        <ul style="font-size: 11px;">
+                            <li>1 Mes / 3 Meses: [Dato] / [Dato]</li>
+                            <li>YTD / 1 Año: [Dato] / [Dato]</li>
+                            <li>Vs Benchmark: [Mejor/Peor por %]</li>
+                            <li>Rango 52 Semanas: [Min - Max]</li>
+                        </ul>
+                    </div>
+                    <div style="flex: 1;">
+                        <strong>Consenso Wall Street:</strong>
+                        <ul style="font-size: 11px;">
+                            <li>Analistas: [Num] (Buy: X | Hold: X | Sell: X)</li>
+                            <li>Precio Objetivo: [Bajo] - [Medio] - [Alto]</li>
+                            <li>Última Revisión: [Firma y Fecha]</li>
+                        </ul>
+                    </div>
+                </div>
+                <div style="margin-top: 10px; font-size: 11px;">
+                    <strong>Actividad Institucional:</strong> [Top 5 inversores y cambios recientes (Hedge Funds)]
+                </div>
+
+                <!-- SECCIÓN 5: ANÁLISIS PROFUNDO ESTADOS FINANCIEROS (EL CORE) -->
+                <h3 style="color: #1e3a8a; border-bottom: 2px solid #ccc; text-transform: uppercase; margin-top: 25px;">5. ANÁLISIS DE ESTADOS FINANCIEROS (DEEP DIVE)</h3>
+                
+                <h4 style="margin-bottom: 5px; color: #444;">A. Cuenta de Resultados (Income Statement)</h4>
+                <p style="font-size: 11px;"><strong>Tendencia Márgenes (Bruto/Operativo/Neto):</strong> [¿Expansión o Contracción? Datos Q a Q]</p>
+                <p style="font-size: 11px;"><strong>Gasto I+D (si aplica):</strong> [% sobre ingresos]</p>
+
+                <h4 style="margin-bottom: 5px; color: #444;">B. Salud del Balance (Balance Sheet)</h4>
+                <ul style="font-size: 11px;">
+                    <li><strong>Liquidez:</strong> Ratio Corriente [X] | Ratio Rápido [X] | Caja Disponible [X]</li>
+                    <li><strong>Deuda:</strong> Total [X] | <strong>Calendario Vencimientos:</strong> [¿Cuándo vence la deuda principal?]</li>
+                    <li><strong>Intangibles:</strong> Fondo de Comercio (Goodwill) vs Activos Totales: [%] (Alerta si >30%)</li>
+                </ul>
+
+                <h4 style="margin-bottom: 5px; color: #444;">C. Calidad del Flujo de Caja (Cash Flow)</h4>
+                <ul style="font-size: 11px;">
+                    <li><strong>OCF vs CapEx = FCF:</strong> [Dato OCF] - [Dato CapEx] = [Dato FCF]</li>
+                    <li><strong>Margen FCF:</strong> [%]</li>
+                    <li><strong>Uso del Efectivo:</strong> [¿Recompras, Dividendos o M&A?]</li>
+                </ul>
+
+                <!-- SECCIÓN 6: SEÑALES DE ALERTA (RED FLAGS) -->
+                <div style="background-color: #fef2f2; border: 1px solid #ef4444; padding: 10px; margin-top: 15px;">
+                    <h4 style="color: #b91c1c; margin: 0 0 5px 0; text-transform: uppercase;">⚠️ Auditoría de Riesgos (Red Flags Check)</h4>
+                    <ul style="font-size: 11px; margin: 0; padding-left: 20px; color: #7f1d1d;">
+                        <li>¿Ingresos suben pero Flujo de Caja baja?: <strong>[SÍ/NO y Análisis]</strong></li>
+                        <li>¿Deuda creciendo más rápido que ingresos?: <strong>[SÍ/NO y Análisis]</strong></li>
+                        <li>¿Cuentas por cobrar > Crecimiento Ventas?: <strong>[SÍ/NO y Análisis]</strong></li>
+                        <li>¿Inventarios acumulándose?: <strong>[SÍ/NO y Análisis]</strong></li>
+                        <li>¿Ganancias Ajustadas (Non-GAAP) muy lejos de GAAP?: <strong>[Análisis]</strong></li>
+                    </ul>
+                </div>
+
+                <!-- SECCIÓN 7: RESULTADOS TRIMESTRALES (EARNINGS) -->
+                <h3 style="color: #1e3a8a; border-bottom: 2px solid #ccc; text-transform: uppercase; margin-top: 25px;">6. REVISIÓN DE RESULTADOS (EARNINGS)</h3>
+                <table style="width:100%; border-collapse: collapse; font-size: 11px;">
+                    <tr style="border-bottom: 1px solid #ccc;"><td><strong>Sorpresa (Beat/Miss):</strong></td><td>Ingresos: [Dato] | EPS: [Dato]</td></tr>
+                    <tr style="border-bottom: 1px solid #ccc;"><td><strong>Guía (Guidance):</strong></td><td>[¿Elevada/Reducida? Rango próximo Q/Año]</td></tr>
+                    <tr style="border-bottom: 1px solid #ccc;"><td><strong>Segmentos:</strong></td><td>[Ganadores vs Perdedores]</td></tr>
+                </table>
+                <p style="font-size: 11px; margin-top: 5px;"><strong>Mensaje Directiva (Tono/Transcript):</strong> "[Cita clave CEO/CFO sobre estrategia/riesgo]"</p>
+                <p style="font-size: 11px;"><strong>Reacción Mercado:</strong> [Movimiento After-hours/Día siguiente]</p>
+
+                <!-- SECCIÓN 8: CONTEXTO COMPETITIVO -->
+                <h3 style="color: #1e3a8a; border-bottom: 2px solid #ccc; text-transform: uppercase; margin-top: 25px;">7. COMPARATIVA SECTORIAL (PEER ANALYSIS)</h3>
+                <table style="width:100%; border-collapse: collapse; font-size: 10px; border: 1px solid #ccc; text-align: center;">
+                    <tr style="background:#e2e8f0; font-weight:bold;">
+                        <th style="text-align: left;">Empresa</th><th>Mkt Cap</th><th>Crecimiento</th><th>Márgenes (Op/Net)</th><th>P/E</th><th>EV/EBITDA</th><th>Deuda/Eq</th>
+                    </tr>
+                    <tr style="font-weight:bold; background: #eff6ff;"><td style="text-align: left;">[ESTA EMPRESA]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td></tr>
+                    <tr><td style="text-align: left;">[Competidor 1]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td></tr>
+                    <tr><td style="text-align: left;">[Competidor 2]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td></tr>
+                    <tr><td style="text-align: left;">[Competidor 3]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td><td>[Dato]</td></tr>
+                </table>
+                <p style="font-size: 11px; margin-top: 5px;"><strong>Ranking Competitivo:</strong> [¿Quién gana cuota de mercado? ¿Líder de costes o diferenciación?]</p>
+
+                <!-- SECCIÓN 9: VALORACIÓN Y ESCENARIOS -->
+                <h3 style="color: #1e3a8a; border-bottom: 2px solid #ccc; text-transform: uppercase; margin-top: 25px;">8. MODELO DE VALORACIÓN (DCF & MÚLTIPLOS)</h3>
+                <div style="background-color: #f8fafc; padding: 10px; border: 1px solid #ccc;">
+                    <p><strong>1. DCF (Descuento Flujos Caja):</strong> WACC [X%] | Tasa Terminal [X%] | Crecimiento Est. [X%]</p>
+                    <p style="font-size: 14px; font-weight: bold; color: #1e3a8a;">→ VALOR INTRÍNSECO ESTIMADO: [PRECIO]</p>
+                    <p><strong>2. Comparativa Histórica:</strong> P/E Actual vs Media 5 años [Dato]. [¿Prima o Descuento?]</p>
+                </div>
+                
+                <h4 style="margin-top: 10px; margin-bottom: 5px;">Análisis de Escenarios (Precio Objetivo):</h4>
+                <table style="width:100%; border-collapse: collapse; font-size: 11px; border: 1px solid #ccc;">
+                    <tr style="background:#f1f5f9;"><th>Escenario</th><th>Precio Obj.</th><th>Upside/Downside</th><th>Supuestos Clave</th></tr>
+                    <tr style="color:#166534;"><td><strong>CASO ALCISTA (Bull)</strong></td><td>[Precio]</td><td>[%]</td><td>[Crecimiento acelerado, expansión márgenes]</td></tr>
+                    <tr style="color:#1e40af; font-weight:bold;"><td><strong>CASO BASE</strong></td><td>[Precio]</td><td>[%]</td><td>[Consenso y supuestos actuales]</td></tr>
+                    <tr style="color:#991b1b;"><td><strong>CASO BAJISTA (Bear)</strong></td><td>[Precio]</td><td>[%]</td><td>[Desaceleración, compresión múltiplos, riesgos]</td></tr>
+                </table>
+
+                <!-- SECCIÓN 10: RIESGOS Y CONCLUSIÓN -->
+                <h3 style="color: #1e3a8a; border-bottom: 2px solid #ccc; text-transform: uppercase; margin-top: 25px;">9. RIESGOS Y VEREDICTO FINAL</h3>
+                <ul style="font-size: 11px;">
+                    <li><strong>Riesgo 1 (Probabilidad/Impacto):</strong> [Detalle]</li>
+                    <li><strong>Riesgo 2 (Probabilidad/Impacto):</strong> [Detalle]</li>
+                    <li><strong>Short Interest:</strong> [% del Float] | <strong>Insider Trading:</strong> [Compras/Ventas recientes]</li>
+                </ul>
+                <div style="background-color: #eff6ff; border-left: 5px solid #1e3a8a; padding: 15px; margin-top: 20px;">
+                    <h4 style="margin: 0; color: #1e3a8a;">VEREDICTO FINAL DEL ANALISTA</h4>
+                    <p style="margin-top: 5px;"><strong>[Resumen final de la recomendación con nivel de convicción, ponderando el valor intrínseco calculado frente a los riesgos detectados]</strong></p>
+                </div>
+
+                <div style="margin-top: 30px; font-size: 9px; color: #666; text-align: center; border-top: 1px solid #ccc; padding-top: 10px;">
+                    Documento generado por IA. Las cifras citadas provienen de informes públicos (SEC/CNMV) y bases de datos financieras. Verifique siempre con fuentes oficiales.
+                </div>
             </div>`
     };
 
@@ -2377,7 +2715,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
     // --- FUNCIONES DE SOPORTE ---
     const askGemini = async (key, prompt) => {
         if (!key) throw new Error("Falta API Key");
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${key}`, {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${key}`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }] })
         });
@@ -2447,7 +2785,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
         try { 
             if (question.trim()) { 
                 const today = new Date().toLocaleString('es-ES');
-                const prompt = `ROL: ASUME QUE ERES UN ANALISTA DE BURSÁTIL. LENGUAJE DE SALIDA: SOLO ESPAÑOL(CASTELLANO), SI EL CONTENIDO ESTÁ EN OTRO IDIOMA TRADÚCELO. NO GENERES PREÁMBULOS NI MENSAJES DE CORTESÍA INICIALES.
+                const prompt = `ROL: ERES UN ANALISTA SENIOR BURSÁTIL DE WALL STREET. LENGUAJE DE SALIDA: SOLO ESPAÑOL(CASTELLANO), SI EL CONTENIDO ESTÁ EN OTRO IDIOMA TRADÚCELO. NO GENERES PREÁMBULOS NI MENSAJES DE CORTESÍA INICIALES.
                 DATE: ${today}. 
                 TASK: Answer "${question}" about "${ticker}". 
                 FORMAT: HTML (<h3>, <ul>, <p>). COMIENZA DIRECTAMENTE EN LOS HTML TAGS (<).`; 
@@ -2500,17 +2838,18 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
             
             // 2. Informe con Protocolo de Integridad
             const prompt = `
-            SISTEMA: ROL ANALISTA SENIOR EXPERTO EN INVERSIÓN EN BOLSA. MODELO: gemini 3 pro preview.
-            TAREA: Auditar el ticker ${ticker}, a FECHA MÁS PRÓXIMA A HOY DÍA (${today}), QUE TIENE UN PRECIO ACTUAL DE ${priceInfo}.
+            SISTEMA: ROL ANALISTA SENIOR DE BOLSA EN WALL STREET. RECABA LOS DATOS DE FORMA ACTIVA EN INTERNET.
+            TAREA: Auditar el ticker ${ticker}, a FECHA MÁS PRÓXIMA A (${today}), CON PRECIO ACTUAL DE ${priceInfo}.
+            ESTILO: Se conciso pero a su vez explicando bien cada apartado con un lenguaje que una persona no muy experimentada en bolsa comprenda.
             
-            --- FUENTES DE BÚSQUEDA ---
-            Investor Relations (Webs oficiales), MarketWatch, Google Finance, SEC.gov, Yahoo Finance y SeekingAlpha. Pero puedes usar otras fuentes si lo ves conveniente.
+            FUENTES DE BÚSQUEDA PREFERIBLES (puedes usar otras):
+            Investor Relations (Webs oficiales), Investing, marketscreener, MarketWatch, Google Finance, SEC.gov, Yahoo Finance, Finviz y SeekingAlpha.
             
-            --- PROTOCOLO DE INTEGRIDAD ---
+            PREMISAS OBLIGATORIAS:
             1. PROHIBIDO INVENTAR: No uses valores de ejemplo.
-            2. SI UN DATO NO SE LOCALIZA: Escribe "N/A (Fecha: sin determinar)".
+            2. SI UN DATO NO SE LOCALIZA: Escribe "No encontré datos".
             3. TRADUCCIÓN: Todo el informe debe estar en ESPAÑOL.
-            4. LOS CONCEPTOS TÉCNICOS COMO PER, PET, BETA, PEG, ROI, etc, AÑADE UNA EXPLICACIÓN COMPRENSIBLE PARA ALGUIEN SIN CONOCIMIENTOS CON EJEMPLOS SENCILLOS PARA QUE EL USUARIO ENTIENDA EL CONCEPTO (EN LETRA MÁS PEQUEÑA).
+            4. LOS CONCEPTOS TÉCNICOS (ROI, PER, PEG, etc) DEBEN SER EXPLICADOS PARA QUE ALGUIEN SIN CONOCIMIENTOS LOS COMPRENDA PREFERIBLENTE CERCA DE DONDE SE CITAN Y EN LETRA MÁS PEQUEÑA CON UN (*)
             
             DATOS CARTERA:
             ${templateCode}
@@ -2720,7 +3059,11 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
                                  <button onClick={() => handleFixedAnalysis('ITEM_4')} className="bg-slate-800 hover:bg-blue-900/40 text-slate-300 hover:text-white border border-slate-700 p-3 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"><Icons.Target size={14}/> Comparativa Sector</button>
                                  <button onClick={() => handleFixedAnalysis('ITEM_5')} className="bg-slate-800 hover:bg-blue-900/40 text-slate-300 hover:text-white border border-slate-700 p-3 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"><Icons.DollarSign size={14}/> Valoración (DCF)</button>
                                  <button onClick={() => handleFixedAnalysis('ITEM_6')} className="bg-slate-800 hover:bg-blue-900/40 text-slate-300 hover:text-white border border-slate-700 p-3 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"><Icons.AlertCircle size={14}/> Riesgos y Alertas</button>
-                             </div>
+                                  <button onClick={() => handleFixedAnalysis('ITEM_7')} className="col-span-2 md:col-span-3 bg-gradient-to-r from-[#1e3a8a] to-[#1e293b] hover:from-blue-800 hover:to-slate-800 text-white border border-blue-400/30 p-4 rounded-xl text-sm font-black flex items-center justify-center gap-3 transition-all shadow-xl shadow-blue-900/20 mt-3 uppercase tracking-widest relative overflow-hidden group">
+                                     <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                                     <Icons.Globe size={18} className="text-blue-300"/> Informe Libre Extendido (Senior Analyst Deep Dive)
+                                 </button>
+                            </div>
                         </div>
                     </div>
 
