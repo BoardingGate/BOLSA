@@ -1698,7 +1698,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
 
     const gridTotals = useMemo(() => {
-        let tFx = 0, tCost = 0, tVal = 0, tRes = 0;
+        let tFx = 0, tCost = 0, tVal = 0, tRes = 0, tIntra = 0; // MODIFICADO: tIntra añadido
         let sumBuyPE = 0, countBuyPE = 0;
         let sumCurPE = 0, countCurPE = 0;
 
@@ -1710,6 +1710,14 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             const val = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
             const fxVal = (p.isIndex ? 0 : (p.shares * (isS ? p.sellPrice : p.currentPrice) * (curF - p.buyFx)));
             const divs = (p.dividends || []).reduce((a,b)=>a+b.net,0);
+            
+            if (!isS && p.previousClose) {
+                const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
+                // Diferencia precio * acciones * cambio actual
+                const diff = (curP - prevP) * p.shares * curF;
+                tIntra += diff;
+            }
+
             tFx += fxVal; tCost += cost; tVal += val; tRes += (val - cost) + divs;
             
             if (p.buyPE > 0) { sumBuyPE += p.buyPE; countBuyPE++; }
@@ -1719,8 +1727,10 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         const avgBuyPE = countBuyPE > 0 ? sumBuyPE / countBuyPE : 0;
         const avgCurPE = countCurPE > 0 ? sumCurPE / countCurPE : 0;
 
-        return { tFx, tCost, tVal, tRes, tPct, avgBuyPE, avgCurPE };
+        return { tFx, tCost, tVal, tRes, tPct, avgBuyPE, avgCurPE, tIntra }; // MODIFICADO: tIntra retornado
     }, [visiblePortfolio]);
+    
+
 
     const stats = useMemo(() => {
         const hasDeepFilters = filterText || filterDateStart || filterDateEnd;
@@ -1819,8 +1829,58 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
 
-    const updatePrices = async (isAuto = false) => { const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); if (!isAuto && active.length === 0) return; setUpdating(true); let log = { success: [], fail: [] }, newUpdates = []; try { for (const item of active) { const assetDesc = item.isIndex ? "MARKET INDEX (SPOT VALUE)" : "STOCK/EQUITY"; const prompt = `ROLE: Financial Data API. TASK: Get data for Ticker: "${item.ticker}". TYPE: ${assetDesc}. REQUIREMENTS: 1. "p": Current Price in its NATIVE currency (${item.stockCurrency}). STRICT RULE: DO NOT convert the price to ${baseCurrency}. Return it as it quotes in the market. 2. "fx": Exchange rate to convert from ${item.stockCurrency} to ${baseCurrency}. (Example: 1 ${item.stockCurrency} = X ${baseCurrency}). If same, fx = 1. 3. "pe": TTM P/E Ratio (0 if Index). RETURN JSON ONLY: {"p": number, "fx": number, "pe": number}`; try { const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json && (json.p || json.p === 0)) { const safeFx = (item.stockCurrency === baseCurrency) ? 1 : cleanVal(json.fx); newUpdates.push({ id: item.id, p: cleanVal(json.p), fx: safeFx, pe: cleanVal(json.pe) }); log.success.push(item.ticker); } else { log.fail.push(item.ticker); } } catch (e) { log.fail.push(item.ticker); } } if (newUpdates.length > 0) { setPortfolio(prev => prev.map(p => { const u = newUpdates.find(x => x.id === p.id); if (u) { return { ...p, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe }; } return p; }), false); setLastUpdate(new Date().toISOString()); } if (!isAuto && log.fail.length > 0) { setInfoModal({ isOpen: true, title: 'Sincronización parcial', msg: `No se pudieron actualizar: ${log.fail.join(', ')}.`, type: 'warning' }); } } catch (e) { if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); } finally { setUpdating(false); } };
+
+    const updatePrices = async (isAuto = false) => { 
+        const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); 
+        if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); 
+        if (!isAuto && active.length === 0) return; 
+        
+        setUpdating(true); 
+        let log = { success: [], fail: [] }, newUpdates = []; 
+        
+        try { 
+            for (const item of active) { 
+                const assetDesc = item.isIndex ? "MARKET INDEX (SPOT VALUE)" : "STOCK/EQUITY"; 
+                // MODIFICADO: Se añade "pc" (Previous Close) al prompt
+                const prompt = `ROLE: Financial Data API. TASK: Get data for Ticker: "${item.ticker}". TYPE: ${assetDesc}. REQUIREMENTS: 1. "p": Current Price in its NATIVE currency (${item.stockCurrency}). STRICT RULE: DO NOT convert the price to ${baseCurrency}. Return it as it quotes in the market. 2. "fx": Exchange rate to convert from ${item.stockCurrency} to ${baseCurrency}. (Example: 1 ${item.stockCurrency} = X ${baseCurrency}). If same, fx = 1. 3. "pe": TTM P/E Ratio (0 if Index). 4. "pc": Previous Close Price (Yesterday's close). RETURN JSON ONLY: {"p": number, "fx": number, "pe": number, "pc": number}`; 
+                
+                try { 
+                    const res = await askGemini(apiKey, prompt); 
+                    const json = extractJSON(res); 
+                    if (json && (json.p || json.p === 0)) { 
+                        const safeFx = (item.stockCurrency === baseCurrency) ? 1 : cleanVal(json.fx); 
+                        // MODIFICADO: Se guarda previousClose
+                        newUpdates.push({ id: item.id, p: cleanVal(json.p), fx: safeFx, pe: cleanVal(json.pe), pc: cleanVal(json.pc) }); 
+                        log.success.push(item.ticker); 
+                    } else { 
+                        log.fail.push(item.ticker); 
+                    } 
+                } catch (e) { log.fail.push(item.ticker); } 
+            } 
+            
+            if (newUpdates.length > 0) { 
+                setPortfolio(prev => prev.map(p => { 
+                    const u = newUpdates.find(x => x.id === p.id); 
+                    if (u) { 
+                        // MODIFICADO: Se asigna previousClose al estado (en memoria)
+                        return { ...p, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe, previousClose: u.pc }; 
+                    } 
+                    return p; 
+                }), false); 
+                setLastUpdate(new Date().toISOString()); 
+            } 
+            
+            if (!isAuto && log.fail.length > 0) { 
+                setInfoModal({ isOpen: true, title: 'Sincronización parcial', msg: `No se pudieron actualizar: ${log.fail.join(', ')}.`, type: 'warning' }); 
+            } 
+        } catch (e) { 
+            if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); 
+        } finally { 
+            setUpdating(false); 
+        } 
+    };
     
+
  // ANALISIS IA MEJORADO Y CORREGIDO (VERSIÓN BLINDADA)
 const analyzePortfolio = async () => {
       const dataToAnalyze = visiblePortfolio;
@@ -2100,7 +2160,8 @@ const handlePrint = () => {
                     <button onClick={() => setIsNotesModalOpen(true)} className="ml-auto h-8 px-4 bg-slate-800 hover:bg-slate-700 text-yellow-500 border border-slate-700 rounded text-[10px] font-black uppercase flex items-center gap-2 transition-all shadow-lg"><Icons.MessageCircle size={14}/> Block de Notas</button>
                 </div>
             </div>
-            
+
+
             {visibleSections.table && (
                 <div className="w-full overflow-x-auto bg-slate-900/50 border border-slate-800 rounded-xl fade-in">
                     <table className="w-full text-left min-w-[1700px] text-sm"><thead className="bg-slate-800 text-slate-400 text-[10px] uppercase font-bold sticky top-0 z-20">
@@ -2111,6 +2172,15 @@ const handlePrint = () => {
                     <th className={`p-3 text-center cursor-pointer select-none hover:text-white hover:bg-slate-700 transition-colors group ${sortConfig.key==='date'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('date')}><div className="flex items-center justify-center gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='date'?'opacity-100':''}`}/> Fechas / Días {sortConfig.key==='date' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
                     <th className="p-3 text-right">Títulos</th>
                     <th className="p-3 text-right">Precios (Inv/Act)</th>
+                    
+                    {/* MODIFICADO: NUEVA COLUMNA INTRADÍA CON TOTALIZADOR EN CABECERA */}
+                    <th className="p-3 text-right bg-slate-900/50 border-l border-r border-slate-700">
+                        <div>INTRADÍA</div>
+                        <div className={`text-[9px] font-mono mt-1 ${gridTotals.tIntra >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {formatMoney(gridTotals.tIntra, baseCurrency)}
+                        </div>
+                    </th>
+
                     <th className="p-3 text-center">FX (I/A)</th>
                     <th className="p-3 text-center text-blue-400">FX Desv.</th>
                     <th className="p-3 text-center">Gastos / Adj</th>
@@ -2123,7 +2193,7 @@ const handlePrint = () => {
                     </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800">
-                    {filteredPortfolio.length === 0 ? ( <tr><td colSpan="15" className="p-10 text-center text-slate-500 italic">No hay registros que coincidan con los filtros aplicados.</td></tr> ) : ( filteredPortfolio.map(p => { 
+                    {filteredPortfolio.length === 0 ? ( <tr><td colSpan="16" className="p-10 text-center text-slate-500 italic">No hay registros que coincidan con los filtros aplicados.</td></tr> ) : ( filteredPortfolio.map(p => { 
                     const isS = !!p.sellDate;
                     const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
                     const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
@@ -2134,21 +2204,50 @@ const handlePrint = () => {
                     const days = calculateDays(p.buyDate, p.sellDate || new Date()); 
                     const rs = calcReturns(cost, vF + ds, days); 
 
+                    // MODIFICADO: Lógica para valor Intradía individual
+                    let intraVal = 0;
+                    let hasIntra = false;
+                    if (!isS && p.previousClose) {
+                         const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
+                         intraVal = (curP - prevP) * p.shares * curF;
+                         hasIntra = true;
+                    }
+
                     return ( 
                         <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''}`} onClick={() => p.notes && setNoteToast(p.notes)}>
                             <td className="p-3 text-center sticky left-0 z-20 bg-slate-900 border-r border-slate-800" onClick={(e) => { e.stopPropagation(); setPortfolio(prev => prev.map(x => x.id === p.id ? {...x, isActive: !x.isActive} : x)); }}><input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" /></td>
                             <td className="p-3 sticky left-10 z-20 bg-slate-900 border-r border-slate-800 min-w-[180px]">
-                                <div className="w-[160px] whitespace-normal break-words leading-tight">
-                                    <b className={`text-sm ${capitalGain >= 0 ? 'text-green-400' : 'text-red-400'}`}>{p.name}</b>
-                                    {isS && <span className="ml-2 px-1.5 py-0.5 bg-red-900/40 text-red-400 text-[8px] rounded uppercase font-bold border border-red-500/20">VENDIDA</span>}<br/>
-                                    <span className="text-[10px] text-slate-400 uppercase">{p.ticker}</span>
-                                    {p.group && <span className="text-[10px] text-purple-300 font-bold bg-purple-900/30 px-1 rounded ml-1 inline-block mt-1">Grp: {p.group}</span>}
+                                <div className="w-[160px] whitespace-normal break-words leading-tight flex flex-col">
+                                    {/* MODIFICADO: Flecha Intradía junto al nombre */}
+                                    <div className="flex items-start gap-1">
+                                        {hasIntra && intraVal !== 0 && (
+                                            <span className={`text-[10px] mt-0.5 ${intraVal > 0 ? 'text-green-500' : 'text-red-500'}`}>
+                                                {intraVal > 0 ? '▲' : '▼'}
+                                            </span>
+                                        )}
+                                        <div>
+                                            <b className={`text-sm ${capitalGain >= 0 ? 'text-green-400' : 'text-red-400'}`}>{p.name}</b>
+                                            {isS && <span className="ml-2 px-1.5 py-0.5 bg-red-900/40 text-red-400 text-[8px] rounded uppercase font-bold border border-red-500/20">VENDIDA</span>}
+                                        </div>
+                                    </div>
+                                    <span className="text-[10px] text-slate-400 uppercase mt-0.5">{p.ticker}</span>
+                                    {p.group && <span className="text-[10px] text-purple-300 font-bold bg-purple-900/30 px-1 rounded inline-block w-fit mt-1">Grp: {p.group}</span>}
                                 </div>
                             </td>
                             <td className="p-3 text-center border-r border-slate-800 font-mono text-slate-400 text-[10px]">{p.customOrder}</td>
                             <td className="p-3 text-center text-[10px] font-bold"><div className="text-blue-400">{formatDateES(p.buyDate)}</div>{p.sellDate && <div className="text-orange-400">{formatDateES(p.sellDate)}</div>}<div className="text-slate-500 text-[9px] mt-1">{formatN(days, 0)} días</div></td>
                             <td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td>
                             <td className="p-3 text-right text-xs font-mono">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td>
+                            
+                            {/* MODIFICADO: Celda Intradía en Body */}
+                            <td className="p-3 text-right font-mono text-xs border-l border-r border-slate-800 bg-slate-900/20">
+                                {hasIntra ? (
+                                    <span className={intraVal >= 0 ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>
+                                        {formatMoney(intraVal, baseCurrency)}
+                                    </span>
+                                ) : <span className="text-slate-600">-</span>}
+                            </td>
+
                             <td className="p-3 text-center text-[10px] font-mono text-slate-400">I: {formatN(p.buyFx, 4)}<br/>A: {formatN(curF, 4)}</td>
                             <td className="p-3 text-center text-[9px] font-mono">
                                 {(() => { const fxDevVal = (p.isIndex ? 0 : (p.shares * (isS ? p.sellPrice : p.currentPrice) * (curF - p.buyFx))); return <div className={fxDevVal >= 0 ? 'text-green-500' : 'text-red-500'}>{formatMoney(fxDevVal, baseCurrency)}</div>; })()}
@@ -2160,7 +2259,6 @@ const handlePrint = () => {
                             <td className="p-3 text-right text-xs"><div className={rs.simple>=0?'text-green-400 font-bold':'text-red-400 font-bold'}>{formatN(rs.simple)}%</div><div className="text-[9px] text-slate-500">Anual: {formatN(rs.annual)}%</div></td>
                             <td className="p-3 text-center text-xs font-mono">I: {formatN(p.buyPE, 1)}<br/>A: <span className="text-yellow-500 font-bold">{formatN(p.currentPE, 1)}</span></td>
                             <td className="p-3 text-center flex gap-2 justify-center" onClick={e=>e.stopPropagation()}>
-                                {/* BOTÓN IA NUEVO */}
                                 <button onClick={() => onAnalyze && onAnalyze(p.ticker)} className="text-purple-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors" title="Analizar con IA"><Icons.Wand size={14}/></button>
                                 {!p.sellDate && <button onClick={() => { setSellItem(p); setSellForm({sharesToSell: p.shares, sellPrice: parseFloat(curP.toFixed(3)), sellDate: new Date().toISOString().slice(0,10), sellFx: p.currentFx, sellFees: 0, sellAdjustments: 0, sellFeesIncludedInPrice: false}); setIsSellModalOpen(true); }} className="bg-green-600/20 text-green-400 border border-green-500/30 px-2 py-1 rounded text-[10px] font-bold hover:bg-green-600/40">VENDER</button>}<button onClick={() => { setForm(p); setEditingId(p.id); setIsModalOpen(true); }} className="text-blue-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors"><Icons.Edit size={14}/></button><button onClick={() => handleClone(p)} className="text-purple-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors" title="Clonar Posición"><Icons.Copy size={14}/></button><button onClick={() => setConfirmModal({isOpen:true, title:'Borrado', msg:`¿Eliminar permanentemente?`, onConfirm:()=>{setPortfolio(prev=>prev.filter(x=>x.id!==p.id)); setConfirmModal({isOpen:false})} })} className="text-red-400 p-1.5 bg-slate-800 rounded hover:text-white transition-colors"><Icons.Trash2 size={14}/></button>
                             </td>
@@ -2171,7 +2269,15 @@ const handlePrint = () => {
                     <tr className="bg-slate-900 border-t-2 border-slate-600 font-bold text-white text-[9px] sticky bottom-0 z-30 shadow-2xl">
                         <td className="p-2 sticky left-0 z-40 bg-slate-900 border-r border-slate-800"></td>
                         <td className="p-2 sticky left-10 z-40 bg-slate-900 border-r border-slate-800 text-right uppercase tracking-wider text-slate-400">TOTALES:</td>
-                        <td colSpan="5"></td>
+                        <td colSpan="4"></td>
+                        
+                        {/* MODIFICADO: TOTAL INTRADÍA AL PIÉ */}
+                        <td className="p-2 text-right bg-slate-900/50 border-l border-r border-slate-700">
+                             <span className={gridTotals.tIntra >= 0 ? 'text-green-400' : 'text-red-400'}>
+                                 {formatMoney(gridTotals.tIntra, baseCurrency)}
+                             </span>
+                        </td>
+
                         <td className="p-2 text-center text-slate-300 font-mono">{formatMoney(gridTotals.tFx, baseCurrency)}</td>
                         <td></td>
                         <td className="p-2 text-right font-mono text-slate-300">{formatMoney(gridTotals.tCost, baseCurrency)}</td>
@@ -2189,6 +2295,9 @@ const handlePrint = () => {
                     </table>
                 </div>
             )}
+
+
+
             {visibleSections.diverging && (<div className="fade-in"><DivergingBarChart data={divergingData} baseCurrency={baseCurrency} /></div>)}
             {visibleSections.stats && (<div className="fade-in"><StatsDashboard portfolio={portfolio} baseCurrency={baseCurrency} taxTotal={taxSum} /></div>)}
             {visibleSections.charts && (<div className="fade-in"><CarouselCharts chartsData={chartsData} /></div>)}
