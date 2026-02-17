@@ -1592,10 +1592,16 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     // FUNCIÓN PARA OBTENER NOTICIAS
     const fetchNews = async (type) => {
-        setIsNewsSelectionModalOpen(false); // Cerramos el selector
+        setIsNewsSelectionModalOpen(false); 
         
+        const now = new Date();
+        // Formato: "17 de febrero de 2026"
+        const todayStr = now.toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
+        // Formato para límites: "15/02/2026"
+        const limit48h = new Date(now.getTime() - (48 * 60 * 60 * 1000)).toLocaleDateString('es-ES');
+        const limit7d = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000)).toLocaleDateString('es-ES');
+
         let prompt = "";
-        const today = new Date().toLocaleDateString('es-ES');
 
         if (type === 'portfolio') {
             const activeTickers = activeFilteredPortfolio
@@ -1607,43 +1613,64 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             }
 
             prompt = `
-                ROL: Analista de Inteligencia de Mercados.
-                TAREA: Buscar en Internet y resumir las noticias financieras más relevantes de los ÚLTIMOS 7 DÍAS.
-                EMPRESAS A INVESTIGAR: ${activeTickers.join(', ')}.
-                REQUISITOS:
+                SISTEMA: ROL ANALISTA DE INTELIGENCIA FINANCIERA.
+                FECHA ACTUAL DE REFERENCIA: ${todayStr}.
+                INSTRUCCIÓN DE BÚSQUEDA: Busca activamente en Internet noticias publicadas ÚNICAMENTE entre el ${limit7d} y HOY (${todayStr}).
+                
+                TAREA: Resumir noticias relevantes para estos valores: ${activeTickers.join(', ')}.
+                
+                REQUISITOS ESTRICTOS:
                 1. Idioma: Castellano.
-                2. Estructura: Agrupar por TICKER (usar <h3> para el ticker).
-                3. Por cada noticia: Fecha exacta, Titular, Resumen y Fuente con enlace URL accesible.
-                4. Formato: HTML puro (sin markdown). COMIENZA DIRECTAMENTE CON LAS ETIQUETAS (<).
-                5. Se debe buscar activamente las noticias en Internet. Está totalmente prohibido generar noticias falsas.
-               
+                2. AGNOSIA TEMPORAL: Ignora cualquier noticia anterior al ${limit7d}. Si no hay nada nuevo, indica "Sin noticias recientes".
+                3. ESTRUCTURA: Agrupar por TICKER (usar <h3> para el ticker).
+                4. CADA NOTICIA: Fecha exacta, Titular, Resumen de 3 frases y enlace URL directo a la fuente.
+              
+                
+                FORMATO: Responde solo con etiquetas HTML (h3, div, p, a).
             `;
         } else {
             prompt = `
-                ROL: Analista Macroeconómico Senior.
-                TAREA: Buscar en Internet las noticias más relevantes de BOLSA, MERCADOS y ECONOMÍA GLOBAL de las ÚLTIMAS 48 HORAS.
-                REQUISITOS:
-                1. Idioma: Castellano.
-                2. Estructura: Agrupar por CATEGORÍAS (Ej: Macro, Tecnología, Divisas, etc. Usar <h3> para la categoría).
-                3. Por cada noticia: Fecha/Hora aproximada, Titular impactante, Resumen de impacto en mercado y Fuente con enlace URL accesible.
-                4. Formato: HTML puro (sin markdown). COMIENZA DIRECTAMENTE CON LAS ETIQUETAS (<).
-                5. Se debe buscar activamente las noticias en Internet. Está totalmente prohibido generar noticias falsas.
+                SISTEMA: ROL ANALISTA MACROECONÓMICO SENIOR.
+                FECHA ACTUAL DE REFERENCIA: ${todayStr}.
+                INSTRUCCIÓN DE BÚSQUEDA: Busca en Internet noticias de Bolsa y Economía Global publicadas en las ÚLTIMAS 48 HORAS (desde el ${limit48h} hasta hoy ${todayStr}).
                 
+                REQUISITOS ESTRICTOS:
+                1. Idioma: Castellano.
+                2. FILTRO DE ACTUALIDAD: No menciones nada que tenga más de 48 horas de antigüedad.
+                3. ESTRUCTURA: Agrupar por CATEGORÍAS (Macro, Tecnología, Banca, etc. Usar <h3>).
+                4. CADA NOTICIA: Hora/Fecha, Titular, Resumen del impacto esperado en los mercados y enlace URL a la fuente.
+                
+                FORMATO: Responde solo con etiquetas HTML (h3, div, p, a).
             `;
         }
 
         setAnalyzingNews(true);
         try {
             const res = await askGemini(apiKey, prompt);
-            const cleanHtml = res.replace(/```html/g, '').replace(/```/g, '').trim();
+            // Limpieza y validación de respuesta
+            let cleanHtml = res.trim();
+            cleanHtml = cleanHtml.replace(/```html/g, '').replace(/```/g, '');
+            const startIdx = cleanHtml.indexOf('<');
+            const endIdx = cleanHtml.lastIndexOf('>');
+            if (startIdx !== -1 && endIdx !== -1) {
+                cleanHtml = cleanHtml.substring(startIdx, endIdx + 1);
+            }
+
+            if (!cleanHtml || cleanHtml.length < 50) throw new Error("La IA no encontró resultados válidos.");
+
             setNewsResult(cleanHtml);
             setIsNewsModalOpen(true);
         } catch (e) {
-            setInfoModal({ isOpen: true, title: 'Error', msg: 'No se pudieron obtener las noticias: ' + e.message, type: 'error' });
+            setInfoModal({ 
+                isOpen: true, 
+                title: 'Error de Rastreo', 
+                msg: 'Fallo al obtener noticias: ' + e.message + '\n\nInténtalo de nuevo en unos segundos.', 
+                type: 'error' 
+            });
         } finally {
             setAnalyzingNews(false);
         }
-    };
+    };    
 
   
     // FUNCIÓN PARA IMPRIMIR NOTICIAS
