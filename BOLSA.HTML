@@ -2555,6 +2555,10 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
     const [screenerSort, setScreenerSort] = useState({ key: 'ticker', direction: 'asc' });
     const [statusModal, setStatusModal] = useState({ isOpen: false, title: '', msg: '', type: 'info' });
 
+    const [isProjModalOpen, setIsProjModalOpen] = useState(false);
+    const [projForm, setProjForm] = useState({ years: 5, shares: 100, buyPrice: 0 });
+
+
     // Configuración de Parámetros RASTREO (ORIGINAL)
     const [params, setParams] = useState({
         per: { val: 25, active: true, label: 'PER Máximo', min: 5, max: 100, step: 1, help: 'Veces que el precio cubre el beneficio. <15: Barata, >25: Crecimiento/Cara.' },
@@ -2623,6 +2627,82 @@ const REPORT_TITLES = {
     };
 
     useEffect(() => { if (initialTicker) setTicker(initialTicker); }, [initialTicker]);
+
+
+    const handleRunProjection = async () => {
+        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+        if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker primero', type: 'info' });
+        if (projForm.buyPrice <= 0 || projForm.shares <= 0) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Revisa el precio y nº de acciones', type: 'warning' });
+
+        setLoading(true);
+        setIsProjModalOpen(false); // Cierra el modal de inputs
+        setSpecificAnswer(null);
+        setData(null);
+
+        try {
+            const today = new Date().toLocaleString('es-ES');
+            
+            // Prompt Ingeniería Financiera para Gemini
+            const prompt = `
+            ROL: ANALISTA FINANCIERO SENIOR (CFA).
+            TAREA: Realizar una PROYECCIÓN FINANCIERA DETALLADA a ${projForm.years} AÑOS para la empresa "${ticker}".
+            
+            DATOS DE ENTRADA USUARIO:
+            - Inversión Inicial (Teórica o Real): ${projForm.shares} acciones compradas a ${projForm.buyPrice} (Divisa Local).
+            - Horizonte Temporal: ${projForm.years} años.
+            
+            INSTRUCCIONES DE BÚSQUEDA ACTIVA (INTERNET):
+            1. Busca el PRECIO ACTUAL, EPS (BPA) TTM, Tasa de Crecimiento estimada (CAGR 5y) y Dividend Yield actual.
+            2. Busca el PER (P/E) Actual y el PER Medio Histórico (5 años).
+
+            CÁLCULOS A REALIZAR (Muestra la lógica):
+            Genera 3 Escenarios (PESIMISTA, PROBABLE, OPTIMISTA) variando el Crecimiento de Beneficios y el Múltiplo PER futuro.
+            
+            Para cada escenario calcula:
+            A. Precio Futuro Acción = EPS_Actual * (1 + Crecimiento)^n * PER_Futuro.
+            B. Valor Final Posición = Precio Futuro * ${projForm.shares}.
+            C. Dividendos Acumulados = Estima la suma total de dividendos cobrados en ${projForm.years} años (asume reinversión o suma simple, indícalo).
+            D. Retorno Total = (Valor Final + Dividendos) - (Inversión Inicial: ${projForm.shares * projForm.buyPrice}).
+            E. Rentabilidad Simple % = (Retorno Total / Inversión Inicial) * 100.
+            F. Rentabilidad Anualizada (CAGR) % = ((Valor Final + Divs) / Inversión Inicial)^(1/n) - 1.
+
+            FORMATO DE SALIDA (HTML LIMPIO, TEXTO NEGRO, FONDO BLANCO):
+            Usa tablas HTML para presentar los 3 escenarios comparados.
+            Incluye una sección de "Cálculos Intermedios" explicando qué tasa de crecimiento y PER has usado para cada escenario.
+            
+            ESTRUCTURA HTML REQUERIDA:
+            <div style="background:#fff; color:#000; padding:10px;">
+                <h2 style="color:#0ea5e9; border-bottom:2px solid #ccc;">PROYECCIÓN DE RETORNO: ${ticker.toUpperCase()} (${projForm.years} AÑOS)</h2>
+                <p><strong>Datos de Partida:</strong> Cotización Actual encontrada: [Precio Actual]. Inversión Base: [Importe Inversión Inicial].</p>
+                
+                <h3 style="color:#0ea5e9; border-bottom:1px solid #ccc; margin-top:20px;">1. ESCENARIOS DE RENTABILIDAD</h3>
+                [TABLA COMPARATIVA DE LOS 3 ESCENARIOS] (Columnas: Escenario, Precio Obj., Valor Final, Divs. Totales, Beneficio Neto, % Total, % CAGR)
+
+                <h3 style="color:#0ea5e9; border-bottom:1px solid #ccc; margin-top:20px;">2. FUNDAMENTOS Y SUPUESTOS UTILIZADOS</h3>
+                [Explicación de EPS base, tasas de crecimiento aplicadas en cada caso y expansión/contracción de PER]
+
+                <div style="background:#f0f9ff; border:1px solid #0ea5e9; padding:10px; margin-top:20px; border-radius:8px;">
+                    <strong>CONCLUSIÓN DEL ANALISTA:</strong> [Opinión sobre si la entrada a ${projForm.buyPrice} ofrece un margen de seguridad suficiente basado en el escenario Probable].
+                </div>
+            </div>
+            `;
+
+            const res = await askGemini(apiKey, prompt);
+            
+            // Limpieza básica
+            let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
+            const startIdx = cleanHtml.indexOf('<');
+            if (startIdx !== -1) cleanHtml = cleanHtml.substring(startIdx);
+
+            setSpecificAnswer(cleanHtml);
+
+        } catch (e) {
+            setStatusModal({ isOpen: true, title: 'Error Proyección', msg: e.message, type: 'error' });
+        } finally {
+            setLoading(false);
+        }
+    };
+
 
   // --- PROMPTS ORIGINALES COMPLETOS (RESTAURADOS ÍNTEGRAMENTE) ---
   const HTML_TEMPLATES = {
@@ -3480,6 +3560,9 @@ const REPORT_TITLES = {
                                  <button onClick={() => handleFixedAnalysis('ITEM_4')} className="bg-slate-800 hover:bg-blue-900/40 text-slate-300 hover:text-white border border-slate-700 p-3 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"><Icons.Target size={14}/> Comparativa Sector</button>
                                  <button onClick={() => handleFixedAnalysis('ITEM_5')} className="bg-slate-800 hover:bg-blue-900/40 text-slate-300 hover:text-white border border-slate-700 p-3 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"><Icons.DollarSign size={14}/> Valoración (DCF)</button>
                                  <button onClick={() => handleFixedAnalysis('ITEM_6')} className="bg-slate-800 hover:bg-blue-900/40 text-slate-300 hover:text-white border border-slate-700 p-3 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"><Icons.AlertCircle size={14}/> Riesgos y Alertas</button>
+                                 <button onClick={() => setIsProjModalOpen(true)} className="col-span-2 md:col-span-3 bg-gradient-to-r from-cyan-900 to-slate-900 hover:from-cyan-800 hover:to-slate-800 text-white border border-cyan-500/50 p-3 rounded-xl text-xs font-black flex items-center justify-center gap-3 transition-all shadow-lg shadow-cyan-900/20 mt-2 uppercase tracking-widest group">
+                                     <Icons.TrendingUp size={16} className="text-cyan-300"/> Proyección Rentabilidad a Futuro
+                                 </button>
                                  <button onClick={() => handleFixedAnalysis('ITEM_9')} className="col-span-2 md:col-span-3 bg-gradient-to-r from-indigo-900 to-slate-900 hover:from-indigo-800 hover:to-slate-800 text-white border border-indigo-500/50 p-3 rounded-xl text-xs font-black flex items-center justify-center gap-3 transition-all shadow-lg shadow-indigo-900/20 mt-2 uppercase tracking-widest group">
                                     <Icons.TrendingUp size={16} className="text-indigo-300"/> Comparar con otras opciones del sector (Top 10)
                                  </button>
@@ -3678,6 +3761,43 @@ const REPORT_TITLES = {
             )}
         </div>
     );
+
+            {/* MODAL DE PROYECCIÓN FINANCIERA */}
+            <Modal isOpen={isProjModalOpen} title={`Proyección: ${ticker}`} onClose={() => setIsProjModalOpen(false)} size="sm">
+                <div className="space-y-4 p-2">
+                    <div className="bg-cyan-900/10 border border-cyan-500/30 p-3 rounded-xl text-[10px] text-cyan-200 mb-4">
+                        La IA calculará escenarios basándose en los fundamentales actuales y tu precio de entrada.
+                    </div>
+                    
+                    <div>
+                        <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Años a Proyectar</label>
+                        <select value={projForm.years} onChange={e => setProjForm({...projForm, years: parseInt(e.target.value)})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-sm text-white font-bold">
+                            {[1, 3, 5, 10, 15, 20].map(y => <option key={y} value={y}>{y} Años</option>)}
+                        </select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Nº Acciones</label>
+                            <input type="number" value={projForm.shares} onChange={e => setProjForm({...projForm, shares: parseFloat(e.target.value)})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-sm text-white font-bold text-right" />
+                        </div>
+                        <div>
+                            <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Precio Compra</label>
+                            <input type="number" step="0.01" value={projForm.buyPrice} onChange={e => setProjForm({...projForm, buyPrice: parseFloat(e.target.value)})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-sm text-white font-bold text-right" />
+                        </div>
+                    </div>
+
+                    <div className="bg-slate-800 p-3 rounded-lg flex justify-between items-center border border-slate-700">
+                        <span className="text-[10px] uppercase font-bold text-slate-400">Inversión Inicial Calc:</span>
+                        <span className="text-sm font-mono font-bold text-white">{formatMoney(projForm.shares * projForm.buyPrice, baseCurrency)}</span>
+                    </div>
+
+                    <button onClick={handleRunProjection} className="w-full bg-cyan-600 hover:bg-cyan-500 text-white py-3 rounded-xl font-black uppercase text-xs tracking-widest shadow-lg transition-colors mt-2">
+                        Calcular Escenarios
+                    </button>
+                </div>
+            </Modal>
+
 };
 
 
