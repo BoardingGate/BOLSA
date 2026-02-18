@@ -1728,9 +1728,9 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         setTimeout(() => printWindow.print(), 500);
     };
 
-
-    const gridTotals = useMemo(() => {
-        let tFx = 0, tCost = 0, tVal = 0, tRes = 0, tIntra = 0; // MODIFICADO: tIntra añadido
+const gridTotals = useMemo(() => {
+        let tFx = 0, tCost = 0, tVal = 0, tRes = 0, tIntra = 0;
+        let tPrevVal = 0; // <--- NUEVA VARIABLE PARA ACUMULAR VALOR PREVIO
         let sumBuyPE = 0, countBuyPE = 0;
         let sumCurPE = 0, countCurPE = 0;
 
@@ -1748,6 +1748,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                 // Diferencia precio * acciones * cambio actual
                 const diff = (curP - prevP) * p.shares * curF;
                 tIntra += diff;
+                tPrevVal += (prevP * p.shares * curF); // <--- ACUMULAMOS VALOR PREVIO
             }
 
             tFx += fxVal; tCost += cost; tVal += val; tRes += (val - cost) + divs;
@@ -1759,8 +1760,12 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         const avgBuyPE = countBuyPE > 0 ? sumBuyPE / countBuyPE : 0;
         const avgCurPE = countCurPE > 0 ? sumCurPE / countCurPE : 0;
 
-        return { tFx, tCost, tVal, tRes, tPct, avgBuyPE, avgCurPE, tIntra }; // MODIFICADO: tIntra retornado
+        // CÁLCULO FINAL PORCENTAJE TOTAL INTRADÍA
+        const tIntraPct = tPrevVal !== 0 ? (tIntra / tPrevVal) * 100 : 0;
+
+        return { tFx, tCost, tVal, tRes, tPct, avgBuyPE, avgCurPE, tIntra, tIntraPct }; // <--- RETORNAMOS tIntraPct
     }, [visiblePortfolio]);
+    
     
 
 
@@ -2253,6 +2258,7 @@ const RenderHistoryCard = () => {
                 </div>
             </div>
 
+
             {visibleSections.table && (
                 <div className="w-full overflow-x-auto bg-slate-900/50 border border-slate-800 rounded-xl fade-in">
                     <table className="w-full text-left min-w-[1700px] text-sm"><thead className="bg-slate-800 text-slate-400 text-[10px] uppercase font-bold sticky top-0 z-20">
@@ -2267,6 +2273,7 @@ const RenderHistoryCard = () => {
                     <th className="p-3 text-right">Títulos</th>
                     <th className="p-3 text-right">Precios (Inv/Act)</th>
                     
+
                     {/* Header Intradía */}
                     <th className={`p-3 text-right cursor-pointer select-none hover:text-white bg-slate-900/50 border-l border-r border-slate-700 transition-colors group ${sortConfig.key==='intraday'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('intraday')}>
                         <div className="flex items-center justify-end gap-1">
@@ -2274,22 +2281,31 @@ const RenderHistoryCard = () => {
                             <div>INTRADÍA {sortConfig.key==='intraday' && (sortConfig.direction==='asc'?'▲':'▼')}</div>
                         </div>
                         <div className={`text-[9px] font-mono mt-1 ${gridTotals.tIntra >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                            {formatMoney(gridTotals.tIntra, baseCurrency)}
+                            {formatMoney(gridTotals.tIntra, baseCurrency)} <span className="opacity-80 ml-1">[{formatN(gridTotals.tIntraPct)}%]</span>
                         </div>
                     </th>
 
-                    {/* MODIFICADO: Ancho mínimo para FX para evitar salto de línea extra */}
+                    {/* Ancho mínimo para FX */}
                     <th className="p-3 text-center min-w-[90px]">FX (I/A)</th>
                     
                     <th className="p-3 text-center text-blue-400">FX Desv.</th>
                     <th className="p-3 text-center">Gastos / Adj</th>
-                    <th className="p-3 text-right">Coste Total</th>
-                    <th className="p-3 text-right text-white font-bold bg-[#161b25] border-l border-slate-700">Valor Final</th>
-                    <th className={`p-3 text-right cursor-pointer select-none hover:text-white bg-[#161b25] border-r border-slate-700 transition-colors group ${sortConfig.key==='yield'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('yield')}><div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='yield'?'opacity-100':''}`}/> RENDIMIENTO {sortConfig.key==='yield' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
-                    <th className={`p-3 text-right cursor-pointer select-none hover:text-white hover:bg-slate-700 transition-colors group ${sortConfig.key==='percent'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('percent')}><div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='percent'?'opacity-100':''}`}/> % Ben/Pérd {sortConfig.key==='percent' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
-                    <th className="p-3 text-center">PER (I/A)</th>
                     
-                    {/* Header Acciones con descripción */}
+                    {/* CAMBIO: Ancho +4 chars (aprox 125px) */}
+                    <th className="p-3 text-right min-w-[125px]">Coste Total</th>
+                    
+                    {/* CAMBIO: Ancho +4 chars (aprox 125px) */}
+                    <th className="p-3 text-right text-white font-bold bg-[#161b25] border-l border-slate-700 min-w-[125px]">Valor Final</th>
+                    
+                    {/* CAMBIO: Ancho +4 chars (aprox 125px) para RENDIMIENTO */}
+                    <th className={`p-3 text-right cursor-pointer select-none hover:text-white bg-[#161b25] border-r border-slate-700 transition-colors group min-w-[125px] ${sortConfig.key==='yield'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('yield')}><div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='yield'?'opacity-100':''}`}/> RENDIMIENTO {sortConfig.key==='yield' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
+                    
+                    {/* CAMBIO: Ancho ampliado para % */}
+                    <th className={`p-3 text-right cursor-pointer select-none hover:text-white hover:bg-slate-700 transition-colors group min-w-[115px] ${sortConfig.key==='percent'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('percent')}><div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='percent'?'opacity-100':''}`}/> % Ben/Pérd {sortConfig.key==='percent' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
+                    
+                    {/* CAMBIO: Ancho +2 chars (80px) para PER */}
+                    <th className="p-3 text-center min-w-[80px]">PER (I/A)</th>
+                    
                     <th className="p-3 text-center">
                         <div>Acciones</div>
                         <div className="text-[7px] text-slate-500 font-normal mt-0.5 normal-case tracking-tight">(iA, Venta, Edita, Clona, Borra)</div>
@@ -2311,10 +2327,12 @@ const RenderHistoryCard = () => {
 
                     // CÁLCULO INTRADÍA INDIVIDUAL
                     let intraVal = 0;
+                    let intraPct = 0;
                     let hasIntra = false;
                     if (!isS && p.previousClose) {
                          const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                          intraVal = (curP - prevP) * p.shares * curF;
+                         intraPct = prevP !== 0 ? ((curP - prevP) / prevP) * 100 : 0;
                          hasIntra = true;
                     }
 
@@ -2337,7 +2355,6 @@ const RenderHistoryCard = () => {
                                         </div>
                                     </div>
                                     
-                                    {/* MODIFICADO: Grupo en la misma línea que el ticker */}
                                     <div className="flex flex-wrap items-center gap-1 mt-0.5">
                                         <span className="text-[10px] text-slate-400 uppercase">{p.ticker}</span>
                                         {p.group && <span className="text-[9px] text-purple-300 font-bold bg-purple-900/30 px-1 rounded">[{p.group}]</span>}
@@ -2349,16 +2366,20 @@ const RenderHistoryCard = () => {
                             <td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td>
                             <td className="p-3 text-right text-xs font-mono">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td>
                             
-                            {/* CELDA INTRADÍA */}
+                            {/* CELDA INTRADÍA ACTUALIZADA CON % */}
                             <td className="p-3 text-right font-mono text-xs border-l border-r border-slate-800 bg-slate-900/20">
                                 {hasIntra ? (
-                                    <span className={intraVal >= 0 ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>
-                                        {formatMoney(intraVal, baseCurrency)}
-                                    </span>
+                                    <div>
+                                        <div className={intraVal >= 0 ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>
+                                            {formatMoney(intraVal, baseCurrency)}
+                                        </div>
+                                        <div className={`text-[9px] ${intraPct >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                                            {formatN(intraPct)}%
+                                        </div>
+                                    </div>
                                 ) : <span className="text-slate-600">-</span>}
                             </td>
 
-                            {/* MODIFICADO: Whitespace nowrap para evitar 4 filas */}
                             <td className="p-3 text-center text-[10px] font-mono text-slate-400 whitespace-nowrap">I: {formatN(p.buyFx, 4)}<br/>A: {formatN(curF, 4)}</td>
                             
                             <td className="p-3 text-center text-[9px] font-mono">
@@ -2407,7 +2428,7 @@ const RenderHistoryCard = () => {
                     </table>
                 </div>
             )}
-           
+
 
             {visibleSections.diverging && (<div className="fade-in"><DivergingBarChart data={divergingData} baseCurrency={baseCurrency} /></div>)}
             {visibleSections.stats && (<div className="fade-in"><StatsDashboard portfolio={portfolio} baseCurrency={baseCurrency} taxTotal={taxSum} /></div>)}
@@ -2569,7 +2590,7 @@ const REPORT_TITLES = {
         ITEM_6: "INFORME DE RIESGOS, ALERTAS Y CATALIZADORES",
         ITEM_7: "HISTORIA, IDENTIDAD Y RANKING DE MERCADO",
         ITEM_8: "INFORME INSTITUCIONAL COMPLETO (SENIOR ANALYST)",
-        ITEM_9: "RANKING COMPARATIVO DE MEJOR INVERSIÓN (TOP 20)" 
+        ITEM_9: "RANKING COMPARATIVO DE MEJOR INVERSIÓN (TOP 10)" 
     };
 
     const handleScreenerClick = (rowTicker) => {
@@ -2837,7 +2858,7 @@ const REPORT_TITLES = {
                     <li><strong>[Hace <12 meses]:</strong> [Último gran hito reportado]</li>
                 </ul>
 
-                <!-- 6. RANKING SECTORIAL (LA PARTE CLAVE) -->
+                <!-- 6. RANKING SECTORIAL (LA PARTE CLAVE)-- INSTRUCCIONES PARA LA IA: USA LA WEB FINVIZ.COM PARA OBTENER LOS INGRESOS-->
                 <div style="background-color: #fffbeb; border: 2px solid #d97706; padding: 15px; border-radius: 8px; margin-top: 25px;">
                     <h3 style="color: #b45309; margin-top: 0; border-bottom: 1px solid #fcd34d; font-size: 14px; text-transform: uppercase;">6. RANKING SECTORIAL REAL (TOP 5)</h3>
                     <p style="font-size: 11px; margin-bottom: 10px;"><strong>Fuente del Ranking:</strong> [Forbes / Fortune / Statista / Gartner] (Año: [Año])</p>
@@ -3023,74 +3044,90 @@ const REPORT_TITLES = {
                 </div>
             </div>`,
 
-           ITEM_9: `
+            ITEM_9: `
             <div style="color: #000000; font-family: sans-serif;">
+                <!-- INSTRUCCIONES OCULTAS PARA LA LÓGICA DE DATOS (SOLO DATOS, NO DISEÑO) -->
+                <div style="display: none;">
+                    SYSTEM INSTRUCTION:
+                    1. Identifica el sector exacto de [TICKER].
+                    2. Localiza sus 9 competidores más directos por Capitalización.
+                    3. BÚSQUEDA: Busca el dato "PER", "PEG", "ROI" y "Deuda/Equity" ACTUAL para cada uno.
+                    4. REGLA DE INTEGRIDAD: Si no encuentras el dato exacto, escribe "N/A".
+                    5. SALIDA: Rellena las filas de la tabla inferior manteniendo el HTML exacto.
+                </div>
+
                 <div style="background-color: #f0f9ff; border-left: 5px solid #0369a1; padding: 10px; margin-bottom: 20px;">
-                    <h3 style="color: #0369a1; margin: 0; font-size: 14px; text-transform: uppercase;">OBJETIVO: BUSCAR LA MEJOR INVERSIÓN DEL SECTOR</h3>
+                    <h3 style="color: #0369a1; margin: 0; font-size: 14px; text-transform: uppercase;">COMPARATIVA FUNDAMENTAL (TOP 10)</h3>
                     <p style="font-size: 11px; margin-top: 5px; color: #333;">
-                        <strong>Metodología de Ranking:</strong> Ponderación basada en Valor Intrínseco (Menor PER/PEG), Calidad (Mayor ROI/Margen) y Salud Financiera (Menor Deuda).
-                        <br/>Comparativa realizada contra los <strong>20 principales competidores globales</strong> por capitalización.
+                        <strong>Metodología:</strong> Datos extraídos de informes financieros recientes. La presencia de <strong>"N/A"</strong> indica que el dato no estaba disponible en fuentes públicas gratuitas en el momento del rastreo.
                     </p>
                 </div>
 
-                <h3 style="color: #1e3a8a; border-bottom: 2px solid #ccc; text-transform: uppercase; font-size: 14px; margin-top: 20px;">1. TABLA DE CLASIFICACIÓN (DE MEJOR A PEOR)</h3>
-                <p style="font-size: 10px; margin-bottom: 5px; font-style: italic;">Datos TTM (Trailing Twelve Months) actualizados a la fecha actual [FECHA].</p>
+                <h3 style="color: #1e3a8a; border-bottom: 2px solid #ccc; text-transform: uppercase; font-size: 14px; margin-top: 20px;">1. TABLA DE DATOS (ORDEN POR CAP. BURSÁTIL)</h3>
                 
-                <table style="width:100%; border-collapse: collapse; font-size: 10px; border: 1px solid #94a3b8;">
-                    <tr style="background:#b2de1b; color:#fff; text-align: center;">
-                        <th style="padding:5px; border:1px solid #20735A;">#</th>
-                        <th style="padding:5px; border:1px solid #20735A; text-align:left;">Empresa</th>
-                        <th style="padding:5px; border:1px solid #20735A;">País</th>
-                        <th style="padding:5px; border:1px solid #20735A;">PER</th>
-                        <th style="padding:5px; border:1px solid #20735A;">PEG</th>
-                        <th style="padding:5px; border:1px solid #20735A;">ROI</th>
-                        <th style="padding:5px; border:1px solid #20735A;">D/E</th>
-                        <th style="padding:5px; border:1px solid #20735A; background:#fca7a7;">PUNTUACIÓN</th>
+                <table style="width:100%; border-collapse: collapse; font-size: 10px; border: 1px solid #ccc;">
+                    <!-- CABECERA FORZADA: GRIS CLARO (#f1f5f9) Y TEXTO NEGRO (#000) -->
+                    <tr style="background-color:#f1f5f9; color:#000000; text-align: center; font-weight:bold;">
+                        <th style="padding:5px; border:1px solid #ccc; text-align:left;">Empresa (Ticker)</th>
+                        <th style="padding:5px; border:1px solid #ccc;">País</th>
+                        <th style="padding:5px; border:1px solid #ccc;">PER (P/E)</th>
+                        <th style="padding:5px; border:1px solid #ccc;">PEG</th>
+                        <th style="padding:5px; border:1px solid #ccc;">ROI</th>
+                        <th style="padding:5px; border:1px solid #ccc;">D/E (Deuda)</th>
+                        <th style="padding:5px; border:1px solid #ccc; background-color:#e2e8f0;">Veredicto</th>
                     </tr>
                     
-                    <!-- INSTRUCCIÓN A LA IA: GENERA 20 FILAS BUSCANDO LOS DATOS REALES (SÉ METICULOSO, YA QUE UN DATO INCIERTO ARRUINA LA TABLA) MÁS ACTUALES (si el dato es más antiguo que 4 meses se omitirá) DE FORMA ACTIVA EN INTERNET. IDENTIFICA LA FILA DEL TICKER SOLICITADO CON BACKGROUND AMARILLO CLARO (#fef9c3) -->
+                    <!-- FILA 1: EMPRESA ANALIZADA (FONDO AMARILLO SUAVE) -->
+                    <tr style="background-color:#fef08a; color:#000;">
+                        <td style="font-weight:bold; border:1px solid #ccc;">1. [TICKER ANALIZADO]</td>
+                        <td style="text-align:center; border:1px solid #ccc;">[País]</td>
+                        <td style="text-align:center; border:1px solid #ccc;">[Dato/NA]</td>
+                        <td style="text-align:center; border:1px solid #ccc;">[Dato/NA]</td>
+                        <td style="text-align:center; border:1px solid #ccc;">[Dato/NA]</td>
+                        <td style="text-align:center; border:1px solid #ccc;">[Dato/NA]</td>
+                        <td style="text-align:center; border:1px solid #ccc; font-weight:bold;">ANÁLISIS</td>
+                    </tr>
+                    
+                    <!-- FILA 2 A 10: COMPETIDORES (FONDO BLANCO) -->
+                    <!-- IA: REEMPLAZA LOS CORCHETES CON DATOS REALES -->
                     <tr>
-                        <td style="text-align:center; font-weight:bold;">1</td>
-                        <td style="font-weight:bold;">[Nombre Empresa #1]</td>
-                        <td style="text-align:center;">[País]</td>
-                        <td style="text-align:center;">[Dato]</td>
-                        <td style="text-align:center;">[Dato]</td>
-                        <td style="text-align:center;">[Dato]</td>
-                        <td style="text-align:center;">[Dato]</td>
-                        <td style="text-align:center; font-weight:bold; color:#1e40af;">[90-100]</td>
+                        <td style="border:1px solid #ccc;">2. [Competidor 1]</td>
+                        <td style="text-align:center; border:1px solid #ccc;">[País]</td>
+                        <td style="text-align:center; border:1px solid #ccc;">[Dato/NA]</td>
+                        <td style="text-align:center; border:1px solid #ccc;">[Dato/NA]</td>
+                        <td style="text-align:center; border:1px solid #ccc;">[Dato/NA]</td>
+                        <td style="text-align:center; border:1px solid #ccc;">[Dato/NA]</td>
+                        <td style="text-align:center; border:1px solid #ccc;">[Mejor/Peor]</td>
                     </tr>
-                     <tr>
-                        <td style="text-align:center;">2</td>
-                        <td>[Nombre Empresa #2]</td>
-                        <td style="text-align:center;">[País]</td>
-                        <td style="text-align:center;">[Dato]</td>
-                        <td style="text-align:center;">[Dato]</td>
-                        <td style="text-align:center;">[Dato]</td>
-                        <td style="text-align:center;">[Dato]</td>
-                        <td style="text-align:center; font-weight:bold;">[Score]</td>
-                    </tr>
-                    <!-- ... Insertar resto de filas hasta 20 y al finalizar poner el rango de fechas de los datos, es decir, el dato más antiguo y el más reciente, para conocer la frescura de la información... -->
-                    
+                    <tr><td style="border:1px solid #ccc;">3. [Competidor 2]</td><td style="text-align:center; border:1px solid #ccc;">[País]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">-</td></tr>
+                    <tr><td style="border:1px solid #ccc;">4. [Competidor 3]</td><td style="text-align:center; border:1px solid #ccc;">[País]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">-</td></tr>
+                    <tr><td style="border:1px solid #ccc;">5. [Competidor 4]</td><td style="text-align:center; border:1px solid #ccc;">[País]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">-</td></tr>
+                    <tr><td style="border:1px solid #ccc;">6. [Competidor 5]</td><td style="text-align:center; border:1px solid #ccc;">[País]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">-</td></tr>
+                    <tr><td style="border:1px solid #ccc;">7. [Competidor 6]</td><td style="text-align:center; border:1px solid #ccc;">[País]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">-</td></tr>
+                    <tr><td style="border:1px solid #ccc;">8. [Competidor 7]</td><td style="text-align:center; border:1px solid #ccc;">[País]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">-</td></tr>
+                    <tr><td style="border:1px solid #ccc;">9. [Competidor 8]</td><td style="text-align:center; border:1px solid #ccc;">[País]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">-</td></tr>
+                    <tr><td style="border:1px solid #ccc;">10. [Competidor 9]</td><td style="text-align:center; border:1px solid #ccc;">[País]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">[Dato]</td><td style="text-align:center; border:1px solid #ccc;">-</td></tr>
+
                 </table>
 
-                <h3 style="color: #1e3a8a; border-bottom: 2px solid #ccc; text-transform: uppercase; font-size: 14px; margin-top: 25px;">2. ANÁLISIS DEL GANADOR</h3>
-                <div style="border: 1px solid #ccc; padding: 10px; background: #fafafa;">
-                    <strong style="color: #15803d; text-transform: uppercase;">¿POR QUÉ LA EMPRESA #1 ES LA MEJOR OPCIÓN?</strong>
-                    <p style="font-size: 11px; margin-top: 5px; text-align: justify;">[Explica brevemente la combinación de factores: ejemplo "Combina un PER bajo de X con un crecimiento PEG de Y, siendo superior a la media del sector..."]</p>
+                <h3 style="color: #1e3a8a; border-bottom: 2px solid #ccc; text-transform: uppercase; font-size: 14px; margin-top: 25px;">2. ANÁLISIS DE DEUDA Y VALORACIÓN</h3>
+                <div style="border: 1px solid #ccc; padding: 10px; background: #fff;">
+                    <strong style="color: #b91c1c; text-transform: uppercase;">¿QUIÉN TIENE EL MEJOR BALANCE?</strong>
+                    <p style="font-size: 11px; margin-top: 5px; text-align: justify;">[Analiza los datos de la columna D/E (Deuda/Patrimonio). Indica qué empresa está menos apalancada y cuál corre más riesgo financiero actualmente.]</p>
                 </div>
 
-                <h3 style="color: #1e3a8a; border-bottom: 2px solid #ccc; text-transform: uppercase; font-size: 14px; margin-top: 25px;">3. CONCLUSIÓN CRÍTICA SOBRE [TICKER SOLICITADO]</h3>
-                <div style="border: 1px solid #ccc; padding: 10px; background: #fff7ed; border-left: 4px solid #f97316;">
-                    <strong style="color: #c2410c; text-transform: uppercase;">POSICIÓN EN RANKING: #[X] DE 20</strong>
+                <h3 style="color: #1e3a8a; border-bottom: 2px solid #ccc; text-transform: uppercase; font-size: 14px; margin-top: 25px;">3. CONCLUSIÓN Y GANADOR</h3>
+                <div style="border: 1px solid #ccc; padding: 10px; background: #f0fdf4; border-left: 4px solid #16a34a;">
+                    <strong style="color: #15803d; text-transform: uppercase;">MEJOR OPCIÓN CALIDAD/PRECIO:</strong>
                     <p style="font-size: 11px; margin-top: 5px; text-align: justify;">
-                        <strong>Veredicto:</strong> [¿Infravalorada / Sobrevalorada / Trampa de Valor?]
-                        <br/><br/>
-                        [Explicación comparativa y debajo de la misma un tarjetón con la explicación de los conceptos técnicos para que un usuario novel puede comprenderlos tanto el concepto como leer los valores (ROI, PEG, PER, etc): "Aunque su ROI es bueno, su deuda es X veces superior a la del líder, lo que la hace más arriesgada en el entorno actual..."]
+                        Basado estrictamente en los múltiplos PER y la solvencia (Deuda) mostrados arriba, la opción más equilibrada es: <strong>[NOMBRE EMPRESA]</strong>.
+                        <br/>
+                        <em>(Nota: Si hay muchos datos N/A en la tabla, este veredicto es parcial).</em>
                     </p>
                 </div>
                 
                 <div style="margin-top: 30px; font-size: 9px; color: #666; text-align: center; border-top: 1px solid #ccc; padding-top: 10px;">
-                    Ranking generado algorítmicamente basado en fundamentales reportados. No constituye asesoramiento financiero vinculante.
+                    Datos extraídos en tiempo real. Fuente de referencia: Finviz / Yahoo Finance / Google Finance.
                 </div>
             </div>`
     };
@@ -3224,16 +3261,16 @@ const REPORT_TITLES = {
             const prompt = `
             SISTEMA: ROL ANALISTA SENIOR DE BOLSA EN WALL STREET. RECABA LOS DATOS DE FORMA ACTIVA EN INTERNET.
             TAREA: Auditar el ticker ${ticker}, a FECHA MÁS PRÓXIMA A (${today}), CON PRECIO ACTUAL DE ${priceInfo}.
-            ESTILO: Se conciso pero a su vez explicando bien cada apartado con un lenguaje que una persona no muy experimentada en bolsa comprenda.
+            ESTILO: Se conciso pero resumir excesivamente los distintos apartados. explicando bien cada uno con un lenguaje que una persona no muy experimentada en bolsa comprenda.
             
-            FUENTES DE BÚSQUEDA PREFERIBLES (puedes usar otras):
-            Investor Relations (Webs oficiales), Investing, marketscreener, MarketWatch, Google Finance, SEC.gov, Yahoo Finance, Finviz y SeekingAlpha.
+            FUENTES DE BÚSQUEDA EN GOOGLE PREFERIBLES POR ORDEN DE BÚSQUEDA Y SI ES POSIBLE, CUANDO BUSQUES UN MISMO TIPO DE DATOS PARA DISTINTOS TICKERS USA LA MISMA FUENTE PARA TODOS ELLOS, PARA DATOS ESTILO PER, ROI, PEG, ETC UTILIZA FINVIZ.COM:
+            Investor Relations (Webs oficiales), FINVIZ,  Investing, TradingView,  marketscreener, Google Finance, SEC.gov, Yahoo Finance, MarketWatch y SeekingAlpha.
             
             PREMISAS OBLIGATORIAS:
-            1. PROHIBIDO INVENTAR: No uses valores de ejemplo.
+            1. PROHIBIDO INVENTAR: No uses valores de ejemplo y jamás inventes, PENALIZADO CON 1.000 EUROS. SIEMPRE INDICA LAS FUENTES DE LOS DATOS Y SU RANGO DE FECHAS EN CADA APARTADO. NO USES NINGUN DATO DEL QUE NO TENGAS CERTEZA QUE SEAN ACTUALES. SI ES POSIBLE LOS DATOS MAS RELEVANTES USA HERRAMIENTAS QUE DAN LOS MISMOS EN TIEMPO REAL Y EN CASO DE TENER A DISPOSICIÓN LOS DATOS COMUNES A VARIOS TICKERS, UTILIZAR LA MISMA FUENTE.
             2. SI UN DATO NO SE LOCALIZA: Escribe "No encontré datos" y las URLs deben ser ejecutables al pinchar en ellas.
             3. TRADUCCIÓN: Todo el informe debe estar en ESPAÑOL.
-            4. LOS CONCEPTOS TÉCNICOS (ROI, PER, PEG, etc) DEBEN SER EXPLICADOS PARA QUE ALGUIEN SIN CONOCIMIENTOS LOS COMPRENDA PREFERIBLENTE CERCA DE DONDE SE CITAN Y EN LETRA MÁS PEQUEÑA CON UN (*)
+            4. LOS CONCEPTOS TÉCNICOS (ROI, PER, PEG, etc) DEBEN SER EXPLICADOS PARA QUE ALGUIEN SIN CONOCIMIENTOS LOS COMPRENDA PREFERIBLENTE CERCA DE DONDE SE CITAN Y EN LETRA MÁS PEQUEÑA CON UN INDICANDO -SIEMPRE- LA FUENTE (*)
             
             DATOS CARTERA:
             ${templateCode}
@@ -3444,7 +3481,7 @@ const REPORT_TITLES = {
                                  <button onClick={() => handleFixedAnalysis('ITEM_5')} className="bg-slate-800 hover:bg-blue-900/40 text-slate-300 hover:text-white border border-slate-700 p-3 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"><Icons.DollarSign size={14}/> Valoración (DCF)</button>
                                  <button onClick={() => handleFixedAnalysis('ITEM_6')} className="bg-slate-800 hover:bg-blue-900/40 text-slate-300 hover:text-white border border-slate-700 p-3 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"><Icons.AlertCircle size={14}/> Riesgos y Alertas</button>
                                  <button onClick={() => handleFixedAnalysis('ITEM_9')} className="col-span-2 md:col-span-3 bg-gradient-to-r from-indigo-900 to-slate-900 hover:from-indigo-800 hover:to-slate-800 text-white border border-indigo-500/50 p-3 rounded-xl text-xs font-black flex items-center justify-center gap-3 transition-all shadow-lg shadow-indigo-900/20 mt-2 uppercase tracking-widest group">
-                                    <Icons.TrendingUp size={16} className="text-indigo-300"/> Comparar con otras opciones del sector (Top 20)
+                                    <Icons.TrendingUp size={16} className="text-indigo-300"/> Comparar con otras opciones del sector (Top 10)
                                  </button>
                                  <button onClick={() => handleFixedAnalysis('ITEM_7')} className="col-span-2 md:col-span-3 bg-gradient-to-r from-emerald-900 to-slate-900 hover:from-emerald-800 hover:to-slate-800 text-white border border-emerald-500/50 p-3 rounded-xl text-xs font-black flex items-center justify-center gap-3 transition-all shadow-lg shadow-emerald-900/20 mt-2 uppercase tracking-widest group">
                                      <Icons.Globe size={16} className="text-emerald-300"/> Conoce la Historia de la Empresa
