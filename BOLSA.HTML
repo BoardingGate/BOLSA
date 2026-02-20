@@ -139,21 +139,10 @@
         CursorClick: (p) => <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18" {...p}><path fillRule="evenodd" d="M14.25 2.25a.75.75 0 0 1 .75.75v3.21l1.9-1.9a.75.75 0 1 1 1.06 1.06l-3.21 3.21h3.21a.75.75 0 0 1 .75.75v3.21l1.9-1.9a.75.75 0 1 1 1.06 1.06l-3.21 3.21h3.21a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1-.75-.75v-4.5a.75.75 0 0 1 .75-.75h3.21l-1.9-1.9a.75.75 0 0 1-.22-.53V5.46L14.78 4.06a.75.75 0 0 1 .53-.22H17.46l-1.9-1.9a.75.75 0 0 1-.22-.53V2.25Z" clipRule="evenodd" /><path d="M5.47 8.53a.75.75 0 0 1 0-1.06l3.5-3.5a.75.75 0 0 1 1.06 1.06L8.06 7.5h11.19a.75.75 0 0 1 0 1.5H8.06l1.97 1.97a.75.75 0 1 1-1.06 1.06l-3.5-3.5Z" /></svg> // Simplified
       };
 
-
-      const DEFAULT_AI_MODELS = [
-          "gemini-3.1-pro-preview",
-          "gemini-3-pro-preview",
-          "gemini-3-flash-preview",
-          "gemini-2.5-pro",
-          "gemini-2.5-flash",
-          "gemini-2.5-flash-lite"
-      ];
-
-      const askGemini = async (apiKey, prompt, model) => {
+    
+      const askGemini = async (apiKey, prompt) => {
           if (!apiKey) throw new Error("Falta API Key");
-          const targetModel = model || "gemini-3-flash-preview";
-          
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey}`, {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }] })
           });
@@ -162,7 +151,6 @@
           return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
       };
 
-    
       const Modal = ({ isOpen, title, onClose, children, size = "md" }) => {
           if (!isOpen) return null;
           return (
@@ -1250,7 +1238,7 @@ const handlePrint = () => {
 
 
 
-const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio, onForceBackup, gScriptUrl, setGScriptUrl, resultsData, appPin, setAppPin, _x_lim, _x_trig, aiModel, setAiModel, availableModels, setAvailableModels }) => {
+const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio, onForceBackup, gScriptUrl, setGScriptUrl, resultsData, appPin, setAppPin, _x_lim, _x_trig }) => {
     const [localLic, setLocalLic] = useState(''); 
     const [showKey, setShowKey] = useState(false); 
     const [testStatus, setTestStatus] = useState(null); 
@@ -1290,25 +1278,20 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
         } 
     };
 
-    const testConnection = async () => { if(!apiKey) return alert("Introduce una clave primero."); setTestStatus('loading'); setErrorDetail(''); try { await askGemini(apiKey, "Test conexión", aiModel); setTestStatus('success'); } catch(e) { setTestStatus('error'); setErrorDetail(e.message); } };
+    const testConnection = async () => { if(!apiKey) return alert("Introduce una clave primero."); setTestStatus('loading'); setErrorDetail(''); try { await askGemini(apiKey, "Test conexión"); setTestStatus('success'); } catch(e) { setTestStatus('error'); setErrorDetail(e.message); } };
     
     const handleRunExport = () => { 
         setIoStatus('processing'); 
         try { 
-            // AQUI SE GUARDAN LOS MODELOS EN EL BACKUP
-            const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 3, resultsData, appPin, aiModel, availableModels }; 
+            const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 3, resultsData, appPin }; // Incluimos PIN en backup
             const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"}); 
             const url = URL.createObjectURL(blob); 
             const a = document.createElement('a'); a.href = url; a.download = `BoardingGate_Backup_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); setIoStatus('success'); setTimeout(() => setIoStatus('idle'), 2000); 
         } catch (e) { alert("Error: " + e.message); setIoStatus('error'); } 
     };
     
-    const handleRunImport = (e) => { const file = e.target.files[0]; if (!file) return; if(!confirm("⚠️ IMPORTANTE:\n\nEsta acción reemplazará TODA tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) { e.target.value = null; return; } setIoStatus('processing'); const reader = new FileReader(); reader.onload = (ev) => { try { const d = JSON.parse(ev.target.result); if (d.portfolio) setPortfolio(d.portfolio); if (d.apiKey) setApiKey(d.apiKey); if (d.baseCurrency) setBaseCurrency(d.baseCurrency); if (d.refreshInterval) setRefreshInterval(d.refreshInterval); if(d.appPin) setAppPin(d.appPin); 
-    // RECUPERAR MODELOS DEL BACKUP
-    if (d.aiModel) setAiModel(d.aiModel); if (d.availableModels) setAvailableModels(d.availableModels);
-    setIoStatus('success'); alert("✅ Restauración completada correctamente."); window.location.reload(); } catch (err) { alert("Archivo inválido o corrupto."); setIoStatus('error'); } }; reader.readAsText(file); };
+    const handleRunImport = (e) => { const file = e.target.files[0]; if (!file) return; if(!confirm("⚠️ IMPORTANTE:\n\nEsta acción reemplazará TODA tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) { e.target.value = null; return; } setIoStatus('processing'); const reader = new FileReader(); reader.onload = (ev) => { try { const d = JSON.parse(ev.target.result); if (d.portfolio) setPortfolio(d.portfolio); if (d.apiKey) setApiKey(d.apiKey); if (d.baseCurrency) setBaseCurrency(d.baseCurrency); if (d.refreshInterval) setRefreshInterval(d.refreshInterval); if(d.appPin) setAppPin(d.appPin); setIoStatus('success'); alert("✅ Restauración completada correctamente."); window.location.reload(); } catch (err) { alert("Archivo inválido o corrupto."); setIoStatus('error'); } }; reader.readAsText(file); };
     
-
     const handleAiImport = async () => { 
         if (!apiKey) return alert("Falta API Key"); 
         if (importMethod === 'pdf' && !pdfFile) return alert("Selecciona un PDF");
@@ -1350,9 +1333,7 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
               4. Ignore headers, totals, or footer text.
             `;
 
-            const res = await askGemini(apiKey, prompt, aiModel); 
-            
-            
+            const res = await askGemini(apiKey, prompt); 
             const extractedData = sanitizeAndParseJSON(res); 
 
             if (Array.isArray(extractedData)) { 
@@ -1444,49 +1425,7 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
             <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
                 <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4"><div className="p-3 bg-purple-500/20 rounded-xl text-purple-400"><Icons.Wand size={32} /></div><div><h2 className="text-2xl font-bold text-white">Configuración IA</h2><p className="text-slate-400 text-sm">Conexión con Google Gemini</p></div></div>
                 <div className="space-y-6">
-                        <div><label className="block text-sm font-bold text-slate-300 mb-2">Google Gemini API Key</label><div className="relative mb-4"><input type={showKey ? "text" : "password"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full bg-black/50 border border-slate-600 rounded-xl p-4 pr-12 text-white focus:border-purple-500 focus:outline-none font-mono"/><button onClick={() => setShowKey(!showKey)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showKey ? <Icons.EyeOff size={20}/> : <Icons.Eye size={20}/>}</button></div><div className="flex justify-end gap-3 items-center"><button onClick={testConnection} className={`h-[40px] px-6 rounded-xl border font-bold text-sm flex items-center gap-2 ${testStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : testStatus === 'error' ? 'bg-red-600 border-red-500 text-white' : 'bg-slate-700 border-slate-600 text-slate-300'}`}>{testStatus === 'loading' ? <Icons.Loader/> : testStatus === 'success' ? <Icons.CheckCircle size={18}/> : 'PROBAR CONEXIÓN'}</button></div>{testStatus === 'error' && <div className="mt-4 p-4 bg-red-900/30 border border-red-500/50 rounded-xl text-red-200 text-xs font-mono whitespace-pre-wrap">{errorDetail}</div>}
-                            <div className="mb-6 border-t border-slate-700 pt-6">
-                            <div className="flex justify-between items-center mb-2">
-                                 <label className="text-sm font-bold text-slate-300 uppercase tracking-wide">Modelo IA Activo</label>
-                                 <span className="text-[10px] text-slate-500 font-mono">{aiModel}</span>
-                            </div>
-                            <select value={aiModel} onChange={(e) => setAiModel(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded-xl p-3 text-white text-sm mb-4 font-mono shadow-inner focus:ring-1 focus:ring-blue-500">
-                                {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
-                            </select>
-                            
-                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
-                                 <label className="block text-[10px] font-bold text-slate-500 mb-2 uppercase flex items-center gap-2"><Icons.Settings size={12}/> Gestión de Modelos Personalizados</label>
-                                 <div className="flex gap-2 mb-3">
-                                     <input type="text" id="newModelInput" placeholder="ID del Modelo (Ej: gemini-1.5-pro)" className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-blue-500"/>
-                                     <button onClick={() => {
-                                         const input = document.getElementById('newModelInput');
-                                         const val = input.value.trim();
-                                         if(val && !availableModels.includes(val)) {
-                                             setAvailableModels([...availableModels, val]);
-                                             setAiModel(val); // Seleccionar el nuevo automáticamente
-                                             input.value = '';
-                                         }
-                                     }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase transition-colors shadow-lg">Añadir</button>
-                                 </div>
-                                 
-                                 <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto custom-scrollbar p-1">
-                                     {availableModels.map(m => (
-                                         <div key={m} className={`group flex items-center gap-2 px-2 py-1.5 rounded border text-[10px] font-mono transition-all ${aiModel === m ? 'bg-blue-900/30 border-blue-500 text-blue-300 shadow-md' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500'}`}>
-                                             <span className="truncate max-w-[150px]" title={m}>{m}</span>
-                                             {availableModels.length > 1 && (
-                                                 <button onClick={(e) => {
-                                                     e.stopPropagation(); // Evitar selects accidentales
-                                                     const newList = availableModels.filter(x => x !== m);
-                                                     setAvailableModels(newList);
-                                                     if(aiModel === m) setAiModel(newList[0] || DEFAULT_AI_MODELS[0]);
-                                                 }} className="text-red-500 hover:text-red-300 font-bold px-1 rounded hover:bg-red-900/20 transition-colors" title="Borrar modelo">×</button>
-                                             )}
-                                         </div>
-                                     ))}
-                                 </div>
-                            </div>
-                        </div>
-                        
+                    <div><label className="block text-sm font-bold text-slate-300 mb-2">Google Gemini API Key</label><div className="relative mb-4"><input type={showKey ? "text" : "password"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full bg-black/50 border border-slate-600 rounded-xl p-4 pr-12 text-white focus:border-purple-500 focus:outline-none font-mono"/><button onClick={() => setShowKey(!showKey)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showKey ? <Icons.EyeOff size={20}/> : <Icons.Eye size={20}/>}</button></div><div className="flex justify-end gap-3 items-center"><button onClick={testConnection} className={`h-[40px] px-6 rounded-xl border font-bold text-sm flex items-center gap-2 ${testStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : testStatus === 'error' ? 'bg-red-600 border-red-500 text-white' : 'bg-slate-700 border-slate-600 text-slate-300'}`}>{testStatus === 'loading' ? <Icons.Loader/> : testStatus === 'success' ? <Icons.CheckCircle size={18}/> : 'PROBAR CONEXIÓN'}</button></div>{testStatus === 'error' && <div className="mt-4 p-4 bg-red-900/30 border border-red-500/50 rounded-xl text-red-200 text-xs font-mono whitespace-pre-wrap">{errorDetail}</div>}
                         <div className="mt-6 p-6 bg-[#1e293b] border border-[#334155] rounded-xl relative overflow-hidden"><h4 className="text-lg font-bold text-blue-400 mb-4 flex items-center gap-2"><Icons.HelpCircle size={20} /> Gestión de la API Key (Gratis vs Pago)</h4><div className="mb-6 border-b border-slate-700 pb-6"><h5 className="text-sm font-bold text-white mb-3 flex items-center gap-2"><span className="bg-green-500/20 text-green-400 px-2 py-0.5 rounded text-[10px] uppercase border border-green-500/30">Opción Gratuita</span><span className="text-slate-400 text-xs font-normal">Ideal para uso básico</span></h5><ol className="list-decimal list-inside text-xs text-slate-300 space-y-2 mb-4 leading-relaxed"><li>Accede a <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-blue-400 hover:underline font-bold">Google AI Studio</a>.</li><li>Haz clic en <strong>"Get API key"</strong> (arriba izquierda) y luego en <strong>"Create API key in new project"</strong>.</li><li>Copia la clave y pégala arriba.</li></ol><p className="text-[10px] text-slate-400 bg-slate-900/50 p-3 rounded border border-slate-700"><strong>Límites actuales:</strong> 15 peticiones/minuto (RPM) y 1.500/día. Si la IA falla o tarda mucho, es probable que hayas superado este límite temporalmente.</p></div><div><h5 className="text-sm font-bold text-white mb-3 flex items-center gap-2"><span className="bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded text-[10px] uppercase border border-blue-500/30">Opción Ilimitada (Pay-as-you-go)</span><span className="text-slate-400 text-xs font-normal">Para uso intensivo</span></h5><p className="text-xs text-slate-300 mb-3 leading-relaxed">Si actualizas precios de muchos valores frecuentemente o realizas análisis complejos, te conviene activar la facturación para eliminar esperas.</p><ol className="list-decimal list-inside text-xs text-slate-300 space-y-2 mb-6 leading-relaxed"><li>Ve a la <a href="https://console.cloud.google.com/billing" target="_blank" className="text-blue-400 hover:underline font-bold">Consola de Google Cloud Billing</a>.</li><li>Selecciona el <strong>mismo proyecto</strong> que se creó automáticamente en AI Studio (suele llamarse "Generative Language Client").</li><li>Haz clic en <strong>"Vincular una cuenta de facturación"</strong> e introduce tu tarjeta.</li><li><strong>Coste:</strong> Es extremadamente barato (aprox. $0.35 por millón de tokens). Actualizar una cartera consume centavos.</li></ol><div className="flex gap-3"><a href="https://aistudio.google.com/app/apikey" target="_blank" className="flex-1 text-center py-2.5 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2 border border-slate-600"><Icons.ExternalLink size={14}/> Obtener Key (AI Studio)</a><a href="https://console.cloud.google.com/billing" target="_blank" className="flex-1 text-center py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2 border border-blue-500"><Icons.ExternalLink size={14}/> Activar Facturación (Cloud)</a></div></div></div>
                     </div>
                 </div>
@@ -1602,7 +1541,7 @@ return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeTyp
    
 
 
-const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady, _x_lim, _x_trig, globalNotes, setGlobalNotes, onAnalyze, aiModel }) => {
+const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady, _x_lim, _x_trig, globalNotes, setGlobalNotes, onAnalyze }) => {
     // --- ESTADOS PERSISTENTES PARA FILTROS ---
     const [isNotesModalOpen, setIsNotesModalOpen] = useState(false);
     const [filterText, setFilterText] = usePersistentState('bg_port_filter_text', '');
@@ -1660,7 +1599,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           if (sortConfig.key === 'yield') { const getPL = (p) => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); return vF - cost; }; return (getPL(a) - getPL(b)) * dir; } 
           if (sortConfig.key === 'percent') { const getPct = (p) => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); const ds = (p.dividends || []).reduce((acc,d)=>acc+d.net,0); const days = calculateDays(p.buyDate, p.sellDate || new Date()); return calcReturns(cost, vF + ds, days).simple; }; return (getPct(a) - getPct(b)) * dir; } 
           
-        if (sortConfig.key === 'intraday') { 
+          if (sortConfig.key === 'intraday') { 
               const getIntra = (p) => {
                   if (p.sellDate || !p.previousClose) return 0;
                   const curP = p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice;
@@ -1671,24 +1610,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
               return (getIntra(a) - getIntra(b)) * dir; 
           }
 
-          // --- NUEVOS CASOS DE ORDENACIÓN ---
-          if (sortConfig.key === 'totalCost') {
-              const getCost = (p) => (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
-              return (getCost(a) - getCost(b)) * dir;
-          }
-          if (sortConfig.key === 'totalValue') {
-              const getVal = (p) => {
-                  const isS = !!p.sellDate;
-                  const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
-                  const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
-                  return (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
-              };
-              return (getVal(a) - getVal(b)) * dir;
-          }
-       
           if (sortConfig.key === 'value') { return a.ticker.localeCompare(b.ticker) * dir; } 
-
-
           if (filterType === 'all') { const aSold = !!a.sellDate; const bSold = !!b.sellDate; if (aSold !== bSold) return (aSold ? 1 : -1) * dir; if (!aSold) return (new Date(b.buyDate) - new Date(a.buyDate)) * dir; else return (new Date(b.sellDate) - new Date(a.sellDate)) * dir; } 
           if (filterType === 'active') return (new Date(b.buyDate) - new Date(a.buyDate)) * dir; 
           if (filterType === 'sold') return (new Date(b.sellDate) - new Date(a.sellDate)) * dir; 
@@ -1756,7 +1678,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
         setAnalyzingNews(true);
         try {
-            const res = await askGemini(apiKey, prompt, aiModel);
+            const res = await askGemini(apiKey, prompt);
             // Limpieza y validación de respuesta
             let cleanHtml = res.trim();
             cleanHtml = cleanHtml.replace(/```html/g, '').replace(/```/g, '');
@@ -1942,7 +1864,7 @@ const gridTotals = useMemo(() => {
     return () => clearInterval(interval); 
 }, [apiKey, refreshInterval, isAppReady]);     
 
-    const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt, aiModel); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
+    const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
 
 
     const updatePrices = async (isAuto = false) => { 
@@ -1960,7 +1882,7 @@ const gridTotals = useMemo(() => {
                 const prompt = `ROLE: Financial Data API. TASK: Get data for Ticker: "${item.ticker}". TYPE: ${assetDesc}. REQUIREMENTS: 1. "p": Current Price in its NATIVE currency (${item.stockCurrency}). STRICT RULE: DO NOT convert the price to ${baseCurrency}. Return it as it quotes in the market. 2. "fx": Exchange rate to convert from ${item.stockCurrency} to ${baseCurrency}. (Example: 1 ${item.stockCurrency} = X ${baseCurrency}). If same, fx = 1. 3. "pe": TTM P/E Ratio (0 if Index). 4. "pc": Previous Close Price (Yesterday's close). RETURN JSON ONLY: {"p": number, "fx": number, "pe": number, "pc": number}`; 
                 
                 try { 
-                    const res = await askGemini(apiKey, prompt, aiModel); 
+                    const res = await askGemini(apiKey, prompt); 
                     const json = extractJSON(res); 
                     if (json && (json.p || json.p === 0)) { 
                         const safeFx = (item.stockCurrency === baseCurrency) ? 1 : cleanVal(json.fx); 
@@ -2105,7 +2027,7 @@ const analyzePortfolio = async () => {
         <p>5 pasos para optimizar. Luego, lista las posiciones activas más relevantes con veredicto (VENDER / MANTENER / AMPLIAR) y motivo.</p>
         `;
 
-        const res = await askGemini(apiKey, prompt, aiModel);
+        const res = await askGemini(apiKey, prompt);
         
         let cleanHtml = res.trim();
         cleanHtml = cleanHtml.replace(/```html/g, '').replace(/```/g, '');
@@ -2368,20 +2290,12 @@ const RenderHistoryCard = () => {
                     
                     <th className="p-3 text-center text-blue-400 min-w-[90px]">FX Desv.</th>
                     <th className="p-3 text-center min-w-[105px]">Gastos / Adj</th>
-
-                    <th className={`p-3 text-right min-w-[125px] cursor-pointer select-none hover:text-white transition-colors group ${sortConfig.key==='totalCost'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('totalCost')}>
-                        <div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='totalCost'?'opacity-100':''}`}/> Coste Total {sortConfig.key==='totalCost' && (sortConfig.direction==='asc'?'▲':'▼')}</div>
-                    </th>
-
-                    {/* NUEVA COLUMNA: PESOS */}
-                    <th className="p-3 text-center min-w-[110px] text-slate-500 font-mono text-[9px]">
-                        Pesos<br/>(Coste - Valor)
-                    </th>
                     
-                    {/* CAMBIO: Ancho +4 chars (aprox 125px) - AHORA ORDENABLE */}
-                    <th className={`p-3 text-right text-white font-bold bg-[#161b25] border-l border-slate-700 min-w-[125px] cursor-pointer select-none hover:text-blue-200 transition-colors group ${sortConfig.key==='totalValue'?'bg-slate-800':''}`} onClick={()=>requestSort('totalValue')}>
-                        <div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='totalValue'?'opacity-100':''}`}/> Valor Final {sortConfig.key==='totalValue' && (sortConfig.direction==='asc'?'▲':'▼')}</div>
-                    </th>
+                    {/* CAMBIO: Ancho +4 chars (aprox 125px) */}
+                    <th className="p-3 text-right min-w-[125px]">Coste Total</th>
+                    
+                    {/* CAMBIO: Ancho +4 chars (aprox 125px) */}
+                    <th className="p-3 text-right text-white font-bold bg-[#161b25] border-l border-slate-700 min-w-[125px]">Valor Final</th>
                     
                     {/* CAMBIO: Ancho +4 chars (aprox 125px) para RENDIMIENTO */}
                     <th className={`p-3 text-right cursor-pointer select-none hover:text-white bg-[#161b25] border-r border-slate-700 transition-colors group min-w-[125px] ${sortConfig.key==='yield'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('yield')}><div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='yield'?'opacity-100':''}`}/> RENDIMIENTO {sortConfig.key==='yield' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
@@ -2472,29 +2386,8 @@ const RenderHistoryCard = () => {
                                 {(() => { const fxDevVal = (p.isIndex ? 0 : (p.shares * (isS ? p.sellPrice : p.currentPrice) * (curF - p.buyFx))); return <div className={fxDevVal >= 0 ? 'text-green-500' : 'text-red-500'}>{formatMoney(fxDevVal, baseCurrency)}</div>; })()}
                             </td>
                             <td className="p-3 text-center text-[10px] font-mono text-slate-400">G: {formatN(isS?p.sellFees:p.fees)}<br/>A: {formatN(isS?p.sellAdjustments:p.adjustments)}</td>
-                            
                             <td className="p-3 text-right text-slate-400 font-mono">{formatMoney(cost, baseCurrency)}</td>
-                            
-                            {/* NUEVA CELDA PESOS CALCULADOS */}
-                            <td className="p-3 text-center font-mono text-[9px] text-slate-500 whitespace-nowrap">
-                                {(() => {
-                                    const wC = gridTotals.tCost > 0 ? (cost / gridTotals.tCost) * 100 : 0;
-                                    const wV = gridTotals.tVal > 0 ? (vF / gridTotals.tVal) * 100 : 0;
-                                    return (
-                                        <div className="flex items-center justify-center gap-1">
-                                            <span className="text-slate-700 text-[7px]">◄</span>
-                                            <span className="text-slate-400">{formatN(wC, 1)}%</span>
-                                            <span className="text-slate-700 mx-0.5">|</span>
-                                            <span className="text-slate-200 font-bold">{formatN(wV, 1)}%</span>
-                                            <span className="text-slate-700 text-[7px]">►</span>
-                                        </div>
-                                    );
-                                })()}
-                            </td>
-
                             <td className="p-3 text-right font-mono text-white bg-[#161b25] border-l border-slate-800"><div className="font-bold">{formatMoney(vF, baseCurrency)}</div></td>
-
-
                             <td className="p-3 text-right font-mono bg-[#161b25] border-r border-slate-800"><div className={`font-bold ${capitalGain >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(capitalGain, baseCurrency)}</div>{ds > 0 && <div className="text-[10px] text-blue-300 font-bold mt-0.5">+ {formatMoney(ds, baseCurrency)} (Div)</div>}</td>
                             <td className="p-3 text-right text-xs"><div className={rs.simple>=0?'text-green-400 font-bold':'text-red-400 font-bold'}>{formatN(rs.simple)}%</div><div className="text-[9px] text-slate-500">Anual: {formatN(rs.annual)}%</div></td>
                             <td className="p-3 text-center text-xs font-mono">I: {formatN(p.buyPE, 1)}<br/>A: <span className="text-yellow-500 font-bold">{formatN(p.currentPE, 1)}</span></td>
@@ -2505,30 +2398,36 @@ const RenderHistoryCard = () => {
                         </tr> 
                     ); 
                     }) )}
-        
                     {filteredPortfolio.length > 0 && (
                     <tr className="bg-slate-900 border-t-2 border-slate-600 font-bold text-white text-[9px] sticky bottom-0 z-30 shadow-2xl">
-                        {/* 1 */}<td className="p-2 sticky left-0 z-40 bg-slate-900 border-r border-slate-800"></td>
-                        {/* 2 */}<td className="p-2 sticky left-10 z-40 bg-slate-900 border-r border-slate-800 text-right uppercase tracking-wider text-slate-400">TOTALES:</td>
-                        {/* 3 */}<td colSpan="4"></td>
-                        {/* 7 */}<td className="p-2 text-right bg-slate-900/50 border-l border-r border-slate-700"><span className={(gridTotals.tIntra||0) >= 0 ? 'text-green-400' : 'text-red-400'}>{formatMoney(gridTotals.tIntra||0, baseCurrency)}</span></td>
-                        {/* 8 */}<td className="p-2"></td>
-                        {/* 9 */}<td className="p-2 text-center text-slate-300 font-mono">{formatMoney(gridTotals.tFx||0, baseCurrency)}</td>
-                        {/* 10 */}<td className="p-2"></td>
-                        {/* 11 */}<td className="p-2 text-right font-mono text-slate-300">{formatMoney(gridTotals.tCost||0, baseCurrency)}</td>
-                        {/* 12 PESOS */}<td className="p-2 text-center text-[9px] text-slate-600">--</td>
-                        {/* 13 */}<td className="p-2 text-right font-mono bg-[#0f121a] border-l border-slate-800 text-white">{formatMoney(gridTotals.tVal||0, baseCurrency)}</td>
-                        {/* 14 */}<td className="p-2 text-right font-mono bg-[#0f121a] border-r border-slate-800"><span className={(gridTotals.tRes||0) >= 0 ? 'text-green-400' : 'text-red-400'}>{formatMoney(gridTotals.tRes||0, baseCurrency)}</span></td>
-                        {/* 15 */}<td className="p-2 text-right font-mono"><span className={(gridTotals.tPct||0) >= 0 ? 'text-green-400' : 'text-red-400'}>{formatN(gridTotals.tPct||0)}%</span></td>
-                        {/* 16 */}<td className="p-2 text-center font-mono text-[8px]"><div className="text-slate-400">I: {formatN(gridTotals.avgBuyPE||0, 1)}</div><div className="text-yellow-500">A: {formatN(gridTotals.avgCurPE||0, 1)}</div></td>
-                        {/* 17 */}<td className="p-2"></td>
+                        <td className="p-2 sticky left-0 z-40 bg-slate-900 border-r border-slate-800"></td>
+                        <td className="p-2 sticky left-10 z-40 bg-slate-900 border-r border-slate-800 text-right uppercase tracking-wider text-slate-400">TOTALES:</td>
+                        <td colSpan="4"></td>
+                        
+                        {/* TOTAL INTRADÍA AL PIÉ */}
+                        <td className="p-2 text-right bg-slate-900/50 border-l border-r border-slate-700">
+                             <span className={gridTotals.tIntra >= 0 ? 'text-green-400' : 'text-red-400'}>
+                                 {formatMoney(gridTotals.tIntra, baseCurrency)}
+                             </span>
+                        </td>
+
+                        <td className="p-2 text-center text-slate-300 font-mono">{formatMoney(gridTotals.tFx, baseCurrency)}</td>
+                        <td></td>
+                        <td className="p-2 text-right font-mono text-slate-300">{formatMoney(gridTotals.tCost, baseCurrency)}</td>
+                        <td className="p-2 text-right font-mono bg-[#0f121a] border-l border-slate-800 text-white">{formatMoney(gridTotals.tVal, baseCurrency)}</td>
+                        <td className="p-2 text-right font-mono bg-[#0f121a] border-r border-slate-800"><span className={gridTotals.tRes >= 0 ? 'text-green-400' : 'text-red-400'}>{formatMoney(gridTotals.tRes, baseCurrency)}</span></td>
+                        <td className="p-2 text-right font-mono"><span className={gridTotals.tPct >= 0 ? 'text-green-400' : 'text-red-400'}>{formatN(gridTotals.tPct)}%</span></td>
+                        <td className="p-2 text-center font-mono text-[8px]">
+                            <div className="text-slate-400">I: {formatN(gridTotals.avgBuyPE, 1)}</div>
+                            <div className="text-yellow-500">A: {formatN(gridTotals.avgCurPE, 1)}</div>
+                        </td>
+                        <td className="p-2"></td>
                     </tr>
                     )}
                     </tbody>
                     </table>
                 </div>
             )}
-                 
 
 
             {visibleSections.diverging && (<div className="fade-in"><DivergingBarChart data={divergingData} baseCurrency={baseCurrency} /></div>)}
@@ -2639,7 +2538,7 @@ const RenderHistoryCard = () => {
 };
 
 
-const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiModel }) => {
+const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker }) => {
     // --- ESTADOS NAVEGACIÓN Y ESTUDIO ---
     const [activeSubTab, setActiveSubTab] = useState('estudio');
     const [ticker, setTicker] = useState(initialTicker || ''); 
@@ -2789,7 +2688,7 @@ const REPORT_TITLES = {
             </div>
             `;
 
-            const res = await askGemini(apiKey, prompt, aiModel);
+            const res = await askGemini(apiKey, prompt);
             
             // Limpieza básica
             let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
@@ -3316,30 +3215,18 @@ const REPORT_TITLES = {
 
 
     // --- FUNCIONES DE SOPORTE ---
-    const DEFAULT_AI_MODELS = [
-          "gemini-3.1-pro-preview",
-          "gemini-3-pro-preview",
-          "gemini-3-flash-preview",
-          "gemini-2.5-pro",
-          "gemini-2.5-flash",
-          "gemini-2.5-flash-lite"
-      ];
+    const askGemini = async (key, prompt) => {
+        if (!key) throw new Error("Falta API Key");
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${key}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }] })
+        });
+        const data = await response.json();
+        if (data.error) throw new Error(data.error.message);
+        return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    };
 
-      const askGemini = async (apiKey, prompt, model) => {
-          if (!apiKey) throw new Error("Falta API Key");
-          const targetModel = model || "gemini-3-flash-preview";
-          
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey}`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }] })
-          });
-          const data = await response.json();
-          if (data.error) throw new Error(data.error.message);
-          return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      };
-
-
-       // UTILIDAD DE EXTRACCIÓN (RESTAURADA ORIGINAL PARA EVITAR ERRORES EN SCREENER)
+    // UTILIDAD DE EXTRACCIÓN (RESTAURADA ORIGINAL PARA EVITAR ERRORES EN SCREENER)
     const extractJSON = (text) => { 
         if (!text) return null;
         try {
@@ -3404,7 +3291,7 @@ const REPORT_TITLES = {
                 FECHA ACTUAL (úsala para buscar los datos más recientes): ${today}. 
                 PREGUNTA: Answer "${question}" about "${ticker}". 
                 FORMATO: HTML (<h3>, <ul>, <p>). COMIENZA DIRECTAMENTE EN LOS HTML TAGS (<).`; 
-                const res = await askGemini(apiKey, prompt, aiModel); 
+                const res = await askGemini(apiKey, prompt); 
                 setSpecificAnswer(cleanAIResponse(res)); 
                 rotateSuggestions(question); 
             } else { 
@@ -3421,7 +3308,7 @@ const REPORT_TITLES = {
                     "pros_cons": { "pros": ["txt1", "txt2"], "cons": ["txt1", "txt2"] }, 
                     "peers": ["TICKER1", "TICKER2"], "suggested_questions": ["q1","q2","q3"] 
                 }`; 
-                const res = await askGemini(apiKey, prompt, aiModel); 
+                const res = await askGemini(apiKey, prompt); 
                 const json = extractJSON(res); 
                 if(!json) throw new Error("La IA no devolvió un JSON válido. Revisa la consola para ver el texto crudo.");
                 setData(json); 
@@ -3472,7 +3359,7 @@ const REPORT_TITLES = {
             FORMATO: Responde solo con código HTML (h3, ul, li, p).
         `;
 
-            const res = await askGemini(apiKey, prompt, aiModel);
+            const res = await askGemini(apiKey, prompt);
             
             const cleanBody = res.trim().replace(/```html/g, '').replace(/```/g, ''); 
             if (!cleanBody || cleanBody.length < 50) throw new Error("La IA no devolvió un informe válido.");
@@ -3544,7 +3431,7 @@ const REPORT_TITLES = {
             [{"ticker":"SYM","name":"Name","price":1.0,"per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0}]
             `;
             
-            const res = await askGemini(apiKey, prompt, aiModel);
+            const res = await askGemini(apiKey, prompt);
             const results = extractJSON(res);
             
             if (!results || !Array.isArray(results) || results.length === 0) {
@@ -3928,9 +3815,6 @@ const App = () => {
     const [resultsData, setResultsData] = usePersistentState('bg_results_data', {});
     const [lastUpdate, setLastUpdate] = usePersistentState('bg_last_update', null);
     const [gScriptUrl, setGScriptUrl] = usePersistentState('bg_g_script_url', '');
-    const [availableModels, setAvailableModels] = usePersistentState('bg_ai_models_list', DEFAULT_AI_MODELS);
-    const [aiModel, setAiModel] = usePersistentState('bg_ai_model', DEFAULT_AI_MODELS[2]);
-
     
     // --- ESTADO NUEVO PARA EL ENLACE ENTRE CARTERA Y ANÁLISIS ---
     const [analysisTicker, setAnalysisTicker] = useState(null);
@@ -3977,9 +3861,9 @@ const App = () => {
 
     const updateResultsData = (newVal) => { setResultsData(newVal); setLocalTimestamp(Date.now()); setSyncStatus('unsaved'); };
 
-    const uploadToCloud = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) return alert("Configura la URL de Google Script en Ajustes."); setSyncStatus('uploading'); setSyncMessage('Subiendo datos...'); try { const now = Date.now(); const payload = { timestamp: now, portfolio, resultsData, apiKey, baseCurrency, refreshInterval, version: 3, appPin, globalNotes, aiModel, availableModels }; await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); setLocalTimestamp(now); setSyncStatus('synced'); setSyncMessage('✅ Sincronizado'); setTimeout(() => setSyncMessage(''), 3000); } catch (e) { console.error(e); setSyncStatus('error'); setSyncMessage('❌ Error al subir'); } };
+    const uploadToCloud = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) return alert("Configura la URL de Google Script en Ajustes."); setSyncStatus('uploading'); setSyncMessage('Subiendo datos...'); try { const now = Date.now(); const payload = { timestamp: now, portfolio, resultsData, apiKey, baseCurrency, refreshInterval, version: 3, appPin, globalNotes }; await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); setLocalTimestamp(now); setSyncStatus('synced'); setSyncMessage('✅ Sincronizado'); setTimeout(() => setSyncMessage(''), 3000); } catch (e) { console.error(e); setSyncStatus('error'); setSyncMessage('❌ Error al subir'); } };
     const checkForCloudUpdates = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) { setIsAppReady(true); return; } setSyncStatus('checking'); try { const response = await fetch(url); const cloudData = await response.json(); const cloudTS = cloudData.timestamp || 0; const localTS = localTimestamp || 0; if (cloudTS > (localTS + 10000)) { setConflictModal({ isOpen: true, cloudData }); setSyncStatus('idle'); } else { setSyncStatus(localTS > cloudTS ? 'unsaved' : 'synced'); setIsAppReady(true); } } catch (e) { console.error("Error comprobando nube:", e); setSyncStatus('error'); setIsAppReady(true); } };
-    const handleApplyCloudData = () => { const data = conflictModal.cloudData; if (!data) return; if (data.globalNotes) setGlobalNotes(data.globalNotes); if (data.portfolio) setPortfolio(data.portfolio); if (data.resultsData) setResultsData(data.resultsData); if (data.apiKey) setApiKey(data.apiKey); if (data.baseCurrency) setBaseCurrency(data.baseCurrency); if (data.aiModel) setAiModel(data.aiModel); if (data.availableModels) setAvailableModels(data.availableModels); setLocalTimestamp(data.timestamp); setConflictModal({ isOpen: false, cloudData: null }); setSyncStatus('synced'); setSyncMessage('✅ Datos descargados'); setIsAppReady(true); setTimeout(() => setSyncMessage(''), 3000); };
+    const handleApplyCloudData = () => { const data = conflictModal.cloudData; if (!data) return; if (data.globalNotes) setGlobalNotes(data.globalNotes); if (data.portfolio) setPortfolio(data.portfolio); if (data.resultsData) setResultsData(data.resultsData); if (data.apiKey) setApiKey(data.apiKey); if (data.baseCurrency) setBaseCurrency(data.baseCurrency); if (data.appPin) setAppPin(data.appPin); setLocalTimestamp(data.timestamp); setConflictModal({ isOpen: false, cloudData: null }); setSyncStatus('synced'); setSyncMessage('✅ Datos descargados'); setIsAppReady(true); setTimeout(() => setSyncMessage(''), 3000); };
     const handleKeepLocalData = () => { setLocalTimestamp(Date.now()); setConflictModal({ isOpen: false, cloudData: null }); setSyncStatus('unsaved'); setIsAppReady(true); };
 
     useEffect(() => { if (gScriptUrl) { checkForCloudUpdates(); } else { setIsAppReady(true); } }, []);
@@ -4037,11 +3921,11 @@ const App = () => {
                         _x_trig={setBlockAction} 
                         globalNotes={globalNotes} 
                         setGlobalNotes={setGlobalNotes}
+                        // PASAMOS LA FUNCIÓN PARA ACTIVAR EL ANÁLISIS
                         onAnalyze={(ticker) => {
                             setAnalysisTicker(ticker);
                             setActiveTab('analysis');
                         }}
-                        aiModel={aiModel}
                     />
                 )}
                 {activeTab === 'dividends' && <DividendTab portfolio={portfolio} setPortfolio={updatePortfolio} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} />}
@@ -4052,12 +3936,12 @@ const App = () => {
                         apiKey={apiKey} 
                         baseCurrency={baseCurrency} 
                         setPortfolio={updatePortfolio}
+                        // PASAMOS EL TICKER INICIAL
                         initialTicker={analysisTicker}
-                        aiModel={aiModel}
                     />
                 )}
                 
-                {activeTab === 'settings' && <SettingsTab apiKey={apiKey} setApiKey={setApiKey} _x_stat={_0xAuth} _x_act={_0xReg} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={updatePortfolio} onForceBackup={uploadToCloud} gScriptUrl={gScriptUrl} setGScriptUrl={setGScriptUrl} resultsData={resultsData} appPin={appPin} setAppPin={setAppPin} aiModel={aiModel} setAiModel={setAiModel} availableModels={availableModels} setAvailableModels={setAvailableModels} />}
+                {activeTab === 'settings' && <SettingsTab apiKey={apiKey} setApiKey={setApiKey} _x_stat={_0xAuth} _x_act={_0xReg} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={updatePortfolio} onForceBackup={uploadToCloud} gScriptUrl={gScriptUrl} setGScriptUrl={setGScriptUrl} resultsData={resultsData} appPin={appPin} setAppPin={setAppPin} />}
              </main>
             <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase"><div>BoardingGate 3.3 (Secure PIN)</div><div className="flex gap-4"><span>Estado: {syncStatus === 'synced' ? 'Sincronizado' : syncStatus === 'unsaved' ? 'Cambios sin guardar' : 'Comprobando...'}</span><span>Ult. Mod: {localTimestamp > 0 ? new Date(localTimestamp).toLocaleTimeString() : 'N/A'}</span></div></footer>
         </div>
