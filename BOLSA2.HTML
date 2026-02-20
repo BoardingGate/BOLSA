@@ -2050,6 +2050,7 @@ const gridTotals = useMemo(() => {
     const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt, aiModel); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
 
 
+
     const updatePrices = async (isAuto = false) => {
         const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
         if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' });
@@ -2080,6 +2081,7 @@ const gridTotals = useMemo(() => {
                 let chunk = chunks[i];
                 let resultsMap = new Map(); // Para guardar lo que vamos logrando
                 
+                // --- INTENTO 1 ---
                 const firstAttemptPromises = chunk.map(async (item) => {
                     try {
                         const json = await fetchItemData(item);
@@ -2088,8 +2090,10 @@ const gridTotals = useMemo(() => {
                 });
                 await Promise.all(firstAttemptPromises);
 
+                // Identificar qué tickers han fallado en este lote
                 let failedInChunk = chunk.filter(item => !resultsMap.has(item.id));
 
+                // --- INTENTO 2 (REINTENTO DE FALLOS) ---
                 if (failedInChunk.length > 0) {
                     await new Promise(resolve => setTimeout(resolve, 3000)); // Espera corta de 3s antes de reintentar
                     const retryPromises = failedInChunk.map(async (item) => {
