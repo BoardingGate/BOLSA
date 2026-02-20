@@ -1933,7 +1933,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
 
     // MOTOR DE CÁLCULO UNIFICADO PARA TODA LA PESTAÑA
-    const globalMetrics = useMemo(() => {
+  const globalMetrics = useMemo(() => {
         const calc = (items) => {
             let inv = 0, cur = 0, divN = 0, fX = 0, weightedDays = 0, intra = 0, prevValTotal = 0;
             let sumBuyPE = 0, countBuyPE = 0, sumCurPE = 0, countCurPE = 0;
@@ -1941,76 +1941,56 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             items.forEach(p => {
                 const isS = !!p.sellDate;
                 const d = calculateDays(p.buyDate, p.sellDate || new Date());
-                
-                // 1. Coste e Inversión
                 const costT = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
-                
-                // 2. Valoración Actual
                 const eP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
                 const eF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
                 const vN = (eP * p.shares * eF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
                 
-                // 3. Intradía (Solo abiertas)
                 if (!isS && p.previousClose) {
                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                     intra += (eP - prevP) * p.shares * eF;
                     prevValTotal += (prevP * p.shares * eF);
                 }
+                if (!p.isIndex) fX += (p.shares * (isS ? p.sellPrice : p.currentPrice) * (eF - p.buyFx));
 
-                // 4. Divisas (Excluir Índices del riesgo divisa si así está marcado)
-                if (!p.isIndex) {
-                    fX += (p.shares * (isS ? p.sellPrice : p.currentPrice) * (eF - p.buyFx));
-                }
-
-                // 5. Acumuladores
-                inv += costT; 
-                cur += vN; 
-                weightedDays += (d * costT);
+                inv += costT; cur += vN; weightedDays += (d * costT);
                 (p.dividends || []).forEach(dv => divN += dv.net);
-
                 if (p.buyPE > 0) { sumBuyPE += p.buyPE; countBuyPE++; }
                 if (p.currentPE > 0) { sumCurPE += p.currentPE; countCurPE++; }
             });
 
             const avgD = inv > 0 ? weightedDays / inv : 0;
-            const plP = cur - inv;
-            const plT = (cur + divN) - inv;
             const rP = calcReturns(inv, cur, avgD);
             const rT = calcReturns(inv, cur + divN, avgD);
-            
-            return { 
-                num: items.length, inv, cur, divN, fX, 
-                plPrice: plP, plTotal: plT, 
-                plP_S: rP.simple, plP_A: rP.annual, 
-                plT_S: rT.simple, plT_A: rT.annual,
-                intra, intraPct: prevValTotal !== 0 ? (intra / prevValTotal) * 100 : 0,
-                avgBuyPE: countBuyPE > 0 ? sumBuyPE / countBuyPE : 0,
-                avgCurPE: countCurPE > 0 ? sumCurPE / countCurPE : 0
-            };
+            return { num: items.length, inv, cur, divN, fX, plPrice: cur - inv, plTotal: (cur + divN) - inv, plP_S: rP.simple, plP_A: rP.annual, plT_S: rT.simple, plT_A: rT.annual, intra, intraPct: prevValTotal !== 0 ? (intra / prevValTotal) * 100 : 0, avgBuyPE: countBuyPE > 0 ? sumBuyPE / countBuyPE : 0, avgCurPE: countCurPE > 0 ? sumCurPE / countCurPE : 0 };
         };
 
-        // Calculamos los 3 bloques basados siempre en lo que el usuario está viendo (filtros aplicados)
-        return {
-            active: calc(visiblePortfolio.filter(p => !p.sellDate)),
-            sold: calc(visiblePortfolio.filter(p => !!p.sellDate)),
-            total: calc(visiblePortfolio)
+        // 1. PANELES SUPERIORES: Calculados sobre TODO el portafolio que tenga el Check Marcado
+        const selectedOnly = portfolio.filter(p => p.isActive !== false);
+        const stats = {
+            active: calc(selectedOnly.filter(p => !p.sellDate)),
+            sold: calc(selectedOnly.filter(p => !!p.sellDate)),
+            total: calc(selectedOnly)
         };
-    }, [visiblePortfolio, baseCurrency]);
 
-    // Alias para no romper el resto del código
-    const stats = globalMetrics;
+        // 2. PIE DE TABLA: Calculado SOLO sobre lo que se ve (Filtros + Check)
+        const gridMetrics = calc(visiblePortfolio);
+
+        return { stats, gridMetrics };
+    }, [portfolio, visiblePortfolio, baseCurrency]);
+
+    const stats = globalMetrics.stats;
     const gridTotals = {
-        tFx: globalMetrics.total.fX,
-        tCost: globalMetrics.total.inv,
-        tVal: globalMetrics.total.cur,
-        tRes: globalMetrics.total.plTotal,
-        tPct: globalMetrics.total.plT_S,
-        tIntra: globalMetrics.total.intra,
-        tIntraPct: globalMetrics.total.intraPct,
-        avgBuyPE: globalMetrics.total.avgBuyPE,
-        avgCurPE: globalMetrics.total.avgCurPE
+        tFx: globalMetrics.gridMetrics.fX,
+        tCost: globalMetrics.gridMetrics.inv,
+        tVal: globalMetrics.gridMetrics.cur,
+        tRes: globalMetrics.gridMetrics.plTotal,
+        tPct: globalMetrics.gridMetrics.plT_S,
+        tIntra: globalMetrics.gridMetrics.intra,
+        tIntraPct: globalMetrics.gridMetrics.intraPct,
+        avgBuyPE: globalMetrics.gridMetrics.avgBuyPE,
+        avgCurPE: globalMetrics.gridMetrics.avgCurPE
     };
-
 
    
     const historicalStats = useMemo(() => {
