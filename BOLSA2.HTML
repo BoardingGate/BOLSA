@@ -1614,28 +1614,23 @@ function doGet(e) {
   if (e.parameter.ticker) {
     try {
       var ticker = e.parameter.ticker;
-      var baseCurrency = e.parameter.base || "EUR";
-      var ss = SpreadsheetApp.create("temp_sheet");
-      var sheet = ss.getSheets()[0];
+      var yTicker = ticker.replace("BME:", "").replace("MC:", "");
+      if (ticker.includes("BME:") || ticker.includes("MC:")) yTicker += ".MC";
       
-      sheet.getRange("A1").setFormula('=GOOGLEFINANCE("' + ticker + '"; "price")');
-      sheet.getRange("A2").setFormula('=GOOGLEFINANCE("' + ticker + '"; "closeyest")');
-      sheet.getRange("A3").setFormula('=GOOGLEFINANCE("' + ticker + '"; "pe")');
-      
-      SpreadsheetApp.flush();
-      Utilities.sleep(500); // Espera para que Google calcule
+      var url = "https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(yTicker);
+      var response = UrlFetchApp.fetch(url, {muteHttpExceptions: true});
+      var json = JSON.parse(response.getContentText());
+      var meta = json.chart.result[0].meta;
       
       var res = {
-        p: sheet.getRange("A1").getValue(),
-        pc: sheet.getRange("A2").getValue(),
-        pe: sheet.getRange("A3").getValue()
+        p: meta.regularMarketPrice,
+        pc: meta.previousClose,
+        pe: 0 
       };
-      
-      DriveApp.getFileById(ss.getId()).setTrashed(true);
       
       return ContentService.createTextOutput(JSON.stringify(res)).setMimeType(ContentService.MimeType.JSON);
     } catch(err) {
-      return ContentService.createTextOutput(JSON.stringify({error: err.toString()})).setMimeType(ContentService.MimeType.JSON);
+      return ContentService.createTextOutput(JSON.stringify({error: "No encontrado"})).setMimeType(ContentService.MimeType.JSON);
     }
   }
 
@@ -2082,8 +2077,7 @@ const gridTotals = useMemo(() => {
   const updatePrices = async (isAuto = false) => {
         const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
         const scriptUrl = simpleDecrypt(gScriptUrl);
-        
-        if (!scriptUrl) return setInfoModal({ isOpen: true, title: 'Configuración Necesaria', msg: 'Para una actualización infalible, debes configurar la URL de tu Google Script en la pestaña Ajustes.', type: 'warning' });
+        if (!scriptUrl) return setInfoModal({ isOpen: true, title: 'Aviso', msg: 'Configura la URL de tu Script en Ajustes.', type: 'warning' });
         if (active.length === 0) return;
 
         setUpdating(true);
@@ -2093,40 +2087,43 @@ const gridTotals = useMemo(() => {
         try {
             for (let i = 0; i < active.length; i++) {
                 const item = active[i];
-                
                 try {
-                    // Llamada directa a tu Script de Google (sin pasar por la IA para el precio)
-                    const response = await fetch(`${scriptUrl}?ticker=${encodeURIComponent(item.ticker)}&base=${baseCurrency}`);
+                    // 1. OBTENER PRECIO Y CIERRE DESDE EL SCRIPT (SERVIDOR OFICIAL)
+                    const response = await fetch(`${scriptUrl}?ticker=${encodeURIComponent(item.ticker)}`);
                     const data = await response.json();
 
-                    if (data && data.p && data.p !== "#N/A") {
-                        // Para el FX (Cambio de moneda), usamos Gemini que es muy bueno con divisas, 
-                        // o lo calculamos si el script devolviese el dato.
-                        // Aquí simplificamos: si no es baseCurrency, pedimos el FX rápido a Gemini
+                    if (data && data.p) {
+                        // 2. OBTENER FX Y PER DESDE IA (SON DATOS QUE NO CAMBIAN POR SEGUNDO)
                         let currentFx = 1;
-                        if (item.stockCurrency !== baseCurrency) {
-                            const fxPrompt = `Get current exchange rate from ${item.stockCurrency} to ${baseCurrency}. Return ONLY the number. Example: 0.92`;
-                            const fxRes = await askGemini(apiKey, fxPrompt, aiModel);
-                            currentFx = cleanVal(fxRes) || 1;
-                        }
+                        let currentPE = cleanVal(data.pe) || 0;
+
+                        const aiPrompt = `Ticker: ${item.ticker}. Get: 1. Exchange rate ${item.stockCurrency} to ${baseCurrency}. 2. Current P/E Ratio. Return JSON: {"fx": number, "pe": number}`;
+                        try {
+                            const aiRes = await askGemini(apiKey, aiPrompt, aiModel);
+                            const aiJson = extractJSON(aiRes);
+                            if (aiJson) {
+                                currentFx = aiJson.fx || 1;
+                                currentPE = aiJson.pe || currentPE;
+                            }
+                        } catch(e) {}
 
                         setPortfolio(prev => prev.map(p => 
-                            p.id === item.id ? { ...p, currentPrice: cleanVal(data.p), currentFx: currentFx, currentPE: cleanVal(data.pe), previousClose: cleanVal(data.pc) } : p
+                            p.id === item.id ? { ...p, currentPrice: cleanVal(data.p), currentFx: cleanVal(currentFx), currentPE: cleanVal(currentPE), previousClose: cleanVal(data.pc) } : p
                         ), false);
                         log.success.push(item.ticker);
                     } else {
                         log.fail.push(item.ticker);
                     }
-                } catch (e) {
-                    log.fail.push(item.ticker);
-                }
+                } catch (e) { log.fail.push(item.ticker); }
 
                 setUpdateProgress(Math.round(((i + 1) / active.length) * 100));
+                // Pausa mínima de 1 segundo para no saturar tu propio script
+                await new Promise(r => setTimeout(r, 1000));
             }
 
             setLastUpdate(new Date().toISOString());
             if (!isAuto && log.fail.length > 0) {
-                setInfoModal({ isOpen: true, title: 'Actualización Finalizada', msg: `Se actualizaron ${log.success.length} valores.\n\nNo se pudo encontrar en Google Finance:\n${log.fail.join(', ')}.\n\nConsejo: Asegúrate de usar formatos como BME:SAN o NASDAQ:AAPL.`, type: 'warning' });
+                setInfoModal({ isOpen: true, title: 'Sincronización', msg: `Completado.\nFallos: ${log.fail.join(', ')}`, type: 'warning' });
             }
         } catch (e) {
             if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' });
@@ -2135,7 +2132,6 @@ const gridTotals = useMemo(() => {
             setTimeout(() => setUpdateProgress(0), 2000);
         }
     };
-  
 
 
 
