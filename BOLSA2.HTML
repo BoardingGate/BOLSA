@@ -2049,96 +2049,100 @@ const gridTotals = useMemo(() => {
 
     const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt, aiModel); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
 
- const updatePrices = async (isAuto = false) => { 
-        const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); 
-        if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); 
-        if (!isAuto && active.length === 0) return; 
-        
-        setUpdating(true); 
+
+    const updatePrices = async (isAuto = false) => {
+        const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
+        if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' });
+        if (!isAuto && active.length === 0) return;
+
+        setUpdating(true);
         setUpdateProgress(0);
         let log = { success: [], fail: [] };
-        
         const BATCH_SIZE = 5; 
         const WAIT_TIME_MS = 10000; 
 
+        // Función interna para realizar la petición a la IA
+        const fetchItemData = async (item) => {
+            const assetDesc = item.isIndex ? "MARKET INDEX (SPOT VALUE)" : "STOCK/EQUITY";
+            const now = new Date().toLocaleString('es-ES', { timeZoneName: 'short' });
+            const prompt = `ROLE: Professional Web Scraper. REF TIME: ${now}. TASK: Get market data for "${item.ticker}" from Yahoo Finance/Google Finance. RETURN JSON ONLY: {"p": last_price, "pc": previous_close, "pe": pe_ratio, "fx": exchange_to_${baseCurrency}}. Use "." for decimals.`;
+            
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 15000));
+            const res = await Promise.race([askGemini(apiKey, prompt, aiModel), timeoutPromise]);
+            return extractJSON(res);
+        };
+
         try {
             const chunks = [];
-            for (let i = 0; i < active.length; i += BATCH_SIZE) {
-                chunks.push(active.slice(i, i + BATCH_SIZE));
-            }
+            for (let i = 0; i < active.length; i += BATCH_SIZE) chunks.push(active.slice(i, i + BATCH_SIZE));
 
             for (let i = 0; i < chunks.length; i++) {
-                const chunk = chunks[i];
+                let chunk = chunks[i];
+                let resultsMap = new Map(); // Para guardar lo que vamos logrando
+                
+                const firstAttemptPromises = chunk.map(async (item) => {
+                    try {
+                        const json = await fetchItemData(item);
+                        if (json && (json.p || json.p === 0)) resultsMap.set(item.id, json);
+                    } catch (e) { /* Error silencioso para reintento */ }
+                });
+                await Promise.all(firstAttemptPromises);
+
+                let failedInChunk = chunk.filter(item => !resultsMap.has(item.id));
+
+                if (failedInChunk.length > 0) {
+                    await new Promise(resolve => setTimeout(resolve, 3000)); // Espera corta de 3s antes de reintentar
+                    const retryPromises = failedInChunk.map(async (item) => {
+                        try {
+                            const json = await fetchItemData(item);
+                            if (json && (json.p || json.p === 0)) resultsMap.set(item.id, json);
+                        } catch (e) { /* Fallo definitivo en este ciclo */ }
+                    });
+                    await Promise.all(retryPromises);
+                }
+
+                // Procesar resultados finales del lote
                 const chunkUpdates = [];
-
-
-                const promises = chunk.map(async (item) => {
-                    const assetDesc = item.isIndex ? "MARKET INDEX (SPOT VALUE)" : "STOCK/EQUITY"; 
-                    const now = new Date().toLocaleString('es-ES', { timeZoneName: 'short' });
-
-
-                    const prompt = `ROLE: Professional Web Scraper & Financial Analyst.
-                    CURRENT REFERENCE TIME: ${now}.
-                    
-                    TASK: Get high-accuracy market data for "${item.ticker}" using these sources:
-                    1. Primary Source: finance.yahoo.com (Search for the ticker and read the summary table).
-                    2. Secondary Source: google.com/finance.
-                    3. Fundamentals (PE/ROI): finviz.com (for US stocks).
-
-                    REQUIRED FIELDS (MANDATORY):
-                    - "p": The LAST MARKET PRICE (Price at the current moment or at last close if market is closed). 
-                    - "pc": The EXACT 'PREVIOUS CLOSE' price (The closing price of the session immediately BEFORE ${now}). 
-                    - "pe": The current P/E Ratio (TTM). If it's a Market Index, use 0.
-                    - "fx": Current exchange rate to convert 1 ${item.stockCurrency} to ${baseCurrency}.
-
-                    CRITICAL INSTRUCTIONS:
-                    - You must verify the "Previous Close" label on the financial website to ensure "pc" is correct.
-                    - Ensure the currency is ${item.stockCurrency}.
-                    - Use "." as decimal separator.
-                    
-                    RETURN ONLY VALID JSON: {"p": number, "fx": number, "pe": number, "pc": number}`;
-  
-                    try { 
-
-                        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 15000));
-                        const res = await Promise.race([askGemini(apiKey, prompt, aiModel), timeoutPromise]);
-                        const json = extractJSON(res); 
-                        if (json && (json.p || json.p === 0)) { 
-                            const safeFx = (item.stockCurrency === baseCurrency) ? 1 : cleanVal(json.fx); 
-                            chunkUpdates.push({ id: item.id, p: cleanVal(json.p), fx: safeFx, pe: cleanVal(json.pe), pc: cleanVal(json.pc) }); 
-                            log.success.push(item.ticker); 
-                        } else { log.fail.push(item.ticker); } 
-                    } catch (e) { log.fail.push(item.ticker); }
+                chunk.forEach(item => {
+                    const data = resultsMap.get(item.id);
+                    if (data) {
+                        const safeFx = (item.stockCurrency === baseCurrency) ? 1 : cleanVal(data.fx);
+                        chunkUpdates.push({ id: item.id, p: cleanVal(data.p), fx: safeFx, pe: cleanVal(data.pe), pc: cleanVal(data.pc) });
+                        log.success.push(item.ticker);
+                    } else {
+                        log.fail.push(item.ticker);
+                    }
                 });
 
-                await Promise.all(promises);
-
+                // Aplicar actualizaciones del lote a la UI
                 if (chunkUpdates.length > 0) {
-                    setPortfolio(prev => prev.map(p => { 
-                        const u = chunkUpdates.find(x => x.id === p.id); 
-                        return u ? { ...p, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe, previousClose: u.pc } : p; 
+                    setPortfolio(prev => prev.map(p => {
+                        const u = chunkUpdates.find(x => x.id === p.id);
+                        return u ? { ...p, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe, previousClose: u.pc } : p;
                     }), false);
                 }
 
-                // Calcular progreso basado en lotes completados
                 setUpdateProgress(Math.round(((i + 1) / chunks.length) * 100));
 
                 if (i < chunks.length - 1) {
                     await new Promise(resolve => setTimeout(resolve, WAIT_TIME_MS));
                 }
             }
-            
-            setLastUpdate(new Date().toISOString()); 
-            if (!isAuto && log.fail.length > 0) { 
-                setInfoModal({ isOpen: true, title: 'Sincronización Finalizada', msg: `Éxitos: ${log.success.length} | Fallos: ${log.fail.length}\nNo se pudieron obtener: ${log.fail.join(', ')}.`, type: 'warning' }); 
-            } 
-        } catch (e) { 
-            if (!isAuto) setInfoModal({ isOpen: true, title: 'Error Crítico', msg: e.message, type: 'error' }); 
-        } finally { 
+
+            setLastUpdate(new Date().toISOString());
+            if (!isAuto && log.fail.length > 0) {
+                setInfoModal({ isOpen: true, title: 'Actualización Finalizada', msg: `Se recuperaron ${log.success.length} valores.\n\nTras un segundo intento, fallaron:\n${[...new Set(log.fail)].join(', ')}.`, type: 'warning' });
+            }
+        } catch (e) {
+            if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' });
+        } finally {
             setUpdating(false);
-            setTimeout(() => setUpdateProgress(0), 2000); // Reset tras terminar
-        } 
+            setTimeout(() => setUpdateProgress(0), 4000);
+        }
     };
+
+
+
 
  // ANALISIS IA MEJORADO Y CORREGIDO (VERSIÓN BLINDADA)
 const analyzePortfolio = async () => {
