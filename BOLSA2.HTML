@@ -2051,7 +2051,8 @@ const gridTotals = useMemo(() => {
 
 
 
-    const updatePrices = async (isAuto = false) => {
+  
+   const updatePrices = async (isAuto = false) => {
         const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
         if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' });
         if (!isAuto && active.length === 0) return;
@@ -2060,40 +2061,53 @@ const gridTotals = useMemo(() => {
         setUpdateProgress(0);
         let log = { success: [], fail: [] };
 
-        // CONFIGURACIÓN DE SEGURIDAD (1 A 1)
-        const DELAY_BETWEEN_ITEMS = 7000; // 6 segundos entre acciones (10 acciones por minuto = Seguro)
-        const RETRY_DELAY = 4000; // 3 segundos antes de un reintento
+        const DELAY_BETWEEN_ITEMS = 5000; 
 
         const fetchSingle = async (item) => {
-            const assetDesc = item.isIndex ? "MARKET INDEX (SPOT VALUE)" : "STOCK/EQUITY";
-            const now = new Date().toLocaleString('es-ES', { timeZoneName: 'short' });
-            const prompt = `ROLE: Professional Financial Scraper. REF TIME: ${now}. 
-            TASK: Get live market data for "${item.ticker}" (Currency: ${item.stockCurrency}). 
-            SOURCES: Yahoo Finance or Google Finance.
-            RETURN JSON ONLY: {"p": last_price, "pc": previous_close_price, "pe": pe_ttm, "fx": exchange_rate_to_${baseCurrency}}.
-            STRICT: Use "." for decimals. Return 0 for any missing field.`;
+            const now = new Date().toLocaleString('es-ES');
+            // PROMPT REVISADO AL DETALLE PARA GOOGLE FINANCE
+            const prompt = `TASK: Scrape GOOGLE FINANCE (google.com/finance) for "${item.ticker}".
+            TIME REFERENCE: ${now}.
+            
+            INSTRUCTIONS:
+            1. Find the ticker "${item.ticker}".
+            2. Get the "Current Price" (Large bold number).
+            3. Get the "Previous Close" (Field labeled 'Previous close' or 'Cierre anterior').
+            4. Get the "P/E Ratio" (Field labeled 'P/E ratio' or 'Relación P/E').
+            5. Get the "Exchange Rate" from ${item.stockCurrency} to ${baseCurrency} (1 ${item.stockCurrency} = ? ${baseCurrency}).
+
+            RULES:
+            - NO EXPLANATIONS. NO PREAMBLE.
+            - ONLY RETURN A JSON OBJECT.
+            - USE "." FOR DECIMALS.
+            - IF DATA IS MISSING, USE 0.
+            
+            OUTPUT FORMAT EXAMPLE: {"p": 150.25, "pc": 148.10, "pe": 25.4, "fx": 0.92}`;
             
             try {
-                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 15000));
-                const res = await Promise.race([askGemini(apiKey, prompt, aiModel), timeoutPromise]);
-                return extractJSON(res);
+                const res = await askGemini(apiKey, prompt, aiModel);
+                const json = extractJSON(res);
+                // Validación estricta del resultado
+                if (json && typeof json.p === 'number' && json.p > 0) return json;
+                return null;
             } catch (e) { return null; }
         };
 
         try {
             for (let i = 0; i < active.length; i++) {
                 const item = active[i];
+                
+                // Intento 1
                 let data = await fetchSingle(item);
 
-                // Reintento inmediato si falla
-                if (!data || (!data.p && data.p !== 0)) {
-                    await new Promise(r => setTimeout(r, RETRY_DELAY));
+                // Si falla el primer intento, reintento inmediato tras 2 segundos
+                if (!data) {
+                    await new Promise(r => setTimeout(r, 2000));
                     data = await fetchSingle(item);
                 }
 
-                if (data && (data.p || data.p === 0)) {
+                if (data) {
                     const safeFx = (item.stockCurrency === baseCurrency) ? 1 : cleanVal(data.fx);
-                    // Actualizar este valor específico en la tabla inmediatamente
                     setPortfolio(prev => prev.map(p => 
                         p.id === item.id ? { ...p, currentPrice: data.p, currentFx: safeFx, currentPE: data.pe, previousClose: data.pc } : p
                     ), false);
@@ -2114,8 +2128,8 @@ const gridTotals = useMemo(() => {
             if (!isAuto && log.fail.length > 0) {
                 setInfoModal({ 
                     isOpen: true, 
-                    title: 'Sincronización Terminada', 
-                    msg: `Proceso finalizado acción por acción.\n\nÉxitos: ${log.success.length}\nFallos: ${log.fail.length} (${log.fail.join(', ')}).\n\nLos fallos suelen deberse a tickers no encontrados en las fuentes principales.`, 
+                    title: 'Actualización Finalizada', 
+                    msg: `Resultados:\n✅ Éxitos: ${log.success.length}\n❌ Fallos: ${log.fail.length} (${log.fail.join(', ')})\n\nNota: Si fallan acciones comunes, asegúrate de que el Ticker incluya el mercado (Ej: NASDAQ:AAPL o BME:SAN) para que Google Finance lo localice rápido.`, 
                     type: 'warning' 
                 });
             }
@@ -2123,11 +2137,9 @@ const gridTotals = useMemo(() => {
             if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' });
         } finally {
             setUpdating(false);
-            setTimeout(() => setUpdateProgress(0), 4000);
+            setTimeout(() => setUpdateProgress(0), 3000);
         }
     };
-
-   
 
 
 
