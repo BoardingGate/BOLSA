@@ -1931,54 +1931,88 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         setTimeout(() => printWindow.print(), 500);
     };
 
-const gridTotals = useMemo(() => {
-        let tFx = 0, tCost = 0, tVal = 0, tRes = 0, tIntra = 0;
-        let tPrevVal = 0; // <--- NUEVA VARIABLE PARA ACUMULAR VALOR PREVIO
-        let sumBuyPE = 0, countBuyPE = 0;
-        let sumCurPE = 0, countCurPE = 0;
 
-        visiblePortfolio.forEach(p => {
-            const isS = !!p.sellDate;
-            const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
-            const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
-            const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
-            const val = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
-            const fxVal = (p.isIndex ? 0 : (p.shares * (isS ? p.sellPrice : p.currentPrice) * (curF - p.buyFx)));
-            const divs = (p.dividends || []).reduce((a,b)=>a+b.net,0);
+    // MOTOR DE CÁLCULO UNIFICADO PARA TODA LA PESTAÑA
+    const globalMetrics = useMemo(() => {
+        const calc = (items) => {
+            let inv = 0, cur = 0, divN = 0, fX = 0, weightedDays = 0, intra = 0, prevValTotal = 0;
+            let sumBuyPE = 0, countBuyPE = 0, sumCurPE = 0, countCurPE = 0;
+
+            items.forEach(p => {
+                const isS = !!p.sellDate;
+                const d = calculateDays(p.buyDate, p.sellDate || new Date());
+                
+                // 1. Coste e Inversión
+                const costT = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+                
+                // 2. Valoración Actual
+                const eP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
+                const eF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
+                const vN = (eP * p.shares * eF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+                
+                // 3. Intradía (Solo abiertas)
+                if (!isS && p.previousClose) {
+                    const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
+                    intra += (eP - prevP) * p.shares * eF;
+                    prevValTotal += (prevP * p.shares * eF);
+                }
+
+                // 4. Divisas (Excluir Índices del riesgo divisa si así está marcado)
+                if (!p.isIndex) {
+                    fX += (p.shares * (isS ? p.sellPrice : p.currentPrice) * (eF - p.buyFx));
+                }
+
+                // 5. Acumuladores
+                inv += costT; 
+                cur += vN; 
+                weightedDays += (d * costT);
+                (p.dividends || []).forEach(dv => divN += dv.net);
+
+                if (p.buyPE > 0) { sumBuyPE += p.buyPE; countBuyPE++; }
+                if (p.currentPE > 0) { sumCurPE += p.currentPE; countCurPE++; }
+            });
+
+            const avgD = inv > 0 ? weightedDays / inv : 0;
+            const plP = cur - inv;
+            const plT = (cur + divN) - inv;
+            const rP = calcReturns(inv, cur, avgD);
+            const rT = calcReturns(inv, cur + divN, avgD);
             
-            if (!isS && p.previousClose) {
-                const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
-                // Diferencia precio * acciones * cambio actual
-                const diff = (curP - prevP) * p.shares * curF;
-                tIntra += diff;
-                tPrevVal += (prevP * p.shares * curF); // <--- ACUMULAMOS VALOR PREVIO
-            }
+            return { 
+                num: items.length, inv, cur, divN, fX, 
+                plPrice: plP, plTotal: plT, 
+                plP_S: rP.simple, plP_A: rP.annual, 
+                plT_S: rT.simple, plT_A: rT.annual,
+                intra, intraPct: prevValTotal !== 0 ? (intra / prevValTotal) * 100 : 0,
+                avgBuyPE: countBuyPE > 0 ? sumBuyPE / countBuyPE : 0,
+                avgCurPE: countCurPE > 0 ? sumCurPE / countCurPE : 0
+            };
+        };
 
-            tFx += fxVal; tCost += cost; tVal += val; tRes += (val - cost) + divs;
-            
-            if (p.buyPE > 0) { sumBuyPE += p.buyPE; countBuyPE++; }
-            if (p.currentPE > 0) { sumCurPE += p.currentPE; countCurPE++; }
-        });
-        const tPct = tCost > 0 ? (tRes / tCost) * 100 : 0;
-        const avgBuyPE = countBuyPE > 0 ? sumBuyPE / countBuyPE : 0;
-        const avgCurPE = countCurPE > 0 ? sumCurPE / countCurPE : 0;
+        // Calculamos los 3 bloques basados siempre en lo que el usuario está viendo (filtros aplicados)
+        return {
+            active: calc(visiblePortfolio.filter(p => !p.sellDate)),
+            sold: calc(visiblePortfolio.filter(p => !!p.sellDate)),
+            total: calc(visiblePortfolio)
+        };
+    }, [visiblePortfolio, baseCurrency]);
 
-        // CÁLCULO FINAL PORCENTAJE TOTAL INTRADÍA
-        const tIntraPct = tPrevVal !== 0 ? (tIntra / tPrevVal) * 100 : 0;
+    // Alias para no romper el resto del código
+    const stats = globalMetrics;
+    const gridTotals = {
+        tFx: globalMetrics.total.fX,
+        tCost: globalMetrics.total.inv,
+        tVal: globalMetrics.total.cur,
+        tRes: globalMetrics.total.plTotal,
+        tPct: globalMetrics.total.plT_S,
+        tIntra: globalMetrics.total.intra,
+        tIntraPct: globalMetrics.total.intraPct,
+        avgBuyPE: globalMetrics.total.avgBuyPE,
+        avgCurPE: globalMetrics.total.avgCurPE
+    };
 
-        return { tFx, tCost, tVal, tRes, tPct, avgBuyPE, avgCurPE, tIntra, tIntraPct }; // <--- RETORNAMOS tIntraPct
-    }, [visiblePortfolio]);
-    
-    
 
-
-    const stats = useMemo(() => {
-        const hasDeepFilters = filterText || filterDateStart || filterDateEnd;
-        const sourceData = hasDeepFilters ? visiblePortfolio : portfolio.filter(p => p.isActive !== false); 
-        const calc = (items) => { let inv = 0, cur = 0, divN = 0, fX = 0, weightedDays = 0; items.forEach(p => { const d = calculateDays(p.buyDate, p.sellDate || new Date()); const costT = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const eP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const eF = isS ? p.sellFx : p.currentFx; const vN = (eP * p.shares * eF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); inv += costT; cur += vN; weightedDays += (d * costT); fX += (eP * p.shares * eF) - (eP * p.shares * p.buyFx); (p.dividends || []).forEach(dv => divN += dv.net); }); const avgD = inv > 0 ? weightedDays / inv : 0; const plP = cur - inv; const plT = (cur + divN) - inv; const rP = calcReturns(inv, cur, avgD); const rT = calcReturns(inv, cur + divN, avgD); return { num: items.length, inv, cur, divN, fX, plPrice: plP, plTotal: plT, plP_S: rP.simple, plP_A: rP.annual, plT_S: rT.simple, plT_A: rT.annual }; };
-        return { active: calc(sourceData.filter(p => !p.sellDate)), sold: calc(sourceData.filter(p => !!p.sellDate)), total: calc(sourceData) };
-    }, [filteredPortfolio, portfolio, filterText, filterDateStart, filterDateEnd, baseCurrency]);
-
+   
     const historicalStats = useMemo(() => {
         const activeP = portfolio.filter(p => !p.sellDate && p.isActive !== false);
         const soldP = portfolio.filter(p => !!p.sellDate && p.isActive !== false);
