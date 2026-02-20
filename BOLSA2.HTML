@@ -2046,7 +2046,7 @@ const gridTotals = useMemo(() => {
 
     const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt, aiModel); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
 
-    const updatePrices = async (isAuto = false) => { 
+  const updatePrices = async (isAuto = false) => { 
         const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); 
         if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); 
         if (!isAuto && active.length === 0) return; 
@@ -2111,7 +2111,72 @@ const gridTotals = useMemo(() => {
             setUpdating(false); 
         } 
     };
+====
+    const updatePrices = async (isAuto = false) => { 
+        const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); 
+        if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); 
+        if (!isAuto && active.length === 0) return; 
+        
+        setUpdating(true); 
+        let log = { success: [], fail: [] }, newUpdates = []; 
+        
+        try { 
+            // EJECUCIÓN PARALELA CON ESCALONAMIENTO Y TIMEOUT AMPLIADO
+            const promises = active.map(async (item, index) => {
+                // Pequeño retraso escalonado (400ms) para no bombardear la API de Google de golpe y evitar bloqueos
+                await new Promise(resolve => setTimeout(resolve, index * 400));
+                
+                const assetDesc = item.isIndex ? "MARKET INDEX (SPOT VALUE)" : "STOCK/EQUITY"; 
+                const prompt = `ROLE: Financial Data API. TASK: Get data for Ticker: "${item.ticker}". TYPE: ${assetDesc}. REQUIREMENTS: 1. "p": Current Price in its NATIVE currency (${item.stockCurrency}). STRICT RULE: DO NOT convert the price to ${baseCurrency}. Return it as it quotes in the market. 2. "fx": Exchange rate to convert from ${item.stockCurrency} to ${baseCurrency}. (Example: 1 ${item.stockCurrency} = X ${baseCurrency}). If same, fx = 1. 3. "pe": TTM P/E Ratio (0 if Index). 4. "pc": Previous Close Price (Yesterday's close). RETURN JSON ONLY: {"p": number, "fx": number, "pe": number, "pc": number}`; 
+                
+                try { 
+                    // Timeout ampliado a 28 segundos para dar margen a la IA
+                    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 28000));
+                    const res = await Promise.race([askGemini(apiKey, prompt, aiModel), timeoutPromise]);
+                    
+                    const json = extractJSON(res); 
+                    if (json && (json.p || json.p === 0)) { 
+                        const safeFx = (item.stockCurrency === baseCurrency) ? 1 : cleanVal(json.fx); 
+                        newUpdates.push({ id: item.id, p: cleanVal(json.p), fx: safeFx, pe: cleanVal(json.pe), pc: cleanVal(json.pc) }); 
+                        log.success.push(item.ticker); 
+                    } else { 
+                        log.fail.push(item.ticker); 
+                    } 
+                } catch (e) { 
+                    log.fail.push(item.ticker); 
+                }
+            });
 
+            await Promise.all(promises);
+            
+            if (newUpdates.length > 0) { 
+                // CORRECCIÓN: Al quitar el 'false' al final, activamos el triggerSync. 
+                // Esto actualiza la variable localTimestamp, haciendo que coincida la hora del PIE DE PÁGINA con la del botón.
+                setPortfolio(prev => prev.map(p => { 
+                    const u = newUpdates.find(x => x.id === p.id); 
+                    if (u) { 
+                        return { ...p, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe, previousClose: u.pc }; 
+                    } 
+                    return p; 
+                })); 
+            } 
+            
+            setLastUpdate(new Date().toISOString()); 
+            
+            if (!isAuto && log.fail.length > 0) { 
+                setInfoModal({ 
+                    isOpen: true, 
+                    title: 'Sincronización Parcial', 
+                    msg: `Se actualizaron ${log.success.length} valores.\n\nLa IA no pudo localizar el precio a tiempo de:\n${log.fail.join(', ')}.\n\nNota: Si tienes muchas acciones, es probable que la API gratuita haya cortado la conexión (límite de 15 req/min). Espera un poco y vuelve a intentarlo.`, 
+                    type: 'warning' 
+                }); 
+            } 
+        } catch (e) { 
+            if (!isAuto) setInfoModal({ isOpen: true, title: 'Error Crítico', msg: e.message, type: 'error' }); 
+        } finally { 
+            setUpdating(false); 
+        } 
+    };  
     
 
  // ANALISIS IA MEJORADO Y CORREGIDO (VERSIÓN BLINDADA)
