@@ -2059,83 +2059,65 @@ const gridTotals = useMemo(() => {
         setUpdating(true);
         setUpdateProgress(0);
         let log = { success: [], fail: [] };
-        const BATCH_SIZE = 5; 
-        const WAIT_TIME_MS = 10000; 
 
-        // Función interna para realizar la petición a la IA
-        const fetchItemData = async (item) => {
+        // CONFIGURACIÓN DE SEGURIDAD (1 A 1)
+        const DELAY_BETWEEN_ITEMS = 7000; // 6 segundos entre acciones (10 acciones por minuto = Seguro)
+        const RETRY_DELAY = 4000; // 3 segundos antes de un reintento
+
+        const fetchSingle = async (item) => {
             const assetDesc = item.isIndex ? "MARKET INDEX (SPOT VALUE)" : "STOCK/EQUITY";
             const now = new Date().toLocaleString('es-ES', { timeZoneName: 'short' });
-            const prompt = `ROLE: Professional Web Scraper. REF TIME: ${now}. TASK: Get market data for "${item.ticker}" from Yahoo Finance/Google Finance. RETURN JSON ONLY: {"p": last_price, "pc": previous_close, "pe": pe_ratio, "fx": exchange_to_${baseCurrency}}. Use "." for decimals.`;
+            const prompt = `ROLE: Professional Financial Scraper. REF TIME: ${now}. 
+            TASK: Get live market data for "${item.ticker}" (Currency: ${item.stockCurrency}). 
+            SOURCES: Yahoo Finance or Google Finance.
+            RETURN JSON ONLY: {"p": last_price, "pc": previous_close_price, "pe": pe_ttm, "fx": exchange_rate_to_${baseCurrency}}.
+            STRICT: Use "." for decimals. Return 0 for any missing field.`;
             
-            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 15000));
-            const res = await Promise.race([askGemini(apiKey, prompt, aiModel), timeoutPromise]);
-            return extractJSON(res);
+            try {
+                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 15000));
+                const res = await Promise.race([askGemini(apiKey, prompt, aiModel), timeoutPromise]);
+                return extractJSON(res);
+            } catch (e) { return null; }
         };
 
         try {
-            const chunks = [];
-            for (let i = 0; i < active.length; i += BATCH_SIZE) chunks.push(active.slice(i, i + BATCH_SIZE));
+            for (let i = 0; i < active.length; i++) {
+                const item = active[i];
+                let data = await fetchSingle(item);
 
-            for (let i = 0; i < chunks.length; i++) {
-                let chunk = chunks[i];
-                let resultsMap = new Map(); // Para guardar lo que vamos logrando
-                
-                // --- INTENTO 1 ---
-                const firstAttemptPromises = chunk.map(async (item) => {
-                    try {
-                        const json = await fetchItemData(item);
-                        if (json && (json.p || json.p === 0)) resultsMap.set(item.id, json);
-                    } catch (e) { /* Error silencioso para reintento */ }
-                });
-                await Promise.all(firstAttemptPromises);
-
-                // Identificar qué tickers han fallado en este lote
-                let failedInChunk = chunk.filter(item => !resultsMap.has(item.id));
-
-                // --- INTENTO 2 (REINTENTO DE FALLOS) ---
-                if (failedInChunk.length > 0) {
-                    await new Promise(resolve => setTimeout(resolve, 3000)); // Espera corta de 3s antes de reintentar
-                    const retryPromises = failedInChunk.map(async (item) => {
-                        try {
-                            const json = await fetchItemData(item);
-                            if (json && (json.p || json.p === 0)) resultsMap.set(item.id, json);
-                        } catch (e) { /* Fallo definitivo en este ciclo */ }
-                    });
-                    await Promise.all(retryPromises);
+                // Reintento inmediato si falla
+                if (!data || (!data.p && data.p !== 0)) {
+                    await new Promise(r => setTimeout(r, RETRY_DELAY));
+                    data = await fetchSingle(item);
                 }
 
-                // Procesar resultados finales del lote
-                const chunkUpdates = [];
-                chunk.forEach(item => {
-                    const data = resultsMap.get(item.id);
-                    if (data) {
-                        const safeFx = (item.stockCurrency === baseCurrency) ? 1 : cleanVal(data.fx);
-                        chunkUpdates.push({ id: item.id, p: cleanVal(data.p), fx: safeFx, pe: cleanVal(data.pe), pc: cleanVal(data.pc) });
-                        log.success.push(item.ticker);
-                    } else {
-                        log.fail.push(item.ticker);
-                    }
-                });
-
-                // Aplicar actualizaciones del lote a la UI
-                if (chunkUpdates.length > 0) {
-                    setPortfolio(prev => prev.map(p => {
-                        const u = chunkUpdates.find(x => x.id === p.id);
-                        return u ? { ...p, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe, previousClose: u.pc } : p;
-                    }), false);
+                if (data && (data.p || data.p === 0)) {
+                    const safeFx = (item.stockCurrency === baseCurrency) ? 1 : cleanVal(data.fx);
+                    // Actualizar este valor específico en la tabla inmediatamente
+                    setPortfolio(prev => prev.map(p => 
+                        p.id === item.id ? { ...p, currentPrice: data.p, currentFx: safeFx, currentPE: data.pe, previousClose: data.pc } : p
+                    ), false);
+                    log.success.push(item.ticker);
+                } else {
+                    log.fail.push(item.ticker);
                 }
 
-                setUpdateProgress(Math.round(((i + 1) / chunks.length) * 100));
+                setUpdateProgress(Math.round(((i + 1) / active.length) * 100));
 
-                if (i < chunks.length - 1) {
-                    await new Promise(resolve => setTimeout(resolve, WAIT_TIME_MS));
+                if (i < active.length - 1) {
+                    await new Promise(r => setTimeout(r, DELAY_BETWEEN_ITEMS));
                 }
             }
 
             setLastUpdate(new Date().toISOString());
+            
             if (!isAuto && log.fail.length > 0) {
-                setInfoModal({ isOpen: true, title: 'Actualización Finalizada', msg: `Se recuperaron ${log.success.length} valores.\n\nTras un segundo intento, fallaron:\n${[...new Set(log.fail)].join(', ')}.`, type: 'warning' });
+                setInfoModal({ 
+                    isOpen: true, 
+                    title: 'Sincronización Terminada', 
+                    msg: `Proceso finalizado acción por acción.\n\nÉxitos: ${log.success.length}\nFallos: ${log.fail.length} (${log.fail.join(', ')}).\n\nLos fallos suelen deberse a tickers no encontrados en las fuentes principales.`, 
+                    type: 'warning' 
+                });
             }
         } catch (e) {
             if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' });
@@ -2144,6 +2126,8 @@ const gridTotals = useMemo(() => {
             setTimeout(() => setUpdateProgress(0), 4000);
         }
     };
+
+   
 
 
 
