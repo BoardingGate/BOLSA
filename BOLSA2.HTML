@@ -1709,7 +1709,10 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const [visibleSections, setVisibleSections] = usePersistentState('bg_visible_sections', { table: true, diverging: true, stats: true, charts: true });
 
     const [updating, setUpdating] = useState(false);
+    const [updateProgress, setUpdateProgress] = useState(0); 
     const [analyzing, setAnalyzing] = useState(false);
+
+
     const [fetchingSingle, setFetchingSingle] = useState(false);
     const [analysisResult, setAnalysisResult] = useState(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -2052,13 +2055,14 @@ const gridTotals = useMemo(() => {
         if (!isAuto && active.length === 0) return; 
         
         setUpdating(true); 
+        setUpdateProgress(0);
         let log = { success: [], fail: [] };
         
-        const BATCH_SIZE = 5; // Procesar 5 acciones por tanda
-        const WAIT_TIME_MS = 12000; // Esperar 12 segundos entre tandas para enfriar la API
+        const BATCH_SIZE = 5; 
+        const WAIT_TIME_MS = 10000; 
 
         try {
-             const chunks = [];
+            const chunks = [];
             for (let i = 0; i < active.length; i += BATCH_SIZE) {
                 chunks.push(active.slice(i, i + BATCH_SIZE));
             }
@@ -2072,21 +2076,15 @@ const gridTotals = useMemo(() => {
                     const prompt = `ROLE: Financial Data API. TASK: Get data for Ticker: "${item.ticker}". TYPE: ${assetDesc}. REQUIREMENTS: 1. "p": Current Price in its NATIVE currency (${item.stockCurrency}). STRICT RULE: DO NOT convert the price to ${baseCurrency}. Return it as it quotes in the market. 2. "fx": Exchange rate to convert from ${item.stockCurrency} to ${baseCurrency}. (Example: 1 ${item.stockCurrency} = X ${baseCurrency}). If same, fx = 1. 3. "pe": TTM P/E Ratio (0 if Index). 4. "pc": Previous Close Price (Yesterday's close). RETURN JSON ONLY: {"p": number, "fx": number, "pe": number, "pc": number}`; 
                     
                     try { 
-                        // Timeout de seguridad por petición individual (15s)
                         const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 15000));
                         const res = await Promise.race([askGemini(apiKey, prompt, aiModel), timeoutPromise]);
                         const json = extractJSON(res); 
-                        
                         if (json && (json.p || json.p === 0)) { 
                             const safeFx = (item.stockCurrency === baseCurrency) ? 1 : cleanVal(json.fx); 
                             chunkUpdates.push({ id: item.id, p: cleanVal(json.p), fx: safeFx, pe: cleanVal(json.pe), pc: cleanVal(json.pc) }); 
                             log.success.push(item.ticker); 
-                        } else { 
-                            log.fail.push(item.ticker); 
-                        } 
-                    } catch (e) { 
-                        log.fail.push(item.ticker); 
-                    }
+                        } else { log.fail.push(item.ticker); } 
+                    } catch (e) { log.fail.push(item.ticker); }
                 });
 
                 await Promise.all(promises);
@@ -2095,8 +2093,11 @@ const gridTotals = useMemo(() => {
                     setPortfolio(prev => prev.map(p => { 
                         const u = chunkUpdates.find(x => x.id === p.id); 
                         return u ? { ...p, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe, previousClose: u.pc } : p; 
-                    }), false); // false = No forzar subida a Drive aún
+                    }), false);
                 }
+
+                // Calcular progreso basado en lotes completados
+                setUpdateProgress(Math.round(((i + 1) / chunks.length) * 100));
 
                 if (i < chunks.length - 1) {
                     await new Promise(resolve => setTimeout(resolve, WAIT_TIME_MS));
@@ -2104,22 +2105,16 @@ const gridTotals = useMemo(() => {
             }
             
             setLastUpdate(new Date().toISOString()); 
-            
             if (!isAuto && log.fail.length > 0) { 
-                setInfoModal({ 
-                    isOpen: true, 
-                    title: 'Sincronización Completada con Avisos', 
-                    msg: `Proceso por lotes finalizado.\n\nÉxitos: ${log.success.length}\nFallos: ${log.fail.length}\n\nNo se pudieron obtener: ${log.fail.join(', ')}.`, 
-                    type: 'warning' 
-                }); 
+                setInfoModal({ isOpen: true, title: 'Sincronización Finalizada', msg: `Éxitos: ${log.success.length} | Fallos: ${log.fail.length}\nNo se pudieron obtener: ${log.fail.join(', ')}.`, type: 'warning' }); 
             } 
         } catch (e) { 
             if (!isAuto) setInfoModal({ isOpen: true, title: 'Error Crítico', msg: e.message, type: 'error' }); 
         } finally { 
-            setUpdating(false); 
+            setUpdating(false);
+            setTimeout(() => setUpdateProgress(0), 2000); // Reset tras terminar
         } 
     };
-    
 
  // ANALISIS IA MEJORADO Y CORREGIDO (VERSIÓN BLINDADA)
 const analyzePortfolio = async () => {
@@ -2496,10 +2491,30 @@ const RenderHistoryCard = () => {
             
             <div className="flex flex-col gap-3 shrink-0 bg-slate-900/50 p-3 rounded-xl border border-slate-800">
                 <div className="flex justify-between items-center"><div className="flex gap-2 items-start">
+               
                   <div className="flex flex-col">
-                      <button onClick={() => updatePrices(false)} disabled={updating} className="bg-slate-800 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-700 hover:bg-slate-700 transition-colors flex items-center gap-2">{updating ? <Icons.Loader/> : <Icons.Refresh/>} ACTUALIZAR</button>
-                      <span className="text-[9px] text-slate-500 mt-1 uppercase font-bold text-center tracking-wider">Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}</span>
+                      <button 
+                        onClick={() => updatePrices(false)} 
+                        disabled={updating} 
+                        className="relative bg-slate-800 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-700 hover:bg-slate-700 transition-all flex items-center gap-2 overflow-hidden"
+                      >
+                          {/* Barra de progreso de fondo */}
+                          {updating && (
+                            <div 
+                                className="absolute left-0 top-0 h-full bg-blue-600/30 transition-all duration-500 ease-out" 
+                                style={{ width: `${updateProgress}%` }}
+                            />
+                          )}
+                          <span className="relative z-10 flex items-center gap-2">
+                              {updating ? <span className="animate-pulse">{updateProgress}%</span> : <Icons.Refresh/>} 
+                              {updating ? 'PROCESANDO...' : 'ACTUALIZAR'}
+                          </span>
+                      </button>
+                      <span className="text-[9px] text-slate-500 mt-1 uppercase font-bold text-center tracking-wider">
+                        {updating ? `Lote ${Math.ceil((updateProgress/100) * (portfolio.filter(p=>!p.sellDate).length/4) || 1)}...` : `Sinc: ${lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}`}
+                      </span>
                   </div>
+
                   <button onClick={onManualSync} className={`px-3 h-9 rounded-lg text-[10px] font-bold border flex items-center gap-2 transition-all ${syncStatus === 'unsaved' ? 'bg-orange-600 border-orange-500 text-white animate-pulse' : syncStatus === 'uploading' || syncStatus === 'downloading' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-green-400'}`}>
                       {syncStatus === 'uploading' || syncStatus === 'downloading' ? <Icons.Loader/> : <Icons.Upload size={14} className={syncStatus==='unsaved' ? '' : 'text-green-500'}/>} 
                       {syncStatus === 'unsaved' ? 'GUARDAR' : syncStatus === 'uploading' ? 'SUBIENDO...' : syncStatus === 'downloading' ? 'BAJANDO...' : 'SYNC OK'}
