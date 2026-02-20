@@ -1660,7 +1660,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           if (sortConfig.key === 'yield') { const getPL = (p) => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); return vF - cost; }; return (getPL(a) - getPL(b)) * dir; } 
           if (sortConfig.key === 'percent') { const getPct = (p) => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); const ds = (p.dividends || []).reduce((acc,d)=>acc+d.net,0); const days = calculateDays(p.buyDate, p.sellDate || new Date()); return calcReturns(cost, vF + ds, days).simple; }; return (getPct(a) - getPct(b)) * dir; } 
           
-          if (sortConfig.key === 'intraday') { 
+        if (sortConfig.key === 'intraday') { 
               const getIntra = (p) => {
                   if (p.sellDate || !p.previousClose) return 0;
                   const curP = p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice;
@@ -1671,7 +1671,24 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
               return (getIntra(a) - getIntra(b)) * dir; 
           }
 
+          // --- NUEVOS CASOS DE ORDENACIÓN ---
+          if (sortConfig.key === 'totalCost') {
+              const getCost = (p) => (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+              return (getCost(a) - getCost(b)) * dir;
+          }
+          if (sortConfig.key === 'totalValue') {
+              const getVal = (p) => {
+                  const isS = !!p.sellDate;
+                  const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
+                  const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
+                  return (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+              };
+              return (getVal(a) - getVal(b)) * dir;
+          }
+       
           if (sortConfig.key === 'value') { return a.ticker.localeCompare(b.ticker) * dir; } 
+
+
           if (filterType === 'all') { const aSold = !!a.sellDate; const bSold = !!b.sellDate; if (aSold !== bSold) return (aSold ? 1 : -1) * dir; if (!aSold) return (new Date(b.buyDate) - new Date(a.buyDate)) * dir; else return (new Date(b.sellDate) - new Date(a.sellDate)) * dir; } 
           if (filterType === 'active') return (new Date(b.buyDate) - new Date(a.buyDate)) * dir; 
           if (filterType === 'sold') return (new Date(b.sellDate) - new Date(a.sellDate)) * dir; 
@@ -2351,12 +2368,20 @@ const RenderHistoryCard = () => {
                     
                     <th className="p-3 text-center text-blue-400 min-w-[90px]">FX Desv.</th>
                     <th className="p-3 text-center min-w-[105px]">Gastos / Adj</th>
+
+                    <th className={`p-3 text-right min-w-[125px] cursor-pointer select-none hover:text-white transition-colors group ${sortConfig.key==='totalCost'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('totalCost')}>
+                        <div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='totalCost'?'opacity-100':''}`}/> Coste Total {sortConfig.key==='totalCost' && (sortConfig.direction==='asc'?'▲':'▼')}</div>
+                    </th>
+
+                    {/* NUEVA COLUMNA: PESOS */}
+                    <th className="p-3 text-center min-w-[110px] text-slate-500 font-mono text-[9px]">
+                        Pesos<br/>(Coste - Valor)
+                    </th>
                     
-                    {/* CAMBIO: Ancho +4 chars (aprox 125px) */}
-                    <th className="p-3 text-right min-w-[125px]">Coste Total</th>
-                    
-                    {/* CAMBIO: Ancho +4 chars (aprox 125px) */}
-                    <th className="p-3 text-right text-white font-bold bg-[#161b25] border-l border-slate-700 min-w-[125px]">Valor Final</th>
+                    {/* CAMBIO: Ancho +4 chars (aprox 125px) - AHORA ORDENABLE */}
+                    <th className={`p-3 text-right text-white font-bold bg-[#161b25] border-l border-slate-700 min-w-[125px] cursor-pointer select-none hover:text-blue-200 transition-colors group ${sortConfig.key==='totalValue'?'bg-slate-800':''}`} onClick={()=>requestSort('totalValue')}>
+                        <div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='totalValue'?'opacity-100':''}`}/> Valor Final {sortConfig.key==='totalValue' && (sortConfig.direction==='asc'?'▲':'▼')}</div>
+                    </th>
                     
                     {/* CAMBIO: Ancho +4 chars (aprox 125px) para RENDIMIENTO */}
                     <th className={`p-3 text-right cursor-pointer select-none hover:text-white bg-[#161b25] border-r border-slate-700 transition-colors group min-w-[125px] ${sortConfig.key==='yield'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('yield')}><div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='yield'?'opacity-100':''}`}/> RENDIMIENTO {sortConfig.key==='yield' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
@@ -2447,8 +2472,29 @@ const RenderHistoryCard = () => {
                                 {(() => { const fxDevVal = (p.isIndex ? 0 : (p.shares * (isS ? p.sellPrice : p.currentPrice) * (curF - p.buyFx))); return <div className={fxDevVal >= 0 ? 'text-green-500' : 'text-red-500'}>{formatMoney(fxDevVal, baseCurrency)}</div>; })()}
                             </td>
                             <td className="p-3 text-center text-[10px] font-mono text-slate-400">G: {formatN(isS?p.sellFees:p.fees)}<br/>A: {formatN(isS?p.sellAdjustments:p.adjustments)}</td>
+                            
                             <td className="p-3 text-right text-slate-400 font-mono">{formatMoney(cost, baseCurrency)}</td>
+                            
+                            {/* NUEVA CELDA PESOS CALCULADOS */}
+                            <td className="p-3 text-center font-mono text-[9px] text-slate-500 whitespace-nowrap">
+                                {(() => {
+                                    const wC = gridTotals.tCost > 0 ? (cost / gridTotals.tCost) * 100 : 0;
+                                    const wV = gridTotals.tVal > 0 ? (vF / gridTotals.tVal) * 100 : 0;
+                                    return (
+                                        <div className="flex items-center justify-center gap-1">
+                                            <span className="text-slate-700 text-[7px]">◄</span>
+                                            <span className="text-slate-400">{formatN(wC, 1)}%</span>
+                                            <span className="text-slate-700 mx-0.5">|</span>
+                                            <span className="text-slate-200 font-bold">{formatN(wV, 1)}%</span>
+                                            <span className="text-slate-700 text-[7px]">►</span>
+                                        </div>
+                                    );
+                                })()}
+                            </td>
+
                             <td className="p-3 text-right font-mono text-white bg-[#161b25] border-l border-slate-800"><div className="font-bold">{formatMoney(vF, baseCurrency)}</div></td>
+
+
                             <td className="p-3 text-right font-mono bg-[#161b25] border-r border-slate-800"><div className={`font-bold ${capitalGain >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(capitalGain, baseCurrency)}</div>{ds > 0 && <div className="text-[10px] text-blue-300 font-bold mt-0.5">+ {formatMoney(ds, baseCurrency)} (Div)</div>}</td>
                             <td className="p-3 text-right text-xs"><div className={rs.simple>=0?'text-green-400 font-bold':'text-red-400 font-bold'}>{formatN(rs.simple)}%</div><div className="text-[9px] text-slate-500">Anual: {formatN(rs.annual)}%</div></td>
                             <td className="p-3 text-center text-xs font-mono">I: {formatN(p.buyPE, 1)}<br/>A: <span className="text-yellow-500 font-bold">{formatN(p.currentPE, 1)}</span></td>
@@ -2459,36 +2505,30 @@ const RenderHistoryCard = () => {
                         </tr> 
                     ); 
                     }) )}
+        
                     {filteredPortfolio.length > 0 && (
                     <tr className="bg-slate-900 border-t-2 border-slate-600 font-bold text-white text-[9px] sticky bottom-0 z-30 shadow-2xl">
-                        <td className="p-2 sticky left-0 z-40 bg-slate-900 border-r border-slate-800"></td>
-                        <td className="p-2 sticky left-10 z-40 bg-slate-900 border-r border-slate-800 text-right uppercase tracking-wider text-slate-400">TOTALES:</td>
-                        <td colSpan="4"></td>
-                        
-                        {/* TOTAL INTRADÍA AL PIÉ */}
-                        <td className="p-2 text-right bg-slate-900/50 border-l border-r border-slate-700">
-                             <span className={gridTotals.tIntra >= 0 ? 'text-green-400' : 'text-red-400'}>
-                                 {formatMoney(gridTotals.tIntra, baseCurrency)}
-                             </span>
-                        </td>
-
-                        <td className="p-2 text-center text-slate-300 font-mono">{formatMoney(gridTotals.tFx, baseCurrency)}</td>
-                        <td></td>
-                        <td className="p-2 text-right font-mono text-slate-300">{formatMoney(gridTotals.tCost, baseCurrency)}</td>
-                        <td className="p-2 text-right font-mono bg-[#0f121a] border-l border-slate-800 text-white">{formatMoney(gridTotals.tVal, baseCurrency)}</td>
-                        <td className="p-2 text-right font-mono bg-[#0f121a] border-r border-slate-800"><span className={gridTotals.tRes >= 0 ? 'text-green-400' : 'text-red-400'}>{formatMoney(gridTotals.tRes, baseCurrency)}</span></td>
-                        <td className="p-2 text-right font-mono"><span className={gridTotals.tPct >= 0 ? 'text-green-400' : 'text-red-400'}>{formatN(gridTotals.tPct)}%</span></td>
-                        <td className="p-2 text-center font-mono text-[8px]">
-                            <div className="text-slate-400">I: {formatN(gridTotals.avgBuyPE, 1)}</div>
-                            <div className="text-yellow-500">A: {formatN(gridTotals.avgCurPE, 1)}</div>
-                        </td>
-                        <td className="p-2"></td>
+                        {/* 1 */}<td className="p-2 sticky left-0 z-40 bg-slate-900 border-r border-slate-800"></td>
+                        {/* 2 */}<td className="p-2 sticky left-10 z-40 bg-slate-900 border-r border-slate-800 text-right uppercase tracking-wider text-slate-400">TOTALES:</td>
+                        {/* 3 */}<td colSpan="4"></td>
+                        {/* 7 */}<td className="p-2 text-right bg-slate-900/50 border-l border-r border-slate-700"><span className={(gridTotals.tIntra||0) >= 0 ? 'text-green-400' : 'text-red-400'}>{formatMoney(gridTotals.tIntra||0, baseCurrency)}</span></td>
+                        {/* 8 */}<td className="p-2"></td>
+                        {/* 9 */}<td className="p-2 text-center text-slate-300 font-mono">{formatMoney(gridTotals.tFx||0, baseCurrency)}</td>
+                        {/* 10 */}<td className="p-2"></td>
+                        {/* 11 */}<td className="p-2 text-right font-mono text-slate-300">{formatMoney(gridTotals.tCost||0, baseCurrency)}</td>
+                        {/* 12 PESOS */}<td className="p-2 text-center text-[9px] text-slate-600">--</td>
+                        {/* 13 */}<td className="p-2 text-right font-mono bg-[#0f121a] border-l border-slate-800 text-white">{formatMoney(gridTotals.tVal||0, baseCurrency)}</td>
+                        {/* 14 */}<td className="p-2 text-right font-mono bg-[#0f121a] border-r border-slate-800"><span className={(gridTotals.tRes||0) >= 0 ? 'text-green-400' : 'text-red-400'}>{formatMoney(gridTotals.tRes||0, baseCurrency)}</span></td>
+                        {/* 15 */}<td className="p-2 text-right font-mono"><span className={(gridTotals.tPct||0) >= 0 ? 'text-green-400' : 'text-red-400'}>{formatN(gridTotals.tPct||0)}%</span></td>
+                        {/* 16 */}<td className="p-2 text-center font-mono text-[8px]"><div className="text-slate-400">I: {formatN(gridTotals.avgBuyPE||0, 1)}</div><div className="text-yellow-500">A: {formatN(gridTotals.avgCurPE||0, 1)}</div></td>
+                        {/* 17 */}<td className="p-2"></td>
                     </tr>
                     )}
                     </tbody>
                     </table>
                 </div>
             )}
+                 
 
 
             {visibleSections.diverging && (<div className="fade-in"><DivergingBarChart data={divergingData} baseCurrency={baseCurrency} /></div>)}
