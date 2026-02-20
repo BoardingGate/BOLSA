@@ -347,61 +347,67 @@ const SimpleChart = ({ type, data, title, height = 400, color = "#3b82f6" }) => 
           );
       };
      
-
-     const StackedWeightsChart = ({ data, baseCurrency }) => {
+const StackedWeightsChart = ({ data, baseCurrency }) => {
           if (!data || data.length === 0) return <div className="text-center text-xs text-slate-500 py-4">Sin datos suficientes</div>;
+          
           const totalCost = data.reduce((sum, d) => sum + Math.max(0, d.cost), 0) || 1;
           const totalVal = data.reduce((sum, d) => sum + Math.max(0, d.val), 0) || 1;
-          const sortedData = [...data].sort((a, b) => b.val - a.val);
+          
+          // Ordenación independiente para cada barra (de más a menos)
+          const sortedByCost = [...data].sort((a, b) => b.cost - a.cost).filter(d => d.cost > 0);
+          const sortedByVal = [...data].sort((a, b) => b.val - a.val).filter(d => d.val > 0);
+          
+          // Asignar colores fijos por Ticker para que se identifiquen en ambas barras
+          const uniqueTickers = Array.from(new Set(data.map(d => d.ticker)));
           const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#a855f7', '#06b6d4', '#f43f5e', '#eab308', '#14b8a6', '#f97316', '#6366f1'];
+          const colorMap = {};
+          uniqueTickers.forEach((t, i) => { colorMap[t] = COLORS[i % COLORS.length]; });
 
-          // Altura dinámica: 35px mínimo por activo para que las etiquetas respiren, más cabeceras
-          const containerHeight = Math.max(400, sortedData.length * 35);
+          // Altura dinámica: Para asegurar que el texto cabe, calculamos un mínimo de ~40px por activo.
+          // El panel crecerá automáticamente sin scroll interno.
+          const containerHeight = Math.max(450, data.length * 40);
+
+          const renderSegment = (d, total, isCost) => {
+              const val = isCost ? d.cost : d.val;
+              const pct = (val / total) * 100;
+              if (pct <= 0) return null;
+              
+              return (
+                  <div 
+                      key={d.ticker} 
+                      className="w-full flex flex-col justify-center px-3 border-b border-black/30 hover:brightness-110 transition-all cursor-crosshair" 
+                      style={{ height: `${pct}%`, minHeight: '38px', backgroundColor: colorMap[d.ticker] }}
+                      title={`${d.ticker}: ${formatMoney(val, baseCurrency)} (${pct.toFixed(2)}%)`}
+                  >
+                      <div className="flex justify-between items-center w-full z-10">
+                          <span className="text-[11px] font-black text-white drop-shadow-md truncate pr-2">{d.ticker}</span>
+                          <div className="text-right flex flex-col leading-none">
+                              <span className="text-[11px] font-bold text-white drop-shadow-md whitespace-nowrap">{formatMoney(val, baseCurrency)}</span>
+                              <span className="text-[9px] font-black text-white/90 drop-shadow-md mt-0.5">{pct.toFixed(2)}%</span>
+                          </div>
+                      </div>
+                  </div>
+              );
+          };
 
           return (
-              <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 flex flex-col w-full h-full min-w-[600px]" style={{ minHeight: `${containerHeight}px` }}>
-                  <h4 className="text-[10px] uppercase font-bold text-slate-400 mb-4 text-center tracking-widest">Distribución de Pesos: Capital Invertido vs Valoración Actual</h4>
-                  <div className="flex-1 flex w-full relative gap-4 h-full">
+              <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 flex flex-col w-full min-w-[600px]">
+                  <h4 className="text-[10px] uppercase font-bold text-slate-400 mb-4 text-center tracking-widest">Pesos de Cartera: Invertido vs Valoración (100%)</h4>
+                  <div className="flex-1 flex w-full gap-6" style={{ height: `${containerHeight}px` }}>
                       
-                      {/* Columna 1: Invertido */}
-                      <div className="flex-1 flex flex-col h-full relative">
-                          <div className="text-center text-[10px] font-bold text-slate-400 mb-2 uppercase">Capital Invertido ({formatMoney(totalCost, baseCurrency)})</div>
-                          <div className="flex-1 flex flex-col w-full rounded-lg overflow-hidden border border-slate-700">
-                              {sortedData.map((d, i) => {
-                                  const pct = Math.max(0, (d.cost / totalCost) * 100);
-                                  if (pct === 0) return null;
-                                  const color = COLORS[i % COLORS.length];
-                                  return (
-                                      <div key={`c-${d.ticker}`} className="w-full flex items-center justify-between px-3 group border-b border-black/20 hover:opacity-90 transition-opacity" style={{ flex: pct, backgroundColor: color, minHeight: '28px' }}>
-                                          <span className="text-xs font-black text-white drop-shadow-md z-10">{d.ticker}</span>
-                                          <div className="text-right z-10 flex flex-col justify-center">
-                                              <span className="text-[11px] font-bold text-white drop-shadow-md leading-none">{formatMoney(d.cost, baseCurrency)}</span>
-                                              <span className="text-[9px] font-bold text-white/80 drop-shadow-md">{pct.toFixed(2)}%</span>
-                                          </div>
-                                      </div>
-                                  );
-                              })}
+                      {/* BARRA 1: CAPITAL INVERTIDO */}
+                      <div className="flex-1 flex flex-col h-full">
+                          <div className="text-center text-[10px] font-bold text-slate-400 mb-2 uppercase">Inversión ({formatMoney(totalCost, baseCurrency)})</div>
+                          <div className="flex-1 flex flex-col w-full rounded-lg overflow-hidden border border-slate-700 bg-slate-800/50 shadow-inner">
+                              {sortedByCost.map(d => renderSegment(d, totalCost, true))}
                           </div>
                       </div>
 
-                      {/* Columna 2: Valor */}
-                      <div className="flex-1 flex flex-col h-full relative">
+                      {/* BARRA 2: VALOR ACTUAL */}
+                      <div className="flex-1 flex flex-col h-full">
                           <div className="text-center text-[10px] font-bold text-slate-400 mb-2 uppercase">Valor Actual ({formatMoney(totalVal, baseCurrency)})</div>
-                          <div className="flex-1 flex flex-col w-full rounded-lg overflow-hidden border border-slate-700">
-                              {sortedData.map((d, i) => {
-                                  const pct = Math.max(0, (d.val / totalVal) * 100);
-                                  if (pct === 0) return null;
-                                  const color = COLORS[i % COLORS.length];
-                                  return (
-                                      <div key={`v-${d.ticker}`} className="w-full flex items-center justify-between px-3 group border-b border-black/20 hover:opacity-90 transition-opacity" style={{ flex: pct, backgroundColor: color, minHeight: '28px' }}>
-                                          <span className="text-xs font-black text-white drop-shadow-md z-10">{d.ticker}</span>
-                                          <div className="text-right z-10 flex flex-col justify-center">
-                                              <span className="text-[11px] font-bold text-white drop-shadow-md leading-none">{formatMoney(d.val, baseCurrency)}</span>
-                                              <span className="text-[9px] font-bold text-white/80 drop-shadow-md">{pct.toFixed(2)}%</span>
-                                          </div>
-                                      </div>
-                                  );
-                              })}
+                          <div className="flex-1 flex flex-col w-full rounded-lg overflow-hidden border border-slate-700 bg-slate-800/50 shadow-inner">
+                              {sortedByVal.map(d => renderSegment(d, totalVal, false))}
                           </div>
                       </div>
 
@@ -409,15 +415,16 @@ const SimpleChart = ({ type, data, title, height = 400, color = "#3b82f6" }) => 
               </div>
           );
       };
+   
  
-
-  const CarouselCharts = ({ chartsData, baseCurrency }) => {
+const CarouselCharts = ({ chartsData, baseCurrency }) => {
           return (
              <div className="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-4 custom-scrollbar items-start">
                 <div className="snap-center min-w-full lg:min-w-[95%] h-[400px]">
                     <SimpleChart type="line" data={chartsData.evolution} title="Evolución Rendimiento Acumulado" height={400} color="#10b981" />
                 </div>
                 <div className="snap-center min-w-full lg:min-w-[95%]">
+                    {/* Sustituimos la tarta por el nuevo componente */}
                     <StackedWeightsChart data={chartsData.weightsData} baseCurrency={baseCurrency} />
                 </div>
                 <div className="snap-center min-w-full lg:min-w-[95%] h-[400px]">
@@ -425,8 +432,8 @@ const SimpleChart = ({ type, data, title, height = 400, color = "#3b82f6" }) => 
                 </div>
              </div>
           );
-      };
-
+};
+  
 const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, syncStatus, onManualSync }) => {
     const r2 = (num) => Math.round((parseFloat(num) || 0) * 100) / 100;
     
@@ -1975,6 +1982,7 @@ const gridTotals = useMemo(() => {
     const activeFilteredPortfolio = useMemo(() => { return visiblePortfolio; }, [visiblePortfolio]); 
    
     const chartsData = useMemo(() => { 
+        // Datos para las Barras Apiladas (Inversión vs Valoración)
         const weightsData = activeFilteredPortfolio.filter(p => !p.sellDate).map(p => {
             const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
             const curP = p.isIndex ? p.currentPrice / (p.indexDivisor||1) : p.currentPrice;
@@ -2671,7 +2679,6 @@ const RenderHistoryCard = () => {
             {visibleSections.diverging && (<div className="fade-in"><DivergingBarChart data={divergingData} baseCurrency={baseCurrency} /></div>)}
             {visibleSections.stats && (<div className="fade-in"><StatsDashboard portfolio={portfolio} baseCurrency={baseCurrency} taxTotal={taxSum} /></div>)}
             {visibleSections.charts && (<div className="fade-in"><CarouselCharts chartsData={chartsData} baseCurrency={baseCurrency} /></div>)}
-
           
             <Modal isOpen={isModalOpen} title={editingId ? `Ficha de Inversión: ${form.ticker}` : "Apertura de Posición"} onClose={()=>setIsModalOpen(false)}>
                 {/* ... (Contenido del Modal de Edición, igual que el original, lo omito por brevedad pero debe ir aquí) ... */}
