@@ -2055,72 +2055,6 @@ const gridTotals = useMemo(() => {
         let log = { success: [], fail: [] }, newUpdates = []; 
         
         try { 
-            // EJECUCIÓN EN PARALELO CON TIMEOUT PARA EVITAR BLOQUEOS INFINITOS
-            const promises = active.map(async (item) => {
-                const assetDesc = item.isIndex ? "MARKET INDEX (SPOT VALUE)" : "STOCK/EQUITY"; 
-                const prompt = `ROLE: Financial Data API. TASK: Get data for Ticker: "${item.ticker}". TYPE: ${assetDesc}. REQUIREMENTS: 1. "p": Current Price in its NATIVE currency (${item.stockCurrency}). STRICT RULE: DO NOT convert the price to ${baseCurrency}. Return it as it quotes in the market. 2. "fx": Exchange rate to convert from ${item.stockCurrency} to ${baseCurrency}. (Example: 1 ${item.stockCurrency} = X ${baseCurrency}). If same, fx = 1. 3. "pe": TTM P/E Ratio (0 if Index). 4. "pc": Previous Close Price (Yesterday's close). RETURN JSON ONLY: {"p": number, "fx": number, "pe": number, "pc": number}`; 
-                
-                try { 
-                    // Timeout de seguridad: Si una petición tarda más de 12 segundos en responder,
-                    // se cancela automáticamente esa petición en concreto para no atascar la rueda general.
-                    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 12000));
-                    const res = await Promise.race([askGemini(apiKey, prompt, aiModel), timeoutPromise]);
-                    
-                    const json = extractJSON(res); 
-                    if (json && (json.p || json.p === 0)) { 
-                        const safeFx = (item.stockCurrency === baseCurrency) ? 1 : cleanVal(json.fx); 
-                        newUpdates.push({ id: item.id, p: cleanVal(json.p), fx: safeFx, pe: cleanVal(json.pe), pc: cleanVal(json.pc) }); 
-                        log.success.push(item.ticker); 
-                    } else { 
-                        log.fail.push(item.ticker); 
-                    } 
-                } catch (e) { 
-                    log.fail.push(item.ticker); 
-                }
-            });
-
-            // Esperamos a que TODAS las peticiones paralelas terminen (o fallen tras sus 12s)
-            await Promise.all(promises);
-            
-            if (newUpdates.length > 0) { 
-                setPortfolio(prev => prev.map(p => { 
-                    const u = newUpdates.find(x => x.id === p.id); 
-                    if (u) { 
-                        return { ...p, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe, previousClose: u.pc }; 
-                    } 
-                    return p; 
-                }), false); 
-            } 
-            
-            // Forzamos el guardado de la hora SIEMPRE, sin importar si hubo fallos,
-            // garantizando que el usuario ve que el proceso terminó.
-            setLastUpdate(new Date().toISOString()); 
-            
-            // Mostramos el modal SI se hizo manual Y hubo fallos
-            if (!isAuto && log.fail.length > 0) { 
-                setInfoModal({ 
-                    isOpen: true, 
-                    title: 'Sincronización Parcial', 
-                    msg: `Se actualizaron ${log.success.length} valores.\n\nLa IA no pudo localizar el precio a tiempo de:\n${log.fail.join(', ')}.\n\nNota: Si tienes muchas acciones, es probable que la API gratuita de Google haya cortado la conexión (límite de 15 peticiones/minuto). Espera unos minutos y vuelve a pulsar el botón.`, 
-                    type: 'warning' 
-                }); 
-            } 
-        } catch (e) { 
-            if (!isAuto) setInfoModal({ isOpen: true, title: 'Error Crítico', msg: e.message, type: 'error' }); 
-        } finally { 
-            setUpdating(false); 
-        } 
-    };
-====
-    const updatePrices = async (isAuto = false) => { 
-        const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); 
-        if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); 
-        if (!isAuto && active.length === 0) return; 
-        
-        setUpdating(true); 
-        let log = { success: [], fail: [] }, newUpdates = []; 
-        
-        try { 
             // EJECUCIÓN PARALELA CON ESCALONAMIENTO Y TIMEOUT AMPLIADO
             const promises = active.map(async (item, index) => {
                 // Pequeño retraso escalonado (400ms) para no bombardear la API de Google de golpe y evitar bloqueos
@@ -2150,15 +2084,15 @@ const gridTotals = useMemo(() => {
             await Promise.all(promises);
             
             if (newUpdates.length > 0) { 
-                // CORRECCIÓN: Al quitar el 'false' al final, activamos el triggerSync. 
-                // Esto actualiza la variable localTimestamp, haciendo que coincida la hora del PIE DE PÁGINA con la del botón.
+                // RESTAURADO: Se vuelve a poner el 'false' para que la consulta de precios 
+                // NO se guarde automáticamente en gDrive ni afecte a la hora del pie de página.
                 setPortfolio(prev => prev.map(p => { 
                     const u = newUpdates.find(x => x.id === p.id); 
                     if (u) { 
                         return { ...p, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe, previousClose: u.pc }; 
                     } 
                     return p; 
-                })); 
+                }), false); 
             } 
             
             setLastUpdate(new Date().toISOString()); 
@@ -2176,7 +2110,7 @@ const gridTotals = useMemo(() => {
         } finally { 
             setUpdating(false); 
         } 
-    };  
+    };
     
 
  // ANALISIS IA MEJORADO Y CORREGIDO (VERSIÓN BLINDADA)
@@ -4312,7 +4246,7 @@ const App = () => {
                 
                 {activeTab === 'settings' && <SettingsTab apiKey={apiKey} setApiKey={setApiKey} _x_stat={_0xAuth} _x_act={_0xReg} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={updatePortfolio} onForceBackup={uploadToCloud} gScriptUrl={gScriptUrl} setGScriptUrl={setGScriptUrl} resultsData={resultsData} appPin={appPin} setAppPin={setAppPin} aiModel={aiModel} setAiModel={setAiModel} availableModels={availableModels} setAvailableModels={setAvailableModels} />}
              </main>
-            <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase"><div>BoardingGate 3.3 (Secure PIN)</div><div className="flex gap-4"><span>Estado: {syncStatus === 'synced' ? 'Sincronizado' : syncStatus === 'unsaved' ? 'Cambios sin guardar' : 'Comprobando...'}</span><span>Ult. Mod: {localTimestamp > 0 ? new Date(localTimestamp).toLocaleTimeString() : 'N/A'}</span></div></footer>
+            <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase"><div>BoardingGate 3.3 (Secure PIN)</div><div className="flex gap-4"><span>Estado: {syncStatus === 'synced' ? 'Sincronizado en gDrive' : syncStatus === 'unsaved' ? 'Cambios sin guardar en gDrive' : 'Comprobando...'}</span><span>Ult. Mod. (no gDrive): {localTimestamp > 0 ? new Date(localTimestamp).toLocaleTimeString() : 'N/A'}</span></div></footer>
         </div>
     );
 };
