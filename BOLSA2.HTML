@@ -1611,32 +1611,52 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
 }
 
 function doGet(e) {
-  if (e.parameter.ticker) {
-    var ticker = e.parameter.ticker;
-    var yTicker = ticker.replace("BME:", "").replace("MC:", "").replace("NASDAQ:", "").replace("NYSE:", "").replace("EPA:", "");
-    if (ticker.includes("BME:") || ticker.includes("MC:")) yTicker += ".MC";
-    if (ticker.includes("EPA:")) yTicker += ".PA";
-    if (ticker.includes("LSE:")) yTicker += ".L";
-    if (ticker.includes("BIT:")) yTicker += ".MI";
-    if (ticker.includes("GER:") || ticker.includes("XETRA:")) yTicker += ".DE";
-
-    try {
-      var url = "https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(yTicker) + "?interval=1d&range=1d";
-      var response = UrlFetchApp.fetch(url, {muteHttpExceptions: true});
-      var json = JSON.parse(response.getContentText());
+  if (e.parameter.tickers) {
+    var tickerList = e.parameter.tickers.split(",");
+    var requests = [];
+    
+    for (var i = 0; i < tickerList.length; i++) {
+      var rawTicker = tickerList[i].trim();
+      var yTicker = rawTicker.replace("BME:", "").replace("MC:", "").replace("NASDAQ:", "").replace("NYSE:", "").replace("EPA:", "");
       
-      if (json && json.chart && json.chart.result && json.chart.result[0]) {
-        var meta = json.chart.result[0].meta;
-        return ContentService.createTextOutput(JSON.stringify({
-          p: meta.regularMarketPrice,
-          pc: meta.previousClose,
-          pe: 0,
-          source: "yahoo"
-        })).setMimeType(ContentService.MimeType.JSON);
-      }
-    } catch(err) {}
+      if (rawTicker.includes("BME:") || rawTicker.includes("MC:")) yTicker += ".MC";
+      else if (rawTicker.includes("EPA:")) yTicker += ".PA";
+      else if (rawTicker.includes("LSE:")) yTicker += ".L";
+      else if (rawTicker.includes("BIT:")) yTicker += ".MI";
+      else if (rawTicker.includes("GER:") || rawTicker.includes("XETRA:")) yTicker += ".DE";
+      else if (rawTicker.includes("TSE:")) yTicker += ".TO";
+      
+      requests.push({
+        url: "https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(yTicker) + "?interval=1d&range=1d",
+        method: "GET",
+        muteHttpExceptions: true
+      });
+    }
 
-    return ContentService.createTextOutput(JSON.stringify({error: "Not Found"})).setMimeType(ContentService.MimeType.JSON);
+    var responses = UrlFetchApp.fetchAll(requests);
+    var results = {};
+
+    for (var j = 0; j < responses.length; j++) {
+      var t = tickerList[j];
+      try {
+        var json = JSON.parse(responses[j].getContentText());
+        if (json.chart && json.chart.result && json.chart.result[0]) {
+          var meta = json.chart.result[0].meta;
+          results[t] = {
+            p: meta.regularMarketPrice,
+            pc: meta.previousClose,
+            curr: meta.currency,
+            success: true
+          };
+        } else {
+          results[t] = { success: false };
+        }
+      } catch (err) {
+        results[t] = { success: false, err: err.toString() };
+      }
+    }
+    
+    return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
   }
 
   try {
@@ -2092,88 +2112,104 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt, aiModel); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
 
 
-  const updatePrices = async (isAuto = false) => {
+  
+const updatePrices = async (isAuto = false) => {
         const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
         const scriptUrl = simpleDecrypt(gScriptUrl);
+        
         if (active.length === 0) return;
+        if (!scriptUrl && !apiKey) return setInfoModal({ isOpen: true, title: 'Error Config', msg: 'Configura la URL del Script de Google o la API Key de Gemini.', type: 'error' });
 
         setUpdating(true);
-        setUpdateProgress(0);
-        let log = { success: [], fail: [] };
-
-        const fetchViaIA = async (item) => {
-            const now = new Date().toLocaleString('es-ES');
-            const aiPrompt = `TASK: Get financial data for "${item.ticker}". REF TIME: ${now}. 
-            RETURN JSON ONLY: {"p": current_price, "pc": previous_close, "pe": pe_ratio, "fx": exchange_rate_to_${baseCurrency}}. 
-            Use google finance as source.`;
-            try {
-                const res = await askGemini(apiKey, aiPrompt, aiModel);
-                return extractJSON(res);
-            } catch (e) { return null; }
-        };
-
+        setUpdateProgress(10); // Inicio visual
+        
         try {
-            for (let i = 0; i < active.length; i++) {
-                const item = active[i];
-                let finalData = null;
+            let updatesMap = {};
+            let failedTickers = [];
 
-                // INTENTO 1: Usar el Script de Google (Yahoo Finance) si está configurado
-                if (scriptUrl) {
-                    try {
-                        const response = await fetch(`${scriptUrl}?ticker=${encodeURIComponent(item.ticker)}`);
-                        const data = await response.json();
-                        if (data && data.p && !data.error) {
-                            finalData = { ...data, source: 'script' };
+            // ESTRATEGIA A: USAR SCRIPT DE GOOGLE (BATCH / MASIVO) - Prioridad 1
+            if (scriptUrl) {
+                try {
+                    // 1. Preparamos todos los tickers separados por coma
+                    const tickersList = active.map(p => p.ticker).join(',');
+                    // 2. Hacemos UNA sola petición
+                    const response = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(tickersList)}`);
+                    const batchData = await response.json();
+
+                    // 3. Procesamos la respuesta masiva
+                    active.forEach(item => {
+                        const data = batchData[item.ticker];
+                        if (data && data.success && data.p) {
+                            updatesMap[item.id] = {
+                                currentPrice: cleanVal(data.p),
+                                previousClose: cleanVal(data.pc),
+                                // Si la divisa coincide con la base, FX es 1, si no, mantenemos el que había (o se podría mejorar con IA)
+                                currentFx: (data.curr === baseCurrency) ? 1 : item.currentFx 
+                            };
+                        } else {
+                            failedTickers.push(item);
                         }
-                    } catch (e) { console.log("Script falló para " + item.ticker); }
+                    });
+                } catch (e) {
+                    console.error("Fallo masivo en script:", e);
+                    // Si falla el script globalmente, todos pasan a fallidos para intentar con IA
+                    failedTickers = [...active]; 
                 }
-
-                // INTENTO 2: Si el Script falla o no hay URL, usamos la iA como respaldo
-                if (!finalData) {
-                    const aiData = await fetchViaIA(item);
-                    if (aiData && aiData.p) {
-                        finalData = { ...aiData, source: 'ia' };
-                    }
-                }
-
-                if (finalData) {
-                    // Si el dato viene del script, le pedimos a la IA solo el FX para ser más precisos
-                    let fx = finalData.fx || 1;
-                    if (finalData.source === 'script' && item.stockCurrency !== baseCurrency) {
-                        const fxRes = await askGemini(apiKey, `Exchange rate ${item.stockCurrency} to ${baseCurrency}. Number only.`, aiModel);
-                        fx = cleanVal(fxRes) || 1;
-                    }
-
-                    setPortfolio(prev => prev.map(p => 
-                        p.id === item.id ? { ...p, currentPrice: cleanVal(finalData.p), currentFx: cleanVal(fx), currentPE: cleanVal(finalData.pe), previousClose: cleanVal(finalData.pc) } : p
-                    ), false);
-                    log.success.push(item.ticker);
-                } else {
-                    log.fail.push(item.ticker);
-                }
-
-                setUpdateProgress(Math.round(((i + 1) / active.length) * 100));
-                // Pausa de seguridad dinámica
-                await new Promise(r => setTimeout(r, scriptUrl ? 1500 : 4000));
+            } else {
+                failedTickers = [...active];
             }
 
-            setLastUpdate(new Date().toISOString());
-            if (!isAuto && log.fail.length > 0) {
-                setInfoModal({ 
-                    isOpen: true, 
-                    title: 'Actualización Finalizada', 
-                    msg: `Éxitos: ${log.success.length}\nFallos: ${log.fail.length} (${log.fail.join(', ')})\n\nSi persisten los fallos, verifica que el ticker incluya el mercado (Ej: BME:ITX).`, 
-                    type: 'warning' 
-                });
+            setUpdateProgress(50); // Mitad del proceso
+
+            // ESTRATEGIA B: GEMINI (IA) SOLO PARA LOS FALLIDOS (Respaldo)
+            // Si el script falló o no encontró algún ticker, usamos la IA uno a uno (más lento, pero necesario)
+            if (failedTickers.length > 0 && apiKey) {
+                for (let i = 0; i < failedTickers.length; i++) {
+                    const item = failedTickers[i];
+                    try {
+                        // Pausa pequeña para no saturar la API de Google
+                        await new Promise(r => setTimeout(r, 1000)); 
+                        
+                        const aiPrompt = `Return JSON: {"p": current_price_number, "pc": previous_close_number} for "${item.ticker}". Source: Google Finance.`;
+                        const res = await askGemini(apiKey, aiPrompt, aiModel);
+                        const json = extractJSON(res);
+                        
+                        if (json && json.p) {
+                            updatesMap[item.id] = {
+                                currentPrice: cleanVal(json.p),
+                                previousClose: cleanVal(json.pc || json.p) // Fallback si no hay cierre anterior
+                            };
+                        }
+                    } catch (err) {
+                        console.log(`IA falló para ${item.ticker}`);
+                    }
+                    // Actualizar barra de progreso para la parte lenta
+                    setUpdateProgress(50 + Math.round(((i + 1) / failedTickers.length) * 40));
+                }
             }
+
+            // APLICAR TODOS LOS CAMBIOS DE GOLPE
+            if (Object.keys(updatesMap).length > 0) {
+                setPortfolio(prev => prev.map(p => {
+                    if (updatesMap[p.id]) {
+                        return { ...p, ...updatesMap[p.id] };
+                    }
+                    return p;
+                }));
+                setLastUpdate(new Date().toISOString());
+                if (!isAuto) setInfoModal({ isOpen: true, title: 'Actualización Completada', msg: `Se han actualizado ${Object.keys(updatesMap).length} valores correctamente.`, type: 'success' });
+            } else if (!isAuto) {
+                setInfoModal({ isOpen: true, title: 'Error', msg: 'No se pudieron actualizar los precios. Verifica el Script o los Tickers.', type: 'error' });
+            }
+
         } catch (e) {
-            if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' });
+            console.error(e);
+            if (!isAuto) setInfoModal({ isOpen: true, title: 'Error Crítico', msg: e.message, type: 'error' });
         } finally {
-            setUpdating(false);
-            setTimeout(() => setUpdateProgress(0), 3000);
+            setUpdateProgress(100);
+            setTimeout(() => { setUpdating(false); setUpdateProgress(0); }, 1000);
         }
     };
-
  
 
 
