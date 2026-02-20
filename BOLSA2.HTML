@@ -348,15 +348,77 @@ const SimpleChart = ({ type, data, title, height = 400, color = "#3b82f6" }) => 
       };
      
 
-      // --- CARRUSEL DE GRÁFICAS ---
-      const CarouselCharts = ({ chartsData }) => {
+     const StackedWeightsChart = ({ data, baseCurrency }) => {
+          if (!data || data.length === 0) return <div className="text-center text-xs text-slate-500 py-4">Sin datos suficientes</div>;
+          const totalCost = data.reduce((sum, d) => sum + Math.max(0, d.cost), 0) || 1;
+          const totalVal = data.reduce((sum, d) => sum + Math.max(0, d.val), 0) || 1;
+          const sortedData = [...data].sort((a, b) => b.val - a.val);
+          const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#a855f7', '#06b6d4', '#f43f5e', '#eab308', '#14b8a6', '#f97316', '#6366f1'];
+
+          // Altura dinámica: 35px mínimo por activo para que las etiquetas respiren, más cabeceras
+          const containerHeight = Math.max(400, sortedData.length * 35);
+
           return (
-             <div className="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-4 custom-scrollbar">
+              <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 flex flex-col w-full h-full min-w-[600px]" style={{ minHeight: `${containerHeight}px` }}>
+                  <h4 className="text-[10px] uppercase font-bold text-slate-400 mb-4 text-center tracking-widest">Distribución de Pesos: Capital Invertido vs Valoración Actual</h4>
+                  <div className="flex-1 flex w-full relative gap-4 h-full">
+                      
+                      {/* Columna 1: Invertido */}
+                      <div className="flex-1 flex flex-col h-full relative">
+                          <div className="text-center text-[10px] font-bold text-slate-400 mb-2 uppercase">Capital Invertido ({formatMoney(totalCost, baseCurrency)})</div>
+                          <div className="flex-1 flex flex-col w-full rounded-lg overflow-hidden border border-slate-700">
+                              {sortedData.map((d, i) => {
+                                  const pct = Math.max(0, (d.cost / totalCost) * 100);
+                                  if (pct === 0) return null;
+                                  const color = COLORS[i % COLORS.length];
+                                  return (
+                                      <div key={`c-${d.ticker}`} className="w-full flex items-center justify-between px-3 group border-b border-black/20 hover:opacity-90 transition-opacity" style={{ flex: pct, backgroundColor: color, minHeight: '28px' }}>
+                                          <span className="text-xs font-black text-white drop-shadow-md z-10">{d.ticker}</span>
+                                          <div className="text-right z-10 flex flex-col justify-center">
+                                              <span className="text-[11px] font-bold text-white drop-shadow-md leading-none">{formatMoney(d.cost, baseCurrency)}</span>
+                                              <span className="text-[9px] font-bold text-white/80 drop-shadow-md">{pct.toFixed(2)}%</span>
+                                          </div>
+                                      </div>
+                                  );
+                              })}
+                          </div>
+                      </div>
+
+                      {/* Columna 2: Valor */}
+                      <div className="flex-1 flex flex-col h-full relative">
+                          <div className="text-center text-[10px] font-bold text-slate-400 mb-2 uppercase">Valor Actual ({formatMoney(totalVal, baseCurrency)})</div>
+                          <div className="flex-1 flex flex-col w-full rounded-lg overflow-hidden border border-slate-700">
+                              {sortedData.map((d, i) => {
+                                  const pct = Math.max(0, (d.val / totalVal) * 100);
+                                  if (pct === 0) return null;
+                                  const color = COLORS[i % COLORS.length];
+                                  return (
+                                      <div key={`v-${d.ticker}`} className="w-full flex items-center justify-between px-3 group border-b border-black/20 hover:opacity-90 transition-opacity" style={{ flex: pct, backgroundColor: color, minHeight: '28px' }}>
+                                          <span className="text-xs font-black text-white drop-shadow-md z-10">{d.ticker}</span>
+                                          <div className="text-right z-10 flex flex-col justify-center">
+                                              <span className="text-[11px] font-bold text-white drop-shadow-md leading-none">{formatMoney(d.val, baseCurrency)}</span>
+                                              <span className="text-[9px] font-bold text-white/80 drop-shadow-md">{pct.toFixed(2)}%</span>
+                                          </div>
+                                      </div>
+                                  );
+                              })}
+                          </div>
+                      </div>
+
+                  </div>
+              </div>
+          );
+      };
+ 
+
+  const CarouselCharts = ({ chartsData, baseCurrency }) => {
+          return (
+             <div className="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-4 custom-scrollbar items-start">
                 <div className="snap-center min-w-full lg:min-w-[95%] h-[400px]">
                     <SimpleChart type="line" data={chartsData.evolution} title="Evolución Rendimiento Acumulado" height={400} color="#10b981" />
                 </div>
-                <div className="snap-center min-w-full lg:min-w-[95%] h-[400px]">
-                    <SimpleChart type="pie" data={chartsData.distribution} title="Distribución de Valor (Activos)" height={400} />
+                <div className="snap-center min-w-full lg:min-w-[95%]">
+                    <StackedWeightsChart data={chartsData.weightsData} baseCurrency={baseCurrency} />
                 </div>
                 <div className="snap-center min-w-full lg:min-w-[95%] h-[400px]">
                     <SimpleChart type="pie" data={chartsData.geoDiversification} title="Diversificación Geográfica (Bolsa)" height={400} />
@@ -364,7 +426,6 @@ const SimpleChart = ({ type, data, title, height = 400, color = "#3b82f6" }) => 
              </div>
           );
       };
-
 
 const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, syncStatus, onManualSync }) => {
     const r2 = (num) => Math.round((parseFloat(num) || 0) * 100) / 100;
@@ -1913,15 +1974,22 @@ const gridTotals = useMemo(() => {
 
     const activeFilteredPortfolio = useMemo(() => { return visiblePortfolio; }, [visiblePortfolio]); 
    
-   const chartsData = useMemo(() => { 
-        const distribution = activeFilteredPortfolio.filter(p => !p.sellDate).map(p => ({ label: p.ticker, value: ((p.currentPrice / (p.isIndex ? p.indexDivisor||1 : 1)) * p.shares * (p.isIndex ? p.buyFx : p.currentFx)) })).sort((a,b) => b.value - a.value); 
+    const chartsData = useMemo(() => { 
+        const weightsData = activeFilteredPortfolio.filter(p => !p.sellDate).map(p => {
+            const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+            const curP = p.isIndex ? p.currentPrice / (p.indexDivisor||1) : p.currentPrice;
+            const curF = p.isIndex ? p.buyFx : p.currentFx;
+            const val = (curP * p.shares * curF); 
+            return { ticker: p.ticker, cost, val };
+        });
+
         const geoMap = {}; 
         activeFilteredPortfolio.filter(p => !p.sellDate).forEach(p => { const region = getRegion(p.ticker); const val = ((p.currentPrice / (p.isIndex ? p.indexDivisor||1 : 1)) * p.shares * (p.isIndex ? p.buyFx : p.currentFx)); geoMap[region] = (geoMap[region] || 0) + val; }); 
         const geoDiversification = Object.keys(geoMap).map(k => ({ label: k, value: geoMap[k] })).sort((a,b) => b.value - a.value); 
         const events = activeFilteredPortfolio.map(p => { const isSold = !!p.sellDate; const date = isSold ? p.sellDate : p.buyDate; const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const curP = isSold ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor||1) : p.currentPrice); const curF = isSold ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx); const value = isSold ? (((p.sellPrice * p.shares * p.sellFx) - (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) - (p.sellAdjustments || 0)) - cost) : ((curP * p.shares * curF) - cost); return { date, value, cost, label: p.ticker }; }).sort((a,b) => new Date(a.date) - new Date(b.date)); 
         let accVal = 0; let accCost = 0; 
         const evolution = events.map(e => { accVal += e.value; accCost += e.cost; const roi = accCost !== 0 ? ((accVal) / accCost) * 100 : 0; return { label: e.date, value: accVal, extraPct: r2(roi) }; }); 
-        return { distribution, geoDiversification, evolution }; 
+        return { weightsData, geoDiversification, evolution }; 
     }, [activeFilteredPortfolio]);
 
     const divergingData = useMemo(() => { return activeFilteredPortfolio.map(p => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice/p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const val = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); const pl = val - cost; const pct = cost !== 0 ? (pl/cost)*100 : 0; return { ticker: p.ticker, shares: p.shares, dates: `${formatDateES(p.buyDate)}${isS ? ' → '+formatDateES(p.sellDate) : ''}`, value: pl, pct: pct }; }).sort((a,b) => b.value - a.value); }, [activeFilteredPortfolio]);
@@ -2600,11 +2668,10 @@ const RenderHistoryCard = () => {
                 </div>
             )}
                  
-
-
             {visibleSections.diverging && (<div className="fade-in"><DivergingBarChart data={divergingData} baseCurrency={baseCurrency} /></div>)}
             {visibleSections.stats && (<div className="fade-in"><StatsDashboard portfolio={portfolio} baseCurrency={baseCurrency} taxTotal={taxSum} /></div>)}
-            {visibleSections.charts && (<div className="fade-in"><CarouselCharts chartsData={chartsData} /></div>)}
+            {visibleSections.charts && (<div className="fade-in"><CarouselCharts chartsData={chartsData} baseCurrency={baseCurrency} /></div>)}
+
           
             <Modal isOpen={isModalOpen} title={editingId ? `Ficha de Inversión: ${form.ticker}` : "Apertura de Posición"} onClose={()=>setIsModalOpen(false)}>
                 {/* ... (Contenido del Modal de Edición, igual que el original, lo omito por brevedad pero debe ir aquí) ... */}
