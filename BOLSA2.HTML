@@ -1250,7 +1250,7 @@ const handlePrint = () => {
 
 
 
-const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio, onForceBackup, gScriptUrl, setGScriptUrl, resultsData, appPin, setAppPin, _x_lim, _x_trig }) => {
+const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio, onForceBackup, gScriptUrl, setGScriptUrl, resultsData, appPin, setAppPin, _x_lim, _x_trig, aiModel, setAiModel, availableModels, setAvailableModels }) => {
     const [localLic, setLocalLic] = useState(''); 
     const [showKey, setShowKey] = useState(false); 
     const [testStatus, setTestStatus] = useState(null); 
@@ -1290,20 +1290,25 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
         } 
     };
 
-    const testConnection = async () => { if(!apiKey) return alert("Introduce una clave primero."); setTestStatus('loading'); setErrorDetail(''); try { await askGemini(apiKey, "Test conexión"); setTestStatus('success'); } catch(e) { setTestStatus('error'); setErrorDetail(e.message); } };
+    const testConnection = async () => { if(!apiKey) return alert("Introduce una clave primero."); setTestStatus('loading'); setErrorDetail(''); try { await askGemini(apiKey, "Test conexión", aiModel); setTestStatus('success'); } catch(e) { setTestStatus('error'); setErrorDetail(e.message); } };
     
     const handleRunExport = () => { 
         setIoStatus('processing'); 
         try { 
-            const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 3, resultsData, appPin }; // Incluimos PIN en backup
+            // AQUI SE GUARDAN LOS MODELOS EN EL BACKUP
+            const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 3, resultsData, appPin, aiModel, availableModels }; 
             const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"}); 
             const url = URL.createObjectURL(blob); 
             const a = document.createElement('a'); a.href = url; a.download = `BoardingGate_Backup_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); setIoStatus('success'); setTimeout(() => setIoStatus('idle'), 2000); 
         } catch (e) { alert("Error: " + e.message); setIoStatus('error'); } 
     };
     
-    const handleRunImport = (e) => { const file = e.target.files[0]; if (!file) return; if(!confirm("⚠️ IMPORTANTE:\n\nEsta acción reemplazará TODA tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) { e.target.value = null; return; } setIoStatus('processing'); const reader = new FileReader(); reader.onload = (ev) => { try { const d = JSON.parse(ev.target.result); if (d.portfolio) setPortfolio(d.portfolio); if (d.apiKey) setApiKey(d.apiKey); if (d.baseCurrency) setBaseCurrency(d.baseCurrency); if (d.refreshInterval) setRefreshInterval(d.refreshInterval); if(d.appPin) setAppPin(d.appPin); setIoStatus('success'); alert("✅ Restauración completada correctamente."); window.location.reload(); } catch (err) { alert("Archivo inválido o corrupto."); setIoStatus('error'); } }; reader.readAsText(file); };
+    const handleRunImport = (e) => { const file = e.target.files[0]; if (!file) return; if(!confirm("⚠️ IMPORTANTE:\n\nEsta acción reemplazará TODA tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) { e.target.value = null; return; } setIoStatus('processing'); const reader = new FileReader(); reader.onload = (ev) => { try { const d = JSON.parse(ev.target.result); if (d.portfolio) setPortfolio(d.portfolio); if (d.apiKey) setApiKey(d.apiKey); if (d.baseCurrency) setBaseCurrency(d.baseCurrency); if (d.refreshInterval) setRefreshInterval(d.refreshInterval); if(d.appPin) setAppPin(d.appPin); 
+    // RECUPERAR MODELOS DEL BACKUP
+    if (d.aiModel) setAiModel(d.aiModel); if (d.availableModels) setAvailableModels(d.availableModels);
+    setIoStatus('success'); alert("✅ Restauración completada correctamente."); window.location.reload(); } catch (err) { alert("Archivo inválido o corrupto."); setIoStatus('error'); } }; reader.readAsText(file); };
     
+
     const handleAiImport = async () => { 
         if (!apiKey) return alert("Falta API Key"); 
         if (importMethod === 'pdf' && !pdfFile) return alert("Selecciona un PDF");
@@ -1345,7 +1350,9 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
               4. Ignore headers, totals, or footer text.
             `;
 
-            const res = await askGemini(apiKey, prompt); 
+            const res = await askGemini(apiKey, prompt, aiModel); 
+            
+            
             const extractedData = sanitizeAndParseJSON(res); 
 
             if (Array.isArray(extractedData)) { 
