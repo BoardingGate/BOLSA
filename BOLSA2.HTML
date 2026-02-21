@@ -1604,20 +1604,12 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
                             <li>Borra todo el código del editor y pega este bloque exacto:
                                 <pre className="bg-black text-green-400 p-2 rounded mt-1 mb-1 border border-slate-800 overflow-x-auto text-[9px] font-mono select-all">
 {`
-// ====================================================================================
-// 1. ZONA DE AUTORIZACIÓN (IMPORTANTE PARA PRIMER USO)
-// ====================================================================================
-// Selecciona esta función "A_AUTORIZAR_AQUI" en el menú superior y dale a "Ejecutar".
-// Google te pedirá permisos. Acepta todo (Configuración avanzada -> Ir a proyecto).
 function A_AUTORIZAR_AQUI() {
   console.log("Comprobando permisos de conexión...");
   UrlFetchApp.fetch("https://www.google.com");
   console.log("¡Permisos concedidos correctamente! Ahora puedes Publicar/Implementar.");
 }
 
-// ====================================================================================
-// 2. SISTEMA DE COPIA DE SEGURIDAD (CLOUD SAVE)
-// ====================================================================================
 function doPost(e) {
   var lock = LockService.getScriptLock();
   lock.tryLock(10000); // Esperar hasta 10s si hay otra operación
@@ -1626,16 +1618,12 @@ function doPost(e) {
     var data = JSON.parse(e.postData.contents);
     var fileName = "BOARDINGGATE_DB.json";
     var files = DriveApp.getFilesByName(fileName);
-    
-    // Si existe sobreescribe, si no, crea uno nuevo
     var file = files.hasNext() ? files.next() : DriveApp.createFile(fileName, "", MimeType.PLAIN_TEXT);
     file.setContent(JSON.stringify(data));
-    
     return ContentService.createTextOutput(JSON.stringify({ 
       status: "success", 
       timestamp: data.timestamp 
     })).setMimeType(ContentService.MimeType.JSON);
-    
   } catch(e) { 
     return ContentService.createTextOutput(JSON.stringify({
       error: e.toString()
@@ -1645,28 +1633,19 @@ function doPost(e) {
   }
 }
 
-// ====================================================================================
-// 3. SISTEMA DE LECTURA DE PRECIOS Y RESTAURACIÓN
-// ====================================================================================
 function doGet(e) {
-  // A. MODO OBTENER PRECIOS (Si recibe parámetros 'tickers')
   if (e.parameter.tickers) {
     var tickerList = e.parameter.tickers.split(",");
     var requests = [];
     var validTickers = [];
-
-    // Preparamos las peticiones
-    for (var i = 0; i < tickerList.length; i++) {
+   for (var i = 0; i < tickerList.length; i++) {
       var rawTicker = tickerList[i].trim();
       var parts = rawTicker.split(':');
       var gTicker = rawTicker;
 
-      // Invertimos MERCADO:TICKER a TICKER:MERCADO para Google Finance
-      // Ejemplo: INDEXSP:.INX -> .INX:INDEXSP
       if (parts.length === 2) {
          gTicker = parts[1] + ":" + parts[0];
       }
-
       requests.push({
         url: "https://www.google.com/finance/quote/" + encodeURIComponent(gTicker),
         method: "GET",
@@ -1674,10 +1653,7 @@ function doGet(e) {
       });
       validTickers.push(rawTicker);
     }
-
     var results = {};
-
-    // Ejecución paralela masiva
     try {
       var responses = UrlFetchApp.fetchAll(requests);
 
@@ -1688,14 +1664,11 @@ function doGet(e) {
         if (code === 200) {
           var html = responses[j].getContentText();
           
-          // --- CORRECCIÓN REGEX PARA ÍNDICES ---
-          // Busca la clase principal del precio "YMlKec" e ignora si tiene colores o modificadores extra.
           var match = html.match(/class="YMlKec[^"]*"[^>]*>([^<]+)<\/div>/);
           
           if (match) {
             var pStr = match[1].replace(/[^0-9.,]/g, ''); // Limpiar símbolos de moneda
             
-            // Normalizar decimales (1.000,50 vs 1,000.50)
             if (pStr.indexOf(',') > -1 && pStr.indexOf('.') > -1) {
               pStr = pStr.replace(/,/g, ''); 
             } else if (pStr.indexOf(',') > -1) {
@@ -1717,23 +1690,19 @@ function doGet(e) {
         }
       }
     } catch(err) {
-       // Fallo catastrófico del fetchAll
        for(var k=0; k<validTickers.length; k++) {
          results[validTickers[k]] = { success: false, reason: "Error de Conexión Google" };
        }
     }
-
     return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
   }
 
-  // B. MODO RESTAURAR COPIA (Si no hay parámetros, devuelve el JSON guardado)
   try {
     var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
     if (files.hasNext()) {
       return ContentService.createTextOutput(files.next().getBlob().getDataAsString())
         .setMimeType(ContentService.MimeType.JSON);
     }
-    // Si no hay archivo, devuelve timestamp 0
     return ContentService.createTextOutput(JSON.stringify({timestamp:0}))
       .setMimeType(ContentService.MimeType.JSON);
   } catch(e) { 
