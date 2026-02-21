@@ -1764,6 +1764,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const [filterDateEnd, setFilterDateEnd] = usePersistentState('bg_port_filter_end', '');
     const [filterType, setFilterType] = usePersistentState('bg_port_filter_type', 'active'); 
     const [sortConfig, setSortConfig] = usePersistentState('bg_port_sort_config', { key: 'date', direction: 'desc' });
+    const [updateText, setUpdateText] = useState('');
     
     // --- ESTADO PERSISTENTE PARA VISIBILIDAD DE SECCIONES ---
     const [visibleSections, setVisibleSections] = usePersistentState('bg_visible_sections', { table: true, diverging: true, stats: true, charts: true });
@@ -2131,19 +2132,20 @@ const updatePrices = async (isAuto = false) => {
         
         if (active.length === 0) return;
         if (!scriptUrl && !apiKey) {
-            if (!isAuto) setInfoModal({ isOpen: true, title: 'Aviso', msg: 'Configura la URL del Script de Google o la API Key.', type: 'error' });
+            if (!isAuto) setInfoModal({ isOpen: true, title: 'Aviso', msg: 'Configura la URL del Script o la API Key.', type: 'error' });
             return;
         }
 
         setUpdating(true);
         setUpdateProgress(20); 
+        setUpdateText('Conectando al mercado...'); // Texto fase rápida
         
         try {
             let updatesMap = {};
             let failedInScript = [];
-            let totallyFailed = []; // Solo los que fallen en ambos lados
+            let totallyFailed = [];
 
-            // ESTRATEGIA A: SCRIPT DE GOOGLE (1 sola petición a toda la lista)
+            // ESTRATEGIA A: SCRIPT DE GOOGLE (Rápido)
             if (scriptUrl) {
                 try {
                     const tickersList = active.map(p => p.ticker).join(',');
@@ -2164,7 +2166,6 @@ const updatePrices = async (isAuto = false) => {
                         }
                     });
                 } catch (e) {
-                    console.error("Fallo Script Global:", e);
                     failedInScript = [...active]; 
                 }
             } else {
@@ -2173,11 +2174,15 @@ const updatePrices = async (isAuto = false) => {
 
             setUpdateProgress(70);
 
-            // ESTRATEGIA B: IA GEMINI (Solo rescata los que fallaron arriba)
+            // ESTRATEGIA B: IA GEMINI (Lento)
             if (failedInScript.length > 0) {
+                // Imprimimos en consola los culpables para que puedas corregirlos
+                console.log("⚠️ Tickers lentos (pasaron a la IA):", failedInScript.map(t => t.ticker));
+
                 if (apiKey) {
                     for (let i = 0; i < failedInScript.length; i++) {
                         const item = failedInScript[i];
+                        setUpdateText(`IA buscando: ${item.ticker}...`); // Texto fase lenta
                         try {
                             const aiPrompt = `Return JSON: {"p": current_price_number, "pc": previous_close_number} for "${item.ticker}". Source: Google Finance. No explanations.`;
                             const res = await askGemini(apiKey, aiPrompt, aiModel);
@@ -2201,28 +2206,21 @@ const updatePrices = async (isAuto = false) => {
                 }
             }
 
-            // APLICAMOS TODOS LOS DATOS A LA CARTERA
             if (Object.keys(updatesMap).length > 0) {
                 setPortfolio(prev => prev.map(p => updatesMap[p.id] ? { ...p, ...updatesMap[p.id] } : p));
                 setLastUpdate(new Date().toISOString());
             }
 
-            // MOSTRAR MODAL SÓLO SI HAY FALLOS (Modo silencioso por defecto)
             if (!isAuto && totallyFailed.length > 0) {
-                setInfoModal({ 
-                    isOpen: true, 
-                    title: 'Advertencia', 
-                    msg: `No se pudo obtener el precio de los siguientes valores:\n\n${totallyFailed.join(', ')}\n\nRevisa el Ticker (Ej: BME:ITX).`, 
-                    type: 'warning' 
-                });
+                setInfoModal({ isOpen: true, title: 'Advertencia', msg: `No se pudo obtener el precio de:\n${totallyFailed.join(', ')}\nRevisa el formato del Ticker.`, type: 'warning' });
             }
 
         } catch (e) {
-            console.error(e);
             if (!isAuto) setInfoModal({ isOpen: true, title: 'Error de Actualización', msg: e.message, type: 'error' });
         } finally {
             setUpdateProgress(100);
-            setTimeout(() => { setUpdating(false); setUpdateProgress(0); }, 500);
+            setUpdateText('Completado');
+            setTimeout(() => { setUpdating(false); setUpdateProgress(0); setUpdateText(''); }, 800);
         }
     };
 
@@ -2622,8 +2620,9 @@ const RenderHistoryCard = () => {
                               {updating ? 'PROCESANDO...' : 'ACTUALIZAR'}
                           </span>
                       </button>
-                      <span className="text-[9px] text-slate-500 mt-1 uppercase font-bold text-center tracking-wider">
-                        {updating ? `Lote ${Math.ceil((updateProgress/100) * (portfolio.filter(p=>!p.sellDate).length/4) || 1)}...` : `Sinc: ${lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}`}
+                      
+                      <span className="text-[9px] text-slate-500 mt-1 uppercase font-bold text-center tracking-wider h-3">
+                        {updating ? updateText : `Sinc: ${lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}`}  
                       </span>
                   </div>
 
