@@ -1603,66 +1603,143 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
                             <li>Ve a <a href="https://script.google.com/home/start" target="_blank" className="text-blue-400 font-bold hover:underline">Google Apps Script</a> y haz clic en <strong>"Nuevo Proyecto"</strong>.</li>
                             <li>Borra todo el código del editor y pega este bloque exacto:
                                 <pre className="bg-black text-green-400 p-2 rounded mt-1 mb-1 border border-slate-800 overflow-x-auto text-[9px] font-mono select-all">
-{`// 1. IMPORTANTE: Selecciona esta función "A_AUTORIZAR_AQUI" arriba y dale al Play (▶) para dar permisos.
+{`
+// ====================================================================================
+// 1. ZONA DE AUTORIZACIÓN (IMPORTANTE PARA PRIMER USO)
+// ====================================================================================
+// Selecciona esta función "A_AUTORIZAR_AQUI" en el menú superior y dale a "Ejecutar".
+// Google te pedirá permisos. Acepta todo (Configuración avanzada -> Ir a proyecto).
 function A_AUTORIZAR_AQUI() {
-  console.log("Solicitando permisos de red...");
+  console.log("Comprobando permisos de conexión...");
   UrlFetchApp.fetch("https://www.google.com");
-  console.log("¡Permisos concedidos!");
+  console.log("¡Permisos concedidos correctamente! Ahora puedes Publicar/Implementar.");
 }
 
+// ====================================================================================
+// 2. SISTEMA DE COPIA DE SEGURIDAD (CLOUD SAVE)
+// ====================================================================================
 function doPost(e) {
-  var lock = LockService.getScriptLock(); lock.tryLock(10000);
+  var lock = LockService.getScriptLock();
+  lock.tryLock(10000); // Esperar hasta 10s si hay otra operación
+  
   try {
     var data = JSON.parse(e.postData.contents);
-    var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
-    var file = files.hasNext() ? files.next() : DriveApp.createFile("BOARDINGGATE_DB.json", "", MimeType.PLAIN_TEXT);
+    var fileName = "BOARDINGGATE_DB.json";
+    var files = DriveApp.getFilesByName(fileName);
+    
+    // Si existe sobreescribe, si no, crea uno nuevo
+    var file = files.hasNext() ? files.next() : DriveApp.createFile(fileName, "", MimeType.PLAIN_TEXT);
     file.setContent(JSON.stringify(data));
-    return ContentService.createTextOutput(JSON.stringify({ status: "success", timestamp: data.timestamp })).setMimeType(ContentService.MimeType.JSON);
-  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
-  finally { lock.releaseLock(); }
+    
+    return ContentService.createTextOutput(JSON.stringify({ 
+      status: "success", 
+      timestamp: data.timestamp 
+    })).setMimeType(ContentService.MimeType.JSON);
+    
+  } catch(e) { 
+    return ContentService.createTextOutput(JSON.stringify({
+      error: e.toString()
+    })).setMimeType(ContentService.MimeType.JSON); 
+  } finally { 
+    lock.releaseLock(); 
+  }
 }
 
+// ====================================================================================
+// 3. SISTEMA DE LECTURA DE PRECIOS Y RESTAURACIÓN
+// ====================================================================================
 function doGet(e) {
+  // A. MODO OBTENER PRECIOS (Si recibe parámetros 'tickers')
   if (e.parameter.tickers) {
     var tickerList = e.parameter.tickers.split(",");
-    var results = {};
+    var requests = [];
+    var validTickers = [];
+
+    // Preparamos las peticiones
     for (var i = 0; i < tickerList.length; i++) {
       var rawTicker = tickerList[i].trim();
-      if (!rawTicker) continue;
-      var cleanTicker = rawTicker.replace(/^(BME|MC|NASDAQ|NYSE|EPA|LSE|BIT|GER|XETRA|TSE|AMS):/i, "");
-      var yTicker = cleanTicker;
-      if (rawTicker.match(/^(BME|MC):/i)) yTicker += ".MC";
-      else if (rawTicker.match(/^EPA:/i)) yTicker += ".PA";
-      else if (rawTicker.match(/^LSE:/i)) yTicker += ".L";
-      else if (rawTicker.match(/^BIT:/i)) yTicker += ".MI";
-      else if (rawTicker.match(/^(GER|XETRA):/i)) yTicker += ".DE";
-      else if (rawTicker.match(/^TSE:/i)) yTicker += ".TO";
-      else if (rawTicker.match(/^AMS:/i)) yTicker += ".AS";
+      var parts = rawTicker.split(':');
+      var gTicker = rawTicker;
 
-      var finalPrice = null; var finalPrev = null;
-      try {
-        Utilities.sleep(100); // Pausa de seguridad
-        var url = "https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(yTicker) + "?interval=1d&range=1d";
-        var response = UrlFetchApp.fetch(url, { method: "GET", muteHttpExceptions: true, headers: { "User-Agent": "Mozilla/5.0" } });
-        if (response.getResponseCode() === 200) {
-          var json = JSON.parse(response.getContentText());
-          if (json.chart && json.chart.result && json.chart.result[0].meta) {
-             finalPrice = json.chart.result[0].meta.regularMarketPrice;
-             finalPrev = json.chart.result[0].meta.previousClose;
-          }
-        }
-      } catch (err) {}
+      // Invertimos MERCADO:TICKER a TICKER:MERCADO para Google Finance
+      // Ejemplo: INDEXSP:.INX -> .INX:INDEXSP
+      if (parts.length === 2) {
+         gTicker = parts[1] + ":" + parts[0];
+      }
 
-      if (finalPrice !== null) { results[rawTicker] = { p: finalPrice, pc: finalPrev || finalPrice, success: true }; }
-      else { results[rawTicker] = { success: false, reason: "No encontrado" }; }
+      requests.push({
+        url: "https://www.google.com/finance/quote/" + encodeURIComponent(gTicker),
+        method: "GET",
+        muteHttpExceptions: true
+      });
+      validTickers.push(rawTicker);
     }
+
+    var results = {};
+
+    // Ejecución paralela masiva
+    try {
+      var responses = UrlFetchApp.fetchAll(requests);
+
+      for (var j = 0; j < responses.length; j++) {
+        var rawTicker = validTickers[j];
+        var code = responses[j].getResponseCode();
+
+        if (code === 200) {
+          var html = responses[j].getContentText();
+          
+          // --- CORRECCIÓN REGEX PARA ÍNDICES ---
+          // Busca la clase principal del precio "YMlKec" e ignora si tiene colores o modificadores extra.
+          var match = html.match(/class="YMlKec[^"]*"[^>]*>([^<]+)<\/div>/);
+          
+          if (match) {
+            var pStr = match[1].replace(/[^0-9.,]/g, ''); // Limpiar símbolos de moneda
+            
+            // Normalizar decimales (1.000,50 vs 1,000.50)
+            if (pStr.indexOf(',') > -1 && pStr.indexOf('.') > -1) {
+              pStr = pStr.replace(/,/g, ''); 
+            } else if (pStr.indexOf(',') > -1) {
+              pStr = pStr.replace(',', '.');
+            }
+            
+            var price = parseFloat(pStr);
+
+            results[rawTicker] = {
+              p: price,
+              pc: price, // Google no facilita el cierre anterior en la vista rápida, usamos el actual para evitar errores
+              success: true
+            };
+          } else {
+            results[rawTicker] = { success: false, reason: "Estructura web no reconocida" };
+          }
+        } else {
+          results[rawTicker] = { success: false, reason: "Ticker no encontrado en Google (HTTP " + code + ")" };
+        }
+      }
+    } catch(err) {
+       // Fallo catastrófico del fetchAll
+       for(var k=0; k<validTickers.length; k++) {
+         results[validTickers[k]] = { success: false, reason: "Error de Conexión Google" };
+       }
+    }
+
     return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
   }
+
+  // B. MODO RESTAURAR COPIA (Si no hay parámetros, devuelve el JSON guardado)
   try {
     var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
-    if (files.hasNext()) return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON);
-    return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
-  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
+    if (files.hasNext()) {
+      return ContentService.createTextOutput(files.next().getBlob().getDataAsString())
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    // Si no hay archivo, devuelve timestamp 0
+    return ContentService.createTextOutput(JSON.stringify({timestamp:0}))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch(e) { 
+    return ContentService.createTextOutput(JSON.stringify({error:e.toString()}))
+      .setMimeType(ContentService.MimeType.JSON); 
+  }
 }`}
                                 </pre>
                             </li>
