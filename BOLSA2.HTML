@@ -1605,47 +1605,36 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
                                 <pre className="bg-black text-green-400 p-2 rounded mt-1 mb-1 border border-slate-800 overflow-x-auto text-[9px] font-mono select-all">
 {`
 function A_AUTORIZAR_AQUI() {
-  console.log("Comprobando permisos de conexión...");
   UrlFetchApp.fetch("https://www.google.com");
-  console.log("¡Permisos concedidos correctamente! Ahora puedes Publicar/Implementar.");
+  console.log("OK");
 }
 
 function doPost(e) {
-  var lock = LockService.getScriptLock();
-  lock.tryLock(10000); // Esperar hasta 10s si hay otra operación
-  
+  var lock = LockService.getScriptLock(); lock.tryLock(10000);
   try {
     var data = JSON.parse(e.postData.contents);
-    var fileName = "BOARDINGGATE_DB.json";
-    var files = DriveApp.getFilesByName(fileName);
-    var file = files.hasNext() ? files.next() : DriveApp.createFile(fileName, "", MimeType.PLAIN_TEXT);
+    var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
+    var file = files.hasNext() ? files.next() : DriveApp.createFile("BOARDINGGATE_DB.json", "", MimeType.PLAIN_TEXT);
     file.setContent(JSON.stringify(data));
-    return ContentService.createTextOutput(JSON.stringify({ 
-      status: "success", 
-      timestamp: data.timestamp 
-    })).setMimeType(ContentService.MimeType.JSON);
-  } catch(e) { 
-    return ContentService.createTextOutput(JSON.stringify({
-      error: e.toString()
-    })).setMimeType(ContentService.MimeType.JSON); 
-  } finally { 
-    lock.releaseLock(); 
-  }
+    return ContentService.createTextOutput(JSON.stringify({ status: "success", timestamp: data.timestamp })).setMimeType(ContentService.MimeType.JSON);
+  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
+  finally { lock.releaseLock(); }
 }
-
 function doGet(e) {
   if (e.parameter.tickers) {
     var tickerList = e.parameter.tickers.split(",");
     var requests = [];
     var validTickers = [];
-   for (var i = 0; i < tickerList.length; i++) {
+
+    for (var i = 0; i < tickerList.length; i++) {
       var rawTicker = tickerList[i].trim();
+      if(!rawTicker) continue;
       var parts = rawTicker.split(':');
       var gTicker = rawTicker;
-
       if (parts.length === 2) {
          gTicker = parts[1] + ":" + parts[0];
       }
+
       requests.push({
         url: "https://www.google.com/finance/quote/" + encodeURIComponent(gTicker),
         method: "GET",
@@ -1654,6 +1643,7 @@ function doGet(e) {
       validTickers.push(rawTicker);
     }
     var results = {};
+
     try {
       var responses = UrlFetchApp.fetchAll(requests);
 
@@ -1663,53 +1653,50 @@ function doGet(e) {
 
         if (code === 200) {
           var html = responses[j].getContentText();
-          
-          var match = html.match(/class="YMlKec[^"]*"[^>]*>([^<]+)<\/div>/);
-          
+          var match = html.match(/<div class="AHmHk"[^>]*>[\s\S]*?<div class="YMlKec[^"]*">([^<]+)<\/div>/);
           if (match) {
-            var pStr = match[1].replace(/[^0-9.,]/g, ''); // Limpiar símbolos de moneda
-            
+            var pStr = match[1].replace(/[^0-9.,]/g, ''); 
             if (pStr.indexOf(',') > -1 && pStr.indexOf('.') > -1) {
               pStr = pStr.replace(/,/g, ''); 
             } else if (pStr.indexOf(',') > -1) {
               pStr = pStr.replace(',', '.');
             }
-            
             var price = parseFloat(pStr);
-
             results[rawTicker] = {
               p: price,
-              pc: price, // Google no facilita el cierre anterior en la vista rápida, usamos el actual para evitar errores
+              pc: price, 
               success: true
             };
           } else {
-            results[rawTicker] = { success: false, reason: "Estructura web no reconocida" };
+            var metaMatch = html.match(/<meta itemprop="price" content="([^"]+)">/);
+            if (metaMatch) {
+               results[rawTicker] = {
+                 p: parseFloat(metaMatch[1]),
+                 pc: parseFloat(metaMatch[1]),
+                 success: true
+               };
+            } else {
+               results[rawTicker] = { success: false, reason: "Estructura web no reconocida" };
+            }
           }
         } else {
-          results[rawTicker] = { success: false, reason: "Ticker no encontrado en Google (HTTP " + code + ")" };
+          results[rawTicker] = { success: false, reason: "HTTP " + code };
         }
       }
     } catch(err) {
        for(var k=0; k<validTickers.length; k++) {
-         results[validTickers[k]] = { success: false, reason: "Error de Conexión Google" };
+         results[validTickers[k]] = { success: false, reason: "Error Conexión" };
        }
     }
     return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
   }
-
   try {
     var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
-    if (files.hasNext()) {
-      return ContentService.createTextOutput(files.next().getBlob().getDataAsString())
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-    return ContentService.createTextOutput(JSON.stringify({timestamp:0}))
-      .setMimeType(ContentService.MimeType.JSON);
-  } catch(e) { 
-    return ContentService.createTextOutput(JSON.stringify({error:e.toString()}))
-      .setMimeType(ContentService.MimeType.JSON); 
-  }
-}`}
+    if (files.hasNext()) return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
+  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
+}
+`}
                                 </pre>
                             </li>
                             <li className="bg-blue-900/20 p-2 rounded border border-blue-500/30 text-blue-200">
