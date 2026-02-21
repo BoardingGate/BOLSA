@@ -1599,23 +1599,83 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
                     
                     {/* PARTE RESTAURADA COMPLETA */}
                     <div className="bg-slate-950/50 border border-slate-700 rounded-xl p-4"><h5 className="text-xs font-bold text-white mb-3 flex items-center gap-2"><Icons.HelpCircle size={14}/> Guía de Configuración (Script de Google)</h5><ol className="list-decimal list-inside text-[10px] text-slate-300 space-y-2 leading-relaxed font-sans"><li>Ve a <a href="https://script.google.com/home/start" target="_blank" className="text-blue-400 font-bold hover:underline">Google Apps Script</a> y haz clic en <strong>"Nuevo Proyecto"</strong>.</li><li>Borra todo el código del editor y pega este bloque tal cual:<pre className="bg-black text-green-400 p-2 rounded mt-1 mb-1 border border-slate-800 overflow-x-auto text-[9px] font-mono select-all">{`function doPost(e) {
-var lock = LockService.getScriptLock(); lock.tryLock(10000);
-try {
-var data = JSON.parse(e.postData.contents);
-var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
-var file = files.hasNext() ? files.next() : DriveApp.createFile("BOARDINGGATE_DB.json", "", MimeType.PLAIN_TEXT);
-file.setContent(JSON.stringify(data));
-return ContentService.createTextOutput(JSON.stringify({ status: "success", timestamp: data.timestamp })).setMimeType(ContentService.MimeType.JSON);
-} catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
-finally { lock.releaseLock(); }
+  var lock = LockService.getScriptLock(); lock.tryLock(10000);
+  try {
+    var data = JSON.parse(e.postData.contents);
+    var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
+    var file = files.hasNext() ? files.next() : DriveApp.createFile("BOARDINGGATE_DB.json", "", MimeType.PLAIN_TEXT);
+    file.setContent(JSON.stringify(data));
+    return ContentService.createTextOutput(JSON.stringify({ status: "success", timestamp: data.timestamp })).setMimeType(ContentService.MimeType.JSON);
+  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
+  finally { lock.releaseLock(); }
 }
 
 function doGet(e) {
-try {
-var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
-if (files.hasNext()) return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON);
-return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
-} catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
+  if (e.parameter.tickers) {
+    var tickerList = e.parameter.tickers.split(",");
+    var mappedTickers = [];
+    var originalMap = {};
+
+    for (var i = 0; i < tickerList.length; i++) {
+      var rawTicker = tickerList[i].trim();
+      var cleanTicker = rawTicker.replace(/^(BME|MC|NASDAQ|NYSE|EPA|LSE|BIT|GER|XETRA|TSE|AMS):/i, "");
+      var yTicker = cleanTicker;
+
+      if (rawTicker.match(/^(BME|MC):/i)) yTicker += ".MC";
+      else if (rawTicker.match(/^EPA:/i)) yTicker += ".PA";
+      else if (rawTicker.match(/^LSE:/i)) yTicker += ".L";
+      else if (rawTicker.match(/^BIT:/i)) yTicker += ".MI";
+      else if (rawTicker.match(/^(GER|XETRA):/i)) yTicker += ".DE";
+      else if (rawTicker.match(/^TSE:/i)) yTicker += ".TO";
+      else if (rawTicker.match(/^AMS:/i)) yTicker += ".AS";
+
+      mappedTickers.push(yTicker);
+      originalMap[yTicker] = rawTicker;
+    }
+
+    var url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" + encodeURIComponent(mappedTickers.join(","));
+    var results = {};
+
+    try {
+      var response = UrlFetchApp.fetch(url, {
+        method: "GET",
+        muteHttpExceptions: true,
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0" }
+      });
+
+      if (response.getResponseCode() === 200) {
+        var json = JSON.parse(response.getContentText());
+        if (json.quoteResponse && json.quoteResponse.result) {
+           var quotes = json.quoteResponse.result;
+           for (var k = 0; k < quotes.length; k++) {
+             var q = quotes[k];
+             var origTicker = originalMap[q.symbol] || q.symbol;
+             results[origTicker] = {
+                p: q.regularMarketPrice,
+                pc: q.regularMarketPreviousClose,
+                pe: q.trailingPE || 0,
+                curr: q.currency,
+                success: true
+             };
+           }
+        }
+      }
+    } catch (err) {}
+
+    // 3. Marcar fallos
+    for (var i = 0; i < tickerList.length; i++) {
+      var t = tickerList[i].trim();
+      if (!results[t]) results[t] = { success: false };
+    }
+
+    return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
+  }
+
+  try {
+    var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
+    if (files.hasNext()) return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
+  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
 }`}</pre></li><li>Pulsa el botón azul <strong>"Implementar"</strong> (arriba dcha) {'>'} <strong>"Nueva implementación"</strong>.</li><li>En la rueda dentada (tipo), selecciona <strong>"Aplicación web"</strong>.</li><li>En "Quién tiene acceso", selecciona <strong>"Cualquier usuario"</strong> (Esto permite que la app guarde sin pedir login cada vez).</li><li>Pulsa "Implementar", autoriza el acceso a Drive, copia la URL que te dan ("Aplicación web") y pégala arriba.</li></ol></div>
                 </div>
             </div>
@@ -1696,7 +1756,7 @@ return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeTyp
    
 
 
-const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady, _x_lim, _x_trig, globalNotes, setGlobalNotes, onAnalyze, aiModel }) => {
+const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady, _x_lim, _x_trig, globalNotes, setGlobalNotes, onAnalyze, aiModel, gScriptUrl }) => {
     // --- ESTADOS PERSISTENTES PARA FILTROS ---
     const [isNotesModalOpen, setIsNotesModalOpen] = useState(false);
     const [filterText, setFilterText] = usePersistentState('bg_port_filter_text', '');
@@ -1704,12 +1764,16 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const [filterDateEnd, setFilterDateEnd] = usePersistentState('bg_port_filter_end', '');
     const [filterType, setFilterType] = usePersistentState('bg_port_filter_type', 'active'); 
     const [sortConfig, setSortConfig] = usePersistentState('bg_port_sort_config', { key: 'date', direction: 'desc' });
+    const [updateText, setUpdateText] = useState('');
     
     // --- ESTADO PERSISTENTE PARA VISIBILIDAD DE SECCIONES ---
     const [visibleSections, setVisibleSections] = usePersistentState('bg_visible_sections', { table: true, diverging: true, stats: true, charts: true });
 
     const [updating, setUpdating] = useState(false);
+    const [updateProgress, setUpdateProgress] = useState(0); 
     const [analyzing, setAnalyzing] = useState(false);
+
+
     const [fetchingSingle, setFetchingSingle] = useState(false);
     const [analysisResult, setAnalysisResult] = useState(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -1900,54 +1964,68 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         setTimeout(() => printWindow.print(), 500);
     };
 
-const gridTotals = useMemo(() => {
-        let tFx = 0, tCost = 0, tVal = 0, tRes = 0, tIntra = 0;
-        let tPrevVal = 0; // <--- NUEVA VARIABLE PARA ACUMULAR VALOR PREVIO
-        let sumBuyPE = 0, countBuyPE = 0;
-        let sumCurPE = 0, countCurPE = 0;
 
-        visiblePortfolio.forEach(p => {
-            const isS = !!p.sellDate;
-            const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
-            const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
-            const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
-            const val = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
-            const fxVal = (p.isIndex ? 0 : (p.shares * (isS ? p.sellPrice : p.currentPrice) * (curF - p.buyFx)));
-            const divs = (p.dividends || []).reduce((a,b)=>a+b.net,0);
-            
-            if (!isS && p.previousClose) {
-                const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
-                // Diferencia precio * acciones * cambio actual
-                const diff = (curP - prevP) * p.shares * curF;
-                tIntra += diff;
-                tPrevVal += (prevP * p.shares * curF); // <--- ACUMULAMOS VALOR PREVIO
-            }
+    // MOTOR DE CÁLCULO UNIFICADO PARA TODA LA PESTAÑA
+  const globalMetrics = useMemo(() => {
+        const calc = (items) => {
+            let inv = 0, cur = 0, divN = 0, fX = 0, weightedDays = 0, intra = 0, prevValTotal = 0;
+            let sumBuyPE = 0, countBuyPE = 0, sumCurPE = 0, countCurPE = 0;
 
-            tFx += fxVal; tCost += cost; tVal += val; tRes += (val - cost) + divs;
-            
-            if (p.buyPE > 0) { sumBuyPE += p.buyPE; countBuyPE++; }
-            if (p.currentPE > 0) { sumCurPE += p.currentPE; countCurPE++; }
-        });
-        const tPct = tCost > 0 ? (tRes / tCost) * 100 : 0;
-        const avgBuyPE = countBuyPE > 0 ? sumBuyPE / countBuyPE : 0;
-        const avgCurPE = countCurPE > 0 ? sumCurPE / countCurPE : 0;
+            items.forEach(p => {
+                const isS = !!p.sellDate;
+                const d = calculateDays(p.buyDate, p.sellDate || new Date());
+                const costT = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+                const eP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
+                const eF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
+                const vN = (eP * p.shares * eF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+                
+                if (!isS && p.previousClose) {
+                    const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
+                    intra += (eP - prevP) * p.shares * eF;
+                    prevValTotal += (prevP * p.shares * eF);
+                }
+                if (!p.isIndex) fX += (p.shares * (isS ? p.sellPrice : p.currentPrice) * (eF - p.buyFx));
 
-        // CÁLCULO FINAL PORCENTAJE TOTAL INTRADÍA
-        const tIntraPct = tPrevVal !== 0 ? (tIntra / tPrevVal) * 100 : 0;
+                inv += costT; cur += vN; weightedDays += (d * costT);
+                (p.dividends || []).forEach(dv => divN += dv.net);
+                if (p.buyPE > 0) { sumBuyPE += p.buyPE; countBuyPE++; }
+                if (p.currentPE > 0) { sumCurPE += p.currentPE; countCurPE++; }
+            });
 
-        return { tFx, tCost, tVal, tRes, tPct, avgBuyPE, avgCurPE, tIntra, tIntraPct }; // <--- RETORNAMOS tIntraPct
-    }, [visiblePortfolio]);
-    
-    
+            const avgD = inv > 0 ? weightedDays / inv : 0;
+            const rP = calcReturns(inv, cur, avgD);
+            const rT = calcReturns(inv, cur + divN, avgD);
+            return { num: items.length, inv, cur, divN, fX, plPrice: cur - inv, plTotal: (cur + divN) - inv, plP_S: rP.simple, plP_A: rP.annual, plT_S: rT.simple, plT_A: rT.annual, intra, intraPct: prevValTotal !== 0 ? (intra / prevValTotal) * 100 : 0, avgBuyPE: countBuyPE > 0 ? sumBuyPE / countBuyPE : 0, avgCurPE: countCurPE > 0 ? sumCurPE / countCurPE : 0 };
+        };
 
+        // 1. PANELES SUPERIORES: Calculados sobre TODO el portafolio que tenga el Check Marcado
+        const selectedOnly = portfolio.filter(p => p.isActive !== false);
+        const stats = {
+            active: calc(selectedOnly.filter(p => !p.sellDate)),
+            sold: calc(selectedOnly.filter(p => !!p.sellDate)),
+            total: calc(selectedOnly)
+        };
 
-    const stats = useMemo(() => {
-        const hasDeepFilters = filterText || filterDateStart || filterDateEnd;
-        const sourceData = hasDeepFilters ? visiblePortfolio : portfolio.filter(p => p.isActive !== false); 
-        const calc = (items) => { let inv = 0, cur = 0, divN = 0, fX = 0, weightedDays = 0; items.forEach(p => { const d = calculateDays(p.buyDate, p.sellDate || new Date()); const costT = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const eP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const eF = isS ? p.sellFx : p.currentFx; const vN = (eP * p.shares * eF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); inv += costT; cur += vN; weightedDays += (d * costT); fX += (eP * p.shares * eF) - (eP * p.shares * p.buyFx); (p.dividends || []).forEach(dv => divN += dv.net); }); const avgD = inv > 0 ? weightedDays / inv : 0; const plP = cur - inv; const plT = (cur + divN) - inv; const rP = calcReturns(inv, cur, avgD); const rT = calcReturns(inv, cur + divN, avgD); return { num: items.length, inv, cur, divN, fX, plPrice: plP, plTotal: plT, plP_S: rP.simple, plP_A: rP.annual, plT_S: rT.simple, plT_A: rT.annual }; };
-        return { active: calc(sourceData.filter(p => !p.sellDate)), sold: calc(sourceData.filter(p => !!p.sellDate)), total: calc(sourceData) };
-    }, [filteredPortfolio, portfolio, filterText, filterDateStart, filterDateEnd, baseCurrency]);
+        // 2. PIE DE TABLA: Calculado SOLO sobre lo que se ve (Filtros + Check)
+        const gridMetrics = calc(visiblePortfolio);
 
+        return { stats, gridMetrics };
+    }, [portfolio, visiblePortfolio, baseCurrency]);
+
+    const stats = globalMetrics.stats;
+    const gridTotals = {
+        tFx: globalMetrics.gridMetrics.fX,
+        tCost: globalMetrics.gridMetrics.inv,
+        tVal: globalMetrics.gridMetrics.cur,
+        tRes: globalMetrics.gridMetrics.plTotal,
+        tPct: globalMetrics.gridMetrics.plT_S,
+        tIntra: globalMetrics.gridMetrics.intra,
+        tIntraPct: globalMetrics.gridMetrics.intraPct,
+        avgBuyPE: globalMetrics.gridMetrics.avgBuyPE,
+        avgCurPE: globalMetrics.gridMetrics.avgCurPE
+    };
+
+   
     const historicalStats = useMemo(() => {
         const activeP = portfolio.filter(p => !p.sellDate && p.isActive !== false);
         const soldP = portfolio.filter(p => !!p.sellDate && p.isActive !== false);
@@ -2047,56 +2125,106 @@ const gridTotals = useMemo(() => {
     const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt, aiModel); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
 
 
-    const updatePrices = async (isAuto = false) => { 
-        const active = portfolio.filter(p => !p.sellDate && p.isActive !== false); 
-        if (!isAuto && !apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' }); 
-        if (!isAuto && active.length === 0) return; 
+  
+const updatePrices = async (isAuto = false) => {
+        const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
+        const scriptUrl = simpleDecrypt(gScriptUrl);
         
-        setUpdating(true); 
-        let log = { success: [], fail: [] }, newUpdates = []; 
+        if (active.length === 0) return;
+        if (!scriptUrl && !apiKey) {
+            if (!isAuto) setInfoModal({ isOpen: true, title: 'Aviso', msg: 'Configura la URL del Script o la API Key.', type: 'error' });
+            return;
+        }
+
+        setUpdating(true);
+        setUpdateProgress(20); 
+        setUpdateText('Conectando al mercado...'); // Texto fase rápida
         
-        try { 
-            for (const item of active) { 
-                const assetDesc = item.isIndex ? "MARKET INDEX (SPOT VALUE)" : "STOCK/EQUITY"; 
-                // MODIFICADO: Se añade "pc" (Previous Close) al prompt
-                const prompt = `ROLE: Financial Data API. TASK: Get data for Ticker: "${item.ticker}". TYPE: ${assetDesc}. REQUIREMENTS: 1. "p": Current Price in its NATIVE currency (${item.stockCurrency}). STRICT RULE: DO NOT convert the price to ${baseCurrency}. Return it as it quotes in the market. 2. "fx": Exchange rate to convert from ${item.stockCurrency} to ${baseCurrency}. (Example: 1 ${item.stockCurrency} = X ${baseCurrency}). If same, fx = 1. 3. "pe": TTM P/E Ratio (0 if Index). 4. "pc": Previous Close Price (Yesterday's close). RETURN JSON ONLY: {"p": number, "fx": number, "pe": number, "pc": number}`; 
-                
-                try { 
-                    const res = await askGemini(apiKey, prompt, aiModel); 
-                    const json = extractJSON(res); 
-                    if (json && (json.p || json.p === 0)) { 
-                        const safeFx = (item.stockCurrency === baseCurrency) ? 1 : cleanVal(json.fx); 
-                        // MODIFICADO: Se guarda previousClose
-                        newUpdates.push({ id: item.id, p: cleanVal(json.p), fx: safeFx, pe: cleanVal(json.pe), pc: cleanVal(json.pc) }); 
-                        log.success.push(item.ticker); 
-                    } else { 
-                        log.fail.push(item.ticker); 
-                    } 
-                } catch (e) { log.fail.push(item.ticker); } 
-            } 
-            
-            if (newUpdates.length > 0) { 
-                setPortfolio(prev => prev.map(p => { 
-                    const u = newUpdates.find(x => x.id === p.id); 
-                    if (u) { 
-                        // MODIFICADO: Se asigna previousClose al estado (en memoria)
-                        return { ...p, currentPrice: u.p, currentFx: u.fx, currentPE: u.pe, previousClose: u.pc }; 
-                    } 
-                    return p; 
-                }), false); 
-                setLastUpdate(new Date().toISOString()); 
-            } 
-            
-            if (!isAuto && log.fail.length > 0) { 
-                setInfoModal({ isOpen: true, title: 'Sincronización parcial', msg: `No se pudieron actualizar: ${log.fail.join(', ')}.`, type: 'warning' }); 
-            } 
-        } catch (e) { 
-            if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); 
-        } finally { 
-            setUpdating(false); 
-        } 
+        try {
+            let updatesMap = {};
+            let failedInScript = [];
+            let totallyFailed = [];
+
+            // ESTRATEGIA A: SCRIPT DE GOOGLE (Rápido)
+            if (scriptUrl) {
+                try {
+                    const tickersList = active.map(p => p.ticker).join(',');
+                    const response = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(tickersList)}`);
+                    const batchData = await response.json();
+
+                    active.forEach(item => {
+                        const data = batchData[item.ticker];
+                        if (data && data.success && data.p) {
+                            updatesMap[item.id] = {
+                                currentPrice: cleanVal(data.p),
+                                previousClose: cleanVal(data.pc),
+                                currentPE: cleanVal(data.pe) || item.currentPE,
+                                currentFx: (data.curr === baseCurrency) ? 1 : item.currentFx 
+                            };
+                        } else {
+                            failedInScript.push(item);
+                        }
+                    });
+                } catch (e) {
+                    failedInScript = [...active]; 
+                }
+            } else {
+                failedInScript = [...active];
+            }
+
+            setUpdateProgress(70);
+
+            // ESTRATEGIA B: IA GEMINI (Lento)
+            if (failedInScript.length > 0) {
+                // Imprimimos en consola los culpables para que puedas corregirlos
+                console.log("⚠️ Tickers lentos (pasaron a la IA):", failedInScript.map(t => t.ticker));
+
+                if (apiKey) {
+                    for (let i = 0; i < failedInScript.length; i++) {
+                        const item = failedInScript[i];
+                        setUpdateText(`IA buscando: ${item.ticker}...`); // Texto fase lenta
+                        try {
+                            const aiPrompt = `Return JSON: {"p": current_price_number, "pc": previous_close_number} for "${item.ticker}". Source: Google Finance. No explanations.`;
+                            const res = await askGemini(apiKey, aiPrompt, aiModel);
+                            const json = extractJSON(res);
+                            
+                            if (json && json.p) {
+                                updatesMap[item.id] = {
+                                    currentPrice: cleanVal(json.p),
+                                    previousClose: cleanVal(json.pc || json.p)
+                                };
+                            } else {
+                                totallyFailed.push(item.ticker);
+                            }
+                        } catch (err) {
+                            totallyFailed.push(item.ticker);
+                        }
+                        setUpdateProgress(70 + Math.round(((i + 1) / failedInScript.length) * 30));
+                    }
+                } else {
+                    totallyFailed = failedInScript.map(item => item.ticker);
+                }
+            }
+
+            if (Object.keys(updatesMap).length > 0) {
+                setPortfolio(prev => prev.map(p => updatesMap[p.id] ? { ...p, ...updatesMap[p.id] } : p));
+                setLastUpdate(new Date().toISOString());
+            }
+
+            if (!isAuto && totallyFailed.length > 0) {
+                setInfoModal({ isOpen: true, title: 'Advertencia', msg: `No se pudo obtener el precio de:\n${totallyFailed.join(', ')}\nRevisa el formato del Ticker.`, type: 'warning' });
+            }
+
+        } catch (e) {
+            if (!isAuto) setInfoModal({ isOpen: true, title: 'Error de Actualización', msg: e.message, type: 'error' });
+        } finally {
+            setUpdateProgress(100);
+            setUpdateText('Completado');
+            setTimeout(() => { setUpdating(false); setUpdateProgress(0); setUpdateText(''); }, 800);
+        }
     };
-    
+
+
 
  // ANALISIS IA MEJORADO Y CORREGIDO (VERSIÓN BLINDADA)
 const analyzePortfolio = async () => {
@@ -2473,10 +2601,31 @@ const RenderHistoryCard = () => {
             
             <div className="flex flex-col gap-3 shrink-0 bg-slate-900/50 p-3 rounded-xl border border-slate-800">
                 <div className="flex justify-between items-center"><div className="flex gap-2 items-start">
+               
                   <div className="flex flex-col">
-                      <button onClick={() => updatePrices(false)} disabled={updating} className="bg-slate-800 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-700 hover:bg-slate-700 transition-colors flex items-center gap-2">{updating ? <Icons.Loader/> : <Icons.Refresh/>} ACTUALIZAR</button>
-                      <span className="text-[9px] text-slate-500 mt-1 uppercase font-bold text-center tracking-wider">Sinc: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}</span>
+                      <button 
+                        onClick={() => updatePrices(false)} 
+                        disabled={updating} 
+                        className="relative bg-slate-800 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-700 hover:bg-slate-700 transition-all flex items-center gap-2 overflow-hidden"
+                      >
+                          {/* Barra de progreso de fondo */}
+                          {updating && (
+                            <div 
+                                className="absolute left-0 top-0 h-full bg-blue-600/30 transition-all duration-500 ease-out" 
+                                style={{ width: `${updateProgress}%` }}
+                            />
+                          )}
+                          <span className="relative z-10 flex items-center gap-2">
+                              {updating ? <span className="animate-pulse">{updateProgress}%</span> : <Icons.Refresh/>} 
+                              {updating ? 'PROCESANDO...' : 'ACTUALIZAR'}
+                          </span>
+                      </button>
+                      
+                      <span className="text-[9px] text-slate-500 mt-1 uppercase font-bold text-center tracking-wider h-3">
+                        {updating ? updateText : `Sinc: ${lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}`}  
+                      </span>
                   </div>
+
                   <button onClick={onManualSync} className={`px-3 h-9 rounded-lg text-[10px] font-bold border flex items-center gap-2 transition-all ${syncStatus === 'unsaved' ? 'bg-orange-600 border-orange-500 text-white animate-pulse' : syncStatus === 'uploading' || syncStatus === 'downloading' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-green-400'}`}>
                       {syncStatus === 'uploading' || syncStatus === 'downloading' ? <Icons.Loader/> : <Icons.Upload size={14} className={syncStatus==='unsaved' ? '' : 'text-green-500'}/>} 
                       {syncStatus === 'unsaved' ? 'GUARDAR' : syncStatus === 'uploading' ? 'SUBIENDO...' : syncStatus === 'downloading' ? 'BAJANDO...' : 'SYNC OK'}
@@ -4209,12 +4358,16 @@ const App = () => {
                         _x_trig={setBlockAction} 
                         globalNotes={globalNotes} 
                         setGlobalNotes={setGlobalNotes}
+                      
                         onAnalyze={(ticker) => {
                             setAnalysisTicker(ticker);
                             setActiveTab('analysis');
                         }}
                         aiModel={aiModel}
+                        gScriptUrl={gScriptUrl}
                     />
+
+
                 )}
                 {activeTab === 'dividends' && <DividendTab portfolio={portfolio} setPortfolio={updatePortfolio} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} />}
                 {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={updateResultsData} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} />}
@@ -4231,7 +4384,7 @@ const App = () => {
                 
                 {activeTab === 'settings' && <SettingsTab apiKey={apiKey} setApiKey={setApiKey} _x_stat={_0xAuth} _x_act={_0xReg} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={updatePortfolio} onForceBackup={uploadToCloud} gScriptUrl={gScriptUrl} setGScriptUrl={setGScriptUrl} resultsData={resultsData} appPin={appPin} setAppPin={setAppPin} aiModel={aiModel} setAiModel={setAiModel} availableModels={availableModels} setAvailableModels={setAvailableModels} />}
              </main>
-            <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase"><div>BoardingGate 3.3 (Secure PIN)</div><div className="flex gap-4"><span>Estado: {syncStatus === 'synced' ? 'Sincronizado' : syncStatus === 'unsaved' ? 'Cambios sin guardar' : 'Comprobando...'}</span><span>Ult. Mod: {localTimestamp > 0 ? new Date(localTimestamp).toLocaleTimeString() : 'N/A'}</span></div></footer>
+            <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase"><div>BoardingGate 3.3 (Secure PIN)</div><div className="flex gap-4"><span>Estado: {syncStatus === 'synced' ? 'Sincronizado en gDrive' : syncStatus === 'unsaved' ? 'Cambios sin guardar en gDrive' : 'Comprobando...'}</span><span>Ult. Mod. Datos Local: {localTimestamp > 0 ? new Date(localTimestamp).toLocaleTimeString() : 'N/A'}</span></div></footer>
         </div>
     );
 };
