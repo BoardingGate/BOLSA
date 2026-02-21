@@ -1609,80 +1609,70 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
   } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
   finally { lock.releaseLock(); }
 }
-
 function doGet(e) {
   if (e.parameter.tickers) {
     var tickerList = e.parameter.tickers.split(",");
-    var mappedTickers = [];
-    var originalMap = {};
-
+    var results = {};
+    
     for (var i = 0; i < tickerList.length; i++) {
       var rawTicker = tickerList[i].trim();
       var cleanTicker = rawTicker.replace(/^(BME|MC|NASDAQ|NYSE|EPA|LSE|BIT|GER|XETRA|TSE|AMS):/i, "");
       var yTicker = cleanTicker;
-
+      
       if (rawTicker.match(/^(BME|MC):/i)) yTicker += ".MC";
       else if (rawTicker.match(/^EPA:/i)) yTicker += ".PA";
       else if (rawTicker.match(/^LSE:/i)) yTicker += ".L";
       else if (rawTicker.match(/^BIT:/i)) yTicker += ".MI";
       else if (rawTicker.match(/^(GER|XETRA):/i)) yTicker += ".DE";
-      else if (rawTicker.match(/^TSE:/i)) yTicker += ".TO";
-      else if (rawTicker.match(/^AMS:/i)) yTicker += ".AS";
+      var price = null; var prevClose = null;
 
-      mappedTickers.push(yTicker);
-      originalMap[yTicker] = rawTicker;
-    }
-
-    var url = "https://query1.finance.yahoo.com/v8/finance/spark?symbols=" + encodeURIComponent(mappedTickers.join(",")) + "&range=1d&interval=1d";
-    var results = {};
-
-    try {
-      var response = UrlFetchApp.fetch(url, {
-        method: "GET",
-        muteHttpExceptions: true,
-        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0" }
-      });
-
-      if (response.getResponseCode() === 200) {
-        var json = JSON.parse(response.getContentText());
-        if (json.spark && json.spark.result) {
-           var quotes = json.spark.result;
-           for (var k = 0; k < quotes.length; k++) {
-             var q = quotes[k];
-             var origTicker = originalMap[q.symbol] || q.symbol;
-             
-             if (q.response && q.response[0] && q.response[0].meta) {
-               var meta = q.response[0].meta;
-               results[origTicker] = {
-                  p: meta.regularMarketPrice,
-                  pc: meta.chartPreviousClose || meta.previousClose || meta.regularMarketPrice,
-                  curr: meta.currency,
-                  success: true
-               };
-             }
-           }
+      try {
+        var url1 = "https://query2.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(yTicker) + "?interval=1d&range=1d";
+        var res1 = UrlFetchApp.fetch(url1, {muteHttpExceptions: true});
+        if (res1.getResponseCode() === 200) {
+          var j1 = JSON.parse(res1.getContentText());
+          if (j1.chart && j1.chart.result && j1.chart.result.length > 0) {
+             price = j1.chart.result[0].meta.regularMarketPrice;
+             prevClose = j1.chart.result[0].meta.previousClose;
+          }
         }
-      } else {
-         results["_ERROR"] = "Yahoo bloqueó la IP: HTTP " + response.getResponseCode();
+      } catch(err) {}
+      if (!price) {
+        try {
+          var parts = rawTicker.split(':');
+          // Google Finance usa el formato TICKER:MERCADO (ej: SAN:BME)
+          var gTicker = parts.length === 2 ? (parts[1] + ":" + parts[0]) : rawTicker;
+          var url2 = "https://www.google.com/finance/quote/" + encodeURIComponent(gTicker);
+          var res2 = UrlFetchApp.fetch(url2, {muteHttpExceptions: true});
+          
+          if (res2.getResponseCode() === 200) {
+            var html = res2.getContentText();
+            var match = html.match(/class="YMlKec fxKbKc"[^>]*>([^<]+)<\/div>/);
+            if (match) {
+              var pStr = match[1].replace(/[^0-9.,]/g, ''); // Quitamos simbolos de moneda
+              // Arreglamos formatos de comas y puntos (EU vs US)
+              if (pStr.indexOf(',') > -1 && pStr.indexOf('.') > -1) pStr = pStr.replace(/,/g, ''); 
+              else if (pStr.indexOf(',') > -1) pStr = pStr.replace(',', '.');
+              price = parseFloat(pStr);
+            }
+          }
+        } catch(err) {}
       }
-    } catch (err) {
-       results["_ERROR"] = "Fallo interno Script: " + err.toString();
+      if (price) {
+        results[rawTicker] = { p: price, pc: prevClose || price, success: true };
+      } else {
+        results[rawTicker] = { success: false, reason: "Bloqueado en Yahoo y Google" };
+      }
     }
-
-    for (var i = 0; i < tickerList.length; i++) {
-      var t = tickerList[i].trim();
-      if (!results[t]) results[t] = { success: false };
-    }
-
-    return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
+      return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
   }
-
   try {
     var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
     if (files.hasNext()) return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON);
     return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
   } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
-}`}</pre></li><li>Pulsa el botón azul <strong>"Implementar"</strong> (arriba dcha) {'>'} <strong>"Nueva implementación"</strong>.</li><li>En la rueda dentada (tipo), selecciona <strong>"Aplicación web"</strong>.</li><li>En "Quién tiene acceso", selecciona <strong>"Cualquier usuario"</strong> (Esto permite que la app guarde sin pedir login cada vez).</li><li>Pulsa "Implementar", autoriza el acceso a Drive, copia la URL que te dan ("Aplicación web") y pégala arriba.</li></ol></div>
+}
+`}</pre></li><li>Pulsa el botón azul <strong>"Implementar"</strong> (arriba dcha) {'>'} <strong>"Nueva implementación"</strong>.</li><li>En la rueda dentada (tipo), selecciona <strong>"Aplicación web"</strong>.</li><li>En "Quién tiene acceso", selecciona <strong>"Cualquier usuario"</strong> (Esto permite que la app guarde sin pedir login cada vez).</li><li>Pulsa "Implementar", autoriza el acceso a Drive, copia la URL que te dan ("Aplicación web") y pégala arriba.</li></ol></div>
                 </div>
             </div>
 
