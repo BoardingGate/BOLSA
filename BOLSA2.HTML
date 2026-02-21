@@ -2130,32 +2130,33 @@ const updatePrices = async (isAuto = false) => {
 
         setUpdating(true);
         setUpdateProgress(30); 
-        setUpdateText('Consultando al Script...');
+        setUpdateText('Consultando Google Finance...');
         
         try {
-            // 1. Preparamos la lista y llamamos al Script
+            // 1. Preparamos la lista
             const tickersList = active.map(p => p.ticker).join(',');
-            const response = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(tickersList)}`);
+            
+            // 2. ROMPE-CACHÉS: Añadimos la hora actual para que el móvil no use datos viejos
+            const fetchUrl = `${scriptUrl}?tickers=${encodeURIComponent(tickersList)}&_t=${Date.now()}`;
+            
+            const response = await fetch(fetchUrl);
             const textResponse = await response.text();
             
-            // 2. TRAMPA CAZADA: Si Google pide iniciar sesión (Error #1 más común)
             if (textResponse.includes("<html") || textResponse.includes("Sign in - Google")) {
-                throw new Error("🚨 ERROR DE PERMISOS: El Script está bloqueado.\n\nVe a Google Apps Script -> Implementar -> Nueva Implementación.\nEn 'Quién tiene acceso', DEBES seleccionar 'Cualquier usuario' (Anyone).");
+                throw new Error("🚨 ERROR DE PERMISOS: El Script está bloqueado. Ve a Google Apps Script -> Nueva Implementación -> 'Cualquier usuario'.");
             }
 
-            // 3. Intentamos leer los datos
             let batchData;
             try {
                 batchData = JSON.parse(textResponse);
             } catch (errJSON) {
-                // Si el error es otro, lo mostramos en pantalla
                 throw new Error("🚨 ERROR DEL SCRIPT:\n\n" + textResponse.substring(0, 150));
             }
 
             let updatesMap = {};
             let totallyFailed = [];
 
-            // 4. Asignamos los precios
+            // 3. Asignamos los precios
             active.forEach(item => {
                 const data = batchData[item.ticker];
                 if (data && data.success && data.p) {
@@ -2165,28 +2166,29 @@ const updatePrices = async (isAuto = false) => {
                         currentFx: (data.curr === baseCurrency) ? 1 : item.currentFx 
                     };
                 } else {
-                    totallyFailed.push(item.ticker);
+                    // Guardamos el ticker Y el motivo real del fallo que nos manda el script
+                    const reason = data ? data.reason : "Desconocido";
+                    totallyFailed.push(`${item.ticker} (${reason})`);
                 }
             });
 
-            // 5. Aplicamos cambios a la cartera
+            // 4. Aplicamos cambios a la cartera
             if (Object.keys(updatesMap).length > 0) {
                 setPortfolio(prev => prev.map(p => updatesMap[p.id] ? { ...p, ...updatesMap[p.id] } : p));
                 setLastUpdate(new Date().toISOString());
             }
 
-            // 6. Si algún Ticker concreto falló, lo avisamos
+            // 5. Mostrar Modal con los errores reales
             if (!isAuto && totallyFailed.length > 0) {
                 setInfoModal({ 
                     isOpen: true, 
                     title: 'Precios no encontrados', 
-                    msg: `No hay datos en Yahoo para:\n${totallyFailed.join(', ')}\n\nRevisa si están bien escritos (Ej: BME:ITX)`, 
+                    msg: `Google Finance falló en estos valores:\n\n${totallyFailed.join('\n')}`, 
                     type: 'warning' 
                 });
             }
 
         } catch (e) {
-            // MOSTRAMOS EL ERROR DIRECTO EN PANTALLA
             if (!isAuto) setInfoModal({ isOpen: true, title: 'Fallo de Conexión', msg: e.message, type: 'error' });
         } finally {
             setUpdateProgress(100);
@@ -2194,7 +2196,6 @@ const updatePrices = async (isAuto = false) => {
             setTimeout(() => { setUpdating(false); setUpdateProgress(0); setUpdateText(''); }, 1000);
         }
     };
-
 
 
  // ANALISIS IA MEJORADO Y CORREGIDO (VERSIÓN BLINDADA)
