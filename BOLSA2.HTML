@@ -1598,7 +1598,15 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
                     <div><label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">URL de la Aplicación Web (Script)</label><div className="flex items-end gap-2 mb-4"><div className="relative flex-1"><input type={showUrl ? "text" : "password"} value={simpleDecrypt(gScriptUrl)} onChange={(e) => setGScriptUrl(simpleEncrypt(e.target.value))} placeholder="https://script.google.com/macros/s/..." className="w-full bg-black/50 border border-slate-600 rounded-xl p-3 pr-12 text-white focus:border-green-500 focus:outline-none font-mono text-xs"/><button onClick={() => setShowUrl(!showUrl)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showUrl ? <Icons.EyeOff size={16}/> : <Icons.Eye size={16}/>}</button></div><button onClick={onForceBackup} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-3 rounded-xl font-bold text-xs flex items-center gap-2 transition-colors shadow-lg whitespace-nowrap"><Icons.Refresh size={16} className="shrink-0"/> FORZAR COPIA</button></div></div>
                     
                     {/* PARTE RESTAURADA COMPLETA */}
-                    <div className="bg-slate-950/50 border border-slate-700 rounded-xl p-4"><h5 className="text-xs font-bold text-white mb-3 flex items-center gap-2"><Icons.HelpCircle size={14}/> Guía de Configuración (Script de Google)</h5><ol className="list-decimal list-inside text-[10px] text-slate-300 space-y-2 leading-relaxed font-sans"><li>Ve a <a href="https://script.google.com/home/start" target="_blank" className="text-blue-400 font-bold hover:underline">Google Apps Script</a> y haz clic en <strong>"Nuevo Proyecto"</strong>.</li><li>Borra todo el código del editor y pega este bloque tal cual:<pre className="bg-black text-green-400 p-2 rounded mt-1 mb-1 border border-slate-800 overflow-x-auto text-[9px] font-mono select-all">{`function doPost(e) {
+                    <div className="bg-slate-950/50 border border-slate-700 rounded-xl p-4"><h5 className="text-xs font-bold text-white mb-3 flex items-center gap-2"><Icons.HelpCircle size={14}/> Guía de Configuración (Script de Google)</h5><ol className="list-decimal list-inside text-[10px] text-slate-300 space-y-2 leading-relaxed font-sans"><li>Ve a <a href="https://script.google.com/home/start" target="_blank" className="text-blue-400 font-bold hover:underline">Google Apps Script</a> y haz clic en <strong>"Nuevo Proyecto"</strong>.</li><li>Borra todo el código del editor y pega este bloque tal cual:<pre className="bg-black text-green-400 p-2 rounded mt-1 mb-1 border border-slate-800 overflow-x-auto text-[9px] font-mono select-all">{`// --- PASO 1: EJECUTA ESTA FUNCIÓN UNA VEZ PARA DAR PERMISOS ---
+function A_AUTORIZAR_AQUI() {
+  console.log("Comprobando permisos...");
+  UrlFetchApp.fetch("https://www.google.com");
+  console.log("¡Permisos concedidos correctamente!");
+}
+// -------------------------------------------------------------
+
+function doPost(e) {
   var lock = LockService.getScriptLock(); lock.tryLock(10000);
   try {
     var data = JSON.parse(e.postData.contents);
@@ -1615,11 +1623,10 @@ function doGet(e) {
     var tickerList = e.parameter.tickers.split(",");
     var results = {};
     
-    // Bucle interno (Muy rápido porque se ejecuta en los servidores de Google)
     for (var i = 0; i < tickerList.length; i++) {
       var rawTicker = tickerList[i].trim();
-      if (!rawTicker) continue; // Si hay un ticker vacío por error, lo salta
-      
+      if (!rawTicker) continue;
+
       var cleanTicker = rawTicker.replace(/^(BME|MC|NASDAQ|NYSE|EPA|LSE|BIT|GER|XETRA|TSE|AMS):/i, "");
       var yTicker = cleanTicker;
       
@@ -1628,65 +1635,46 @@ function doGet(e) {
       else if (rawTicker.match(/^LSE:/i)) yTicker += ".L";
       else if (rawTicker.match(/^BIT:/i)) yTicker += ".MI";
       else if (rawTicker.match(/^(GER|XETRA):/i)) yTicker += ".DE";
+      else if (rawTicker.match(/^TSE:/i)) yTicker += ".TO";
+      else if (rawTicker.match(/^AMS:/i)) yTicker += ".AS";
+
+      var finalPrice = null;
+      var finalPrev = null;
       
-      var price = null;
-      var prevClose = null;
-      var errorLog = "";
-
       try {
-        var url1 = "https://query2.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(yTicker) + "?interval=1d&range=1d";
-        var res1 = UrlFetchApp.fetch(url1, {muteHttpExceptions: true});
-        if (res1.getResponseCode() === 200) {
-          var j1 = JSON.parse(res1.getContentText());
-          if (j1.chart && j1.chart.result && j1.chart.result.length > 0) {
-             price = j1.chart.result[0].meta.regularMarketPrice;
-             prevClose = j1.chart.result[0].meta.previousClose;
-          } else {
-             errorLog += "Yahoo: Sin datos. ";
-          }
-        } else {
-           errorLog += "Yahoo: HTTP " + res1.getResponseCode() + ". ";
-        }
-      } catch(err) { errorLog += "Yahoo: Error interno. "; }
+        Utilities.sleep(100); 
+        var url = "https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(yTicker) + "?interval=1d&range=1d";
+        var response = UrlFetchApp.fetch(url, {
+          method: "GET",
+          muteHttpExceptions: true,
+          headers: { "User-Agent": "Mozilla/5.0" }
+        });
 
-      if (!price) {
-        try {
-          var parts = rawTicker.split(':');
-          var gTicker = parts.length === 2 ? (parts[1] + ":" + parts[0]) : rawTicker;
-          var url2 = "https://www.google.com/finance/quote/" + encodeURIComponent(gTicker);
-          var res2 = UrlFetchApp.fetch(url2, {muteHttpExceptions: true});
-          
-          if (res2.getResponseCode() === 200) {
-            var html = res2.getContentText();
-            var match = html.match(/class="YMlKec fxKbKc"[^>]*>([^<]+)<\/div>/);
-            if (match) {
-              var pStr = match[1].replace(/[^0-9.,]/g, '');
-              if (pStr.indexOf(',') > -1 && pStr.indexOf('.') > -1) pStr = pStr.replace(/,/g, ''); 
-              else if (pStr.indexOf(',') > -1) pStr = pStr.replace(',', '.');
-              price = parseFloat(pStr);
-            } else {
-              errorLog += "Google: Elemento no encontrado.";
-            }
-          } else {
-            errorLog += "Google: HTTP " + res2.getResponseCode();
+        if (response.getResponseCode() === 200) {
+          var json = JSON.parse(response.getContentText());
+          if (json.chart && json.chart.result && json.chart.result[0].meta) {
+             finalPrice = json.chart.result[0].meta.regularMarketPrice;
+             finalPrev = json.chart.result[0].meta.previousClose;
           }
-        } catch(err) { errorLog += "Google: Error interno."; }
-      }
-      if (price) {
-        results[rawTicker] = { p: price, pc: prevClose || price, success: true };
+        }
+      } catch (err) {}
+
+      if (finalPrice !== null) {
+        results[rawTicker] = { p: finalPrice, pc: finalPrev || finalPrice, success: true };
       } else {
-        results[rawTicker] = { success: false, reason: errorLog };
+        results[rawTicker] = { success: false, reason: "No encontrado" };
       }
     }
-    
     return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
   }
+
   try {
     var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
     if (files.hasNext()) return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON);
     return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
   } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
-}`}</pre></li><li>Pulsa el botón azul <strong>"Implementar"</strong> (arriba dcha) {'>'} <strong>"Nueva implementación"</strong>.</li><li>En la rueda dentada (tipo), selecciona <strong>"Aplicación web"</strong>.</li><li>En "Quién tiene acceso", selecciona <strong>"Cualquier usuario"</strong> (Esto permite que la app guarde sin pedir login cada vez).</li><li>Pulsa "Implementar", autoriza el acceso a Drive, copia la URL que te dan ("Aplicación web") y pégala arriba.</li></ol></div>
+}
+`}</pre></li><li>Pulsa el botón azul <strong>"Implementar"</strong> (arriba dcha) {'>'} <strong>"Nueva implementación"</strong>.</li><li>En la rueda dentada (tipo), selecciona <strong>"Aplicación web"</strong>.</li><li>En "Quién tiene acceso", selecciona <strong>"Cualquier usuario"</strong> (Esto permite que la app guarde sin pedir login cada vez).</li><li>Pulsa "Implementar", autoriza el acceso a Drive, copia la URL que te dan ("Aplicación web") y pégala arriba.</li></ol></div>
                 </div>
             </div>
 
