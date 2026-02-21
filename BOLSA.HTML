@@ -1613,11 +1613,11 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
 function doGet(e) {
   if (e.parameter.tickers) {
     var tickerList = e.parameter.tickers.split(",");
-    var mappedTickers = [];
-    var originalMap = {};
-
+    var requests = [];
+    
     for (var i = 0; i < tickerList.length; i++) {
       var rawTicker = tickerList[i].trim();
+      
       var cleanTicker = rawTicker.replace(/^(BME|MC|NASDAQ|NYSE|EPA|LSE|BIT|GER|XETRA|TSE|AMS):/i, "");
       var yTicker = cleanTicker;
 
@@ -1629,45 +1629,48 @@ function doGet(e) {
       else if (rawTicker.match(/^TSE:/i)) yTicker += ".TO";
       else if (rawTicker.match(/^AMS:/i)) yTicker += ".AS";
 
-      mappedTickers.push(yTicker);
-      originalMap[yTicker] = rawTicker;
-    }
-
-    var url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" + encodeURIComponent(mappedTickers.join(","));
-    var results = {};
-
-    try {
-      var response = UrlFetchApp.fetch(url, {
+      requests.push({
+        url: "https://query2.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(yTicker) + "?interval=1d&range=1d",
         method: "GET",
         muteHttpExceptions: true,
-        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0" }
-      });
-
-      if (response.getResponseCode() === 200) {
-        var json = JSON.parse(response.getContentText());
-        if (json.quoteResponse && json.quoteResponse.result) {
-           var quotes = json.quoteResponse.result;
-           for (var k = 0; k < quotes.length; k++) {
-             var q = quotes[k];
-             var origTicker = originalMap[q.symbol] || q.symbol;
-             results[origTicker] = {
-                p: q.regularMarketPrice,
-                pc: q.regularMarketPreviousClose,
-                pe: q.trailingPE || 0,
-                curr: q.currency,
-                success: true
-             };
-           }
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0"
         }
-      }
-    } catch (err) {}
-
-    // 3. Marcar fallos
-    for (var i = 0; i < tickerList.length; i++) {
-      var t = tickerList[i].trim();
-      if (!results[t]) results[t] = { success: false };
+      });
     }
 
+    var results = {};
+    
+    try {
+      var responses = UrlFetchApp.fetchAll(requests);
+
+      for (var j = 0; j < responses.length; j++) {
+        var rawTicker = tickerList[j].trim();
+        var code = responses[j].getResponseCode();
+        
+        if (code === 200) {
+          var json = JSON.parse(responses[j].getContentText());
+          if (json.chart && json.chart.result && json.chart.result.length > 0) {
+            var meta = json.chart.result[0].meta;
+            results[rawTicker] = {
+              p: meta.regularMarketPrice,
+              pc: meta.previousClose,
+              curr: meta.currency,
+              success: true
+            };
+          } else {
+            results[rawTicker] = { success: false, reason: "Sin datos en Yahoo" };
+          }
+        } else {
+          results[rawTicker] = { success: false, reason: "Error HTTP " + code };
+        }
+      }
+    } catch (err) {
+      for (var k = 0; k < tickerList.length; k++) {
+        results[tickerList[k].trim()] = { success: false, reason: "Fallo ejecución Script" };
+      }
+    }
+    
     return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
   }
 
