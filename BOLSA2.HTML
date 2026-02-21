@@ -1613,55 +1613,61 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
 function doGet(e) {
   if (e.parameter.tickers) {
     var tickerList = e.parameter.tickers.split(",");
-    var requests = [];
-    
+    var mappedTickers = [];
+    var originalMap = {};
+
     for (var i = 0; i < tickerList.length; i++) {
       var rawTicker = tickerList[i].trim();
-      var yTicker = rawTicker.replace("BME:", "").replace("MC:", "").replace("NASDAQ:", "").replace("NYSE:", "").replace("EPA:", "");
-      
-      if (rawTicker.includes("BME:") || rawTicker.includes("MC:")) yTicker += ".MC";
-      else if (rawTicker.includes("EPA:")) yTicker += ".PA";
-      else if (rawTicker.includes("LSE:")) yTicker += ".L";
-      else if (rawTicker.includes("BIT:")) yTicker += ".MI";
-      else if (rawTicker.includes("GER:") || rawTicker.includes("XETRA:")) yTicker += ".DE";
-      else if (rawTicker.includes("TSE:")) yTicker += ".TO";
-      else if (rawTicker.includes("AMS:")) yTicker += ".AS";
-      
-      requests.push({
-        url: "https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(yTicker) + "?interval=1d&range=1d",
-        method: "GET",
-        muteHttpExceptions: true,
-        headers: {
-          // Esto evita que Yahoo bloquee la petición masiva
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-        }
-      });
+      var cleanTicker = rawTicker.replace(/^(BME|MC|NASDAQ|NYSE|EPA|LSE|BIT|GER|XETRA|TSE|AMS):/i, "");
+      var yTicker = cleanTicker;
+
+      if (rawTicker.match(/^(BME|MC):/i)) yTicker += ".MC";
+      else if (rawTicker.match(/^EPA:/i)) yTicker += ".PA";
+      else if (rawTicker.match(/^LSE:/i)) yTicker += ".L";
+      else if (rawTicker.match(/^BIT:/i)) yTicker += ".MI";
+      else if (rawTicker.match(/^(GER|XETRA):/i)) yTicker += ".DE";
+      else if (rawTicker.match(/^TSE:/i)) yTicker += ".TO";
+      else if (rawTicker.match(/^AMS:/i)) yTicker += ".AS";
+
+      mappedTickers.push(yTicker);
+      originalMap[yTicker] = rawTicker;
     }
 
-    var responses = UrlFetchApp.fetchAll(requests);
+    var url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" + encodeURIComponent(mappedTickers.join(","));
     var results = {};
 
-    for (var j = 0; j < responses.length; j++) {
-      var t = tickerList[j];
-      try {
-        var code = responses[j].getResponseCode();
-        if (code === 200) {
-            var json = JSON.parse(responses[j].getContentText());
-            if (json.chart && json.chart.result && json.chart.result.length > 0) {
-              var meta = json.chart.result[0].meta;
-              results[t] = { p: meta.regularMarketPrice, pc: meta.previousClose, curr: meta.currency, success: true };
-            } else {
-              results[t] = { success: false };
-            }
-        } else {
-            results[t] = { success: false };
+    try {
+      var response = UrlFetchApp.fetch(url, {
+        method: "GET",
+        muteHttpExceptions: true,
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0" }
+      });
+
+      if (response.getResponseCode() === 200) {
+        var json = JSON.parse(response.getContentText());
+        if (json.quoteResponse && json.quoteResponse.result) {
+           var quotes = json.quoteResponse.result;
+           for (var k = 0; k < quotes.length; k++) {
+             var q = quotes[k];
+             var origTicker = originalMap[q.symbol] || q.symbol;
+             results[origTicker] = {
+                p: q.regularMarketPrice,
+                pc: q.regularMarketPreviousClose,
+                pe: q.trailingPE || 0,
+                curr: q.currency,
+                success: true
+             };
+           }
         }
-      } catch (err) {
-        results[t] = { success: false };
       }
+    } catch (err) {}
+
+    // 3. Marcar fallos
+    for (var i = 0; i < tickerList.length; i++) {
+      var t = tickerList[i].trim();
+      if (!results[t]) results[t] = { success: false };
     }
-    
+
     return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
   }
 
@@ -2118,7 +2124,8 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt, aiModel); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
 
 
-  const updatePrices = async (isAuto = false) => {
+  
+const updatePrices = async (isAuto = false) => {
         const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
         const scriptUrl = simpleDecrypt(gScriptUrl);
         
@@ -2129,14 +2136,14 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         }
 
         setUpdating(true);
-        setUpdateProgress(10); 
+        setUpdateProgress(20); 
         
         try {
             let updatesMap = {};
             let failedInScript = [];
-            let totallyFailed = []; // Tickers que fallaron tanto en Script como en IA
+            let totallyFailed = []; // Solo los que fallen en ambos lados
 
-            // ESTRATEGIA A: SCRIPT DE GOOGLE (Petición Masiva Rápida)
+            // ESTRATEGIA A: SCRIPT DE GOOGLE (1 sola petición a toda la lista)
             if (scriptUrl) {
                 try {
                     const tickersList = active.map(p => p.ticker).join(',');
@@ -2149,6 +2156,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                             updatesMap[item.id] = {
                                 currentPrice: cleanVal(data.p),
                                 previousClose: cleanVal(data.pc),
+                                currentPE: cleanVal(data.pe) || item.currentPE,
                                 currentFx: (data.curr === baseCurrency) ? 1 : item.currentFx 
                             };
                         } else {
@@ -2163,16 +2171,15 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                 failedInScript = [...active];
             }
 
-            setUpdateProgress(50);
+            setUpdateProgress(70);
 
-            // ESTRATEGIA B: IA GEMINI (Solo como plan B para los que fallaron)
+            // ESTRATEGIA B: IA GEMINI (Solo rescata los que fallaron arriba)
             if (failedInScript.length > 0) {
                 if (apiKey) {
                     for (let i = 0; i < failedInScript.length; i++) {
                         const item = failedInScript[i];
                         try {
-                            await new Promise(r => setTimeout(r, 1000)); // Pequeña pausa anticuelgues
-                            const aiPrompt = `Return JSON: {"p": current_price_number, "pc": previous_close_number} for "${item.ticker}". Source: Google Finance.`;
+                            const aiPrompt = `Return JSON: {"p": current_price_number, "pc": previous_close_number} for "${item.ticker}". Source: Google Finance. No explanations.`;
                             const res = await askGemini(apiKey, aiPrompt, aiModel);
                             const json = extractJSON(res);
                             
@@ -2187,39 +2194,37 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                         } catch (err) {
                             totallyFailed.push(item.ticker);
                         }
-                        setUpdateProgress(50 + Math.round(((i + 1) / failedInScript.length) * 40));
+                        setUpdateProgress(70 + Math.round(((i + 1) / failedInScript.length) * 30));
                     }
                 } else {
                     totallyFailed = failedInScript.map(item => item.ticker);
                 }
             }
 
-            // APLICAR CAMBIOS
+            // APLICAMOS TODOS LOS DATOS A LA CARTERA
             if (Object.keys(updatesMap).length > 0) {
                 setPortfolio(prev => prev.map(p => updatesMap[p.id] ? { ...p, ...updatesMap[p.id] } : p));
                 setLastUpdate(new Date().toISOString());
             }
 
-            // MOSTRAR MODAL SOLO SI HAY FALLOS (Silencioso en caso de éxito)
+            // MOSTRAR MODAL SÓLO SI HAY FALLOS (Modo silencioso por defecto)
             if (!isAuto && totallyFailed.length > 0) {
                 setInfoModal({ 
                     isOpen: true, 
-                    title: 'Aviso de Actualización', 
-                    msg: `No se ha podido obtener el precio de los siguientes valores:\n\n${totallyFailed.join('\n')}\n\nRevisa si el Ticker está escrito correctamente (Ej: BME:ITX o AAPL).`, 
+                    title: 'Advertencia', 
+                    msg: `No se pudo obtener el precio de los siguientes valores:\n\n${totallyFailed.join(', ')}\n\nRevisa el Ticker (Ej: BME:ITX).`, 
                     type: 'warning' 
                 });
             }
 
         } catch (e) {
             console.error(e);
-            if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' });
+            if (!isAuto) setInfoModal({ isOpen: true, title: 'Error de Actualización', msg: e.message, type: 'error' });
         } finally {
             setUpdateProgress(100);
-            setTimeout(() => { setUpdating(false); setUpdateProgress(0); }, 800);
+            setTimeout(() => { setUpdating(false); setUpdateProgress(0); }, 500);
         }
     };
-
-
 
 
 
