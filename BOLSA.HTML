@@ -1586,8 +1586,7 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
                 </div>
             </div>
 
-
-            {/* COPIA DE SEGURIDAD Y CLOUD */}
+{/* COPIA DE SEGURIDAD Y CLOUD */}
             <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
                 <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4"><div className="p-3 bg-cyan-500/20 rounded-xl text-cyan-400"><Icons.Upload size={32} className="rotate-180" /></div><div><h2 className="text-2xl font-bold text-white">Copia de Seguridad y Cloud</h2><p className="text-slate-400 text-sm">Exporta tu configuración y conecta Google Drive</p></div></div>
                 <div className="bg-yellow-900/20 border border-yellow-600/30 rounded-xl p-4 mb-6"><h4 className="text-yellow-500 font-bold text-sm mb-2 flex items-center gap-2"><Icons.AlertCircle size={16}/> Información Importante</h4><p className="text-sm text-slate-300 leading-relaxed">El archivo de exportación contiene <strong>toda tu configuración, claves, y cartera de inversiones</strong>. Guárdalo en un lugar seguro.</p></div>
@@ -1597,8 +1596,20 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
                     <h4 className="text-sm font-bold text-blue-400 mb-4 uppercase tracking-widest flex items-center gap-2"><Icons.Globe size={16}/> Copia Automática (Google Apps Script)</h4>
                     <div><label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">URL de la Aplicación Web (Script)</label><div className="flex items-end gap-2 mb-4"><div className="relative flex-1"><input type={showUrl ? "text" : "password"} value={simpleDecrypt(gScriptUrl)} onChange={(e) => setGScriptUrl(simpleEncrypt(e.target.value))} placeholder="https://script.google.com/macros/s/..." className="w-full bg-black/50 border border-slate-600 rounded-xl p-3 pr-12 text-white focus:border-green-500 focus:outline-none font-mono text-xs"/><button onClick={() => setShowUrl(!showUrl)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showUrl ? <Icons.EyeOff size={16}/> : <Icons.Eye size={16}/>}</button></div><button onClick={onForceBackup} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-3 rounded-xl font-bold text-xs flex items-center gap-2 transition-colors shadow-lg whitespace-nowrap"><Icons.Refresh size={16} className="shrink-0"/> FORZAR COPIA</button></div></div>
                     
-                    {/* PARTE RESTAURADA COMPLETA */}
-                    <div className="bg-slate-950/50 border border-slate-700 rounded-xl p-4"><h5 className="text-xs font-bold text-white mb-3 flex items-center gap-2"><Icons.HelpCircle size={14}/> Guía de Configuración (Script de Google)</h5><ol className="list-decimal list-inside text-[10px] text-slate-300 space-y-2 leading-relaxed font-sans"><li>Ve a <a href="https://script.google.com/home/start" target="_blank" className="text-blue-400 font-bold hover:underline">Google Apps Script</a> y haz clic en <strong>"Nuevo Proyecto"</strong>.</li><li>Borra todo el código del editor y pega este bloque tal cual:<pre className="bg-black text-green-400 p-2 rounded mt-1 mb-1 border border-slate-800 overflow-x-auto text-[9px] font-mono select-all">{`function doPost(e) {
+                    {/* PARTE RESTAURADA COMPLETA Y DETALLADA */}
+                    <div className="bg-slate-950/50 border border-slate-700 rounded-xl p-4">
+                        <h5 className="text-xs font-bold text-white mb-3 flex items-center gap-2"><Icons.HelpCircle size={14}/> Guía de Configuración (Script de Google)</h5>
+                        <ol className="list-decimal list-inside text-[10px] text-slate-300 space-y-2 leading-relaxed font-sans">
+                            <li>Ve a <a href="https://script.google.com/home/start" target="_blank" className="text-blue-400 font-bold hover:underline">Google Apps Script</a> y haz clic en <strong>"Nuevo Proyecto"</strong>.</li>
+                            <li>Borra todo el código del editor y pega este bloque exacto:
+                                <pre className="bg-black text-green-400 p-2 rounded mt-1 mb-1 border border-slate-800 overflow-x-auto text-[9px] font-mono select-all">
+{`
+function A_AUTORIZAR_AQUI() {
+  UrlFetchApp.fetch("https://www.google.com");
+  console.log("OK");
+}
+
+function doPost(e) {
   var lock = LockService.getScriptLock(); lock.tryLock(10000);
   try {
     var data = JSON.parse(e.postData.contents);
@@ -1609,82 +1620,104 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
   } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
   finally { lock.releaseLock(); }
 }
-
 function doGet(e) {
   if (e.parameter.tickers) {
     var tickerList = e.parameter.tickers.split(",");
-    var mappedTickers = [];
-    var originalMap = {};
+    var requests = [];
+    var validTickers = [];
 
     for (var i = 0; i < tickerList.length; i++) {
       var rawTicker = tickerList[i].trim();
-      var cleanTicker = rawTicker.replace(/^(BME|MC|NASDAQ|NYSE|EPA|LSE|BIT|GER|XETRA|TSE|AMS):/i, "");
-      var yTicker = cleanTicker;
+      if(!rawTicker) continue;
+      var parts = rawTicker.split(':');
+      var gTicker = rawTicker;
+      if (parts.length === 2) {
+         gTicker = parts[1] + ":" + parts[0];
+      }
 
-      if (rawTicker.match(/^(BME|MC):/i)) yTicker += ".MC";
-      else if (rawTicker.match(/^EPA:/i)) yTicker += ".PA";
-      else if (rawTicker.match(/^LSE:/i)) yTicker += ".L";
-      else if (rawTicker.match(/^BIT:/i)) yTicker += ".MI";
-      else if (rawTicker.match(/^(GER|XETRA):/i)) yTicker += ".DE";
-      else if (rawTicker.match(/^TSE:/i)) yTicker += ".TO";
-      else if (rawTicker.match(/^AMS:/i)) yTicker += ".AS";
-
-      mappedTickers.push(yTicker);
-      originalMap[yTicker] = rawTicker;
+      requests.push({
+        url: "https://www.google.com/finance/quote/" + encodeURIComponent(gTicker),
+        method: "GET",
+        muteHttpExceptions: true
+      });
+      validTickers.push(rawTicker);
     }
-
-    var url = "https://query1.finance.yahoo.com/v8/finance/spark?symbols=" + encodeURIComponent(mappedTickers.join(",")) + "&range=1d&interval=1d";
     var results = {};
 
     try {
-      var response = UrlFetchApp.fetch(url, {
-        method: "GET",
-        muteHttpExceptions: true,
-        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0" }
-      });
+      var responses = UrlFetchApp.fetchAll(requests);
 
-      if (response.getResponseCode() === 200) {
-        var json = JSON.parse(response.getContentText());
-        if (json.spark && json.spark.result) {
-           var quotes = json.spark.result;
-           for (var k = 0; k < quotes.length; k++) {
-             var q = quotes[k];
-             var origTicker = originalMap[q.symbol] || q.symbol;
-             
-             if (q.response && q.response[0] && q.response[0].meta) {
-               var meta = q.response[0].meta;
-               results[origTicker] = {
-                  p: meta.regularMarketPrice,
-                  pc: meta.chartPreviousClose || meta.previousClose || meta.regularMarketPrice,
-                  curr: meta.currency,
-                  success: true
+      for (var j = 0; j < responses.length; j++) {
+        var rawTicker = validTickers[j];
+        var code = responses[j].getResponseCode();
+
+        if (code === 200) {
+          var html = responses[j].getContentText();
+          var match = html.match(/<div class="AHmHk"[^>]*>[\s\S]*?<div class="YMlKec[^"]*">([^<]+)<\/div>/);
+          if (match) {
+            var pStr = match[1].replace(/[^0-9.,]/g, ''); 
+            if (pStr.indexOf(',') > -1 && pStr.indexOf('.') > -1) {
+              pStr = pStr.replace(/,/g, ''); 
+            } else if (pStr.indexOf(',') > -1) {
+              pStr = pStr.replace(',', '.');
+            }
+            var price = parseFloat(pStr);
+            results[rawTicker] = {
+              p: price,
+              pc: price, 
+              success: true
+            };
+          } else {
+            var metaMatch = html.match(/<meta itemprop="price" content="([^"]+)">/);
+            if (metaMatch) {
+               results[rawTicker] = {
+                 p: parseFloat(metaMatch[1]),
+                 pc: parseFloat(metaMatch[1]),
+                 success: true
                };
-             }
-           }
+            } else {
+               results[rawTicker] = { success: false, reason: "Estructura web no reconocida" };
+            }
+          }
+        } else {
+          results[rawTicker] = { success: false, reason: "HTTP " + code };
         }
-      } else {
-         results["_ERROR"] = "Yahoo bloqueó la IP: HTTP " + response.getResponseCode();
       }
-    } catch (err) {
-       results["_ERROR"] = "Fallo interno Script: " + err.toString();
+    } catch(err) {
+       for(var k=0; k<validTickers.length; k++) {
+         results[validTickers[k]] = { success: false, reason: "Error Conexión" };
+       }
     }
-
-    for (var i = 0; i < tickerList.length; i++) {
-      var t = tickerList[i].trim();
-      if (!results[t]) results[t] = { success: false };
-    }
-
     return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
   }
-
   try {
     var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
     if (files.hasNext()) return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON);
     return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
   } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
-}`}</pre></li><li>Pulsa el botón azul <strong>"Implementar"</strong> (arriba dcha) {'>'} <strong>"Nueva implementación"</strong>.</li><li>En la rueda dentada (tipo), selecciona <strong>"Aplicación web"</strong>.</li><li>En "Quién tiene acceso", selecciona <strong>"Cualquier usuario"</strong> (Esto permite que la app guarde sin pedir login cada vez).</li><li>Pulsa "Implementar", autoriza el acceso a Drive, copia la URL que te dan ("Aplicación web") y pégala arriba.</li></ol></div>
+}
+`}
+                                </pre>
+                            </li>
+                            <li className="bg-blue-900/20 p-2 rounded border border-blue-500/30 text-blue-200">
+                                <strong>PASO CRÍTICO (Autorización):</strong>
+                                <ul className="list-disc list-inside mt-1 space-y-1">
+                                    <li>En la barra superior del editor, cambia la función <code>doPost</code> por <strong><code>A_AUTORIZAR_AQUI</code></strong>.</li>
+                                    <li>Pulsa el botón <strong>▶ Ejecutar</strong>.</li>
+                                    <li>Saldrá una ventana: "Se requiere autorización" &rarr; <strong>Revisar permisos</strong>.</li>
+                                    <li>Elige tu cuenta Google. Si sale "Google no ha verificado esta aplicación" (Pantalla de peligro), pulsa en <strong>Configuración avanzada</strong> (Advanced) y abajo en <strong>Ir a Proyecto... (no seguro)</strong>.</li>
+                                    <li>Finalmente pulsa <strong>Permitir</strong> (Allow).</li>
+                                </ul>
+                            </li>
+                            <li>Ahora pulsa el botón azul <strong>"Implementar"</strong> (arriba derecha) &rarr; <strong>"Nueva implementación"</strong>.</li>
+                            <li>En la rueda dentada (tipo), selecciona <strong>"Aplicación web"</strong>.</li>
+                            <li>En "Quién tiene acceso", selecciona <strong>"Cualquier usuario"</strong> (Anyone). <span className="text-orange-400 font-bold">Importante para que funcione en el móvil.</span></li>
+                            <li>Pulsa "Implementar", copia la URL ("Aplicación web") y pégala arriba.</li>
+                        </ol>
+                    </div>
                 </div>
             </div>
+       
 
             {/* IMPORTACIÓN MASIVA IA */}
             <div className="max-w-2xl w-full bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
@@ -2130,119 +2163,78 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt, aiModel); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
 
-
 const updatePrices = async (isAuto = false) => {
         const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
         const scriptUrl = simpleDecrypt(gScriptUrl);
         
         if (active.length === 0) return;
-        if (!scriptUrl && !apiKey) {
-            if (!isAuto) setInfoModal({ isOpen: true, title: 'Aviso', msg: 'Falta configurar Script o API Key.', type: 'error' });
+        if (!scriptUrl) {
+            if (!isAuto) setInfoModal({ isOpen: true, title: 'Aviso', msg: 'Para actualizar precios necesitas configurar la URL del Script de Google en Ajustes.', type: 'error' });
             return;
         }
 
         setUpdating(true);
-        setUpdateProgress(20); 
-        setUpdateText('Conectando al mercado...');
+        setUpdateProgress(30); 
+        setUpdateText('Consultando Google Finance...');
         
         try {
+            // 1. Preparamos la lista
+            const tickersList = active.map(p => p.ticker).join(',');
+            
+            // 2. ROMPE-CACHÉS: Añadimos la hora actual para que el móvil no use datos viejos
+            const fetchUrl = `${scriptUrl}?tickers=${encodeURIComponent(tickersList)}&_t=${Date.now()}`;
+            
+            const response = await fetch(fetchUrl);
+            const textResponse = await response.text();
+            
+            if (textResponse.includes("<html") || textResponse.includes("Sign in - Google")) {
+                throw new Error("🚨 ERROR DE PERMISOS: El Script está bloqueado. Ve a Google Apps Script -> Nueva Implementación -> 'Cualquier usuario'.");
+            }
+
+            let batchData;
+            try {
+                batchData = JSON.parse(textResponse);
+            } catch (errJSON) {
+                throw new Error("🚨 ERROR DEL SCRIPT:\n\n" + textResponse.substring(0, 150));
+            }
+
             let updatesMap = {};
-            let failedInScript = [];
             let totallyFailed = [];
 
-            // ESTRATEGIA A: SCRIPT DE GOOGLE (1 sola llamada masiva rápida)
-            if (scriptUrl) {
-                try {
-                    const tickersList = active.map(p => p.ticker).join(',');
-                    const response = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(tickersList)}`);
-                    const textResponse = await response.text();
-                    
-                    let batchData;
-                    try {
-                        batchData = JSON.parse(textResponse);
-                    } catch (errJSON) {
-                        console.error("🚨 ERROR FATAL DEL SCRIPT:", textResponse);
-                        throw new Error("El Script no devolvió un JSON válido. Revisa si publicaste la 'Nueva Implementación'.");
-                    }
-
-                    if (batchData._ERROR) {
-                        console.error("🚨 YAHOO BLOQUEÓ EL SCRIPT:", batchData._ERROR);
-                    }
-
-                    active.forEach(item => {
-                        const data = batchData[item.ticker];
-                        if (data && data.success && data.p) {
-                            updatesMap[item.id] = {
-                                currentPrice: cleanVal(data.p),
-                                previousClose: cleanVal(data.pc),
-                                currentFx: (data.curr === baseCurrency) ? 1 : item.currentFx 
-                            };
-                        } else {
-                            failedInScript.push(item);
-                        }
-                    });
-                } catch (e) {
-                    console.error("Fallo general conectando al Script:", e.message);
-                    setUpdateText('Script falló, usando IA...');
-                    failedInScript = [...active]; 
-                }
-            } else {
-                failedInScript = [...active];
-            }
-
-            setUpdateProgress(70);
-
-            // ESTRATEGIA B: GEMINI (IA)
-            // Solo entra aquí para los Tickers que hayan fallado en Yahoo
-            if (failedInScript.length > 0) {
-                console.log("⚠️ Tickers que se van a procesar por IA (LENTO):", failedInScript.map(t => t.ticker));
-
-                if (apiKey) {
-                    for (let i = 0; i < failedInScript.length; i++) {
-                        const item = failedInScript[i];
-                        setUpdateText(`IA buscando: ${item.ticker}...`);
-                        try {
-                            const aiPrompt = `Return JSON: {"p": current_price_number, "pc": previous_close_number} for "${item.ticker}". Source: Google Finance. No explanations.`;
-                            const res = await askGemini(apiKey, aiPrompt, aiModel);
-                            const json = extractJSON(res);
-                            
-                            if (json && json.p) {
-                                updatesMap[item.id] = {
-                                    currentPrice: cleanVal(json.p),
-                                    previousClose: cleanVal(json.pc || json.p)
-                                };
-                            } else {
-                                totallyFailed.push(item.ticker);
-                            }
-                        } catch (err) {
-                            totallyFailed.push(item.ticker);
-                        }
-                        setUpdateProgress(70 + Math.round(((i + 1) / failedInScript.length) * 30));
-                    }
+            // 3. Asignamos los precios
+            active.forEach(item => {
+                const data = batchData[item.ticker];
+                if (data && data.success && data.p) {
+                    updatesMap[item.id] = {
+                        currentPrice: cleanVal(data.p),
+                        previousClose: cleanVal(data.pc),
+                        currentFx: (data.curr === baseCurrency) ? 1 : item.currentFx 
+                    };
                 } else {
-                    totallyFailed = failedInScript.map(item => item.ticker);
+                    // Guardamos el ticker Y el motivo real del fallo que nos manda el script
+                    const reason = data ? data.reason : "Desconocido";
+                    totallyFailed.push(`${item.ticker} (${reason})`);
                 }
-            }
+            });
 
-            // GUARDAR DATOS EN LA CARTERA
+            // 4. Aplicamos cambios a la cartera
             if (Object.keys(updatesMap).length > 0) {
                 setPortfolio(prev => prev.map(p => updatesMap[p.id] ? { ...p, ...updatesMap[p.id] } : p));
                 setLastUpdate(new Date().toISOString());
             }
 
-            // AVISAR SI HAY FALLOS DEFINITIVOS
+            // 5. Mostrar Modal con los errores reales
             if (!isAuto && totallyFailed.length > 0) {
                 setInfoModal({ 
                     isOpen: true, 
-                    title: 'Aviso', 
-                    msg: `No se encontró cotización para:\n\n${totallyFailed.join(', ')}\n\nRevisa la consola (F12) para ver por qué falló el Script.`, 
+                    title: 'Precios no encontrados', 
+                    msg: `Google Finance falló en estos valores:\n\n${totallyFailed.join('\n')}`, 
                     type: 'warning' 
                 });
             }
 
         } catch (e) {
-            console.error(e);
-            if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' });
+            if (!isAuto) setInfoModal({ isOpen: true, title: 'Fallo de Conexión', msg: e.message, type: 'error' });
         } finally {
             setUpdateProgress(100);
             setUpdateText('Completado');
