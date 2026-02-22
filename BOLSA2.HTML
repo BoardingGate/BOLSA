@@ -1607,15 +1607,19 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
 }
 
 function doPost(e) {
-  var lock = LockService.getScriptLock(); lock.tryLock(10000);
+  var lock = LockService.getScriptLock(); 
+  lock.tryLock(10000);
   try {
     var data = JSON.parse(e.postData.contents);
     var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
     var file = files.hasNext() ? files.next() : DriveApp.createFile("BOARDINGGATE_DB.json", "", MimeType.PLAIN_TEXT);
     file.setContent(JSON.stringify(data));
     return ContentService.createTextOutput(JSON.stringify({ status: "success", timestamp: data.timestamp })).setMimeType(ContentService.MimeType.JSON);
-  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
-  finally { lock.releaseLock(); }
+  } catch(e) { 
+    return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); 
+  } finally { 
+    lock.releaseLock(); 
+  }
 }
 
 function doGet(e) {
@@ -1634,7 +1638,9 @@ function doGet(e) {
       } else {
          var parts = rawTicker.split(':');
          var gTicker = rawTicker;
-         if (parts.length === 2) { gTicker = parts[1] + ":" + parts[0]; }
+         if (parts.length === 2) { 
+           gTicker = parts[1] + ":" + parts[0]; 
+         }
          url = "https://www.google.com/finance/quote/" + encodeURIComponent(gTicker);
       }
 
@@ -1642,7 +1648,7 @@ function doGet(e) {
         url: url,
         method: "GET",
         muteHttpExceptions: true,
-        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36" }
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" }
       });
       validTickers.push(rawTicker);
     }
@@ -1661,10 +1667,13 @@ function doGet(e) {
           if (priceMatch) {
             res.p = cleanNumGAS(priceMatch[1]);
             res.success = true;
+            
             var nameMatch = html.match(/<div class="zz7u7b">([^<]+)<\/div>/);
             if (nameMatch) res.n = nameMatch[1];
+
             var peMatch = html.match(/(?:Ratio precio-beneficio|P\/E ratio)[\s\S]*?<div class="P6W0H">([^<]+)<\/div>/);
             if (peMatch) res.pe = cleanNumGAS(peMatch[1]);
+
             var divMatch = html.match(/(?:Rentabilidad por dividendo|Dividend yield)[\s\S]*?<div class="P6W0H">([^<]+)<\/div>/);
             if (divMatch) {
               var divVal = divMatch[1].split(/\s|\(/)[0];
@@ -1686,14 +1695,19 @@ function doGet(e) {
     var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
     if (files.hasNext()) return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON);
     return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
-  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
+  } catch(e) { 
+    return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); 
+  }
 }
 
 function cleanNumGAS(str) {
   if (!str) return 0;
   var val = str.replace(/[^0-9.,-]/g, '');
-  if (val.indexOf(',') > -1 && val.indexOf('.') > -1) { val = val.replace(/,/g, ''); } 
-  else if (val.indexOf(',') > -1) { val = val.replace(',', '.'); }
+  if (val.indexOf(',') > -1 && val.indexOf('.') > -1) { 
+    val = val.replace(/,/g, ''); 
+  } else if (val.indexOf(',') > -1) { 
+    val = val.replace(',', '.'); 
+  }
   return parseFloat(val) || 0;
 }
 `}
@@ -2248,12 +2262,16 @@ const fetchTickerData = async () => {
     
     try {
         const scriptUrl = simpleDecrypt(gScriptUrl);
-        const fxPair = form.stockCurrency + baseCurrency;
+        const fxPair = (form.stockCurrency || 'USD') + baseCurrency;
         let googleData = null;
 
         if (scriptUrl) {
-            const res = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(form.ticker)},${encodeURIComponent(fxPair)}`);
-            googleData = await res.json();
+            try {
+                const res = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(form.ticker)},${encodeURIComponent(fxPair)}&_t=${Date.now()}`);
+                googleData = await res.json();
+            } catch (e) { 
+                console.warn("Script de Google no disponible, recurriendo a iA..."); 
+            }
         }
 
         const stock = googleData ? googleData[form.ticker] : null;
@@ -2262,35 +2280,35 @@ const fetchTickerData = async () => {
         if (stock && stock.success) {
             setForm(prev => ({
                 ...prev,
-                name: stock.n || prev.name,
+                name: stock.n || prev.name || form.ticker, 
                 buyPrice: stock.p || prev.buyPrice,
-                buyFx: fx?.success ? fx.p : (prev.stockCurrency === baseCurrency ? 1 : prev.buyFx),
+                buyFx: (prev.stockCurrency === baseCurrency) ? 1 : (fx?.success ? fx.p : prev.buyFx),
                 buyPE: stock.pe || prev.buyPE,
                 annualDividend: stock.div || prev.annualDividend
             }));
-            
-            if (stock.n) {
+
+            if (stock.p > 0) {
                 setFetchingSingle(false);
-                return;
+                return; 
             }
         }
 
-        // B. Si falta el nombre, usamos la IA como apoyo (Tu lógica original)
         const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL.`;
         const aiRes = await askGemini(apiKey, prompt, aiModel);
         const json = extractJSON(aiRes);
+        
         if (json) {
             setForm(prev => ({ 
                 ...prev, 
                 name: json.n || prev.name, 
-                buyPrice: (stock?.success ? stock.p : json.p) || prev.buyPrice, 
-                buyFx: (fx?.success ? fx.p : json.fx) || prev.buyFx, 
-                buyPE: (stock?.pe ? stock.pe : json.pe) || prev.buyPE, 
-                annualDividend: (stock?.div ? stock.div : json.div) || prev.annualDividend 
+                buyPrice: json.p || prev.buyPrice, 
+                buyFx: json.fx || prev.buyFx, 
+                buyPE: json.pe || prev.buyPE, 
+                annualDividend: json.div || prev.annualDividend 
             }));
         }
     } catch (e) {
-        setInfoModal({ isOpen: true, title: 'Fallo', msg: `Error rescatando datos.`, type: 'error' });
+        setInfoModal({ isOpen: true, title: 'Fallo', msg: `No se pudieron rescatar datos automáticamente para ${form.ticker}.`, type: 'error' });
     } finally {
         setFetchingSingle(false);
     }
@@ -2311,10 +2329,12 @@ const updatePrices = async (isAuto = false) => {
     setUpdateText('Consultando Google Finance...');
     
     try {
+        // 1. Preparamos la lista (Acciones + Divisas necesarias)
         const tickers = active.map(p => p.ticker);
         const currencies = [...new Set(active.filter(p => p.stockCurrency !== baseCurrency).map(p => p.stockCurrency + baseCurrency))];
         const tickersList = [...tickers, ...currencies].join(',');
         
+        // 2. ROMPE-CACHÉS con timestamp
         const fetchUrl = `${scriptUrl}?tickers=${encodeURIComponent(tickersList)}&_t=${Date.now()}`;
         
         const response = await fetch(fetchUrl);
@@ -2334,35 +2354,38 @@ const updatePrices = async (isAuto = false) => {
         let updatesMap = {};
         let totallyFailed = [];
 
+        // 3. Mapeo de datos recibidos a la estructura de la cartera
         active.forEach(item => {
-            const data = batchData[item.ticker];
+            const stockData = batchData[item.ticker];
             const fxKey = item.stockCurrency + baseCurrency;
             const fxData = batchData[fxKey];
 
-            if (data && data.success && data.p) {
+            if (stockData && stockData.success && stockData.p) {
                 updatesMap[item.id] = {
-                    currentPrice: cleanVal(data.p),
-                    // RESCATE DE PER
-                    currentPE: data.pe ? cleanVal(data.pe) : item.currentPE,
-                    previousClose: cleanVal(data.pc) // Se mantiene por si el script lo da
+                    currentPrice: cleanVal(stockData.p),
+                    currentPE: stockData.pe ? cleanVal(stockData.pe) : item.currentPE,
+                    previousClose: stockData.pc ? cleanVal(stockData.pc) : item.previousClose
                 };
 
+                // Actualización del tipo de cambio (FX)
                 if (item.stockCurrency === baseCurrency) {
                     updatesMap[item.id].currentFx = 1;
                 } else if (fxData && fxData.success) {
                     updatesMap[item.id].currentFx = cleanVal(fxData.p);
                 }
             } else {
-                const reason = data ? (data.reason || "Sin datos") : "Desconocido";
+                const reason = stockData ? (stockData.reason || "Sin datos") : "No encontrado";
                 totallyFailed.push(`${item.ticker} (${reason})`);
             }
         });
 
+        // 4. Aplicación de cambios al estado de React
         if (Object.keys(updatesMap).length > 0) {
             setPortfolio(prev => prev.map(p => updatesMap[p.id] ? { ...p, ...updatesMap[p.id] } : p));
             setLastUpdate(new Date().toISOString());
         }
 
+        // 5. Gestión de errores visuales
         if (!isAuto && totallyFailed.length > 0) {
             setInfoModal({ 
                 isOpen: true, 
