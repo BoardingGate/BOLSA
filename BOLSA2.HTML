@@ -2131,8 +2131,8 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             return { num: items.length, inv, cur, divN, fX, plPrice: cur - inv, plTotal: (cur + divN) - inv, plP_S: rP.simple, plP_A: rP.annual, plT_S: rT.simple, plT_A: rT.annual, intra, intraPct: prevValTotal !== 0 ? (intra / prevValTotal) * 100 : 0, avgBuyPE: countBuyPE > 0 ? sumBuyPE / countBuyPE : 0, avgCurPE: countCurPE > 0 ? sumCurPE / countCurPE : 0 };
         };
 
-        // 1. PANELES SUPERIORES: Calculados sobre TODO el portafolio que tenga el Check Marcado
-        const selectedOnly = portfolio.filter(p => p.isActive !== false);
+        // 1. PANELES SUPERIORES: Calculados sobre la cartera visible (Filtros de búsqueda, fechas y Check Marcado)
+        const selectedOnly = visiblePortfolio;
         const stats = {
             active: calc(selectedOnly.filter(p => !p.sellDate)),
             sold: calc(selectedOnly.filter(p => !!p.sellDate)),
@@ -2143,7 +2143,78 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         const gridMetrics = calc(visiblePortfolio);
 
         return { stats, gridMetrics };
-    }, [portfolio, visiblePortfolio, baseCurrency]);
+    }, [visiblePortfolio, baseCurrency]);
+
+    const stats = globalMetrics.stats;
+    const gridTotals = {
+        tFx: globalMetrics.gridMetrics.fX,
+        tCost: globalMetrics.gridMetrics.inv,
+        tVal: globalMetrics.gridMetrics.cur,
+        tRes: globalMetrics.gridMetrics.plTotal,
+        tPct: globalMetrics.gridMetrics.plT_S,
+        tIntra: globalMetrics.gridMetrics.intra,
+        tIntraPct: globalMetrics.gridMetrics.intraPct,
+        avgBuyPE: globalMetrics.gridMetrics.avgBuyPE,
+        avgCurPE: globalMetrics.gridMetrics.avgCurPE
+    };
+
+   
+    const historicalStats = useMemo(() => {
+        const activeP = visiblePortfolio.filter(p => !p.sellDate);
+        const soldP = visiblePortfolio.filter(p => !!p.sellDate);
+        const allP = visiblePortfolio;
+        
+        const calcAvgCapital = (items) => {
+            if (items.length === 0) return { avgCap: 0, profit: 0, first: null, last: null, diffDays: 0 };
+            const sortedByBuy = [...items].sort((a,b) => new Date(a.buyDate) - new Date(b.buyDate));
+            const firstDate = new Date(sortedByBuy[0].buyDate);
+            let lastDate = new Date();
+            if (items.every(p => p.sellDate)) {
+                const sortedBySell = [...items].sort((a,b) => new Date(b.sellDate) - new Date(a.sellDate));
+                lastDate = new Date(sortedBySell[0].sellDate);
+            }
+            const totalPeriodDays = Math.max(1, (lastDate - firstDate) / (1000 * 60 * 60 * 24));
+            let weightedSum = 0;
+            let totalProfit = 0;
+            items.forEach(p => {
+                const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+                const endDate = p.sellDate ? new Date(p.sellDate) : new Date();
+                const daysHeld = Math.max(0, (endDate - new Date(p.buyDate)) / (1000 * 60 * 60 * 24));
+                weightedSum += (cost * daysHeld);
+                const isS = !!p.sellDate;
+                const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
+                const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
+                const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+                const divs = (p.dividends || []).reduce((acc,d) => acc+d.net, 0);
+                totalProfit += (vF - cost) + divs;
+            });
+            const avgCap = weightedSum / totalPeriodDays;
+            return { avgCap, profit: totalProfit, first: firstDate, last: lastDate, diffDays: totalPeriodDays };
+        };
+
+        const allOps = [];
+        allP.forEach(p => {
+            allOps.push({ d: new Date(p.buyDate).getTime(), type: 'buy' });
+            if(p.sellDate) allOps.push({ d: new Date(p.sellDate).getTime(), type: 'sell' });
+        });
+        allOps.sort((a,b) => a.d - b.d);
+        let diffSum = 0;
+        for(let i=1; i<allOps.length; i++) {
+            diffSum += (allOps[i].d - allOps[i-1].d);
+        }
+        const avgIntervalDays = allOps.length > 1 ? (diffSum / (allOps.length - 1)) / (1000 * 60 * 60 * 24) : 0;
+        const firstEver = allOps.length > 0 ? allOps[0].d : Date.now();
+        const lastEver = allOps.length > 0 ? allOps[allOps.length-1].d : Date.now();
+        const totalTimeSpan = Math.max(1, (lastEver - firstEver)/(1000*60*60*24));
+        let totalDaysOpenAccum = 0;
+        allP.forEach(p => {
+            const end = p.sellDate ? new Date(p.sellDate) : new Date();
+            totalDaysOpenAccum += Math.max(0, (end - new Date(p.buyDate))/(1000*60*60*24));
+        });
+        const avgPositions = totalTimeSpan > 0 ? totalDaysOpenAccum / totalTimeSpan : 0;
+
+        return { consolidated: calcAvgCapital(allP), closed: calcAvgCapital(soldP), active: calcAvgCapital(activeP), avgIntervalDays, avgPositions };
+    }, [visiblePortfolio]);
 
     const stats = globalMetrics.stats;
     const gridTotals = {
