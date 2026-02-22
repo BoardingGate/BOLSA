@@ -1601,60 +1601,26 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
                             <li>Ve a <a href="https://script.google.com/home/start" target="_blank" className="text-blue-400 font-bold hover:underline">Google Apps Script</a> y haz clic en <strong>"Nuevo Proyecto"</strong>.</li>
                             <li>Borra todo el código del editor y pega este bloque exacto:
                                 <pre className="bg-black text-green-400 p-2 rounded mt-1 mb-1 border border-slate-800 overflow-x-auto text-[9px] font-mono select-all">
-{`/**
- * FUNCIÓN DE AUTORIZACIÓN
- * Ejecuta esta función UNA VEZ en el editor pulsando el botón "Ejecutar"
- * para conceder permisos de lectura/escritura en Drive y conexión externa.
- */
-function A_AUTORIZAR_AQUI() {
+{`function A_AUTORIZAR_AQUI() {
   UrlFetchApp.fetch("https://www.google.com");
-  console.log("Autorización completada con éxito.");
+  console.log("OK");
 }
 
-/**
- * FUNCIÓN POST: GUARDAR BACKUP
- * Recibe los datos de la app y los guarda en el archivo BOARDINGGATE_DB.json en Drive.
- */
 function doPost(e) {
-  var lock = LockService.getScriptLock();
-  lock.tryLock(10000); // Evita colisiones de escritura si hay varias subidas a la vez
-  
+  var lock = LockService.getScriptLock(); lock.tryLock(10000);
   try {
     var data = JSON.parse(e.postData.contents);
-    var fileName = "BOARDINGGATE_DB.json";
-    var files = DriveApp.getFilesByName(fileName);
-    var file;
-    
-    if (files.hasNext()) {
-      file = files.next();
-    } else {
-      file = DriveApp.createFile(fileName, "", MimeType.PLAIN_TEXT);
-    }
-    
+    var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
+    var file = files.hasNext() ? files.next() : DriveApp.createFile("BOARDINGGATE_DB.json", "", MimeType.PLAIN_TEXT);
     file.setContent(JSON.stringify(data));
-    
-    return ContentService.createTextOutput(JSON.stringify({ 
-      status: "success", 
-      timestamp: data.timestamp 
-    })).setMimeType(ContentService.MimeType.JSON);
-    
-  } catch(err) {
-    return ContentService.createTextOutput(JSON.stringify({
-      error: err.toString()
-    })).setMimeType(ContentService.MimeType.JSON);
-  } finally {
-    lock.releaseLock();
-  }
+    return ContentService.createTextOutput(JSON.stringify({ status: "success", timestamp: data.timestamp })).setMimeType(ContentService.MimeType.JSON);
+  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
+  finally { lock.releaseLock(); }
 }
 
-/**
- * FUNCIÓN GET: CONSULTAR DATOS DE MERCADO O DESCARGAR BACKUP
- */
 function doGet(e) {
-  // CASO A: CONSULTA DE TICKERS Y DIVISAS
   if (e.parameter.tickers) {
     var tickerList = e.parameter.tickers.split(",");
-    var results = {};
     var requests = [];
     var validTickers = [];
 
@@ -1662,89 +1628,75 @@ function doGet(e) {
       var rawTicker = tickerList[i].trim();
       if(!rawTicker) continue;
       
-      var url = "https://www.google.com/finance/quote/" + encodeURIComponent(rawTicker);
-      
-      // Lógica especial para Pares de Divisas (ej: EURUSD -> EUR-USD)
+      var url;
       if (rawTicker.length === 6 && !rawTicker.includes(":")) {
          url = "https://www.google.com/finance/quote/" + rawTicker.substring(0,3) + "-" + rawTicker.substring(3,6);
+      } else {
+         var parts = rawTicker.split(':');
+         var gTicker = rawTicker;
+         if (parts.length === 2) { gTicker = parts[1] + ":" + parts[0]; }
+         url = "https://www.google.com/finance/quote/" + encodeURIComponent(gTicker);
       }
 
       requests.push({
         url: url,
         method: "GET",
         muteHttpExceptions: true,
-        headers: { "User-Agent": "Mozilla/5.0" }
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36" }
       });
       validTickers.push(rawTicker);
     }
 
+    var results = {};
     try {
       var responses = UrlFetchApp.fetchAll(requests);
-
       for (var j = 0; j < responses.length; j++) {
-        var html = responses[j].getContentText();
-        var currentTicker = validTickers[j];
-        var itemResult = { success: false };
-
-        if (responses[j].getResponseCode() === 200) {
-          // 1. Extraer Precio (currentPrice)
+        var rawTicker = validTickers[j];
+        var code = responses[j].getResponseCode();
+        if (code === 200) {
+          var html = responses[j].getContentText();
+          var res = { success: false };
+          
           var priceMatch = html.match(/<div class="AHmHk"[^>]*>[\s\S]*?<div class="YMlKec[^"]*">([^<]+)<\/div>/);
           if (priceMatch) {
-            itemResult.p = cleanNum(priceMatch[1]);
-            itemResult.success = true;
-            
-            // 2. Extraer Nombre de Empresa (name)
+            res.p = cleanNumGAS(priceMatch[1]);
+            res.success = true;
             var nameMatch = html.match(/<div class="zz7u7b">([^<]+)<\/div>/);
-            if (nameMatch) itemResult.n = nameMatch[1];
-
-            // 3. Extraer PER (Ratio precio-beneficio)
+            if (nameMatch) res.n = nameMatch[1];
             var peMatch = html.match(/(?:Ratio precio-beneficio|P\/E ratio)[\s\S]*?<div class="P6W0H">([^<]+)<\/div>/);
-            if (peMatch) itemResult.pe = cleanNum(peMatch[1]);
-
-            // 4. Extraer Dividendo (Importe Anual)
+            if (peMatch) res.pe = cleanNumGAS(peMatch[1]);
             var divMatch = html.match(/(?:Rentabilidad por dividendo|Dividend yield)[\s\S]*?<div class="P6W0H">([^<]+)<\/div>/);
             if (divMatch) {
-              // Google devuelve "1,24 (0,50%)". Extraemos solo el primer bloque numérico.
-              var divRaw = divMatch[1].split(/\s|%/)[0];
-              itemResult.div = cleanNum(divRaw);
+              var divVal = divMatch[1].split(/\s|\(/)[0];
+              res.div = cleanNumGAS(divVal);
             }
           }
+          results[rawTicker] = res;
+        } else {
+          results[rawTicker] = { success: false, reason: "HTTP " + code };
         }
-        results[currentTicker] = itemResult;
       }
     } catch(err) {
-       return ContentService.createTextOutput(JSON.stringify({error: "Fetch error"})).setMimeType(ContentService.MimeType.JSON);
+       return ContentService.createTextOutput(JSON.stringify({error: err.toString()})).setMimeType(ContentService.MimeType.JSON);
     }
     return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
   }
 
-  // CASO B: DESCARGAR EL ARCHIVO DE BACKUP (Sincronización)
   try {
     var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
-    if (files.hasNext()) {
-      var content = files.next().getBlob().getDataAsString();
-      return ContentService.createTextOutput(content).setMimeType(ContentService.MimeType.JSON);
-    } else {
-      return ContentService.createTextOutput(JSON.stringify({ timestamp: 0 })).setMimeType(ContentService.MimeType.JSON);
-    }
-  } catch(e) {
-    return ContentService.createTextOutput(JSON.stringify({ error: e.toString() })).setMimeType(ContentService.MimeType.JSON);
-  }
+    if (files.hasNext()) return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
+  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
 }
 
-function cleanNum(str) {
+function cleanNumGAS(str) {
   if (!str) return 0;
   var val = str.replace(/[^0-9.,-]/g, '');
-  
-  if (val.indexOf(',') > -1 && val.indexOf('.') > -1) {
-    val = val.replace(/,/g, '');
-  } 
-  else if (val.indexOf(',') > -1) {
-    val = val.replace(',', '.');
-  }
-  
+  if (val.indexOf(',') > -1 && val.indexOf('.') > -1) { val = val.replace(/,/g, ''); } 
+  else if (val.indexOf(',') > -1) { val = val.replace(',', '.'); }
   return parseFloat(val) || 0;
-}`}
+}
+`}
                                 </pre>
                             </li>
                             <li className="bg-blue-900/20 p-2 rounded border border-blue-500/30 text-blue-200">
@@ -2291,52 +2243,54 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
 
 const fetchTickerData = async () => {
-    if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker primero.', type: 'warning' });
+    if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' });
     setFetchingSingle(true);
-
+    
     try {
         const scriptUrl = simpleDecrypt(gScriptUrl);
-        const fxPair = (form.stockCurrency || 'USD') + baseCurrency;
-        
+        const fxPair = form.stockCurrency + baseCurrency;
         let googleData = null;
 
         if (scriptUrl) {
-            try {
-                const res = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(form.ticker)},${encodeURIComponent(fxPair)}`);
-                googleData = await res.json();
-            } catch (e) { console.warn("Google Script falló, reintentando con iA..."); }
+            const res = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(form.ticker)},${encodeURIComponent(fxPair)}`);
+            googleData = await res.json();
         }
 
         const stock = googleData ? googleData[form.ticker] : null;
         const fx = googleData ? googleData[fxPair] : null;
 
-        setForm(prev => {
-            let nextForm = { ...prev };
+        if (stock && stock.success) {
+            setForm(prev => ({
+                ...prev,
+                name: stock.n || prev.name,
+                buyPrice: stock.p || prev.buyPrice,
+                buyFx: fx?.success ? fx.p : (prev.stockCurrency === baseCurrency ? 1 : prev.buyFx),
+                buyPE: stock.pe || prev.buyPE,
+                annualDividend: stock.div || prev.annualDividend
+            }));
             
-            if (stock?.success) {
-                if (stock.n) nextForm.name = stock.n;
-                nextForm.buyPrice = stock.p;
-                if (stock.pe) nextForm.buyPE = stock.pe;
-                if (stock.div) nextForm.annualDividend = stock.div;
+            if (stock.n) {
+                setFetchingSingle(false);
+                return;
             }
-
-            if (fx?.success) {
-                nextForm.buyFx = fx.p;
-            } else if (prev.stockCurrency === baseCurrency) {
-                nextForm.buyFx = 1;
-            }
-
-            return nextForm;
-        });
-
-        if (!stock?.n) {
-            const prompt = `Dime solo el nombre oficial de la empresa con ticker "${form.ticker}". Responde solo el nombre, sin puntos ni texto extra.`;
-            const aiRes = await askGemini(apiKey, prompt, aiModel);
-            if (aiRes) setForm(prev => ({ ...prev, name: aiRes.trim() }));
         }
 
+        // B. Si falta el nombre, usamos la IA como apoyo (Tu lógica original)
+        const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL.`;
+        const aiRes = await askGemini(apiKey, prompt, aiModel);
+        const json = extractJSON(aiRes);
+        if (json) {
+            setForm(prev => ({ 
+                ...prev, 
+                name: json.n || prev.name, 
+                buyPrice: (stock?.success ? stock.p : json.p) || prev.buyPrice, 
+                buyFx: (fx?.success ? fx.p : json.fx) || prev.buyFx, 
+                buyPE: (stock?.pe ? stock.pe : json.pe) || prev.buyPE, 
+                annualDividend: (stock?.div ? stock.div : json.div) || prev.annualDividend 
+            }));
+        }
     } catch (e) {
-        setInfoModal({ isOpen: true, title: 'Error', msg: 'No se pudo completar la búsqueda automática.', type: 'warning' });
+        setInfoModal({ isOpen: true, title: 'Fallo', msg: `Error rescatando datos.`, type: 'error' });
     } finally {
         setFetchingSingle(false);
     }
@@ -2381,17 +2335,16 @@ const updatePrices = async (isAuto = false) => {
         let totallyFailed = [];
 
         active.forEach(item => {
-            const stockData = batchData[item.ticker];
+            const data = batchData[item.ticker];
             const fxKey = item.stockCurrency + baseCurrency;
             const fxData = batchData[fxKey];
 
-            if (stockData && stockData.success && stockData.p) {
+            if (data && data.success && data.p) {
                 updatesMap[item.id] = {
-                    currentPrice: cleanVal(stockData.p),
-                    // Rescatamos el PER si el script lo encontró
-                    currentPE: stockData.pe ? cleanVal(stockData.pe) : item.currentPE,
-                    // Mantenemos previousClose si viniera del script
-                    previousClose: stockData.pc ? cleanVal(stockData.pc) : item.previousClose
+                    currentPrice: cleanVal(data.p),
+                    // RESCATE DE PER
+                    currentPE: data.pe ? cleanVal(data.pe) : item.currentPE,
+                    previousClose: cleanVal(data.pc) // Se mantiene por si el script lo da
                 };
 
                 if (item.stockCurrency === baseCurrency) {
@@ -2400,7 +2353,7 @@ const updatePrices = async (isAuto = false) => {
                     updatesMap[item.id].currentFx = cleanVal(fxData.p);
                 }
             } else {
-                const reason = stockData ? (stockData.reason || "Sin datos") : "No encontrado";
+                const reason = data ? (data.reason || "Sin datos") : "Desconocido";
                 totallyFailed.push(`${item.ticker} (${reason})`);
             }
         });
