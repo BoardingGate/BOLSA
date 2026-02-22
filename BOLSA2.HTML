@@ -1390,16 +1390,14 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
     const handleRunExport = () => { 
         setIoStatus('processing'); 
         try { 
-            // AQUI SE GUARDAN LOS MODELOS EN EL BACKUP
-            const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 3, resultsData, appPin, aiModel, availableModels }; 
+            const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 3, resultsData, appPin, aiModel, availableModels, gScriptUrl,globalNotes }; 
             const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"}); 
             const url = URL.createObjectURL(blob); 
             const a = document.createElement('a'); a.href = url; a.download = `BoardingGate_Backup_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); setIoStatus('success'); setTimeout(() => setIoStatus('idle'), 2000); 
         } catch (e) { alert("Error: " + e.message); setIoStatus('error'); } 
     };
     
-    const handleRunImport = (e) => { const file = e.target.files[0]; if (!file) return; if(!confirm("⚠️ IMPORTANTE:\n\nEsta acción reemplazará TODA tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) { e.target.value = null; return; } setIoStatus('processing'); const reader = new FileReader(); reader.onload = (ev) => { try { const d = JSON.parse(ev.target.result); if (d.portfolio) setPortfolio(d.portfolio); if (d.apiKey) setApiKey(d.apiKey); if (d.baseCurrency) setBaseCurrency(d.baseCurrency); if (d.refreshInterval) setRefreshInterval(d.refreshInterval); if(d.appPin) setAppPin(d.appPin); 
-    // RECUPERAR MODELOS DEL BACKUP
+    const handleRunImport = (e) => { const file = e.target.files[0]; if (!file) return; if(!confirm("⚠️ IMPORTANTE:\n\nEsta acción reemplazará TODA tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) { e.target.value = null; return; } setIoStatus('processing'); const reader = new FileReader(); reader.onload = (ev) => { try { const d = JSON.parse(ev.target.result); if (d.portfolio) setPortfolio(d.portfolio); if (d.apiKey) setApiKey(d.apiKey); if (d.baseCurrency) setBaseCurrency(d.baseCurrency); if (d.gScriptUrl) setGScriptUrl(d.gScriptUrl);  if (d.refreshInterval) setRefreshInterval(d.refreshInterval); if(d.appPin) setAppPin(d.appPin); 
     if (d.aiModel) setAiModel(d.aiModel); if (d.availableModels) setAvailableModels(d.availableModels);
     setIoStatus('success'); alert("✅ Restauración completada correctamente."); window.location.reload(); } catch (err) { alert("Archivo inválido o corrupto."); setIoStatus('error'); } }; reader.readAsText(file); };
     
@@ -1451,7 +1449,6 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
             const extractedData = sanitizeAndParseJSON(res); 
 
             if (Array.isArray(extractedData)) { 
-                // AQUI SE COMPRUEBA EL LIMITE DE ACCIONES (5 SIN REGISTRO)
                 if ((portfolio.length + extractedData.length) > _x_lim) {
                     throw new Error("CAPACITY_OVERFLOW_EXCEPTION"); 
                 }
@@ -1604,100 +1601,150 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
                             <li>Ve a <a href="https://script.google.com/home/start" target="_blank" className="text-blue-400 font-bold hover:underline">Google Apps Script</a> y haz clic en <strong>"Nuevo Proyecto"</strong>.</li>
                             <li>Borra todo el código del editor y pega este bloque exacto:
                                 <pre className="bg-black text-green-400 p-2 rounded mt-1 mb-1 border border-slate-800 overflow-x-auto text-[9px] font-mono select-all">
-{`
+{`/**
+ * FUNCIÓN DE AUTORIZACIÓN
+ * Ejecuta esta función UNA VEZ en el editor pulsando el botón "Ejecutar"
+ * para conceder permisos de lectura/escritura en Drive y conexión externa.
+ */
 function A_AUTORIZAR_AQUI() {
   UrlFetchApp.fetch("https://www.google.com");
-  console.log("OK");
+  console.log("Autorización completada con éxito.");
 }
 
+/**
+ * FUNCIÓN POST: GUARDAR BACKUP
+ * Recibe los datos de la app y los guarda en el archivo BOARDINGGATE_DB.json en Drive.
+ */
 function doPost(e) {
-  var lock = LockService.getScriptLock(); lock.tryLock(10000);
+  var lock = LockService.getScriptLock();
+  lock.tryLock(10000); // Evita colisiones de escritura si hay varias subidas a la vez
+  
   try {
     var data = JSON.parse(e.postData.contents);
-    var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
-    var file = files.hasNext() ? files.next() : DriveApp.createFile("BOARDINGGATE_DB.json", "", MimeType.PLAIN_TEXT);
+    var fileName = "BOARDINGGATE_DB.json";
+    var files = DriveApp.getFilesByName(fileName);
+    var file;
+    
+    if (files.hasNext()) {
+      file = files.next();
+    } else {
+      file = DriveApp.createFile(fileName, "", MimeType.PLAIN_TEXT);
+    }
+    
     file.setContent(JSON.stringify(data));
-    return ContentService.createTextOutput(JSON.stringify({ status: "success", timestamp: data.timestamp })).setMimeType(ContentService.MimeType.JSON);
-  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
-  finally { lock.releaseLock(); }
+    
+    return ContentService.createTextOutput(JSON.stringify({ 
+      status: "success", 
+      timestamp: data.timestamp 
+    })).setMimeType(ContentService.MimeType.JSON);
+    
+  } catch(err) {
+    return ContentService.createTextOutput(JSON.stringify({
+      error: err.toString()
+    })).setMimeType(ContentService.MimeType.JSON);
+  } finally {
+    lock.releaseLock();
+  }
 }
+
+/**
+ * FUNCIÓN GET: CONSULTAR DATOS DE MERCADO O DESCARGAR BACKUP
+ */
 function doGet(e) {
+  // CASO A: CONSULTA DE TICKERS Y DIVISAS
   if (e.parameter.tickers) {
     var tickerList = e.parameter.tickers.split(",");
+    var results = {};
     var requests = [];
     var validTickers = [];
 
     for (var i = 0; i < tickerList.length; i++) {
       var rawTicker = tickerList[i].trim();
       if(!rawTicker) continue;
-      var parts = rawTicker.split(':');
-      var gTicker = rawTicker;
-      if (parts.length === 2) {
-         gTicker = parts[1] + ":" + parts[0];
+      
+      var url = "https://www.google.com/finance/quote/" + encodeURIComponent(rawTicker);
+      
+      // Lógica especial para Pares de Divisas (ej: EURUSD -> EUR-USD)
+      if (rawTicker.length === 6 && !rawTicker.includes(":")) {
+         url = "https://www.google.com/finance/quote/" + rawTicker.substring(0,3) + "-" + rawTicker.substring(3,6);
       }
 
       requests.push({
-        url: "https://www.google.com/finance/quote/" + encodeURIComponent(gTicker),
+        url: url,
         method: "GET",
-        muteHttpExceptions: true
+        muteHttpExceptions: true,
+        headers: { "User-Agent": "Mozilla/5.0" }
       });
       validTickers.push(rawTicker);
     }
-    var results = {};
 
     try {
       var responses = UrlFetchApp.fetchAll(requests);
 
       for (var j = 0; j < responses.length; j++) {
-        var rawTicker = validTickers[j];
-        var code = responses[j].getResponseCode();
+        var html = responses[j].getContentText();
+        var currentTicker = validTickers[j];
+        var itemResult = { success: false };
 
-        if (code === 200) {
-          var html = responses[j].getContentText();
-          var match = html.match(/<div class="AHmHk"[^>]*>[\s\S]*?<div class="YMlKec[^"]*">([^<]+)<\/div>/);
-          if (match) {
-            var pStr = match[1].replace(/[^0-9.,]/g, ''); 
-            if (pStr.indexOf(',') > -1 && pStr.indexOf('.') > -1) {
-              pStr = pStr.replace(/,/g, ''); 
-            } else if (pStr.indexOf(',') > -1) {
-              pStr = pStr.replace(',', '.');
-            }
-            var price = parseFloat(pStr);
-            results[rawTicker] = {
-              p: price,
-              pc: price, 
-              success: true
-            };
-          } else {
-            var metaMatch = html.match(/<meta itemprop="price" content="([^"]+)">/);
-            if (metaMatch) {
-               results[rawTicker] = {
-                 p: parseFloat(metaMatch[1]),
-                 pc: parseFloat(metaMatch[1]),
-                 success: true
-               };
-            } else {
-               results[rawTicker] = { success: false, reason: "Estructura web no reconocida" };
+        if (responses[j].getResponseCode() === 200) {
+          // 1. Extraer Precio (currentPrice)
+          var priceMatch = html.match(/<div class="AHmHk"[^>]*>[\s\S]*?<div class="YMlKec[^"]*">([^<]+)<\/div>/);
+          if (priceMatch) {
+            itemResult.p = cleanNum(priceMatch[1]);
+            itemResult.success = true;
+            
+            // 2. Extraer Nombre de Empresa (name)
+            var nameMatch = html.match(/<div class="zz7u7b">([^<]+)<\/div>/);
+            if (nameMatch) itemResult.n = nameMatch[1];
+
+            // 3. Extraer PER (Ratio precio-beneficio)
+            var peMatch = html.match(/(?:Ratio precio-beneficio|P\/E ratio)[\s\S]*?<div class="P6W0H">([^<]+)<\/div>/);
+            if (peMatch) itemResult.pe = cleanNum(peMatch[1]);
+
+            // 4. Extraer Dividendo (Importe Anual)
+            var divMatch = html.match(/(?:Rentabilidad por dividendo|Dividend yield)[\s\S]*?<div class="P6W0H">([^<]+)<\/div>/);
+            if (divMatch) {
+              // Google devuelve "1,24 (0,50%)". Extraemos solo el primer bloque numérico.
+              var divRaw = divMatch[1].split(/\s|%/)[0];
+              itemResult.div = cleanNum(divRaw);
             }
           }
-        } else {
-          results[rawTicker] = { success: false, reason: "HTTP " + code };
         }
+        results[currentTicker] = itemResult;
       }
     } catch(err) {
-       for(var k=0; k<validTickers.length; k++) {
-         results[validTickers[k]] = { success: false, reason: "Error Conexión" };
-       }
+       return ContentService.createTextOutput(JSON.stringify({error: "Fetch error"})).setMimeType(ContentService.MimeType.JSON);
     }
     return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
   }
+
+  // CASO B: DESCARGAR EL ARCHIVO DE BACKUP (Sincronización)
   try {
     var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
-    if (files.hasNext()) return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON);
-    return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
-  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
+    if (files.hasNext()) {
+      var content = files.next().getBlob().getDataAsString();
+      return ContentService.createTextOutput(content).setMimeType(ContentService.MimeType.JSON);
+    } else {
+      return ContentService.createTextOutput(JSON.stringify({ timestamp: 0 })).setMimeType(ContentService.MimeType.JSON);
+    }
+  } catch(e) {
+    return ContentService.createTextOutput(JSON.stringify({ error: e.toString() })).setMimeType(ContentService.MimeType.JSON);
+  }
 }
-`}
+
+function cleanNum(str) {
+  if (!str) return 0;
+  var val = str.replace(/[^0-9.,-]/g, '');
+  
+  if (val.indexOf(',') > -1 && val.indexOf('.') > -1) {
+    val = val.replace(/,/g, '');
+  } 
+  else if (val.indexOf(',') > -1) {
+    val = val.replace(',', '.');
+  }
+  
+  return parseFloat(val) || 0;
+}`}
                                 </pre>
                             </li>
                             <li className="bg-blue-900/20 p-2 rounded border border-blue-500/30 text-blue-200">
@@ -2242,86 +2289,144 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     return () => clearInterval(interval); 
 }, [apiKey, refreshInterval, isAppReady]);     
 
-    const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt, aiModel); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
+
+const fetchTickerData = async () => {
+    if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker primero.', type: 'warning' });
+    setFetchingSingle(true);
+
+    try {
+        const scriptUrl = simpleDecrypt(gScriptUrl);
+        const fxPair = (form.stockCurrency || 'USD') + baseCurrency;
+        
+        let googleData = null;
+
+        if (scriptUrl) {
+            try {
+                const res = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(form.ticker)},${encodeURIComponent(fxPair)}`);
+                googleData = await res.json();
+            } catch (e) { console.warn("Google Script falló, reintentando con iA..."); }
+        }
+
+        const stock = googleData ? googleData[form.ticker] : null;
+        const fx = googleData ? googleData[fxPair] : null;
+
+        setForm(prev => {
+            let nextForm = { ...prev };
+            
+            if (stock?.success) {
+                if (stock.n) nextForm.name = stock.n;
+                nextForm.buyPrice = stock.p;
+                if (stock.pe) nextForm.buyPE = stock.pe;
+                if (stock.div) nextForm.annualDividend = stock.div;
+            }
+
+            if (fx?.success) {
+                nextForm.buyFx = fx.p;
+            } else if (prev.stockCurrency === baseCurrency) {
+                nextForm.buyFx = 1;
+            }
+
+            return nextForm;
+        });
+
+        if (!stock?.n) {
+            const prompt = `Dime solo el nombre oficial de la empresa con ticker "${form.ticker}". Responde solo el nombre, sin puntos ni texto extra.`;
+            const aiRes = await askGemini(apiKey, prompt, aiModel);
+            if (aiRes) setForm(prev => ({ ...prev, name: aiRes.trim() }));
+        }
+
+    } catch (e) {
+        setInfoModal({ isOpen: true, title: 'Error', msg: 'No se pudo completar la búsqueda automática.', type: 'warning' });
+    } finally {
+        setFetchingSingle(false);
+    }
+};
 
 const updatePrices = async (isAuto = false) => {
-        const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
-        const scriptUrl = simpleDecrypt(gScriptUrl);
+    const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
+    const scriptUrl = simpleDecrypt(gScriptUrl);
+    
+    if (active.length === 0) return;
+    if (!scriptUrl) {
+        if (!isAuto) setInfoModal({ isOpen: true, title: 'Aviso', msg: 'Para actualizar precios necesitas configurar la URL del Script de Google en Ajustes.', type: 'error' });
+        return;
+    }
+
+    setUpdating(true);
+    setUpdateProgress(30); 
+    setUpdateText('Consultando Google Finance...');
+    
+    try {
+        const tickers = active.map(p => p.ticker);
+        const currencies = [...new Set(active.filter(p => p.stockCurrency !== baseCurrency).map(p => p.stockCurrency + baseCurrency))];
+        const tickersList = [...tickers, ...currencies].join(',');
         
-        if (active.length === 0) return;
-        if (!scriptUrl) {
-            if (!isAuto) setInfoModal({ isOpen: true, title: 'Aviso', msg: 'Para actualizar precios necesitas configurar la URL del Script de Google en Ajustes.', type: 'error' });
-            return;
+        const fetchUrl = `${scriptUrl}?tickers=${encodeURIComponent(tickersList)}&_t=${Date.now()}`;
+        
+        const response = await fetch(fetchUrl);
+        const textResponse = await response.text();
+        
+        if (textResponse.includes("<html") || textResponse.includes("Sign in - Google")) {
+            throw new Error("🚨 ERROR DE PERMISOS: El Script está bloqueado. Ve a Google Apps Script -> Nueva Implementación -> 'Cualquier usuario'.");
         }
 
-        setUpdating(true);
-        setUpdateProgress(30); 
-        setUpdateText('Consultando Google Finance...');
-        
+        let batchData;
         try {
-            // 1. Preparamos la lista
-            const tickersList = active.map(p => p.ticker).join(',');
-            
-            // 2. ROMPE-CACHÉS: Añadimos la hora actual para que el móvil no use datos viejos
-            const fetchUrl = `${scriptUrl}?tickers=${encodeURIComponent(tickersList)}&_t=${Date.now()}`;
-            
-            const response = await fetch(fetchUrl);
-            const textResponse = await response.text();
-            
-            if (textResponse.includes("<html") || textResponse.includes("Sign in - Google")) {
-                throw new Error("🚨 ERROR DE PERMISOS: El Script está bloqueado. Ve a Google Apps Script -> Nueva Implementación -> 'Cualquier usuario'.");
-            }
-
-            let batchData;
-            try {
-                batchData = JSON.parse(textResponse);
-            } catch (errJSON) {
-                throw new Error("🚨 ERROR DEL SCRIPT:\n\n" + textResponse.substring(0, 150));
-            }
-
-            let updatesMap = {};
-            let totallyFailed = [];
-
-            // 3. Asignamos los precios
-            active.forEach(item => {
-                const data = batchData[item.ticker];
-                if (data && data.success && data.p) {
-                    updatesMap[item.id] = {
-                        currentPrice: cleanVal(data.p),
-                        previousClose: cleanVal(data.pc),
-                        currentFx: (data.curr === baseCurrency) ? 1 : item.currentFx 
-                    };
-                } else {
-                    // Guardamos el ticker Y el motivo real del fallo que nos manda el script
-                    const reason = data ? data.reason : "Desconocido";
-                    totallyFailed.push(`${item.ticker} (${reason})`);
-                }
-            });
-
-            // 4. Aplicamos cambios a la cartera
-            if (Object.keys(updatesMap).length > 0) {
-                setPortfolio(prev => prev.map(p => updatesMap[p.id] ? { ...p, ...updatesMap[p.id] } : p));
-                setLastUpdate(new Date().toISOString());
-            }
-
-            // 5. Mostrar Modal con los errores reales
-            if (!isAuto && totallyFailed.length > 0) {
-                setInfoModal({ 
-                    isOpen: true, 
-                    title: 'Precios no encontrados', 
-                    msg: `Google Finance falló en estos valores:\n\n${totallyFailed.join('\n')}`, 
-                    type: 'warning' 
-                });
-            }
-
-        } catch (e) {
-            if (!isAuto) setInfoModal({ isOpen: true, title: 'Fallo de Conexión', msg: e.message, type: 'error' });
-        } finally {
-            setUpdateProgress(100);
-            setUpdateText('Completado');
-            setTimeout(() => { setUpdating(false); setUpdateProgress(0); setUpdateText(''); }, 1000);
+            batchData = JSON.parse(textResponse);
+        } catch (errJSON) {
+            throw new Error("🚨 ERROR DEL SCRIPT:\n\n" + textResponse.substring(0, 150));
         }
-    };
+
+        let updatesMap = {};
+        let totallyFailed = [];
+
+        active.forEach(item => {
+            const stockData = batchData[item.ticker];
+            const fxKey = item.stockCurrency + baseCurrency;
+            const fxData = batchData[fxKey];
+
+            if (stockData && stockData.success && stockData.p) {
+                updatesMap[item.id] = {
+                    currentPrice: cleanVal(stockData.p),
+                    // Rescatamos el PER si el script lo encontró
+                    currentPE: stockData.pe ? cleanVal(stockData.pe) : item.currentPE,
+                    // Mantenemos previousClose si viniera del script
+                    previousClose: stockData.pc ? cleanVal(stockData.pc) : item.previousClose
+                };
+
+                if (item.stockCurrency === baseCurrency) {
+                    updatesMap[item.id].currentFx = 1;
+                } else if (fxData && fxData.success) {
+                    updatesMap[item.id].currentFx = cleanVal(fxData.p);
+                }
+            } else {
+                const reason = stockData ? (stockData.reason || "Sin datos") : "No encontrado";
+                totallyFailed.push(`${item.ticker} (${reason})`);
+            }
+        });
+
+        if (Object.keys(updatesMap).length > 0) {
+            setPortfolio(prev => prev.map(p => updatesMap[p.id] ? { ...p, ...updatesMap[p.id] } : p));
+            setLastUpdate(new Date().toISOString());
+        }
+
+        if (!isAuto && totallyFailed.length > 0) {
+            setInfoModal({ 
+                isOpen: true, 
+                title: 'Precios no encontrados', 
+                msg: `Google Finance falló en estos valores:\n\n${totallyFailed.join('\n')}`, 
+                type: 'warning' 
+            });
+        }
+
+    } catch (e) {
+        if (!isAuto) setInfoModal({ isOpen: true, title: 'Fallo de Conexión', msg: e.message, type: 'error' });
+    } finally {
+        setUpdateProgress(100);
+        setUpdateText('Completado');
+        setTimeout(() => { setUpdating(false); setUpdateProgress(0); setUpdateText(''); }, 1000);
+    }
+};
 
 
  // ANALISIS IA MEJORADO Y CORREGIDO (VERSIÓN BLINDADA)
@@ -4416,9 +4521,9 @@ const App = () => {
 
     const updateResultsData = (newVal) => { setResultsData(newVal); setLocalTimestamp(Date.now()); setSyncStatus('unsaved'); };
 
-    const uploadToCloud = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) return alert("Configura la URL de Google Script en Ajustes."); setSyncStatus('uploading'); setSyncMessage('Subiendo datos...'); try { const now = Date.now(); const payload = { timestamp: now, portfolio, resultsData, apiKey, baseCurrency, refreshInterval, version: 3, appPin, globalNotes, aiModel, availableModels }; await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); setLocalTimestamp(now); setSyncStatus('synced'); setSyncMessage('✅ Sincronizado'); setTimeout(() => setSyncMessage(''), 3000); } catch (e) { console.error(e); setSyncStatus('error'); setSyncMessage('❌ Error al subir'); } };
+    const uploadToCloud = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) return alert("Configura la URL de Google Script en Ajustes."); setSyncStatus('uploading'); setSyncMessage('Subiendo datos...'); try { const now = Date.now(); const payload = { timestamp: now, portfolio, resultsData, apiKey, baseCurrency, refreshInterval, version: 3, appPin, globalNotes, aiModel, availableModels, gScriptUrl }; await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); setLocalTimestamp(now); setSyncStatus('synced'); setSyncMessage('✅ Sincronizado'); setTimeout(() => setSyncMessage(''), 3000); } catch (e) { console.error(e); setSyncStatus('error'); setSyncMessage('❌ Error al subir'); } };
     const checkForCloudUpdates = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) { setIsAppReady(true); return; } setSyncStatus('checking'); try { const response = await fetch(url); const cloudData = await response.json(); const cloudTS = cloudData.timestamp || 0; const localTS = localTimestamp || 0; if (cloudTS > (localTS + 10000)) { setConflictModal({ isOpen: true, cloudData }); setSyncStatus('idle'); } else { setSyncStatus(localTS > cloudTS ? 'unsaved' : 'synced'); setIsAppReady(true); } } catch (e) { console.error("Error comprobando nube:", e); setSyncStatus('error'); setIsAppReady(true); } };
-    const handleApplyCloudData = () => { const data = conflictModal.cloudData; if (!data) return; if (data.globalNotes) setGlobalNotes(data.globalNotes); if (data.portfolio) setPortfolio(data.portfolio); if (data.resultsData) setResultsData(data.resultsData); if (data.apiKey) setApiKey(data.apiKey); if (data.baseCurrency) setBaseCurrency(data.baseCurrency); if (data.aiModel) setAiModel(data.aiModel); if (data.availableModels) setAvailableModels(data.availableModels); setLocalTimestamp(data.timestamp); setConflictModal({ isOpen: false, cloudData: null }); setSyncStatus('synced'); setSyncMessage('✅ Datos descargados'); setIsAppReady(true); setTimeout(() => setSyncMessage(''), 3000); };
+    const handleApplyCloudData = () => { const data = conflictModal.cloudData; if (!data) return; if (d.gScriptUrl) setGScriptUrl(d.gScriptUrl); if (data.globalNotes) setGlobalNotes(data.globalNotes); if (data.portfolio) setPortfolio(data.portfolio); if (data.resultsData) setResultsData(data.resultsData); if (data.apiKey) setApiKey(data.apiKey); if (data.baseCurrency) setBaseCurrency(data.baseCurrency); if (data.aiModel) setAiModel(data.aiModel); if (data.availableModels) setAvailableModels(data.availableModels); setLocalTimestamp(data.timestamp); setConflictModal({ isOpen: false, cloudData: null }); setSyncStatus('synced'); setSyncMessage('✅ Datos descargados'); setIsAppReady(true); setTimeout(() => setSyncMessage(''), 3000); };
     const handleKeepLocalData = () => { setLocalTimestamp(Date.now()); setConflictModal({ isOpen: false, cloudData: null }); setSyncStatus('unsaved'); setIsAppReady(true); };
 
     useEffect(() => { if (gScriptUrl) { checkForCloudUpdates(); } else { setIsAppReady(true); } }, []);
