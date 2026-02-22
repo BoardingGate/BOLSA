@@ -1390,16 +1390,14 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
     const handleRunExport = () => { 
         setIoStatus('processing'); 
         try { 
-            // AQUI SE GUARDAN LOS MODELOS EN EL BACKUP
-            const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 3, resultsData, appPin, aiModel, availableModels }; 
+            const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 3, resultsData, appPin, aiModel, availableModels, gScriptUrl,globalNotes }; 
             const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"}); 
             const url = URL.createObjectURL(blob); 
             const a = document.createElement('a'); a.href = url; a.download = `BoardingGate_Backup_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); setIoStatus('success'); setTimeout(() => setIoStatus('idle'), 2000); 
         } catch (e) { alert("Error: " + e.message); setIoStatus('error'); } 
     };
     
-    const handleRunImport = (e) => { const file = e.target.files[0]; if (!file) return; if(!confirm("⚠️ IMPORTANTE:\n\nEsta acción reemplazará TODA tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) { e.target.value = null; return; } setIoStatus('processing'); const reader = new FileReader(); reader.onload = (ev) => { try { const d = JSON.parse(ev.target.result); if (d.portfolio) setPortfolio(d.portfolio); if (d.apiKey) setApiKey(d.apiKey); if (d.baseCurrency) setBaseCurrency(d.baseCurrency); if (d.refreshInterval) setRefreshInterval(d.refreshInterval); if(d.appPin) setAppPin(d.appPin); 
-    // RECUPERAR MODELOS DEL BACKUP
+    const handleRunImport = (e) => { const file = e.target.files[0]; if (!file) return; if(!confirm("⚠️ IMPORTANTE:\n\nEsta acción reemplazará TODA tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) { e.target.value = null; return; } setIoStatus('processing'); const reader = new FileReader(); reader.onload = (ev) => { try { const d = JSON.parse(ev.target.result); if (d.portfolio) setPortfolio(d.portfolio); if (d.apiKey) setApiKey(d.apiKey); if (d.baseCurrency) setBaseCurrency(d.baseCurrency); if (d.gScriptUrl) setGScriptUrl(d.gScriptUrl);  if (d.refreshInterval) setRefreshInterval(d.refreshInterval); if(d.appPin) setAppPin(d.appPin); 
     if (d.aiModel) setAiModel(d.aiModel); if (d.availableModels) setAvailableModels(d.availableModels);
     setIoStatus('success'); alert("✅ Restauración completada correctamente."); window.location.reload(); } catch (err) { alert("Archivo inválido o corrupto."); setIoStatus('error'); } }; reader.readAsText(file); };
     
@@ -1451,7 +1449,6 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
             const extractedData = sanitizeAndParseJSON(res); 
 
             if (Array.isArray(extractedData)) { 
-                // AQUI SE COMPRUEBA EL LIMITE DE ACCIONES (5 SIN REGISTRO)
                 if ((portfolio.length + extractedData.length) > _x_lim) {
                     throw new Error("CAPACITY_OVERFLOW_EXCEPTION"); 
                 }
@@ -1604,23 +1601,27 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
                             <li>Ve a <a href="https://script.google.com/home/start" target="_blank" className="text-blue-400 font-bold hover:underline">Google Apps Script</a> y haz clic en <strong>"Nuevo Proyecto"</strong>.</li>
                             <li>Borra todo el código del editor y pega este bloque exacto:
                                 <pre className="bg-black text-green-400 p-2 rounded mt-1 mb-1 border border-slate-800 overflow-x-auto text-[9px] font-mono select-all">
-{`
-function A_AUTORIZAR_AQUI() {
+{`function A_AUTORIZAR_AQUI() {
   UrlFetchApp.fetch("https://www.google.com");
   console.log("OK");
 }
 
 function doPost(e) {
-  var lock = LockService.getScriptLock(); lock.tryLock(10000);
+  var lock = LockService.getScriptLock(); 
+  lock.tryLock(10000);
   try {
     var data = JSON.parse(e.postData.contents);
     var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
     var file = files.hasNext() ? files.next() : DriveApp.createFile("BOARDINGGATE_DB.json", "", MimeType.PLAIN_TEXT);
     file.setContent(JSON.stringify(data));
     return ContentService.createTextOutput(JSON.stringify({ status: "success", timestamp: data.timestamp })).setMimeType(ContentService.MimeType.JSON);
-  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
-  finally { lock.releaseLock(); }
+  } catch(e) { 
+    return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); 
+  } finally { 
+    lock.releaseLock(); 
+  }
 }
+
 function doGet(e) {
   if (e.parameter.tickers) {
     var tickerList = e.parameter.tickers.split(",");
@@ -1630,72 +1631,84 @@ function doGet(e) {
     for (var i = 0; i < tickerList.length; i++) {
       var rawTicker = tickerList[i].trim();
       if(!rawTicker) continue;
-      var parts = rawTicker.split(':');
-      var gTicker = rawTicker;
-      if (parts.length === 2) {
-         gTicker = parts[1] + ":" + parts[0];
+      
+      var url;
+      if (rawTicker.length === 6 && !rawTicker.includes(":")) {
+         url = "https://www.google.com/finance/quote/" + rawTicker.substring(0,3) + "-" + rawTicker.substring(3,6);
+      } else {
+         var parts = rawTicker.split(':');
+         var gTicker = rawTicker;
+         if (parts.length === 2) { 
+           gTicker = parts[1] + ":" + parts[0]; 
+         }
+         url = "https://www.google.com/finance/quote/" + encodeURIComponent(gTicker);
       }
 
       requests.push({
-        url: "https://www.google.com/finance/quote/" + encodeURIComponent(gTicker),
+        url: url,
         method: "GET",
-        muteHttpExceptions: true
+        muteHttpExceptions: true,
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" }
       });
       validTickers.push(rawTicker);
     }
-    var results = {};
 
+    var results = {};
     try {
       var responses = UrlFetchApp.fetchAll(requests);
-
       for (var j = 0; j < responses.length; j++) {
         var rawTicker = validTickers[j];
         var code = responses[j].getResponseCode();
-
         if (code === 200) {
           var html = responses[j].getContentText();
-          var match = html.match(/<div class="AHmHk"[^>]*>[\s\S]*?<div class="YMlKec[^"]*">([^<]+)<\/div>/);
-          if (match) {
-            var pStr = match[1].replace(/[^0-9.,]/g, ''); 
-            if (pStr.indexOf(',') > -1 && pStr.indexOf('.') > -1) {
-              pStr = pStr.replace(/,/g, ''); 
-            } else if (pStr.indexOf(',') > -1) {
-              pStr = pStr.replace(',', '.');
-            }
-            var price = parseFloat(pStr);
-            results[rawTicker] = {
-              p: price,
-              pc: price, 
-              success: true
-            };
-          } else {
-            var metaMatch = html.match(/<meta itemprop="price" content="([^"]+)">/);
-            if (metaMatch) {
-               results[rawTicker] = {
-                 p: parseFloat(metaMatch[1]),
-                 pc: parseFloat(metaMatch[1]),
-                 success: true
-               };
-            } else {
-               results[rawTicker] = { success: false, reason: "Estructura web no reconocida" };
+          var res = { success: false };
+          
+          var priceMatch = html.match(/<div class="AHmHk"[^>]*>[\s\S]*?<div class="YMlKec[^"]*">([^<]+)<\/div>/);
+          if (priceMatch) {
+            res.p = cleanNumGAS(priceMatch[1]);
+            res.success = true;
+            
+            var nameMatch = html.match(/<div class="zz7u7b">([^<]+)<\/div>/);
+            if (nameMatch) res.n = nameMatch[1];
+
+            var peMatch = html.match(/(?:Ratio precio-beneficio|P\/E ratio)[\s\S]*?<div class="P6W0H">([^<]+)<\/div>/);
+            if (peMatch) res.pe = cleanNumGAS(peMatch[1]);
+
+            var divMatch = html.match(/(?:Rentabilidad por dividendo|Dividend yield)[\s\S]*?<div class="P6W0H">([^<]+)<\/div>/);
+            if (divMatch) {
+              var divVal = divMatch[1].split(/\s|\(/)[0];
+              res.div = cleanNumGAS(divVal);
             }
           }
+          results[rawTicker] = res;
         } else {
           results[rawTicker] = { success: false, reason: "HTTP " + code };
         }
       }
     } catch(err) {
-       for(var k=0; k<validTickers.length; k++) {
-         results[validTickers[k]] = { success: false, reason: "Error Conexión" };
-       }
+       return ContentService.createTextOutput(JSON.stringify({error: err.toString()})).setMimeType(ContentService.MimeType.JSON);
     }
     return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
   }
+
   try {
     var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
     if (files.hasNext()) return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON);
     return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
-  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
+  } catch(e) { 
+    return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); 
+  }
+}
+
+function cleanNumGAS(str) {
+  if (!str) return 0;
+  var val = str.replace(/[^0-9.,-]/g, '');
+  if (val.indexOf(',') > -1 && val.indexOf('.') > -1) { 
+    val = val.replace(/,/g, ''); 
+  } else if (val.indexOf(',') > -1) { 
+    val = val.replace(',', '.'); 
+  }
+  return parseFloat(val) || 0;
 }
 `}
                                 </pre>
@@ -2242,86 +2255,154 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     return () => clearInterval(interval); 
 }, [apiKey, refreshInterval, isAppReady]);     
 
-    const fetchTickerData = async () => { if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' }); setFetchingSingle(true); try { const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL. SIN SIMBOLOS. Si no hay dividendo pon 0.`; const res = await askGemini(apiKey, prompt, aiModel); const json = extractJSON(res); if (json) { setForm(prev => ({ ...prev, name: json.n || prev.name, buyPrice: cleanVal(json.p) || prev.buyPrice, buyFx: cleanVal(json.fx) || prev.buyFx, buyPE: cleanVal(json.pe) || prev.buyPE, annualDividend: cleanVal(json.div) || prev.annualDividend })); } } catch (e) { setInfoModal({ isOpen: true, title: 'Fallo', msg: `No localizado: ${form.ticker}.`, type: 'error' }); } finally { setFetchingSingle(false); } };
+
+const fetchTickerData = async () => {
+    if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker.', type: 'error' });
+    setFetchingSingle(true);
+    
+    try {
+        const scriptUrl = simpleDecrypt(gScriptUrl);
+        const fxPair = (form.stockCurrency || 'USD') + baseCurrency;
+        let googleData = null;
+
+        if (scriptUrl) {
+            try {
+                const res = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(form.ticker)},${encodeURIComponent(fxPair)}&_t=${Date.now()}`);
+                googleData = await res.json();
+            } catch (e) { 
+                console.warn("Script de Google no disponible, recurriendo a iA..."); 
+            }
+        }
+
+        const stock = googleData ? googleData[form.ticker] : null;
+        const fx = googleData ? googleData[fxPair] : null;
+
+        if (stock && stock.success) {
+            setForm(prev => ({
+                ...prev,
+                name: stock.n || prev.name || form.ticker, 
+                buyPrice: stock.p || prev.buyPrice,
+                buyFx: (prev.stockCurrency === baseCurrency) ? 1 : (fx?.success ? fx.p : prev.buyFx),
+                buyPE: stock.pe || prev.buyPE,
+                annualDividend: stock.div || prev.annualDividend
+            }));
+
+            if (stock.p > 0) {
+                setFetchingSingle(false);
+                return; 
+            }
+        }
+
+        const prompt = `Actúa como API financiera. Busca "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_importe_numero}. USA PUNTO DECIMAL.`;
+        const aiRes = await askGemini(apiKey, prompt, aiModel);
+        const json = extractJSON(aiRes);
+        
+        if (json) {
+            setForm(prev => ({ 
+                ...prev, 
+                name: json.n || prev.name, 
+                buyPrice: json.p || prev.buyPrice, 
+                buyFx: json.fx || prev.buyFx, 
+                buyPE: json.pe || prev.buyPE, 
+                annualDividend: json.div || prev.annualDividend 
+            }));
+        }
+    } catch (e) {
+        setInfoModal({ isOpen: true, title: 'Fallo', msg: `No se pudieron rescatar datos automáticamente para ${form.ticker}.`, type: 'error' });
+    } finally {
+        setFetchingSingle(false);
+    }
+};
 
 const updatePrices = async (isAuto = false) => {
-        const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
-        const scriptUrl = simpleDecrypt(gScriptUrl);
+    const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
+    const scriptUrl = simpleDecrypt(gScriptUrl);
+    
+    if (active.length === 0) return;
+    if (!scriptUrl) {
+        if (!isAuto) setInfoModal({ isOpen: true, title: 'Aviso', msg: 'Para actualizar precios necesitas configurar la URL del Script de Google en Ajustes.', type: 'error' });
+        return;
+    }
+
+    setUpdating(true);
+    setUpdateProgress(30); 
+    setUpdateText('Consultando Google Finance...');
+    
+    try {
+        // 1. Preparamos la lista (Acciones + Divisas necesarias)
+        const tickers = active.map(p => p.ticker);
+        const currencies = [...new Set(active.filter(p => p.stockCurrency !== baseCurrency).map(p => p.stockCurrency + baseCurrency))];
+        const tickersList = [...tickers, ...currencies].join(',');
         
-        if (active.length === 0) return;
-        if (!scriptUrl) {
-            if (!isAuto) setInfoModal({ isOpen: true, title: 'Aviso', msg: 'Para actualizar precios necesitas configurar la URL del Script de Google en Ajustes.', type: 'error' });
-            return;
+        // 2. ROMPE-CACHÉS con timestamp
+        const fetchUrl = `${scriptUrl}?tickers=${encodeURIComponent(tickersList)}&_t=${Date.now()}`;
+        
+        const response = await fetch(fetchUrl);
+        const textResponse = await response.text();
+        
+        if (textResponse.includes("<html") || textResponse.includes("Sign in - Google")) {
+            throw new Error("🚨 ERROR DE PERMISOS: El Script está bloqueado. Ve a Google Apps Script -> Nueva Implementación -> 'Cualquier usuario'.");
         }
 
-        setUpdating(true);
-        setUpdateProgress(30); 
-        setUpdateText('Consultando Google Finance...');
-        
+        let batchData;
         try {
-            // 1. Preparamos la lista
-            const tickersList = active.map(p => p.ticker).join(',');
-            
-            // 2. ROMPE-CACHÉS: Añadimos la hora actual para que el móvil no use datos viejos
-            const fetchUrl = `${scriptUrl}?tickers=${encodeURIComponent(tickersList)}&_t=${Date.now()}`;
-            
-            const response = await fetch(fetchUrl);
-            const textResponse = await response.text();
-            
-            if (textResponse.includes("<html") || textResponse.includes("Sign in - Google")) {
-                throw new Error("🚨 ERROR DE PERMISOS: El Script está bloqueado. Ve a Google Apps Script -> Nueva Implementación -> 'Cualquier usuario'.");
-            }
-
-            let batchData;
-            try {
-                batchData = JSON.parse(textResponse);
-            } catch (errJSON) {
-                throw new Error("🚨 ERROR DEL SCRIPT:\n\n" + textResponse.substring(0, 150));
-            }
-
-            let updatesMap = {};
-            let totallyFailed = [];
-
-            // 3. Asignamos los precios
-            active.forEach(item => {
-                const data = batchData[item.ticker];
-                if (data && data.success && data.p) {
-                    updatesMap[item.id] = {
-                        currentPrice: cleanVal(data.p),
-                        previousClose: cleanVal(data.pc),
-                        currentFx: (data.curr === baseCurrency) ? 1 : item.currentFx 
-                    };
-                } else {
-                    // Guardamos el ticker Y el motivo real del fallo que nos manda el script
-                    const reason = data ? data.reason : "Desconocido";
-                    totallyFailed.push(`${item.ticker} (${reason})`);
-                }
-            });
-
-            // 4. Aplicamos cambios a la cartera
-            if (Object.keys(updatesMap).length > 0) {
-                setPortfolio(prev => prev.map(p => updatesMap[p.id] ? { ...p, ...updatesMap[p.id] } : p));
-                setLastUpdate(new Date().toISOString());
-            }
-
-            // 5. Mostrar Modal con los errores reales
-            if (!isAuto && totallyFailed.length > 0) {
-                setInfoModal({ 
-                    isOpen: true, 
-                    title: 'Precios no encontrados', 
-                    msg: `Google Finance falló en estos valores:\n\n${totallyFailed.join('\n')}`, 
-                    type: 'warning' 
-                });
-            }
-
-        } catch (e) {
-            if (!isAuto) setInfoModal({ isOpen: true, title: 'Fallo de Conexión', msg: e.message, type: 'error' });
-        } finally {
-            setUpdateProgress(100);
-            setUpdateText('Completado');
-            setTimeout(() => { setUpdating(false); setUpdateProgress(0); setUpdateText(''); }, 1000);
+            batchData = JSON.parse(textResponse);
+        } catch (errJSON) {
+            throw new Error("🚨 ERROR DEL SCRIPT:\n\n" + textResponse.substring(0, 150));
         }
-    };
+
+        let updatesMap = {};
+        let totallyFailed = [];
+
+        // 3. Mapeo de datos recibidos a la estructura de la cartera
+        active.forEach(item => {
+            const stockData = batchData[item.ticker];
+            const fxKey = item.stockCurrency + baseCurrency;
+            const fxData = batchData[fxKey];
+
+            if (stockData && stockData.success && stockData.p) {
+                updatesMap[item.id] = {
+                    currentPrice: cleanVal(stockData.p),
+                    currentPE: stockData.pe ? cleanVal(stockData.pe) : item.currentPE,
+                    previousClose: stockData.pc ? cleanVal(stockData.pc) : item.previousClose
+                };
+
+                // Actualización del tipo de cambio (FX)
+                if (item.stockCurrency === baseCurrency) {
+                    updatesMap[item.id].currentFx = 1;
+                } else if (fxData && fxData.success) {
+                    updatesMap[item.id].currentFx = cleanVal(fxData.p);
+                }
+            } else {
+                const reason = stockData ? (stockData.reason || "Sin datos") : "No encontrado";
+                totallyFailed.push(`${item.ticker} (${reason})`);
+            }
+        });
+
+        // 4. Aplicación de cambios al estado de React
+        if (Object.keys(updatesMap).length > 0) {
+            setPortfolio(prev => prev.map(p => updatesMap[p.id] ? { ...p, ...updatesMap[p.id] } : p));
+            setLastUpdate(new Date().toISOString());
+        }
+
+        // 5. Gestión de errores visuales
+        if (!isAuto && totallyFailed.length > 0) {
+            setInfoModal({ 
+                isOpen: true, 
+                title: 'Precios no encontrados', 
+                msg: `Google Finance falló en estos valores:\n\n${totallyFailed.join('\n')}`, 
+                type: 'warning' 
+            });
+        }
+
+    } catch (e) {
+        if (!isAuto) setInfoModal({ isOpen: true, title: 'Fallo de Conexión', msg: e.message, type: 'error' });
+    } finally {
+        setUpdateProgress(100);
+        setUpdateText('Completado');
+        setTimeout(() => { setUpdating(false); setUpdateProgress(0); setUpdateText(''); }, 1000);
+    }
+};
 
 
  // ANALISIS IA MEJORADO Y CORREGIDO (VERSIÓN BLINDADA)
@@ -2698,43 +2779,54 @@ const RenderHistoryCard = () => {
 
             
             <div className="flex flex-col gap-3 shrink-0 bg-slate-900/50 p-3 rounded-xl border border-slate-800">
-                <div className="flex justify-between items-center"><div className="flex gap-2 items-start">
                
-                  <div className="flex flex-col">
-                      <button 
-                        onClick={() => updatePrices(false)} 
-                        disabled={updating} 
-                        className="relative bg-slate-800 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-700 hover:bg-slate-700 transition-all flex items-center gap-2 overflow-hidden"
-                      >
-                          {/* Barra de progreso de fondo */}
-                          {updating && (
-                            <div 
-                                className="absolute left-0 top-0 h-full bg-blue-600/30 transition-all duration-500 ease-out" 
-                                style={{ width: `${updateProgress}%` }}
-                            />
-                          )}
-                          <span className="relative z-10 flex items-center gap-2">
-                              {updating ? <span className="animate-pulse">{updateProgress}%</span> : <Icons.Refresh/>} 
-                              {updating ? 'PROCESANDO...' : 'ACTUALIZAR'}
-                          </span>
-                      </button>
-                      
-                      <span className="text-[9px] text-slate-500 mt-1 uppercase font-bold text-center tracking-wider h-3">
-                        {updating ? updateText : `Sinc: ${lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}`}  
-                      </span>
-                  </div>
-
-                  <button onClick={onManualSync} className={`px-3 h-9 rounded-lg text-[10px] font-bold border flex items-center gap-2 transition-all ${syncStatus === 'unsaved' ? 'bg-orange-600 border-orange-500 text-white animate-pulse' : syncStatus === 'uploading' || syncStatus === 'downloading' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-green-400'}`}>
-                      {syncStatus === 'uploading' || syncStatus === 'downloading' ? <Icons.Loader/> : <Icons.Upload size={14} className={syncStatus==='unsaved' ? '' : 'text-green-500'}/>} 
-                      {syncStatus === 'unsaved' ? 'GUARDAR' : syncStatus === 'uploading' ? 'SUBIENDO...' : syncStatus === 'downloading' ? 'BAJANDO...' : 'SYNC OK'}
-                  </button>
-                  <button onClick={analyzePortfolio} className="bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 transition-colors flex items-center gap-2"><Icons.Wand/> INFORME iA</button>
-                  <button onClick={() => setIsNewsSelectionModalOpen(true)} className="bg-blue-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-blue-500/50 hover:bg-blue-600 transition-colors flex items-center gap-2">
-                        <Icons.Globe size={14}/> NOTICIAS
-                  </button>  
-
-                  <button onClick={handlePrint} className="bg-slate-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button></div><button onClick={() => { setEditingId(null); setForm({ ticker:'', name:'', group: '', notes: '', customOrder:'', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, feesIncludedInPrice: false, buyPE:0, annualDividend:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, sellFeesIncludedInPrice: false, currentPE:0, dividends: [], lots:[] }); setIsModalOpen(true); }} className="bg-blue-600 px-4 h-9 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg hover:bg-blue-500"><Icons.Plus size={14}/> NUEVA POSICIÓN</button></div>
+                <div className="flex justify-between items-center">
+                    <div className="flex gap-2 items-start">
+                        {/* LA BARRA COMIENZA AHORA DIRECTAMENTE CON ACTUALIZAR */}
+                        <div className="flex flex-col">
+                            <button 
+                                onClick={() => updatePrices(false)} 
+                                disabled={updating} 
+                                className="relative bg-slate-800 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-700 hover:bg-slate-700 transition-all flex items-center gap-2 overflow-hidden"
+                            >
+                                {updating && (
+                                <div 
+                                    className="absolute left-0 top-0 h-full bg-blue-600/30 transition-all duration-500 ease-out" 
+                                    style={{ width: `${updateProgress}%` }}
+                                />
+                                )}
+                                <span className="relative z-10 flex items-center gap-2">
+                                    {updating ? <span className="animate-pulse">{updateProgress}%</span> : <Icons.Refresh/>} 
+                                    {updating ? 'PROCESANDO...' : 'ACTUALIZAR'}
+                                </span>
+                            </button>
+                            <span className="text-[9px] text-slate-500 mt-1 uppercase font-bold text-center tracking-wider h-3">
+                                {updating ? updateText : `Sinc: ${lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}`}  
+                            </span>
+                        </div>
                 
+                        <button onClick={onManualSync} className={`px-3 h-9 rounded-lg text-[10px] font-bold border flex items-center gap-2 transition-all ${syncStatus === 'unsaved' ? 'bg-orange-600 border-orange-500 text-white animate-pulse' : syncStatus === 'uploading' || syncStatus === 'downloading' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-green-400'}`}>
+                            {syncStatus === 'uploading' || syncStatus === 'downloading' ? <Icons.Loader/> : <Icons.Upload size={14}/>} 
+                            {syncStatus === 'unsaved' ? 'GUARDAR' : 'SYNC OK'}
+                        </button>
+                        
+                        <button onClick={analyzePortfolio} className="bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 transition-colors flex items-center gap-2">
+                            <Icons.Wand/> INFORME iA
+                        </button>
+                        
+                        <button onClick={() => setIsNewsSelectionModalOpen(true)} className="bg-blue-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-blue-500/50 hover:bg-blue-600 transition-colors flex items-center gap-2">
+                            <Icons.Globe size={14}/> NOTICIAS
+                        </button>  
+                
+                        <button onClick={handlePrint} className="bg-slate-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white">
+                            <Icons.ExternalLink size={14}/> IMPRIMIR
+                        </button>
+                    </div>
+                    <div></div>
+                </div>
+
+
+
                 <div className="flex flex-wrap gap-2 items-center bg-slate-950/50 p-2 rounded-lg border border-slate-800/50">
                     <div className="flex-1 min-w-[150px] relative"><Icons.Search className="absolute left-2 top-2 text-slate-500" size={14}/><input type="text" value={filterText} onChange={e => setFilterText(e.target.value)} placeholder="Filtrar por ticker, nombre o grupo..." className="w-full bg-slate-900 border border-slate-700 h-8 pl-8 pr-2 text-xs rounded focus:border-blue-500 font-bold" /></div>
                     <div className="flex items-center gap-1 bg-slate-900 border border-slate-700 rounded h-8 px-2">
@@ -2777,8 +2869,35 @@ const RenderHistoryCard = () => {
                     <th className="p-3 w-10 text-center sticky left-0 z-30 bg-slate-900 border-r border-slate-800"><button onClick={toggleAllActive} title="Marcar/Desmarcar Todo"><Icons.CursorClick size={16} className="text-blue-400"/></button></th>
                     
                     {/* Ancho columna Valor */}
-                    <th className={`p-3 cursor-pointer select-none hover:text-white transition-colors group bg-slate-900 border-r border-slate-800 min-w-[210px] sticky left-10 z-30 ${sortConfig.key==='value'?'bg-slate-800 text-white':''}`} onClick={()=>requestSort('value')}><div className="flex items-center gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='value'?'opacity-100':''}`}/> Valor {sortConfig.key==='value' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
+                  
+                    <th className={`p-3 cursor-pointer select-none hover:text-white transition-colors group bg-slate-900 border-r border-slate-800 min-w-[240px] sticky left-10 z-30 ${sortConfig.key==='value'?'bg-slate-800 text-white':''}`} 
+                        onClick={()=>requestSort('value')}>
+                        <div className="flex items-center justify-between w-full">
+                            {/* Título de la Columna y Flecha de Ordenación */}
+                            <div className="flex items-center gap-1">
+                                <Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='value'?'opacity-100':''}`}/>
+                                <span>Valor {sortConfig.key==='value' && (sortConfig.direction==='asc'?'▲':'▼')}</span>
+                            </div>
                     
+                            {/* --- BOTÓN INTEGRADO: NUEVA POSICIÓN --- */}
+                            <button 
+                                onClick={(e) => { 
+                                    e.stopPropagation(); // EVITA QUE SE ORDENE LA COLUMNA AL PULSAR EL BOTÓN
+                                    setEditingId(null); 
+                                    setForm({ ticker:'', name:'', group: '', notes: '', customOrder:'', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:'USD', buyFx:1, fees:0, adjustments:0, feesIncludedInPrice: false, buyPE:0, annualDividend:0, sellPrice:0, sellDate:'', sellFx:1, sellFx:1, sellFees:0, sellAdjustments:0, sellFeesIncludedInPrice: false, currentPE:0, dividends: [], lots:[] }); 
+                                    setIsModalOpen(true); 
+                                }} 
+                                className="bg-blue-600 hover:bg-blue-500 text-white py-1 px-2 rounded border border-white/20 shadow-lg flex items-center gap-1 active:scale-95 transition-all"
+                                title="Añadir nueva inversión"
+                            >
+                                <Icons.Plus size={10}/>
+                                <span className="text-[8px] font-black tracking-tighter">NUEVO APUNTE</span>
+                            </button>
+                        </div>
+                    </th>
+
+
+
                     <th className={`p-3 w-14 text-center cursor-pointer select-none hover:text-white border-r border-slate-800 ${sortConfig.key==='customOrder'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('customOrder')}>Ord {sortConfig.key==='customOrder' && (sortConfig.direction==='asc'?'▲':'▼')}</th>
                     <th className={`p-3 text-center cursor-pointer select-none hover:text-white hover:bg-slate-700 transition-colors group ${sortConfig.key==='date'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('date')}><div className="flex items-center justify-center gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='date'?'opacity-100':''}`}/> Fechas / Días {sortConfig.key==='date' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
                     <th className="p-3 text-right">Títulos</th>
@@ -2791,7 +2910,7 @@ const RenderHistoryCard = () => {
                             <Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 transition-opacity ${sortConfig.key==='intraday'?'opacity-100':''}`}/>
                             <div>INTRADÍA {sortConfig.key==='intraday' && (sortConfig.direction==='asc'?'▲':'▼')}</div>
                         </div>
-                        <div className={`text-[9px] font-mono mt-1 ${gridTotals.tIntra >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        <div className={`text-[6px] font-mono mt-1 ${gridTotals.tIntra >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                             {formatMoney(gridTotals.tIntra, baseCurrency)} <span className="opacity-80 ml-1">[{formatN(gridTotals.tIntraPct)}%]</span>
                         </div>
                     </th>
@@ -4416,9 +4535,9 @@ const App = () => {
 
     const updateResultsData = (newVal) => { setResultsData(newVal); setLocalTimestamp(Date.now()); setSyncStatus('unsaved'); };
 
-    const uploadToCloud = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) return alert("Configura la URL de Google Script en Ajustes."); setSyncStatus('uploading'); setSyncMessage('Subiendo datos...'); try { const now = Date.now(); const payload = { timestamp: now, portfolio, resultsData, apiKey, baseCurrency, refreshInterval, version: 3, appPin, globalNotes, aiModel, availableModels }; await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); setLocalTimestamp(now); setSyncStatus('synced'); setSyncMessage('✅ Sincronizado'); setTimeout(() => setSyncMessage(''), 3000); } catch (e) { console.error(e); setSyncStatus('error'); setSyncMessage('❌ Error al subir'); } };
+    const uploadToCloud = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) return alert("Configura la URL de Google Script en Ajustes."); setSyncStatus('uploading'); setSyncMessage('Subiendo datos...'); try { const now = Date.now(); const payload = { timestamp: now, portfolio, resultsData, apiKey, baseCurrency, refreshInterval, version: 3, appPin, globalNotes, aiModel, availableModels, gScriptUrl }; await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); setLocalTimestamp(now); setSyncStatus('synced'); setSyncMessage('✅ Sincronizado'); setTimeout(() => setSyncMessage(''), 3000); } catch (e) { console.error(e); setSyncStatus('error'); setSyncMessage('❌ Error al subir'); } };
     const checkForCloudUpdates = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) { setIsAppReady(true); return; } setSyncStatus('checking'); try { const response = await fetch(url); const cloudData = await response.json(); const cloudTS = cloudData.timestamp || 0; const localTS = localTimestamp || 0; if (cloudTS > (localTS + 10000)) { setConflictModal({ isOpen: true, cloudData }); setSyncStatus('idle'); } else { setSyncStatus(localTS > cloudTS ? 'unsaved' : 'synced'); setIsAppReady(true); } } catch (e) { console.error("Error comprobando nube:", e); setSyncStatus('error'); setIsAppReady(true); } };
-    const handleApplyCloudData = () => { const data = conflictModal.cloudData; if (!data) return; if (data.globalNotes) setGlobalNotes(data.globalNotes); if (data.portfolio) setPortfolio(data.portfolio); if (data.resultsData) setResultsData(data.resultsData); if (data.apiKey) setApiKey(data.apiKey); if (data.baseCurrency) setBaseCurrency(data.baseCurrency); if (data.aiModel) setAiModel(data.aiModel); if (data.availableModels) setAvailableModels(data.availableModels); setLocalTimestamp(data.timestamp); setConflictModal({ isOpen: false, cloudData: null }); setSyncStatus('synced'); setSyncMessage('✅ Datos descargados'); setIsAppReady(true); setTimeout(() => setSyncMessage(''), 3000); };
+    const handleApplyCloudData = () => { const data = conflictModal.cloudData; if (!data) return; if (d.gScriptUrl) setGScriptUrl(d.gScriptUrl); if (data.globalNotes) setGlobalNotes(data.globalNotes); if (data.portfolio) setPortfolio(data.portfolio); if (data.resultsData) setResultsData(data.resultsData); if (data.apiKey) setApiKey(data.apiKey); if (data.baseCurrency) setBaseCurrency(data.baseCurrency); if (data.aiModel) setAiModel(data.aiModel); if (data.availableModels) setAvailableModels(data.availableModels); setLocalTimestamp(data.timestamp); setConflictModal({ isOpen: false, cloudData: null }); setSyncStatus('synced'); setSyncMessage('✅ Datos descargados'); setIsAppReady(true); setTimeout(() => setSyncMessage(''), 3000); };
     const handleKeepLocalData = () => { setLocalTimestamp(Date.now()); setConflictModal({ isOpen: false, cloudData: null }); setSyncStatus('unsaved'); setIsAppReady(true); };
 
     useEffect(() => { if (gScriptUrl) { checkForCloudUpdates(); } else { setIsAppReady(true); } }, []);
