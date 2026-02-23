@@ -1950,23 +1950,56 @@ const TradingViewChart = ({ ticker, onClear }) => {
 };
 
 const TopAnalysisSection = ({ selectedTicker, onClearTicker }) => {
+          const carouselRef = useRef(null);
+
+          const scrollToPanel = (targetId) => {
+              if (!carouselRef.current) return;
+              const container = carouselRef.current;
+              const panels = container.children;
+              
+              // Calcular índice dependiendo de si el primer panel (Técnico) está visible
+              let index = 0;
+              if (targetId === 'technical' && selectedTicker) index = 0;
+              else if (targetId === 'heatmap') index = selectedTicker ? 1 : 0;
+              else if (targetId === 'markets') index = selectedTicker ? 2 : 1;
+
+              if (panels[index]) {
+                  panels[index].scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+              }
+          };
+
           return (
               <div className="w-full mb-8 fade-in">
                   
-                  {/* BARRA DE NAVEGACIÓN VISUAL */}
+                  {/* BARRA DE NAVEGACIÓN VISUAL Y BOTONERA */}
                   <div className="flex justify-between items-center bg-slate-900/80 border border-slate-700 rounded-t-xl px-4 py-2 mb-1">
                       <div className="flex items-center gap-2 text-[10px] font-bold text-blue-400 uppercase tracking-widest animate-pulse">
-                          <span>↔ Desliza para ver más paneles</span>
+                          <span>↔ Desliza para ver paneles o haz clic en su título</span>
                       </div>
                       <div className="flex gap-4 text-[9px] font-bold text-slate-500 uppercase tracking-wider">
-                          <span className={selectedTicker ? "text-blue-300" : "opacity-50"}>1. Gráfico Técnico</span>
-                          <span className="text-purple-400">2. Mapa de Calor</span>
-                          <span className="text-green-400">3. Índices Globales</span>
+                          <button 
+                              onClick={() => selectedTicker && scrollToPanel('technical')}
+                              className={`transition-colors ${selectedTicker ? "text-blue-300 hover:text-white cursor-pointer" : "opacity-50 cursor-not-allowed"}`}
+                          >
+                              1. Gráfico Técnico
+                          </button>
+                          <button 
+                              onClick={() => scrollToPanel('heatmap')}
+                              className="text-purple-400 hover:text-purple-200 cursor-pointer transition-colors"
+                          >
+                              2. Mapa de Calor
+                          </button>
+                          <button 
+                              onClick={() => scrollToPanel('markets')}
+                              className="text-green-400 hover:text-green-200 cursor-pointer transition-colors"
+                          >
+                              3. Índices Globales
+                          </button>
                       </div>
                   </div>
 
                   {/* CARRUSEL CON ALTURA FIJA DE 650px PARA TODOS */}
-                  <div className="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-4 custom-scrollbar rounded-b-xl">
+                  <div ref={carouselRef} className="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-4 custom-scrollbar rounded-b-xl scroll-smooth">
                       
                       {/* 1. GRÁFICO TÉCNICO (Solo si hay selección) */}
                       {selectedTicker && (
@@ -3460,7 +3493,8 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         roi: { val: 10, active: true, label: 'ROI Mínimo %', min: 1, max: 50, step: 1, help: 'Retorno sobre inversión. >15% indica gran ventaja competitiva (Moat).' },
         divYield: { val: 2, active: true, label: 'Div. Yield Mín %', min: 0, max: 15, step: 0.5, help: 'Rentabilidad por dividendo. >4% suele ser defensiva o madura.' },
         pb: { val: 3, active: false, label: 'P/B Máximo', min: 0.1, max: 10, step: 0.1, help: 'Precio/Valor Contable. <1: Cotiza bajo valor de liquidación teórico.' },
-        debtEquity: { val: 1.5, active: false, label: 'Deuda/Equity Máx', min: 0, max: 5, step: 0.1, help: 'Apalancamiento. >1.5 implica riesgo alto si suben tipos de interés.' }
+        debtEquity: { val: 1.5, active: false, label: 'Deuda/Equity Máx', min: 0, max: 5, step: 0.1, help: 'Apalancamiento. >1.5 implica riesgo alto si suben tipos de interés.' },
+        fcf: { val: 5, active: false, label: 'FCF Yield Mín %', min: 0, max: 30, step: 0.5, help: 'Rentabilidad por Flujo de Caja Libre. >5% indica fuerte generación de caja.' }
     });
 
     const EXCHANGES = [
@@ -4152,11 +4186,12 @@ const REPORT_TITLES = {
         return n.toFixed(dec).replace('.', ',');
     };
 
+
     const checkCriteria = (paramKey, value) => {
         const p = params[paramKey];
         if (!p.active) return "text-slate-400";
         const val = parseFloat(value);
-        if (paramKey === 'roi' || paramKey === 'divYield') return val >= p.val ? "text-green-400 font-bold" : "text-red-400 font-bold";
+        if (paramKey === 'roi' || paramKey === 'divYield' || paramKey === 'fcf') return val >= p.val ? "text-green-400 font-bold" : "text-red-400 font-bold";
         return val <= p.val ? "text-green-400 font-bold" : "text-red-400 font-bold";
     };
 
@@ -4308,6 +4343,7 @@ const REPORT_TITLES = {
         const marketObj = EXCHANGES.find(e => e.id === exchange);
         const marketDesc = marketObj ? marketObj.name : exchange;
 
+
         const activeFilters = Object.entries(params)
             .filter(([_, p]) => p.active)
             .map(([k, p]) => {
@@ -4317,6 +4353,7 @@ const REPORT_TITLES = {
                 if (k === 'peg') return `PEG < ${p.val}`;
                 if (k === 'pb') return `P/B < ${p.val}`;
                 if (k === 'debtEquity') return `Debt/Equity < ${p.val}`;
+                if (k === 'fcf') return `FCF Yield > ${p.val}%`;
                 return '';
             })
             .join(', ');
@@ -4334,8 +4371,10 @@ const REPORT_TITLES = {
             3. OUTPUT MUST START WITH '[' AND END WITH ']'.
             4. NO PREAMBLE. NO EXPLANATIONS.
             OUTPUT FORMAT:
-            [{"ticker":"SYM","name":"Name","price":1.0,"per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0}]
+            [{"ticker":"SYM","name":"Name","price":1.0,"per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0,"fcf":1.0}]
             `;
+
+        if (!activeFilters) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Por favor, activa al menos un parámetro.', type: 'info' });
             
             const res = await askGemini(apiKey, prompt, aiModel);
             const results = extractJSON(res);
@@ -4359,15 +4398,18 @@ const REPORT_TITLES = {
         });
     }, [screenerResults, screenerSort]);
 
+
     const handlePrintScreener = () => {
         const printWindow = window.open('', '', 'height=800,width=1100');
         let html = `<html><head><title>Rastreo iA</title><style>body{font-family:sans-serif;padding:20px;font-size:10px;} h1{border-bottom:2px solid #333;} table{width:100%;border-collapse:collapse;margin-top:10px;} th,td{border:1px solid #ddd;padding:6px;text-align:right;} th{background:#f1f5f9;text-align:center;text-transform:uppercase;font-size:8px;} .left{text-align:left;}</style></head><body>`;
         html += `<h1>RASTREO DE ACTIVOS: ${EXCHANGES.find(e=>e.id===exchange)?.name || exchange}</h1><p><b>Filtros Activos:</b> ${Object.entries(params).filter(([_,p])=>p.active).map(([_,p])=>`${p.label}(${p.val})`).join(' | ')}</p><p>Fecha: ${new Date().toLocaleString()}</p>`;
-        html += `<table><thead><tr><th>Ticker</th><th class="left">Nombre</th><th>Precio</th><th>PER</th><th>PEG</th><th>ROI</th><th>Yield</th><th>P/B</th><th>D/E</th></tr></thead><tbody>`;
-        sortedScreenerResults.forEach(r => { html += `<tr><td><b>${r.ticker}</b></td><td class="left">${r.name}</td><td>${formatN(r.price)}</td><td>${r.per}</td><td>${r.peg}</td><td>${r.roi}%</td><td>${r.divYield}%</td><td>${r.pb}</td><td>${r.debtEquity}</td></tr>`; });
+        html += `<table><thead><tr><th>Ticker</th><th class="left">Nombre</th><th>Precio</th><th>PER</th><th>PEG</th><th>ROI</th><th>Yield</th><th>P/B</th><th>D/E</th><th>FCF%</th></tr></thead><tbody>`;
+        sortedScreenerResults.forEach(r => { html += `<tr><td><b>${r.ticker}</b></td><td class="left">${r.name}</td><td>${formatN(r.price)}</td><td>${r.per}</td><td>${r.peg}</td><td>${r.roi}%</td><td>${r.divYield}%</td><td>${r.pb}</td><td>${r.debtEquity}</td><td>${r.fcf}%</td></tr>`; });
         html += `</tbody></table></body></html>`;
         printWindow.document.write(html); printWindow.document.close(); printWindow.print();
     };
+
+    
 
     const handlePrintEstudio = () => { 
         const printWindow = window.open('', '', 'height=800,width=800'); 
@@ -4628,11 +4670,12 @@ const REPORT_TITLES = {
                             </div>
                             <div className="overflow-x-auto">
                                 <table className="w-full text-left text-xs">
-                                    <thead className="bg-slate-950/80 text-slate-500 uppercase text-[9px] font-black sticky top-0">
+
+                                   <thead className="bg-slate-950/80 text-slate-500 uppercase text-[9px] font-black sticky top-0">
                                         <tr>
-                                            {['ticker', 'name', 'price', 'per', 'peg', 'roi', 'divYield', 'pb', 'debtEquity'].map(k => (
+                                            {['ticker', 'name', 'price', 'per', 'peg', 'roi', 'divYield', 'pb', 'debtEquity', 'fcf'].map(k => (
                                                 <th key={k} className="p-5 cursor-pointer hover:text-white transition-colors border-b border-slate-800" onClick={()=>setScreenerSort({key:k, direction: screenerSort.direction==='asc'?'desc':'asc'})}>
-                                                    <div className="flex items-center gap-1">{k === 'divYield' ? 'Yield' : k === 'debtEquity' ? 'D/E' : k} {screenerSort.key === k && (screenerSort.direction==='asc'?'▲':'▼')}</div>
+                                                    <div className="flex items-center gap-1">{k === 'divYield' ? 'Yield' : k === 'debtEquity' ? 'D/E' : k === 'fcf' ? 'FCF%' : k} {screenerSort.key === k && (screenerSort.direction==='asc'?'▲':'▼')}</div>
                                                 </th>
                                             ))}
                                         </tr>
@@ -4657,9 +4700,10 @@ const REPORT_TITLES = {
                                                 <td className={`p-5 ${checkCriteria('divYield', r.divYield)}`}>{r.divYield}%</td>
                                                 <td className={`p-5 ${checkCriteria('pb', r.pb)}`}>{r.pb}</td>
                                                 <td className={`p-5 ${checkCriteria('debtEquity', r.debtEquity)}`}>{r.debtEquity}</td>
+                                                <td className={`p-5 ${checkCriteria('fcf', r.fcf)}`}>{r.fcf}%</td>
                                             </tr>
                                         ))}
-                                    </tbody>
+                                    </tbody> 
                                 </table>
                             </div>
                         </div>
