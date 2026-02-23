@@ -1633,21 +1633,42 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
                             <li>Borra todo el código del editor y pega este bloque exacto:
                                 <pre className="bg-black text-green-400 p-2 rounded mt-1 mb-1 border border-slate-800 overflow-x-auto text-[9px] font-mono select-all">
 {`function A_AUTORIZAR_AQUI() {
+  // Esta función no hace nada útil, solo sirve para que Google
+  // te pida los permisos necesarios (Drive y Conexión Externa)
+  // una única vez.
+  var files = DriveApp.getFiles(); 
   UrlFetchApp.fetch("https://www.google.com");
-  console.log("OK");
+  console.log("✅ Permisos concedidos correctamente. Ahora puedes borrar esta función o ignorarla.");
 }
 
 function doPost(e) {
   var lock = LockService.getScriptLock(); 
-  lock.tryLock(10000);
+  lock.tryLock(10000); // Espera hasta 10 segundos
+  
   try {
     var data = JSON.parse(e.postData.contents);
-    var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
-    var file = files.hasNext() ? files.next() : DriveApp.createFile("BOARDINGGATE_DB.json", "", MimeType.PLAIN_TEXT);
+    var fileName = "BOARDINGGATE_DB.json";
+    
+    var files = DriveApp.getFilesByName(fileName);
+    var file;
+    
+    if (files.hasNext()) {
+      file = files.next();
+    } else {
+      file = DriveApp.createFile(fileName, "", MimeType.PLAIN_TEXT);
+    }
+    
     file.setContent(JSON.stringify(data));
-    return ContentService.createTextOutput(JSON.stringify({ status: "success", timestamp: data.timestamp })).setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({ 
+      status: "success", 
+      timestamp: data.timestamp 
+    })).setMimeType(ContentService.MimeType.JSON);
+    
   } catch(e) { 
-    return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); 
+    return ContentService.createTextOutput(JSON.stringify({
+      status: "error",
+      error: e.toString()
+    })).setMimeType(ContentService.MimeType.JSON); 
   } finally { 
     lock.releaseLock(); 
   }
@@ -1655,93 +1676,115 @@ function doPost(e) {
 
 function doGet(e) {
   if (e.parameter.tickers) {
-    var tickerList = e.parameter.tickers.split(",");
-    var requests = [];
-    var validTickers = [];
-
-    for (var i = 0; i < tickerList.length; i++) {
-      var rawTicker = tickerList[i].trim();
-      if(!rawTicker) continue;
-      
-      var url;
-      if (rawTicker.length === 6 && !rawTicker.includes(":")) {
-         url = "https://www.google.com/finance/quote/" + rawTicker.substring(0,3) + "-" + rawTicker.substring(3,6);
-      } else {
-         var parts = rawTicker.split(':');
-         var gTicker = rawTicker;
-         if (parts.length === 2) { 
-           gTicker = parts[1] + ":" + parts[0]; 
-         }
-         url = "https://www.google.com/finance/quote/" + encodeURIComponent(gTicker);
-      }
-
-      requests.push({
-        url: url,
-        method: "GET",
-        muteHttpExceptions: true,
-        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" }
-      });
-      validTickers.push(rawTicker);
-    }
-
-    var results = {};
-    try {
-      var responses = UrlFetchApp.fetchAll(requests);
-      for (var j = 0; j < responses.length; j++) {
-        var rawTicker = validTickers[j];
-        var code = responses[j].getResponseCode();
-        if (code === 200) {
-          var html = responses[j].getContentText();
-          var res = { success: false };
-          
-          var priceMatch = html.match(/<div class="AHmHk"[^>]*>[\s\S]*?<div class="YMlKec[^"]*">([^<]+)<\/div>/);
-          if (priceMatch) {
-            res.p = cleanNumGAS(priceMatch[1]);
-            res.success = true;
-            
-            var nameMatch = html.match(/<div class="zz7u7b">([^<]+)<\/div>/);
-            if (nameMatch) res.n = nameMatch[1];
-
-            var peMatch = html.match(/(?:Ratio precio-beneficio|P\/E ratio)[\s\S]*?<div class="P6W0H">([^<]+)<\/div>/);
-            if (peMatch) res.pe = cleanNumGAS(peMatch[1]);
-
-            var divMatch = html.match(/(?:Rentabilidad por dividendo|Dividend yield)[\s\S]*?<div class="P6W0H">([^<]+)<\/div>/);
-            if (divMatch) {
-              var divVal = divMatch[1].split(/\s|\(/)[0];
-              res.div = cleanNumGAS(divVal);
-            }
-          }
-          results[rawTicker] = res;
-        } else {
-          results[rawTicker] = { success: false, reason: "HTTP " + code };
-        }
-      }
-    } catch(err) {
-       return ContentService.createTextOutput(JSON.stringify({error: err.toString()})).setMimeType(ContentService.MimeType.JSON);
-    }
-    return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
+    return fetchStockData(e.parameter.tickers);
   }
 
   try {
     var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
-    if (files.hasNext()) return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON);
-    return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
+    if (files.hasNext()) {
+      return ContentService.createTextOutput(files.next().getBlob().getDataAsString())
+             .setMimeType(ContentService.MimeType.JSON);
+    }
+    return ContentService.createTextOutput(JSON.stringify({timestamp:0}))
+           .setMimeType(ContentService.MimeType.JSON);
   } catch(e) { 
-    return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); 
+    return ContentService.createTextOutput(JSON.stringify({error:e.toString()}))
+           .setMimeType(ContentService.MimeType.JSON); 
   }
+}
+
+function fetchStockData(tickersString) {
+  var tickerList = tickersString.split(",");
+  var requests = [];
+  var validTickers = [];
+
+  for (var i = 0; i < tickerList.length; i++) {
+    var rawTicker = tickerList[i].trim();
+    if(!rawTicker) continue;
+    
+    var url;
+    if (rawTicker.length === 6 && !rawTicker.includes(":")) {
+       url = "https://www.google.com/finance/quote/" + rawTicker.substring(0,3) + "-" + rawTicker.substring(3,6);
+    } else {
+       var parts = rawTicker.split(':');
+       var gTicker = rawTicker;
+       if (parts.length === 2) { 
+         gTicker = parts[1] + ":" + parts[0]; 
+       }
+       url = "https://www.google.com/finance/quote/" + encodeURIComponent(gTicker);
+    }
+
+    requests.push({
+      url: url,
+      method: "GET",
+      muteHttpExceptions: true,
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" }
+    });
+    validTickers.push(rawTicker);
+  }
+
+  var results = {};
+  
+  try {
+    var responses = UrlFetchApp.fetchAll(requests);
+    
+    for (var j = 0; j < responses.length; j++) {
+      var rawTicker = validTickers[j];
+      var code = responses[j].getResponseCode();
+      
+      if (code === 200) {
+        var html = responses[j].getContentText();
+        var res = { success: false };
+        
+        var priceMatch = html.match(/<div class="AHmHk"[^>]*>[\s\S]*?<div class="YMlKec[^"]*">([^<]+)<\/div>/);
+        if (priceMatch) {
+          res.p = cleanNumGAS(priceMatch[1]);
+          res.success = true;
+          
+          var nameMatch = html.match(/<div class="zz7u7b">([^<]+)<\/div>/);
+          if (nameMatch) res.n = nameMatch[1];
+
+          var peMatch = html.match(/(?:Ratio precio-beneficio|P\/E ratio)[\s\S]*?<div class="P6K39c">([^<]+)<\/div>/);
+          if (peMatch) res.pe = cleanNumGAS(peMatch[1]);
+
+          var divMatch = html.match(/(?:Rentabilidad por dividendo|Dividend yield)[\s\S]*?<div class="P6K39c">([^<]+)<\/div>/);
+          if (divMatch) {
+            // Limpia texto extra como "2.54% (anual)"
+            var divVal = divMatch[1].split(/\s|\(/)[0];
+            res.div = cleanNumGAS(divVal);
+          }
+
+          var pcMatch = html.match(/(?:Cierre anterior|Previous close)[\s\S]*?<div class="P6K39c">([^<]+)<\/div>/);
+          if (pcMatch) res.pc = cleanNumGAS(pcMatch[1]);
+        }
+        results[rawTicker] = res;
+      } else {
+        results[rawTicker] = { success: false, reason: "HTTP Error " + code };
+      }
+    }
+  } catch(err) {
+     return ContentService.createTextOutput(JSON.stringify({error: err.toString()})).setMimeType(ContentService.MimeType.JSON);
+  }
+  
+  return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
 }
 
 function cleanNumGAS(str) {
   if (!str) return 0;
   var val = str.replace(/[^0-9.,-]/g, '');
+  
   if (val.indexOf(',') > -1 && val.indexOf('.') > -1) { 
-    val = val.replace(/,/g, ''); 
+    if (val.lastIndexOf(',') > val.lastIndexOf('.')) {
+        val = val.replace(/\./g, '').replace(',', '.');
+    } else {
+        val = val.replace(/,/g, '');
+    }
   } else if (val.indexOf(',') > -1) { 
     val = val.replace(',', '.'); 
   }
+  
   return parseFloat(val) || 0;
-}
-`}
+}`}
                                 </pre>
                             </li>
                             <li className="bg-blue-900/20 p-2 rounded border border-blue-500/30 text-blue-200">
