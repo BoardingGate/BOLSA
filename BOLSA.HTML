@@ -1343,9 +1343,7 @@ const handlePrint = () => {
 };
 
 
-
-
-const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio, onForceBackup, gScriptUrl, setGScriptUrl, resultsData, appPin, setAppPin, _x_lim, _x_trig, aiModel, setAiModel, availableModels, setAvailableModels }) => {
+const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio, onForceBackup, gScriptUrl, setGScriptUrl, resultsData, setResultsData, appPin, setAppPin, _x_lim, _x_trig, aiModel, setAiModel, availableModels, setAvailableModels, globalNotes, setGlobalNotes }) => {
     const [localLic, setLocalLic] = useState(''); 
     const [showKey, setShowKey] = useState(false); 
     const [testStatus, setTestStatus] = useState(null); 
@@ -1390,17 +1388,44 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
     const handleRunExport = () => { 
         setIoStatus('processing'); 
         try { 
-            const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 3, resultsData, appPin, aiModel, availableModels, gScriptUrl,globalNotes }; 
+            // SE CONFIRMA: Guarda en Local EXACTAMENTE lo mismo que sube a la Nube
+            const data = { portfolio, apiKey, baseCurrency, refreshInterval, version: 3, resultsData, appPin, aiModel, availableModels, gScriptUrl, globalNotes }; 
             const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"}); 
             const url = URL.createObjectURL(blob); 
             const a = document.createElement('a'); a.href = url; a.download = `BoardingGate_Backup_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); setIoStatus('success'); setTimeout(() => setIoStatus('idle'), 2000); 
         } catch (e) { alert("Error: " + e.message); setIoStatus('error'); } 
     };
     
-    const handleRunImport = (e) => { const file = e.target.files[0]; if (!file) return; if(!confirm("⚠️ IMPORTANTE:\n\nEsta acción reemplazará TODA tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) { e.target.value = null; return; } setIoStatus('processing'); const reader = new FileReader(); reader.onload = (ev) => { try { const d = JSON.parse(ev.target.result); if (d.portfolio) setPortfolio(d.portfolio); if (d.apiKey) setApiKey(d.apiKey); if (d.baseCurrency) setBaseCurrency(d.baseCurrency); if (d.gScriptUrl) setGScriptUrl(d.gScriptUrl);  if (d.refreshInterval) setRefreshInterval(d.refreshInterval); if(d.appPin) setAppPin(d.appPin); 
-    if (d.aiModel) setAiModel(d.aiModel); if (d.availableModels) setAvailableModels(d.availableModels);
-    setIoStatus('success'); alert("✅ Restauración completada correctamente."); window.location.reload(); } catch (err) { alert("Archivo inválido o corrupto."); setIoStatus('error'); } }; reader.readAsText(file); };
-    
+    const handleRunImport = (e) => { 
+        const file = e.target.files[0]; 
+        if (!file) return; 
+        if(!confirm("⚠️ IMPORTANTE:\n\nEsta acción reemplazará TODA tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) { e.target.value = null; return; } 
+        setIoStatus('processing'); 
+        const reader = new FileReader(); 
+        reader.onload = (ev) => { 
+            try { 
+                const d = JSON.parse(ev.target.result); 
+                // RESTAURA EXACTAMENTE LOS MISMOS 11 PARÁMETROS
+                if (d.portfolio) setPortfolio(d.portfolio); 
+                if (d.resultsData) setResultsData(d.resultsData);
+                if (d.apiKey !== undefined) setApiKey(d.apiKey); 
+                if (d.baseCurrency) setBaseCurrency(d.baseCurrency); 
+                if (d.gScriptUrl !== undefined) setGScriptUrl(d.gScriptUrl);  
+                if (d.refreshInterval) setRefreshInterval(d.refreshInterval); 
+                if (d.appPin !== undefined) setAppPin(d.appPin); 
+                if (d.aiModel) setAiModel(d.aiModel); 
+                if (d.availableModels) setAvailableModels(d.availableModels);
+                if (d.globalNotes !== undefined) setGlobalNotes(d.globalNotes);
+                
+                setIoStatus('success'); 
+                alert("✅ Restauración completada correctamente."); 
+                window.location.reload(); 
+            } catch (err) { alert("Archivo inválido o corrupto."); setIoStatus('error'); } 
+        }; 
+        reader.readAsText(file); 
+    };
+
+
 
     const handleAiImport = async () => { 
         if (!apiKey) return alert("Falta API Key"); 
@@ -4562,7 +4587,31 @@ const App = () => {
 
     const uploadToCloud = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) return alert("Configura la URL de Google Script en Ajustes."); setSyncStatus('uploading'); setSyncMessage('Subiendo datos...'); try { const now = Date.now(); const payload = { timestamp: now, portfolio, resultsData, apiKey, baseCurrency, refreshInterval, version: 3, appPin, globalNotes, aiModel, availableModels, gScriptUrl }; await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); setLocalTimestamp(now); setSyncStatus('synced'); setSyncMessage('✅ Sincronizado'); setTimeout(() => setSyncMessage(''), 3000); } catch (e) { console.error(e); setSyncStatus('error'); setSyncMessage('❌ Error al subir'); } };
     const checkForCloudUpdates = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) { setIsAppReady(true); return; } setSyncStatus('checking'); try { const response = await fetch(url); const cloudData = await response.json(); const cloudTS = cloudData.timestamp || 0; const localTS = localTimestamp || 0; if (cloudTS > (localTS + 10000)) { setConflictModal({ isOpen: true, cloudData }); setSyncStatus('idle'); } else { setSyncStatus(localTS > cloudTS ? 'unsaved' : 'synced'); setIsAppReady(true); } } catch (e) { console.error("Error comprobando nube:", e); setSyncStatus('error'); setIsAppReady(true); } };
-    const handleApplyCloudData = () => { const data = conflictModal.cloudData; if (!data) return; if (d.gScriptUrl) setGScriptUrl(d.gScriptUrl); if (data.globalNotes) setGlobalNotes(data.globalNotes); if (data.portfolio) setPortfolio(data.portfolio); if (data.resultsData) setResultsData(data.resultsData); if (data.apiKey) setApiKey(data.apiKey); if (data.baseCurrency) setBaseCurrency(data.baseCurrency); if (data.aiModel) setAiModel(data.aiModel); if (data.availableModels) setAvailableModels(data.availableModels); setLocalTimestamp(data.timestamp); setConflictModal({ isOpen: false, cloudData: null }); setSyncStatus('synced'); setSyncMessage('✅ Datos descargados'); setIsAppReady(true); setTimeout(() => setSyncMessage(''), 3000); };
+
+   
+      const handleApplyCloudData = () => { 
+        const data = conflictModal.cloudData; 
+        if (!data) return; 
+        // RESTAURA DESDE LA NUBE EXACTAMENTE LOS 11 PARÁMETROS
+        if (data.portfolio) setPortfolio(data.portfolio); 
+        if (data.resultsData) setResultsData(data.resultsData); 
+        if (data.apiKey !== undefined) setApiKey(data.apiKey); 
+        if (data.baseCurrency) setBaseCurrency(data.baseCurrency); 
+        if (data.gScriptUrl !== undefined) setGScriptUrl(data.gScriptUrl); 
+        if (data.refreshInterval) setRefreshInterval(data.refreshInterval); 
+        if (data.appPin !== undefined) setAppPin(data.appPin);
+        if (data.aiModel) setAiModel(data.aiModel); 
+        if (data.availableModels) setAvailableModels(data.availableModels); 
+        if (data.globalNotes !== undefined) setGlobalNotes(data.globalNotes); 
+        
+        setLocalTimestamp(data.timestamp); 
+        setConflictModal({ isOpen: false, cloudData: null }); 
+        setSyncStatus('synced'); 
+        setSyncMessage('✅ Datos descargados'); 
+        setIsAppReady(true); 
+        setTimeout(() => setSyncMessage(''), 3000); 
+    };
+    
     const handleKeepLocalData = () => { setLocalTimestamp(Date.now()); setConflictModal({ isOpen: false, cloudData: null }); setSyncStatus('unsaved'); setIsAppReady(true); };
 
     useEffect(() => { if (gScriptUrl) { checkForCloudUpdates(); } else { setIsAppReady(true); } }, []);
@@ -4644,8 +4693,9 @@ const App = () => {
                     />
                 )}
                 
-                {activeTab === 'settings' && <SettingsTab apiKey={apiKey} setApiKey={setApiKey} _x_stat={_0xAuth} _x_act={_0xReg} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={updatePortfolio} onForceBackup={uploadToCloud} gScriptUrl={gScriptUrl} setGScriptUrl={setGScriptUrl} resultsData={resultsData} appPin={appPin} setAppPin={setAppPin} aiModel={aiModel} setAiModel={setAiModel} availableModels={availableModels} setAvailableModels={setAvailableModels} />}
-             </main>
+                {activeTab === 'settings' && <SettingsTab apiKey={apiKey} setApiKey={setApiKey} _x_stat={_0xAuth} _x_act={_0xReg} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={updatePortfolio} onForceBackup={uploadToCloud} gScriptUrl={gScriptUrl} setGScriptUrl={setGScriptUrl} resultsData={resultsData} setResultsData={updateResultsData} appPin={appPin} setAppPin={setAppPin} aiModel={aiModel} setAiModel={setAiModel} availableModels={availableModels} setAvailableModels={setAvailableModels} globalNotes={globalNotes} setGlobalNotes={setGlobalNotes} />}
+
+       </main>
             <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase"><div>BoardingGate 3.3 (Secure PIN)</div><div className="flex gap-4"><span>Estado: {syncStatus === 'synced' ? 'Sincronizado en gDrive' : syncStatus === 'unsaved' ? 'Cambios sin guardar en gDrive' : 'Comprobando...'}</span><span>Ult. Mod. Datos Local: {localTimestamp > 0 ? new Date(localTimestamp).toLocaleTimeString() : 'N/A'}</span></div></footer>
         </div>
     );
