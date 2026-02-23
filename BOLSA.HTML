@@ -1633,64 +1633,33 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
                             <li>Borra todo el código del editor y pega este bloque exacto:
                                 <pre className="bg-black text-green-400 p-2 rounded mt-1 mb-1 border border-slate-800 overflow-x-auto text-[9px] font-mono select-all">
 {`function A_AUTORIZAR_AQUI() {
-  // Esta función no hace nada útil, solo sirve para que Google
-  // te pida los permisos necesarios (Drive y Conexión Externa)
-  // una única vez.
   var files = DriveApp.getFiles(); 
   UrlFetchApp.fetch("https://www.google.com");
-  console.log("✅ Permisos concedidos correctamente. Ahora puedes borrar esta función o ignorarla.");
+  console.log("✅ Permisos concedidos.");
 }
 
 function doPost(e) {
   var lock = LockService.getScriptLock(); 
-  lock.tryLock(10000); // Espera hasta 10 segundos
-  
+  lock.tryLock(10000);
   try {
     var data = JSON.parse(e.postData.contents);
     var fileName = "BOARDINGGATE_DB.json";
-    
     var files = DriveApp.getFilesByName(fileName);
-    var file;
-    
-    if (files.hasNext()) {
-      file = files.next();
-    } else {
-      file = DriveApp.createFile(fileName, "", MimeType.PLAIN_TEXT);
-    }
-    
+    var file = files.hasNext() ? files.next() : DriveApp.createFile(fileName, "", MimeType.PLAIN_TEXT);
     file.setContent(JSON.stringify(data));
-    return ContentService.createTextOutput(JSON.stringify({ 
-      status: "success", 
-      timestamp: data.timestamp 
-    })).setMimeType(ContentService.MimeType.JSON);
-    
+    return ContentService.createTextOutput(JSON.stringify({ status: "success", timestamp: data.timestamp })).setMimeType(ContentService.MimeType.JSON);
   } catch(e) { 
-    return ContentService.createTextOutput(JSON.stringify({
-      status: "error",
-      error: e.toString()
-    })).setMimeType(ContentService.MimeType.JSON); 
-  } finally { 
-    lock.releaseLock(); 
-  }
+    return ContentService.createTextOutput(JSON.stringify({status: "error", error: e.toString()})).setMimeType(ContentService.MimeType.JSON); 
+  } finally { lock.releaseLock(); }
 }
 
 function doGet(e) {
-  if (e.parameter.tickers) {
-    return fetchStockData(e.parameter.tickers);
-  }
-
+  if (e.parameter.tickers) { return fetchStockData(e.parameter.tickers); }
   try {
     var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
-    if (files.hasNext()) {
-      return ContentService.createTextOutput(files.next().getBlob().getDataAsString())
-             .setMimeType(ContentService.MimeType.JSON);
-    }
-    return ContentService.createTextOutput(JSON.stringify({timestamp:0}))
-           .setMimeType(ContentService.MimeType.JSON);
-  } catch(e) { 
-    return ContentService.createTextOutput(JSON.stringify({error:e.toString()}))
-           .setMimeType(ContentService.MimeType.JSON); 
-  }
+    if (files.hasNext()) { return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON); }
+    return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
+  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
 }
 
 function fetchStockData(tickersString) {
@@ -1701,88 +1670,61 @@ function fetchStockData(tickersString) {
   for (var i = 0; i < tickerList.length; i++) {
     var rawTicker = tickerList[i].trim();
     if(!rawTicker) continue;
-    
     var url;
     if (rawTicker.length === 6 && !rawTicker.includes(":")) {
        url = "https://www.google.com/finance/quote/" + rawTicker.substring(0,3) + "-" + rawTicker.substring(3,6);
     } else {
        var parts = rawTicker.split(':');
-       var gTicker = rawTicker;
-       if (parts.length === 2) { 
-         gTicker = parts[1] + ":" + parts[0]; 
-       }
+       var gTicker = parts.length === 2 ? parts[1] + ":" + parts[0] : rawTicker;
        url = "https://www.google.com/finance/quote/" + encodeURIComponent(gTicker);
     }
-
-    requests.push({
-      url: url,
-      method: "GET",
-      muteHttpExceptions: true,
-      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" }
-    });
+    requests.push({ url: url, method: "GET", muteHttpExceptions: true, headers: { "User-Agent": "Mozilla/5.0..." } });
     validTickers.push(rawTicker);
   }
 
   var results = {};
-  
   try {
     var responses = UrlFetchApp.fetchAll(requests);
-    
     for (var j = 0; j < responses.length; j++) {
       var rawTicker = validTickers[j];
-      var code = responses[j].getResponseCode();
-      
-      if (code === 200) {
+      if (responses[j].getResponseCode() === 200) {
         var html = responses[j].getContentText();
         var res = { success: false };
-        
         var priceMatch = html.match(/<div class="AHmHk"[^>]*>[\s\S]*?<div class="YMlKec[^"]*">([^<]+)<\/div>/);
         if (priceMatch) {
           res.p = cleanNumGAS(priceMatch[1]);
           res.success = true;
+          res.n = (html.match(/<div class="zz7u7b">([^<]+)<\/div>/) || [])[1];
           
-          var nameMatch = html.match(/<div class="zz7u7b">([^<]+)<\/div>/);
-          if (nameMatch) res.n = nameMatch[1];
-
-          var peMatch = html.match(/(?:Ratio precio-beneficio|P\/E ratio)[\s\S]*?<div class="P6K39c">([^<]+)<\/div>/);
-          if (peMatch) res.pe = cleanNumGAS(peMatch[1]);
-
-          var divMatch = html.match(/(?:Rentabilidad por dividendo|Dividend yield)[\s\S]*?<div class="P6K39c">([^<]+)<\/div>/);
-          if (divMatch) {
-            // Limpia texto extra como "2.54% (anual)"
-            var divVal = divMatch[1].split(/\s|\(/)[0];
-            res.div = cleanNumGAS(divVal);
-          }
-
-          var pcMatch = html.match(/(?:Cierre anterior|Previous close)[\s\S]*?<div class="P6K39c">([^<]+)<\/div>/);
-          if (pcMatch) res.pc = cleanNumGAS(pcMatch[1]);
+          // Lógica de extras (PE, Div, MC, EPS, Beta, 52H)
+          var getV = function(labels) {
+            for (var k=0; k<labels.length; k++) {
+              var m = html.match(new RegExp(labels[k] + '[\\s\\S]*?<div class="P6K39c">([^<]+)<\\/div>'));
+              if (m) return m[1].trim();
+            } return null;
+          };
+          res.pe = cleanNumGAS(getV(["Ratio precio-beneficio", "P/E ratio"]));
+          res.div = cleanNumGAS(getV(["Rentabilidad por dividendo", "Dividend yield"]));
+          res.pc = cleanNumGAS(getV(["Cierre anterior", "Previous close"]));
+          res.mc = getV(["Capitalización bursátil", "Market cap"]);
+          res.eps = cleanNumGAS(getV(["Beneficio por acción", "Earnings per share"]));
+          res.beta = cleanNumGAS(getV(["Beta"]));
+          res.h52 = getV(["Rango de 52 semanas", "52-week range"]);
         }
         results[rawTicker] = res;
-      } else {
-        results[rawTicker] = { success: false, reason: "HTTP Error " + code };
       }
     }
-  } catch(err) {
-     return ContentService.createTextOutput(JSON.stringify({error: err.toString()})).setMimeType(ContentService.MimeType.JSON);
-  }
-  
+  } catch(err) { return ContentService.createTextOutput(JSON.stringify({error: err.toString()})).setMimeType(ContentService.MimeType.JSON); }
   return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
 }
 
 function cleanNumGAS(str) {
   if (!str) return 0;
   var val = str.replace(/[^0-9.,-]/g, '');
-  
   if (val.indexOf(',') > -1 && val.indexOf('.') > -1) { 
-    if (val.lastIndexOf(',') > val.lastIndexOf('.')) {
-        val = val.replace(/\./g, '').replace(',', '.');
-    } else {
-        val = val.replace(/,/g, '');
-    }
-  } else if (val.indexOf(',') > -1) { 
-    val = val.replace(',', '.'); 
-  }
-  
+    if (val.lastIndexOf(',') > val.lastIndexOf('.')) { val = val.replace(/\./g, '').replace(',', '.'); } 
+    else { val = val.replace(/,/g, ''); }
+  } else if (val.indexOf(',') > -1) { val = val.replace(',', '.'); }
   return parseFloat(val) || 0;
 }`}
                                 </pre>
@@ -3465,7 +3407,7 @@ const RenderHistoryCard = () => {
 };
 
 
-const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiModel }) => {
+const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiModel, gScriptUrl }) => {
     // --- ESTADOS NAVEGACIÓN Y ESTUDIO ---
     const [activeSubTab, setActiveSubTab] = useState('estudio');
     const [ticker, setTicker] = useState(initialTicker || ''); 
@@ -4258,67 +4200,79 @@ const REPORT_TITLES = {
         } catch (e) { setStatusModal({ isOpen: true, title: 'Error iA', msg: e.message, type: 'error' }); } finally { setLoading(false); } 
     };
 
-    const handleFixedAnalysis = async (promptId) => {
+
+
+
+const handleFixedAnalysis = async (promptId) => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' }); 
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' }); 
         
-        setLoading(true); 
-        setSpecificAnswer(null); 
-        setData(null);
+        setLoading(true); setSpecificAnswer(null); setData(null);
 
         try {
             const today = new Date().toLocaleString('es-ES');
-            
-            // 1. Obtener precio (Llamada rápida)
-            const priceFetchPrompt = `BUSCA EN INTERNET: Precio real actual de ${ticker}. Responde solo: "Precio: [X] [Divisa] | Fecha: [Fecha]"`;
-            let priceInfo = "Buscando precio actualizado...";
-            try { 
-                const pRes = await askGemini(apiKey, priceFetchPrompt);
-                priceInfo = pRes || "Precio no disponible";
-            } catch(e) { priceInfo = "Error al conectar con el servidor de precios"; }
+            let anchorContext = "";
+            let hardData = null;
 
-            const templateCode = HTML_TEMPLATES[promptId];
-            
-            // 2. Informe con Protocolo de Integridad
+            // LLAMADA AL SCRIPT PARA DATOS REALES
+            const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
+            if (scriptUrl) {
+                try {
+                    const res = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(ticker)}&_t=${Date.now()}`);
+                    const json = await res.json();
+                    hardData = json[ticker];
+                    if (hardData && hardData.success) {
+                        anchorContext = `
+                        DATOS ACTUALES VERIFICADOS (SISTEMA):
+                        - PRECIO: ${hardData.p}
+                        - MARKET CAP: ${hardData.mc || 'N/D'}
+                        - PER (P/E): ${hardData.pe || 'N/D'}
+                        - BPA (EPS): ${hardData.eps || 'N/D'}
+                        - YIELD DIVIDENDO: ${hardData.div ? hardData.div + '%' : 'N/D'}
+                        - BETA: ${hardData.beta || 'N/D'}
+                        - RANGO 52 SEM: ${hardData.h52 || 'N/D'}
+                        `;
+                    }
+                } catch (e) { console.warn("Script no disponible para anclaje."); }
+            }
+
             const prompt = `
             SISTEMA: ROL ANALISTA SENIOR DE BOLSA EN WALL STREET. RECABA LOS DATOS DE FORMA ACTIVA EN INTERNET.
-            TAREA: Auditar el ticker ${ticker}, a FECHA MÁS PRÓXIMA A (${today}), CON PRECIO ACTUAL DE ${priceInfo}.
-            ESTILO: Se conciso pero resumir excesivamente los distintos apartados. explicando bien cada uno con un lenguaje que una persona no muy experimentada en bolsa comprenda.
+            TAREA: Auditar el ticker ${ticker}, a FECHA MÁS PRÓXIMA A (${today}).
+            ESTILO: Se conciso pero sin resumir excesivamente los distintos apartados. Explica bien cada uno con un lenguaje que una persona no muy experimentada en bolsa comprenda.
             
-            FUENTES DE BÚSQUEDA EN GOOGLE PREFERIBLES POR ORDEN DE BÚSQUEDA Y SI ES POSIBLE, CUANDO BUSQUES UN MISMO TIPO DE DATOS PARA DISTINTOS TICKERS USA LA MISMA FUENTE PARA TODOS ELLOS, PARA DATOS ESTILO PER, ROI, PEG, ETC UTILIZA FINVIZ.COM:
-            Investor Relations (Webs oficiales), FINVIZ,  Investing, TradingView,  marketscreener, Google Finance, SEC.gov, Yahoo Finance, MarketWatch y SeekingAlpha.
+            ${anchorContext}
+
+            FUENTES DE BÚSQUEDA EN GOOGLE PREFERIBLES POR ORDEN:
+            Investor Relations (Webs oficiales), FINVIZ, Investing, TradingView, MarketScreener, Google Finance, SEC.gov, Yahoo Finance, MarketWatch y SeekingAlpha.
             
             PREMISAS OBLIGATORIAS:
-            1. PROHIBIDO INVENTAR: No uses valores de ejemplo y jamás inventes, PENALIZADO CON 1.000 EUROS. SIEMPRE INDICA LAS FUENTES DE LOS DATOS Y SU RANGO DE FECHAS EN CADA APARTADO. NO USES NINGUN DATO DEL QUE NO TENGAS CERTEZA QUE SEAN ACTUALES. SI ES POSIBLE LOS DATOS MAS RELEVANTES USA HERRAMIENTAS QUE DAN LOS MISMOS EN TIEMPO REAL Y EN CASO DE TENER A DISPOSICIÓN LOS DATOS COMUNES A VARIOS TICKERS, UTILIZAR LA MISMA FUENTE.
-            2. SI UN DATO NO SE LOCALIZA: Escribe "No encontré datos" y las URLs deben ser ejecutables al pinchar en ellas.
-            3. TRADUCCIÓN: Todo el informe debe estar en ESPAÑOL.
-            4. LOS CONCEPTOS TÉCNICOS (ROI, PER, PEG, etc) DEBEN SER EXPLICADOS PARA QUE ALGUIEN SIN CONOCIMIENTOS LOS COMPRENDA PREFERIBLENTE CERCA DE DONDE SE CITAN Y EN LETRA MÁS PEQUEÑA CON UN INDICANDO -SIEMPRE- LA FUENTE (*)
+            1. PROHIBIDO INVENTAR: No uses valores de ejemplo y jamás inventes, PENALIZADO CON 1.000 EUROS. SIEMPRE INDICA LAS FUENTES DE LOS DATOS Y SU RANGO DE FECHAS EN CADA APARTADO. 
+            2. PROTOCOLO DE CONSISTENCIA: Si el informe precisa comparar varios tickers o realizar rankings, utiliza la MISMA FUENTE para los datos comunes de todos ellos para asegurar la integridad de la comparativa.
+            3. ATEMPORALIDAD: No uses ningún dato del que no tengas certeza que sea actual (máximo 12 meses de antigüedad desde la fecha de hoy).
+            4. EXPLICACIÓN TÉCNICA: Los conceptos técnicos (ROI, PER, PEG, etc) deben ser explicados para que alguien sin conocimientos los comprenda, preferiblemente cerca de donde se citan y en LETRA MÁS PEQUEÑA indicando la fuente.
+            5. SI UN DATO NO SE LOCALIZA: Escribe "DATO NO LOCALIZADO" y las URLs deben ser ejecutables.
+            6. TRADUCCIÓN: Todo el informe debe estar en ESPAÑOL.
             
-            DATOS CARTERA:
-            ${templateCode}
+            DATOS CARTERA A RELLENAR:
+            ${HTML_TEMPLATES[promptId]}
             
-            FORMATO: Responde solo con código HTML (h3, ul, li, p).
+            FORMATO: Responde solo con código HTML (h3, ul, li, p). Sin bloques markdown.
         `;
 
             const res = await askGemini(apiKey, prompt, aiModel);
-            
-            const cleanBody = res.trim().replace(/```html/g, '').replace(/```/g, ''); 
-            if (!cleanBody || cleanBody.length < 50) throw new Error("La IA no devolvió un informe válido.");
+            const cleanBody = cleanAIResponse(res);
+            if (!cleanBody || cleanBody.length < 50) throw new Error("Informe insuficiente.");
 
-            const reportTitle = REPORT_TITLES[promptId] || "INFORME FINANCIERO";
-            
-            // Construcción del HTML final (FONDO BLANCO / TEXTO NEGRO / TÍTULO AZUL)
             const finalHtml = `
-                <div style="background-color: #ffffff; color: #000000; padding: 0px;">
+                <div style="background-color: #ffffff; color: #000000; padding: 0px; font-family: sans-serif;">
                     <div style="border-bottom: 3px solid #1e3a8a; padding-bottom: 10px; margin-bottom: 20px;">
-                        <h2 style="color: #1e3a8a; margin: 0; font-size: 1.5rem; text-transform: uppercase;">${reportTitle}</h2>
+                        <h2 style="color: #1e3a8a; margin: 0; font-size: 1.5rem; text-transform: uppercase;">${REPORT_TITLES[promptId]}</h2>
                         <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 8px;">
-                            <div>
-                                <span style="font-size: 1.2rem; font-weight: bold; color: #000;">${ticker}</span>
-                            </div>
+                            <div><span style="font-size: 1.2rem; font-weight: bold; color: #000;">${hardData?.n || ticker}</span></div>
                             <div style="text-align: right; font-size: 0.75rem; color: #000; font-family: monospace;">
-                                <div>${priceInfo}</div>
-                                <div>GENERADO EL: ${today}</div>
+                                <div>${hardData?.p ? 'Precio: ' + hardData.p : 'Consultando internet...'}</div>
+                                <div>AUDITORÍA iA: ${today}</div>
                             </div>
                         </div>
                     </div>
@@ -4327,14 +4281,11 @@ const REPORT_TITLES = {
                     </div>
                 </div>
             `;
-            
             setSpecificAnswer(finalHtml); 
-        } catch (e) { 
-            setStatusModal({ isOpen: true, title: 'Error Análisis', msg: e.message, type: 'error' }); 
-        } finally { 
-            setLoading(false); 
-        }
+        } catch (e) { setStatusModal({ isOpen: true, title: 'Fallo', msg: e.message, type: 'error' }); } finally { setLoading(false); }
     };
+
+
 
     // --- RASTREO (SCREENER) RESTAURADO AL ORIGINAL ---
     const runScreener = async () => {
@@ -4919,6 +4870,7 @@ const App = () => {
                         setPortfolio={updatePortfolio}
                         initialTicker={analysisTicker}
                         aiModel={aiModel}
+                        gScriptUrl={gScriptUrl}
                     />
                 )}
                 
