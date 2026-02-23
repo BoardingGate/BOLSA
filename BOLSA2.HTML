@@ -2218,9 +2218,11 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const [newsResult, setNewsResult] = useState(null);
     const [isNewsModalOpen, setIsNewsModalOpen] = useState(false);
     const [isNewsSelectionModalOpen, setIsNewsSelectionModalOpen] = useState(false);
+    const [customNewsTopic, setCustomNewsTopic] = useState('');
 
     // FUNCIÓN PARA OBTENER NOTICIAS
     const fetchNews = async (type) => {
+        if (type === 'custom' && !customNewsTopic.trim()) return alert("Por favor, introduce un tema de búsqueda.");
         setIsNewsSelectionModalOpen(false); 
         
         const now = new Date();
@@ -2251,11 +2253,10 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                 2. AGNOSIA TEMPORAL: Ignora cualquier noticia anterior al ${limit7d}. Si no hay nada nuevo, indica "Sin noticias recientes".
                 3. ESTRUCTURA: Agrupar por TICKER (usar <h3> para el ticker).
                 4. CADA NOTICIA: Fecha exacta, Titular, Resumen de 3 frases y enlace URL directo a la fuente.
-              
                 
                 FORMATO: Responde solo con etiquetas HTML (h3, div, p, a).
             `;
-        } else {
+        } else if (type === 'general') {
             prompt = `
                 SISTEMA: ROL ANALISTA MACROECONÓMICO SENIOR.
                 FECHA ACTUAL DE REFERENCIA: ${todayStr}.
@@ -2269,12 +2270,25 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                 
                 FORMATO: Responde solo con etiquetas HTML (h3, div, p, a).
             `;
+        } else if (type === 'custom') {
+            prompt = `
+                SISTEMA: ROL ANALISTA DE INVESTIGACIÓN FINANCIERA.
+                FECHA ACTUAL DE REFERENCIA: ${todayStr}.
+                TAREA: Realizar una búsqueda exhaustiva en Internet sobre noticias y eventos relevantes publicados en los ÚLTIMOS 7 DÍAS sobre el tema específico: "${customNewsTopic}".
+                
+                REQUISITOS ESTRICTOS:
+                1. Idioma: Castellano.
+                2. RELEVANCIA: Filtra solo noticias que tengan impacto económico o financiero relacionado con el tema.
+                3. ESTRUCTURA: Agrupar por subtemas o relevancia (usar <h3>).
+                4. CADA NOTICIA: Fecha, Titular, Resumen ejecutivo del evento y enlace URL directo a la fuente.
+                
+                FORMATO: Responde solo con etiquetas HTML (h3, div, p, a).
+            `;
         }
 
         setAnalyzingNews(true);
         try {
             const res = await askGemini(apiKey, prompt, aiModel);
-            // Limpieza y validación de respuesta
             let cleanHtml = res.trim();
             cleanHtml = cleanHtml.replace(/```html/g, '').replace(/```/g, '');
             const startIdx = cleanHtml.indexOf('<');
@@ -2291,13 +2305,14 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             setInfoModal({ 
                 isOpen: true, 
                 title: 'Error de Rastreo', 
-                msg: 'Fallo al obtener noticias: ' + e.message + '\n\nInténtalo de nuevo en unos segundos.', 
+                msg: 'Fallo al obtener noticias: ' + e.message, 
                 type: 'error' 
             });
         } finally {
             setAnalyzingNews(false);
+            if (type === 'custom') setCustomNewsTopic('');
         }
-    };    
+    };
 
   
     // FUNCIÓN PARA IMPRIMIR NOTICIAS
@@ -3395,8 +3410,7 @@ const RenderHistoryCard = () => {
                 </div>
             )}
 
-
-            <Modal isOpen={isNewsSelectionModalOpen} title="¿Qué noticias deseas consultar?" onClose={() => setIsNewsSelectionModalOpen(false)} size="sm">
+<Modal isOpen={isNewsSelectionModalOpen} title="¿Qué noticias deseas consultar?" onClose={() => setIsNewsSelectionModalOpen(false)} size="sm">
             <div className="flex flex-col gap-4 p-2">
                 <button 
                     onClick={() => fetchNews('portfolio')}
@@ -3419,8 +3433,29 @@ const RenderHistoryCard = () => {
                         <div className="text-[10px] text-slate-400">Noticias macro, economía y bolsa mundial reciente</div>
                     </div>
                 </button>
+
+                {/* OPCIÓN: TEMA PERSONALIZADO */}
+                <div className="mt-2 p-4 bg-slate-950 border border-slate-700 rounded-xl shadow-inner">
+                    <label className="text-[10px] font-black text-slate-500 uppercase mb-2 block tracking-widest">Búsqueda sobre tema libre</label>
+                    <div className="flex gap-2">
+                        <input 
+                            type="text" 
+                            value={customNewsTopic} 
+                            onChange={(e) => setCustomNewsTopic(e.target.value)} 
+                            placeholder="Ej: Tipos de interés, Nvidia, Crypto..." 
+                            className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:border-blue-500 outline-none transition-colors"
+                        />
+                        <button 
+                            onClick={() => fetchNews('custom')}
+                            className="bg-blue-600 hover:bg-blue-500 text-white p-2 rounded-lg transition-colors flex items-center justify-center min-w-[40px]"
+                        >
+                            <Icons.Search size={18}/>
+                        </button>
+                    </div>
+                </div>
             </div>
         </Modal>
+            
 
 {/* --- MODAL DE RESULTADOS DE NOTICIAS --- */}
 <Modal isOpen={isNewsModalOpen} title="Radar de Noticias iA" onClose={() => setIsNewsModalOpen(false)} size="lg">
