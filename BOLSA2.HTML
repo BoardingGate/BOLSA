@@ -1039,6 +1039,17 @@ const DividendTab = ({ portfolio, setPortfolio, baseCurrency, syncStatus, onManu
         return `${date.getDate().toString().padStart(2,'0')}/${(date.getMonth()+1).toString().padStart(2,'0')}/${date.getFullYear().toString().slice(-2)}`;
     };
 
+    const paymentSchedule = useMemo(() => {
+        const schedule = {};
+        portfolio.forEach(p => {
+            const monthsWithPayments = (p.dividends || [])
+                .filter(d => d.net > 0)
+                .map(d => d.month);
+            schedule[p.id] = [...new Set(monthsWithPayments)];
+        });
+        return schedule;
+    }, [portfolio]);    
+
     const filtered = useMemo(() => {
         return portfolio.filter(p => { 
             if (showAllHistory) return (p.dividends && p.dividends.length > 0) || p.annualDividend > 0;
@@ -1287,15 +1298,28 @@ const handlePrint = () => {
                                     <td className="p-2 bg-yellow-900/5 text-right font-mono space-x-1.5 text-[9px]">
                                         <span className="text-green-300">{formatN(r.n)}</span>|<span className="text-slate-400">{formatN(r.o)}</span>|<span className="text-slate-400">{formatN(r.d)}</span>|<span className="text-white font-bold">{formatN(r.b)}</span>
                                     </td>
-                                    {r.rowMonths.map((m, i) => ( 
-                                        <td key={i} className={`p-1 border-l border-slate-800 ${i % 2 === 0 ? 'bg-white/[0.04]' : ''} ${showAllHistory ? 'bg-slate-900/30' : ''}`}>
-                                            <div className="grid grid-cols-3 gap-1">
-                                                <input type="number" step="0.01" value={m.n || ''} onChange={e => handleDivChange(r.id, i, 'net', e.target.value)} disabled={showAllHistory} className={`w-full text-center text-green-400 bg-transparent border-none p-0 focus:ring-1 focus:ring-green-500 ${showAllHistory ? 'opacity-30 cursor-not-allowed' : ''}`} />
-                                                <input type="number" step="0.01" value={m.o || ''} onChange={e => handleDivChange(r.id, i, 'taxOrigin', e.target.value)} disabled={showAllHistory} className={`w-full text-center text-slate-400 bg-transparent border-none p-0 focus:ring-1 focus:ring-slate-500 ${showAllHistory ? 'opacity-30 cursor-not-allowed' : ''}`} />
-                                                <input type="number" step="0.01" value={m.d || ''} onChange={e => handleDivChange(r.id, i, 'taxDest', e.target.value)} disabled={showAllHistory} className={`w-full text-center text-slate-400 bg-transparent border-none p-0 focus:ring-1 focus:ring-slate-500 ${showAllHistory ? 'opacity-30 cursor-not-allowed' : ''}`} />
-                                            </div>
-                                        </td> 
-                                    ))}
+
+                                    {r.rowMonths.map((m, i) => {
+                                        const isExpected = paymentSchedule[r.id]?.includes(i);
+                                        const hasValue = (m.n || m.o || m.d);
+                                        return ( 
+                                            <td key={i} 
+                                                title={isExpected ? "Mes de pago habitual" : ""}
+                                                className={`p-1 border-l border-slate-800 transition-colors 
+                                                    ${i % 2 === 0 ? 'bg-white/[0.04]' : ''} 
+                                                    ${showAllHistory ? 'bg-slate-900/30' : ''}
+                                                    ${isExpected && !hasValue ? 'bg-blue-500/10 ring-1 ring-inset ring-blue-500/20' : ''}
+                                                    ${isExpected && hasValue ? 'bg-green-500/5' : ''}
+                                                `}>
+                                                <div className="grid grid-cols-3 gap-1">
+                                                    <input type="number" step="0.01" value={m.n || ''} onChange={e => handleDivChange(r.id, i, 'net', e.target.value)} disabled={showAllHistory} className={`w-full text-center text-green-400 bg-transparent border-none p-0 focus:ring-1 focus:ring-green-500 ${showAllHistory ? 'opacity-30 cursor-not-allowed' : ''} ${isExpected && !m.n ? 'placeholder-blue-400/30' : ''}`} placeholder={isExpected && !m.n ? "•" : ""} />
+                                                    <input type="number" step="0.01" value={m.o || ''} onChange={e => handleDivChange(r.id, i, 'taxOrigin', e.target.value)} disabled={showAllHistory} className={`w-full text-center text-slate-400 bg-transparent border-none p-0 focus:ring-1 focus:ring-slate-500 ${showAllHistory ? 'opacity-30 cursor-not-allowed' : ''}`} />
+                                                    <input type="number" step="0.01" value={m.d || ''} onChange={e => handleDivChange(r.id, i, 'taxDest', e.target.value)} disabled={showAllHistory} className={`w-full text-center text-slate-400 bg-transparent border-none p-0 focus:ring-1 focus:ring-slate-500 ${showAllHistory ? 'opacity-30 cursor-not-allowed' : ''}`} />
+                                                </div>
+                                            </td> 
+                                        );
+                                    })}
+
                                     <td className="p-2 text-center bg-purple-900/10 font-bold text-purple-300">{formatN(r.diBruto)}</td>
                                     <td className="p-2 text-center bg-purple-900/10 border-l border-slate-800 font-bold text-purple-300">{formatN(r.di15)}</td>
                                 </tr> 
