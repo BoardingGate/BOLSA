@@ -1635,7 +1635,7 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
 {`function A_AUTORIZAR_AQUI() {
   var files = DriveApp.getFiles(); 
   UrlFetchApp.fetch("https://www.google.com");
-  console.log("✅ Permisos concedidos correctamente.");
+  console.log("✅ Permisos concedidos.");
 }
 
 function doPost(e) {
@@ -1666,13 +1666,22 @@ function fetchStockData(tickersString) {
   var tickerList = tickersString.split(",");
   var requests = [];
   var validTickers = [];
+
   for (var i = 0; i < tickerList.length; i++) {
     var rawTicker = tickerList[i].trim();
     if(!rawTicker) continue;
-    var url = "https://www.google.com/finance/quote/" + encodeURIComponent(rawTicker.replace(':',':'));
-    requests.push({ url: url, method: "GET", muteHttpExceptions: true, headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" } });
+    var url;
+    if (rawTicker.length === 6 && !rawTicker.includes(":")) {
+       url = "https://www.google.com/finance/quote/" + rawTicker.substring(0,3) + "-" + rawTicker.substring(3,6);
+    } else {
+       var parts = rawTicker.split(':');
+       var gTicker = parts.length === 2 ? parts[1] + ":" + parts[0] : rawTicker;
+       url = "https://www.google.com/finance/quote/" + encodeURIComponent(gTicker);
+    }
+    requests.push({ url: url, method: "GET", muteHttpExceptions: true, headers: { "User-Agent": "Mozilla/5.0..." } });
     validTickers.push(rawTicker);
   }
+
   var results = {};
   try {
     var responses = UrlFetchApp.fetchAll(requests);
@@ -1680,27 +1689,30 @@ function fetchStockData(tickersString) {
       var rawTicker = validTickers[j];
       if (responses[j].getResponseCode() === 200) {
         var html = responses[j].getContentText();
-        var res = { success: true };
-        var getVal = function(labels) {
-          for (var l = 0; l < labels.length; l++) {
-            var regex = new RegExp(labels[l] + '[\\s\\S]*?<div class="P6K39c">([^<]+)<\\/div>');
-            var match = html.match(regex);
-            if (match) return match[1].trim();
-          }
-          return null;
-        };
+        var res = { success: false };
         var priceMatch = html.match(/<div class="AHmHk"[^>]*>[\s\S]*?<div class="YMlKec[^"]*">([^<]+)<\/div>/);
-        res.p = priceMatch ? cleanNumGAS(priceMatch[1]) : 0;
-        res.n = (html.match(/<div class="zz7u7b">([^<]+)<\/div>/) || [])[1] || rawTicker;
-        res.pe = cleanNumGAS(getVal(["Ratio precio-beneficio", "P/E ratio"]));
-        res.div = cleanNumGAS(getVal(["Rentabilidad por dividendo", "Dividend yield"]));
-        res.mc = getVal(["Capitalización bursátil", "Market cap"]);
-        res.eps = cleanNumGAS(getVal(["Beneficio por acción", "Earnings per share"]));
-        res.beta = cleanNumGAS(getVal(["Beta"]));
-        res.h52 = getVal(["Rango de 52 semanas", "52-week range"]);
-        res.pc = cleanNumGAS(getVal(["Cierre anterior", "Previous close"]));
+        if (priceMatch) {
+          res.p = cleanNumGAS(priceMatch[1]);
+          res.success = true;
+          res.n = (html.match(/<div class="zz7u7b">([^<]+)<\/div>/) || [])[1];
+          
+          // Lógica de extras (PE, Div, MC, EPS, Beta, 52H)
+          var getV = function(labels) {
+            for (var k=0; k<labels.length; k++) {
+              var m = html.match(new RegExp(labels[k] + '[\\s\\S]*?<div class="P6K39c">([^<]+)<\\/div>'));
+              if (m) return m[1].trim();
+            } return null;
+          };
+          res.pe = cleanNumGAS(getV(["Ratio precio-beneficio", "P/E ratio"]));
+          res.div = cleanNumGAS(getV(["Rentabilidad por dividendo", "Dividend yield"]));
+          res.pc = cleanNumGAS(getV(["Cierre anterior", "Previous close"]));
+          res.mc = getV(["Capitalización bursátil", "Market cap"]);
+          res.eps = cleanNumGAS(getV(["Beneficio por acción", "Earnings per share"]));
+          res.beta = cleanNumGAS(getV(["Beta"]));
+          res.h52 = getV(["Rango de 52 semanas", "52-week range"]);
+        }
         results[rawTicker] = res;
-      } else { results[rawTicker] = { success: false }; }
+      }
     }
   } catch(err) { return ContentService.createTextOutput(JSON.stringify({error: err.toString()})).setMimeType(ContentService.MimeType.JSON); }
   return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
@@ -3395,7 +3407,7 @@ const RenderHistoryCard = () => {
 };
 
 
-const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiModel }) => {
+const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiModel, gScriptUrl }) => {
     // --- ESTADOS NAVEGACIÓN Y ESTUDIO ---
     const [activeSubTab, setActiveSubTab] = useState('estudio');
     const [ticker, setTicker] = useState(initialTicker || ''); 
@@ -4191,7 +4203,7 @@ const REPORT_TITLES = {
 
 
 
-    const handleFixedAnalysis = async (promptId) => {
+const handleFixedAnalysis = async (promptId) => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' }); 
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' }); 
         
@@ -4199,38 +4211,31 @@ const REPORT_TITLES = {
 
         try {
             const today = new Date().toLocaleString('es-ES');
-            const scriptUrl = simpleDecrypt(gScriptUrl);
-            let hardData = null;
             let anchorContext = "";
+            let hardData = null;
 
-            // 1. OBTENCIÓN DE DATOS ANCLA (BLINDAJE DEL TICKER PRINCIPAL)
+            // LLAMADA AL SCRIPT PARA DATOS REALES
+            const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
             if (scriptUrl) {
                 try {
-                    const fetchUrl = `${scriptUrl}?tickers=${encodeURIComponent(ticker)}&_t=${Date.now()}`;
-                    const res = await fetch(fetchUrl);
+                    const res = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(ticker)}&_t=${Date.now()}`);
                     const json = await res.json();
                     hardData = json[ticker];
-                    
                     if (hardData && hardData.success) {
                         anchorContext = `
-                        DATOS ACTUALES VERIFICADOS PARA ${ticker} (Úsalos como única fuente para estos campos):
+                        DATOS ACTUALES VERIFICADOS (SISTEMA):
                         - PRECIO: ${hardData.p}
-                        - NOMBRE: ${hardData.n}
                         - MARKET CAP: ${hardData.mc || 'N/D'}
                         - PER (P/E): ${hardData.pe || 'N/D'}
                         - BPA (EPS): ${hardData.eps || 'N/D'}
                         - YIELD DIVIDENDO: ${hardData.div ? hardData.div + '%' : 'N/D'}
                         - BETA: ${hardData.beta || 'N/D'}
-                        - RANGO 52 SEMANAS: ${hardData.h52 || 'N/D'}
+                        - RANGO 52 SEM: ${hardData.h52 || 'N/D'}
                         `;
                     }
-                } catch (err) { console.warn("Script no disponible."); }
+                } catch (e) { console.warn("Script no disponible para anclaje."); }
             }
 
-            const templateCode = HTML_TEMPLATES[promptId];
-            const reportTitle = REPORT_TITLES[promptId] || "INFORME FINANCIERO";
-            
-            // 2. PROMPT ORIGINAL + INTEGRACIÓN DE DATOS REALES Y FUENTE ÚNICA
             const prompt = `
             SISTEMA: ROL ANALISTA SENIOR DE BOLSA EN WALL STREET. RECABA LOS DATOS DE FORMA ACTIVA EN INTERNET.
             TAREA: Auditar el ticker ${ticker}, a FECHA MÁS PRÓXIMA A (${today}).
@@ -4243,31 +4248,30 @@ const REPORT_TITLES = {
             
             PREMISAS OBLIGATORIAS:
             1. PROHIBIDO INVENTAR: No uses valores de ejemplo y jamás inventes, PENALIZADO CON 1.000 EUROS. SIEMPRE INDICA LAS FUENTES DE LOS DATOS Y SU RANGO DE FECHAS EN CADA APARTADO. 
-            2. PROTOCOLO DE CONSISTENCIA: Si el informe precisa comparar varios tickers o realizar rankings, utiliza la MISMA FUENTE para los datos comunes de todos ellos (ej: todos los PER sacados de Finviz) para asegurar la integridad de la comparativa.
-            3. ATEMPORALIDAD: No uses ningún dato del que no tengas certeza que sea actual (máximo 12 meses de antigüedad desde ${today}).
+            2. PROTOCOLO DE CONSISTENCIA: Si el informe precisa comparar varios tickers o realizar rankings, utiliza la MISMA FUENTE para los datos comunes de todos ellos para asegurar la integridad de la comparativa.
+            3. ATEMPORALIDAD: No uses ningún dato del que no tengas certeza que sea actual (máximo 12 meses de antigüedad desde la fecha de hoy).
             4. EXPLICACIÓN TÉCNICA: Los conceptos técnicos (ROI, PER, PEG, etc) deben ser explicados para que alguien sin conocimientos los comprenda, preferiblemente cerca de donde se citan y en LETRA MÁS PEQUEÑA indicando la fuente.
             5. SI UN DATO NO SE LOCALIZA: Escribe "DATO NO LOCALIZADO" y las URLs deben ser ejecutables.
             6. TRADUCCIÓN: Todo el informe debe estar en ESPAÑOL.
             
             DATOS CARTERA A RELLENAR:
-            ${templateCode}
+            ${HTML_TEMPLATES[promptId]}
             
-            FORMATO: Responde solo con código HTML (h3, ul, li, p). Sin bloques de código markdown.
-            `;
+            FORMATO: Responde solo con código HTML (h3, ul, li, p). Sin bloques markdown.
+        `;
 
             const res = await askGemini(apiKey, prompt, aiModel);
-            const cleanBody = res.trim().replace(/```html/g, '').replace(/```/g, ''); 
-            
-            if (!cleanBody || cleanBody.length < 50) throw new Error("La IA no generó contenido suficiente.");
+            const cleanBody = cleanAIResponse(res);
+            if (!cleanBody || cleanBody.length < 50) throw new Error("Informe insuficiente.");
 
             const finalHtml = `
                 <div style="background-color: #ffffff; color: #000000; padding: 0px; font-family: sans-serif;">
                     <div style="border-bottom: 3px solid #1e3a8a; padding-bottom: 10px; margin-bottom: 20px;">
-                        <h2 style="color: #1e3a8a; margin: 0; font-size: 1.5rem; text-transform: uppercase;">${reportTitle}</h2>
+                        <h2 style="color: #1e3a8a; margin: 0; font-size: 1.5rem; text-transform: uppercase;">${REPORT_TITLES[promptId]}</h2>
                         <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 8px;">
                             <div><span style="font-size: 1.2rem; font-weight: bold; color: #000;">${hardData?.n || ticker}</span></div>
                             <div style="text-align: right; font-size: 0.75rem; color: #000; font-family: monospace;">
-                                <div>${hardData?.p ? 'Precio: ' + hardData.p : 'Buscando datos...'}</div>
+                                <div>${hardData?.p ? 'Precio: ' + hardData.p : 'Consultando internet...'}</div>
                                 <div>AUDITORÍA iA: ${today}</div>
                             </div>
                         </div>
@@ -4278,9 +4282,8 @@ const REPORT_TITLES = {
                 </div>
             `;
             setSpecificAnswer(finalHtml); 
-        } catch (e) { setStatusModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' }); } finally { setLoading(false); }
+        } catch (e) { setStatusModal({ isOpen: true, title: 'Fallo', msg: e.message, type: 'error' }); } finally { setLoading(false); }
     };
-
 
 
 
@@ -4867,6 +4870,7 @@ const App = () => {
                         setPortfolio={updatePortfolio}
                         initialTicker={analysisTicker}
                         aiModel={aiModel}
+                        gScriptUrl={gScriptUrl}
                     />
                 )}
                 
