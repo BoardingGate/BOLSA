@@ -466,10 +466,16 @@ const CarouselCharts = ({ chartsData, baseCurrency }) => {
 
 
 
-
-const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, syncStatus, onManualSync }) => {
+const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, syncStatus, onManualSync, apiKey, aiModel }) => {
     const r2 = (num) => Math.round((parseFloat(num) || 0) * 100) / 100;
     
+    // --- ESTADOS PARA RENTA CON IA ---
+    const [isRentaModalOpen, setIsRentaModalOpen] = useState(false);
+    const [rentaYear, setRentaYear] = useState(new Date().getFullYear() - 1);
+    const [isGeneratingRenta, setIsGeneratingRenta] = useState(false);
+    const [rentaReport, setRentaReport] = useState(null);
+    const [isRentaReportModalOpen, setIsRentaReportModalOpen] = useState(false);
+
     // Obtener rango de años
     const getDisplayYears = () => { 
         const yearsSet = new Set(); 
@@ -491,7 +497,7 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
         return range; 
     };
 
-    // LÓGICA DE RECALCULO MASIVO (Botón Recalcular)
+    // LÓGICA DE RECALCULO MASIVO
     const handleRecalculate = () => { 
         const newData = { ...resultsData }; 
         const yearsToCalc = getDisplayYears(); 
@@ -504,26 +510,16 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
             
             const currentData = newData[y];
 
-            // Si está bloqueado, se respeta el valor existente para el acumulado y se salta el cálculo
             if (currentData.locked) { 
                 runningAccum = r2(runningAccum + (parseFloat(currentData.resWithDiv) || 0)); 
                 newData[y].accumulated = runningAccum; 
                 return; 
             } 
 
-            let yearProfitPrice = 0;
-            let yearLossPrice = 0;
-            let yearFees = 0;
-            let lotesTotal = 0;
-            let yearDivs = 0;
+            let yearProfitPrice = 0; let yearLossPrice = 0; let yearFees = 0; let lotesTotal = 0; let yearDivs = 0;
             const uniqueTickers = new Set(); 
 
-            const sales = portfolio.filter(p => {
-                if (!p.sellDate) return false;
-                const sYear = new Date(p.sellDate).getFullYear();
-                return sYear === y;
-            }); 
-
+            const sales = portfolio.filter(p => p.sellDate && new Date(p.sellDate).getFullYear() === y); 
             lotesTotal = sales.length; 
 
             sales.forEach(p => { 
@@ -531,11 +527,8 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                 const shares = parseFloat(p.shares) || 0;
                 const buyP = parseFloat(p.buyPrice) || 0; const buyF = parseFloat(p.buyFx) || 1;
                 const sellP = parseFloat(p.sellPrice) || 0; const sellF = parseFloat(p.sellFx) || 1;
-                
-                const buyFees = p.feesIncludedInPrice ? 0 : (parseFloat(p.fees) || 0);
-                const buyAdj = parseFloat(p.adjustments) || 0;
-                const sellFees = p.sellFeesIncludedInPrice ? 0 : (parseFloat(p.sellFees) || 0);
-                const sellAdj = parseFloat(p.sellAdjustments) || 0;
+                const buyFees = p.feesIncludedInPrice ? 0 : (parseFloat(p.fees) || 0); const buyAdj = parseFloat(p.adjustments) || 0;
+                const sellFees = p.sellFeesIncludedInPrice ? 0 : (parseFloat(p.sellFees) || 0); const sellAdj = parseFloat(p.sellAdjustments) || 0;
 
                 const cost = r2((buyP * shares * buyF) + buyFees + buyAdj); 
                 const revenueNet = r2((sellP * shares * sellF) - sellFees - sellAdj); 
@@ -549,166 +542,190 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
 
             portfolio.forEach(p => { 
                 if (p.dividends && Array.isArray(p.dividends)) { 
-                    p.dividends.forEach(d => { 
-                        if (d.year === y) yearDivs += (parseFloat(d.net) || 0); 
-                    }); 
+                    p.dividends.forEach(d => { if (d.year === y) yearDivs += (parseFloat(d.net) || 0); }); 
                 } 
             }); 
 
-            yearProfitPrice = r2(yearProfitPrice); 
-            yearLossPrice = r2(yearLossPrice); 
-            yearDivs = r2(yearDivs); 
-            yearFees = r2(yearFees); 
-
+            yearProfitPrice = r2(yearProfitPrice); yearLossPrice = r2(yearLossPrice); yearDivs = r2(yearDivs); yearFees = r2(yearFees); 
             const resNoDiv = r2(yearProfitPrice - yearLossPrice); 
             const resWithDiv = r2(resNoDiv + yearDivs); 
             const tax = resNoDiv > 0 ? r2(resNoDiv * 0.19) : 0; 
-            
-            // En modo Recalcular Automático, 'Accumulated' es el acumulado histórico (Running Total)
             runningAccum = r2(runningAccum + resWithDiv); 
 
-            // Renta
-            const rentaResNoDiv = resNoDiv; // Copia por defecto
+            const rentaResNoDiv = resNoDiv;
             const rentaAdj = parseFloat(currentData.rentaAdj) || 0;
-            const rentaBase = r2(rentaResNoDiv + rentaAdj); // Base = Res + Ajustes
+            const rentaBase = r2(rentaResNoDiv + rentaAdj);
 
             let finalCompRest = parseFloat(currentData.compRest) || 0; 
             if (rentaBase < 0) { 
-                const c1 = parseFloat(currentData.comp1) || 0; 
-                const c2 = parseFloat(currentData.comp2) || 0; 
-                const c3 = parseFloat(currentData.comp3) || 0; 
-                const c4 = parseFloat(currentData.comp4) || 0; 
+                const c1 = parseFloat(currentData.comp1) || 0; const c2 = parseFloat(currentData.comp2) || 0; const c3 = parseFloat(currentData.comp3) || 0; const c4 = parseFloat(currentData.comp4) || 0; 
                 finalCompRest = r2(rentaBase + c1 + c2 + c3 + c4); 
-            } else {
-                finalCompRest = 0; 
-            }
+            } else { finalCompRest = 0; }
 
-            newData[y] = { 
-                ...newData[y], 
-                soldCount: lotesTotal, 
-                uniqueCount: uniqueTickers.size, 
-                profitPrice: yearProfitPrice, 
-                dividends: yearDivs, 
-                lossPrice: yearLossPrice, 
-                fees: yearFees, 
-                resNoDiv: resNoDiv, 
-                resWithDiv: resWithDiv, 
-                tax: tax, 
-                accumulated: runningAccum, 
-                rentaResNoDiv: rentaResNoDiv, 
-                rentaFees: yearFees, 
-                rentaAdj: rentaAdj, 
-                rentaBase: rentaBase,
-                comp1: parseFloat(currentData.comp1) || 0, 
-                comp2: parseFloat(currentData.comp2) || 0, 
-                comp3: parseFloat(currentData.comp3) || 0, 
-                comp4: parseFloat(currentData.comp4) || 0, 
-                compRest: finalCompRest 
-            }; 
+            newData[y] = { ...newData[y], soldCount: lotesTotal, uniqueCount: uniqueTickers.size, profitPrice: yearProfitPrice, dividends: yearDivs, lossPrice: yearLossPrice, fees: yearFees, resNoDiv: resNoDiv, resWithDiv: resWithDiv, tax: tax, accumulated: runningAccum, rentaResNoDiv: rentaResNoDiv, rentaFees: yearFees, rentaAdj: rentaAdj, rentaBase: rentaBase, comp1: parseFloat(currentData.comp1) || 0, comp2: parseFloat(currentData.comp2) || 0, comp3: parseFloat(currentData.comp3) || 0, comp4: parseFloat(currentData.comp4) || 0, compRest: finalCompRest }; 
         }); 
-        
         setResultsData(newData); 
     };
 
     useEffect(() => { handleRecalculate(); }, [portfolio.length, portfolio]);
 
-    // LÓGICA DE EDICIÓN MANUAL (Cálculos en vivo)
     const handleEdit = (year, field, val) => { 
         if (resultsData[year]?.locked && !field.startsWith('renta') && !field.startsWith('comp')) return; 
-        
-        const v = parseFloat(val); 
-        const safeVal = isNaN(v) ? 0 : r2(v); 
-        
+        const v = parseFloat(val); const safeVal = isNaN(v) ? 0 : r2(v); 
         setResultsData(prev => { 
-            // Copiamos el objeto del año para manipularlo
             const d = { ...prev[year], [field]: safeVal }; 
-            
-            // 1. Si cambian Beneficios o Pérdidas -> Recalcular Res Sin Div
-            if (field === 'profitPrice' || field === 'lossPrice') {
-                d.resNoDiv = r2(d.profitPrice - d.lossPrice);
-                
-                // Actualizar Impuestos (19% s/ Sin Div positivo)
-                d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * 0.19) : 0;
-                
-                // Actualizar Con Div
-                d.resWithDiv = r2(d.resNoDiv + d.dividends);
-
-                // Actualizar "Resultado" (Columna Acumulado en modo manual = Sin Div - Impuestos)
-                d.accumulated = r2(d.resNoDiv - d.tax);
-
-                // Actualizar Renta (Copia automática)
-                d.rentaResNoDiv = d.resNoDiv;
-                d.rentaBase = r2(d.rentaResNoDiv + (d.rentaAdj || 0));
-            }
-
-            // 2. Si cambian Dividendos -> Recalcular Res Con Div
-            if (field === 'dividends') {
-                d.resWithDiv = r2(d.resNoDiv + d.dividends);
-            }
-
-            // 3. Si cambia Res Sin Div (directamente) -> Recalcular Impuestos y Con Div
-            if (field === 'resNoDiv') {
-                d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * 0.19) : 0;
-                d.resWithDiv = r2(d.resNoDiv + d.dividends);
-                d.accumulated = r2(d.resNoDiv - d.tax); // Neto manual
-                d.rentaResNoDiv = d.resNoDiv;
-                d.rentaBase = r2(d.rentaResNoDiv + (d.rentaAdj || 0));
-            }
-
-            // 4. Si cambian Ajustes Renta -> Recalcular Base Imp
-            if (field === 'rentaAdj' || field === 'rentaResNoDiv') {
-                d.rentaBase = r2(d.rentaResNoDiv + d.rentaAdj);
-            }
-
-            // 5. Lógica Compensaciones (Si Base < 0)
-            if (['comp1', 'comp2', 'comp3', 'comp4', 'rentaBase', 'profitPrice', 'lossPrice', 'resNoDiv', 'rentaAdj'].includes(field)) { 
-                if (d.rentaBase < 0) { 
-                    const c1 = parseFloat(d.comp1) || 0; 
-                    const c2 = parseFloat(d.comp2) || 0; 
-                    const c3 = parseFloat(d.comp3) || 0; 
-                    const c4 = parseFloat(d.comp4) || 0; 
-                    d.compRest = r2(d.rentaBase + c1 + c2 + c3 + c4); 
-                } else {
-                    d.compRest = 0;
-                }
-            } 
-
+            if (field === 'profitPrice' || field === 'lossPrice') { d.resNoDiv = r2(d.profitPrice - d.lossPrice); d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * 0.19) : 0; d.resWithDiv = r2(d.resNoDiv + d.dividends); d.accumulated = r2(d.resNoDiv - d.tax); d.rentaResNoDiv = d.resNoDiv; d.rentaBase = r2(d.rentaResNoDiv + (d.rentaAdj || 0)); }
+            if (field === 'dividends') { d.resWithDiv = r2(d.resNoDiv + d.dividends); }
+            if (field === 'resNoDiv') { d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * 0.19) : 0; d.resWithDiv = r2(d.resNoDiv + d.dividends); d.accumulated = r2(d.resNoDiv - d.tax); d.rentaResNoDiv = d.resNoDiv; d.rentaBase = r2(d.rentaResNoDiv + (d.rentaAdj || 0)); }
+            if (field === 'rentaAdj' || field === 'rentaResNoDiv') { d.rentaBase = r2(d.rentaResNoDiv + d.rentaAdj); }
+            if (['comp1', 'comp2', 'comp3', 'comp4', 'rentaBase', 'profitPrice', 'lossPrice', 'resNoDiv', 'rentaAdj'].includes(field)) { if (d.rentaBase < 0) { const c1 = parseFloat(d.comp1) || 0; const c2 = parseFloat(d.comp2) || 0; const c3 = parseFloat(d.comp3) || 0; const c4 = parseFloat(d.comp4) || 0; d.compRest = r2(d.rentaBase + c1 + c2 + c3 + c4); } else { d.compRest = 0; } } 
             return { ...prev, [year]: d }; 
         }); 
     };
 
-    const toggleLock = (year) => { 
-        setResultsData(prev => ({ ...prev, [year]: { ...prev[year], locked: !prev[year].locked } })); 
-    };
+    const toggleLock = (year) => { setResultsData(prev => ({ ...prev, [year]: { ...prev[year], locked: !prev[year].locked } })); };
 
     const yearsToShow = getDisplayYears();
     const totals = yearsToShow.reduce((acc, year) => { 
         const curr = resultsData[year] || {}; 
-        return { 
-            soldCount: acc.soldCount + (curr.soldCount || 0), 
-            profitPrice: acc.profitPrice + (curr.profitPrice || 0), 
-            dividends: acc.dividends + (curr.dividends || 0), 
-            lossPrice: acc.lossPrice + (curr.lossPrice || 0), 
-            fees: acc.fees + (curr.fees || 0), 
-            resNoDiv: acc.resNoDiv + (curr.resNoDiv || 0), 
-            resWithDiv: acc.resWithDiv + (curr.resWithDiv || 0), 
-            tax: acc.tax + (curr.tax || 0), 
-            rentaBase: acc.rentaBase + (curr.rentaBase || 0),
-            accumulated: acc.accumulated + (curr.accumulated || 0) // Simple sum for total row
-        }; 
+        return { soldCount: acc.soldCount + (curr.soldCount || 0), profitPrice: acc.profitPrice + (curr.profitPrice || 0), dividends: acc.dividends + (curr.dividends || 0), lossPrice: acc.lossPrice + (curr.lossPrice || 0), fees: acc.fees + (curr.fees || 0), resNoDiv: acc.resNoDiv + (curr.resNoDiv || 0), resWithDiv: acc.resWithDiv + (curr.resWithDiv || 0), tax: acc.tax + (curr.tax || 0), rentaBase: acc.rentaBase + (curr.rentaBase || 0), accumulated: acc.accumulated + (curr.accumulated || 0) }; 
     }, { soldCount: 0, profitPrice: 0, dividends: 0, lossPrice: 0, fees: 0, resNoDiv: 0, resWithDiv: 0, tax: 0, rentaBase: 0, accumulated: 0 });
 
-    const chartData = useMemo(() => { 
-        return yearsToShow.map(y => ({ label: y.toString(), value: (resultsData[y]?.resWithDiv || 0) })); 
-    }, [resultsData, yearsToShow]);
+    const chartData = useMemo(() => { return yearsToShow.map(y => ({ label: y.toString(), value: (resultsData[y]?.resWithDiv || 0) })); }, [resultsData, yearsToShow]);
+
+    // --- LÓGICA DE GENERACIÓN DEL INFORME RENTA CON IA ---
+  const handleGenerateRentaReport = async () => {
+        if (!apiKey) {
+            alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA.");
+            setIsRentaModalOpen(false);
+            return;
+        }
+
+        setIsGeneratingRenta(true);
+        setIsRentaModalOpen(false);
+        setRentaReport(null);
+
+        try {
+            const formatD = (d) => { if(!d) return ''; const date = new Date(d); return `${date.getDate().toString().padStart(2,'0')}/${(date.getMonth()+1).toString().padStart(2,'0')}/${date.getFullYear()}`; };
+            
+            // 1. Recopilar Datos Dividendos (Desglose Ticker a Ticker)
+            let divBruto = 0, divRetEsp = 0, divRetExt = 0, divDobleImp15 = 0;
+            const divDetails = [];
+            
+            portfolio.forEach(p => {
+                let pDivNet = 0, pDivOrg = 0, pDivDest = 0;
+                (p.dividends || []).filter(d => d.year === rentaYear).forEach(d => {
+                    const n = parseFloat(d.net) || 0;
+                    const o = parseFloat(d.taxOrigin) || 0;
+                    const dest = parseFloat(d.taxDest) || 0;
+                    pDivNet += n; pDivOrg += o; pDivDest += dest;
+                    
+                    const b = n + o + dest;
+                    divBruto += b; divRetEsp += dest; divRetExt += o;
+                    if (o > 0) divDobleImp15 += (b * 0.15); // Límite del 15% sobre brutos con retención extranjera
+                });
+                
+                const pDivBruto = pDivNet + pDivOrg + pDivDest;
+                if (pDivBruto > 0) {
+                    divDetails.push(`Ticker: ${p.ticker} | Bruto: ${formatMoney(pDivBruto, baseCurrency)} | Ret. Origen: ${formatMoney(pDivOrg, baseCurrency)} | Ret. Destino: ${formatMoney(pDivDest, baseCurrency)} | Neto: ${formatMoney(pDivNet, baseCurrency)}`);
+                }
+            });
+
+            // 2. Recopilar Datos Ventas (Desglose operación a operación)
+            const salesList = [];
+            let totalGain = 0, totalLoss = 0;
+            portfolio.filter(p => p.sellDate && new Date(p.sellDate).getFullYear() === rentaYear).forEach(p => {
+                const shares = parseFloat(p.shares) || 0;
+                const cost = (parseFloat(p.buyPrice) * shares * parseFloat(p.buyFx)) + (p.feesIncludedInPrice ? 0 : parseFloat(p.fees||0)) + parseFloat(p.adjustments||0);
+                const revenue = (parseFloat(p.sellPrice) * shares * parseFloat(p.sellFx)) - (p.sellFeesIncludedInPrice ? 0 : parseFloat(p.sellFees||0)) - parseFloat(p.sellAdjustments||0);
+                const pl = revenue - cost;
+                
+                if (pl >= 0) totalGain += pl; else totalLoss += Math.abs(pl);
+                
+                salesList.push(`Fecha Compra: ${formatD(p.buyDate)} | Fecha Venta: ${formatD(p.sellDate)} | Acción: ${p.ticker} (${p.name}) | Compra: ${formatMoney(cost, baseCurrency)} | Venta: ${formatMoney(revenue, baseCurrency)} | Resultado: ${formatMoney(pl, baseCurrency)}`);
+            });
+
+            // 3. Recopilar Compensaciones Pendientes (4 años anteriores)
+            let pendingComp = 0;
+            const compDetails = [];
+            for (let i = 1; i <= 4; i++) {
+                const y = rentaYear - i;
+                const d = resultsData[y];
+                if (d && d.compRest < 0) {
+                    pendingComp += Math.abs(d.compRest);
+                    compDetails.push(`- Año ${y}: Pendiente de compensar ${formatMoney(Math.abs(d.compRest), baseCurrency)}`);
+                }
+            }
+
+            // 4. Construir Prompt Experto Fiscal
+            const prompt = `
+            ROL: Eres un Asesor Fiscal Colegiado, experto en el IRPF de España.
+            TAREA: Redactar un manual paso a paso, sumamente detallado, para que el usuario rellene su Declaración de la Renta del Ejercicio Fiscal ${rentaYear} (campaña del año ${rentaYear + 1}).
+            
+            INSTRUCCIÓN DE ESTILO Y MAQUETACIÓN (¡VITAL!):
+            La información debe estar MUY BIEN ESTRUCTURADA. EVITA TOTALMENTE los párrafos densos o apelotonados. 
+            Utiliza listas, negritas, subtítulos cortos y saltos de línea (<br><br>) abundantes para que la lectura sea ligera, clara y profesional. Todas las cantidades aisladas sombrealas con fondo gris claro y letra negra, azul oscura o roja. En las tablas el pie y cabeceras no deben sombrearse y nunca uses sombreados con color de fuente que no sea negro, azul o rojo, es decir, la letra debe resaltar siempre sobre el fondo. Siempre se pondrá el nº de casilla y el importe a poner en ella, indistintamente de que salga en una tabla de las indicadas.
+            INSTRUCCIÓN DE DATOS: 
+            Busca en internet la información más actualizada sobre la RENTA DEL EJERCICIO ${rentaYear} en la Agencia Tributaria Española, para proporcionar las CASILLAS EXACTAS vigentes.
+            
+            AQUÍ TIENES LOS DATOS REALES DE LA CARTERA DEL USUARIO:
+
+            1. DESGLOSE DE DIVIDENDOS COBRADOS:
+            ${divDetails.length > 0 ? divDetails.join('\n') : 'No hay dividendos cobrados este ejercicio.'}
+            --> TOTALES DIVIDENDOS: Bruto: ${formatMoney(divBruto, baseCurrency)} | Ret. Extranjera: ${formatMoney(divRetExt, baseCurrency)} | Ret. España: ${formatMoney(divRetEsp, baseCurrency)} | Base para Deducción Doble Imposición (Límite 15% aplicado): ${formatMoney(divDobleImp15, baseCurrency)}
+
+            2. DESGLOSE DE VENTA DE ACCIONES:
+            ${salesList.length > 0 ? salesList.join('\n') : 'No se realizaron ventas este ejercicio.'}
+            --> TOTALES VENTAS: Ganancias brutas totales: ${formatMoney(totalGain, baseCurrency)} | Pérdidas brutas totales: ${formatMoney(totalLoss, baseCurrency)}
+
+            3. COMPENSACIÓN DE PÉRDIDAS DE AÑOS ANTERIORES:
+            - Saldo total pendiente aplicable este año: ${formatMoney(pendingComp, baseCurrency)}
+            ${compDetails.length > 0 ? compDetails.join('\n') : '- No hay saldos pendientes de años anteriores.'}
+
+            FORMATO DE SALIDA REQUERIDO (Usa código HTML limpio, text-align left para textos y right para números):
+
+            <h3>1. INSTRUCCIONES PARA DECLARAR DIVIDENDOS</h3>
+            <p>Indica de forma clara, con párrafos cortos, la sección del Renta Web y las CASILLAS EXACTAS para el importe bruto, la retención nacional, y la casilla para aplicar la deducción por doble imposición internacional con el importe de ${formatMoney(divDobleImp15, baseCurrency)}.</p>
+            [AQUÍ DEBES GENERAR UNA TABLA HTML con el desglose Ticker a Ticker de los dividendos indicados arriba (Columnas: Ticker, Bruto, Ret. Origen, Ret. Destino, Neto). INCLUYE UNA FILA FINAL DE TOTALES AL PIE DE LA TABLA. Usa un estilo corporativo sencillo: <table style="width:100%; border-collapse:collapse; margin-top:10px; margin-bottom:20px;" border="1">...</table> con encabezados en gris oscuro o claro].
+
+            <h3>2. INSTRUCCIONES PARA DECLARAR VENTA DE ACCIONES</h3>
+            <p>Indica la sección y las CASILLAS correspondientes en Renta Web. Aconseja brevemente sobre la agrupación de operaciones.</p>
+            [AQUÍ DEBES GENERAR OTRA TABLA HTML con las operaciones de venta desglosadas arriba (Columnas: Fecha compra, Fecha venta, Acción, Importe Compra, Importe Venta, Plusvalía/Pérdida). INCLUYE UNA FILA FINAL DE TOTALES AL PIE DE LA TABLA separando Ganancias y Pérdidas. Aplica el mismo estilo de tabla que en dividendos].
+
+            <h3>3. APLICACIÓN DE COMPENSACIONES PENDIENTES</h3>
+            <p>Explica en párrafos MUY CORTOS en qué apartado de la Base Imponible del Ahorro debe entrar el usuario para compensar los ${formatMoney(pendingComp, baseCurrency)} de años pasados.</p>
+
+            <h3>4. RESUMEN FINAL DE CASILLAS E IMPORTES A INTRODUCIR</h3>
+            <ul>
+                [Crea una lista limpia y espaciada con el formato: <b>Casilla XXX:</b> Importe correspondiente y descripción corta.]
+            </ul>
+            `;
+
+            const res = await askGemini(apiKey, prompt, aiModel);
+            
+            // Limpiar HTML de los backticks de la respuesta de Gemini
+            let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
+            const startIdx = cleanHtml.indexOf('<');
+            if (startIdx !== -1) cleanHtml = cleanHtml.substring(startIdx);
+
+            setRentaReport(cleanHtml);
+            setIsRentaReportModalOpen(true);
+
+        } catch (e) {
+            alert("Error al generar el informe fiscal: " + e.message);
+        } finally {
+            setIsGeneratingRenta(false);
+        }
+    };
+
 
     const handlePrint = () => { 
+        // ... (Código de impresión original intacto) ...
         const printWindow = window.open('', '', 'height=800,width=1200'); 
         const emissionTime = new Date().toLocaleString(); 
         let html = `<html><head><title>Resultados Anuales</title><style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:9px;} h1{font-size:10px;margin-bottom:2px;text-transform:uppercase;} h2{font-size:9px;margin-top:15px;margin-bottom:2px;color:#d97706;} table{width:100%;border-collapse:collapse;margin-bottom:10px;} th{background:#f1f5f9;text-align:center;padding:2px;border:1px solid #94a3b8;font-size:7px;text-transform:uppercase;} td{padding:2px;border:1px solid #e2e8f0;text-align:right;font-family:monospace;font-size:7px;} .gray-bg{background:#f1f5f9;} .dark-bg{background:#e2e8f0;font-weight:bold;} .orange-bg{background:#fff7ed;color:#ea580c;font-weight:bold;} .info-box{border:1px solid #ccc; background:#f9f9f9; padding:5px; font-size:7px; text-align:justify; margin-top:10px;}</style></head><body>`; 
         html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>INFORME DE RESULTADOS ANUALES CARTERA</h1></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`; 
         html += `<h2>1. Rendimiento y Fiscalidad Base</h2>`; 
-        // MODIFICADO: Orden Columnas Impresión
         html += `<table><thead><tr><th>Año</th><th>Lotes</th><th>Beneficio</th><th>Pérdida</th><th>Res. SIN Div</th><th>Dividendos</th><th>Res. CON Div</th><th>Impuestos</th><th>Neto/Acum</th><th style="border-left:2px solid #333;">Res. SIN Div (R)</th><th>Gtos Broker</th><th>Ajustes</th><th>Base Imp. 19%</th></tr></thead><tbody>`; 
         yearsToShow.forEach(year => { 
             const d = resultsData[year] || {}; 
@@ -729,8 +746,84 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
         printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(()=>printWindow.print(),500); 
     };
 
+    const handlePrintRentaReport = () => {
+        const printWindow = window.open('', '', 'height=800,width=800');
+        let html = `<html><head><title>Borrador Renta iA - Ejercicio ${rentaYear}</title><style>
+        body { font-family: sans-serif; padding: 40px; font-size: 13px; line-height: 1.6; color: #000; -webkit-print-color-adjust: exact; }
+        h1 { border-bottom: 4px solid #1e3a8a; color: #1e3a8a; text-transform: uppercase; padding-bottom: 10px; margin-bottom: 5px; }
+        h3 { color: #1e3a8a; border-bottom: 1px solid #ccc; margin-top: 30px; padding-bottom: 5px; text-transform: uppercase; font-size: 16px; }
+        ul { padding-left: 20px; } li { margin-bottom: 6px; }
+        .meta { font-size: 11px; color: #555; margin-bottom: 30px; border-left: 3px solid #eab308; padding-left: 10px; background: #fefce8; padding: 10px; }
+        b, strong { color: #0f172a; }
+        </style></head><body>
+        <h1>GUÍA FISCAL iA - IRPF EJERCICIO ${rentaYear}</h1>
+        <div class="meta">
+            <b>EMISIÓN:</b> ${new Date().toLocaleString()}<br/>
+            <b>AVISO LEGAL:</b> Este documento es una guía automatizada generada por Inteligencia Artificial basada en los datos introducidos en la plataforma. <b>No sustituye el consejo de un asesor fiscal cualificado.</b> Es responsabilidad del contribuyente verificar la exactitud de las casillas en el manual oficial de la Agencia Tributaria para la campaña correspondiente.
+        </div>
+        <div>${rentaReport}</div>
+        </body></html>`;
+        printWindow.document.write(html);
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(() => printWindow.print(), 500);
+    };
+
     return (
-        <div className="w-full p-4 md:p-6 flex flex-col gap-6">
+        <div className="w-full p-4 md:p-6 flex flex-col gap-6 relative">
+             
+             {/* OVERLAY CARGA iA */}
+             {isGeneratingRenta && (
+                <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center fade-in">
+                    <Icons.Loader size={60} className="text-purple-500 mb-4 animate-spin" />
+                    <div className="text-xl font-bold text-white animate-pulse">Consultando Agencia Tributaria...</div>
+                    <div className="text-xs text-slate-400 mt-2">Localizando casillas actualizadas y redactando informe.</div>
+                </div>
+            )}
+
+            {/* MODAL SOLICITUD AÑO */}
+            <Modal isOpen={isRentaModalOpen} title="Generador de Renta con iA" onClose={() => setIsRentaModalOpen(false)} size="sm">
+                <div className="flex flex-col gap-4 text-center">
+                    <div className="bg-purple-900/20 p-4 rounded-xl border border-purple-500/30 text-purple-200 text-xs">
+                        La iA analizará tus dividendos, ventas y pérdidas acumuladas, y buscará en internet las <b>casillas exactas</b> del Modelo 100 para el ejercicio fiscal indicado.
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-400 mb-2 uppercase">Selecciona el Ejercicio Fiscal a declarar:</label>
+                        <select 
+                            value={rentaYear} 
+                            onChange={(e) => setRentaYear(parseInt(e.target.value))} 
+                            className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-white text-lg font-bold text-center"
+                        >
+                            {getDisplayYears().reverse().map(y => <option key={y} value={y}>Ejercicio {y}</option>)}
+                        </select>
+                        <p className="text-[10px] text-slate-500 mt-2 italic">Ej: Selecciona {new Date().getFullYear()-1} para la campaña que se hace en {new Date().getFullYear()}.</p>
+                    </div>
+                    <button onClick={handleGenerateRentaReport} className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold uppercase py-3 rounded-xl shadow-lg transition-colors flex items-center justify-center gap-2 mt-2">
+                        <Icons.Wand size={18}/> Redactar Guía Fiscal
+                    </button>
+                </div>
+            </Modal>
+
+            {/* MODAL REPORTE FINAL iA */}
+            <Modal isOpen={isRentaReportModalOpen} title={`Borrador Fiscal iA - Ejercicio ${rentaYear}`} onClose={() => setIsRentaReportModalOpen(false)} size="lg">
+                <div className="space-y-4 p-2 max-h-[75vh] overflow-y-auto custom-scrollbar">
+                    <div className="bg-yellow-900/20 border-l-4 border-yellow-500 p-3 rounded text-[10px] text-yellow-200 mb-4">
+                        <b>Aviso:</b> Verifica siempre los números de casilla con el manual oficial de la campaña de Renta correspondiente al ejercicio {rentaYear}.
+                    </div>
+                    <div 
+                        className="prose-content text-sm leading-relaxed font-sans text-slate-200 
+                                   [&_h3]:text-purple-400 [&_h3]:mt-6 [&_h3]:border-slate-700 [&_h3]:uppercase [&_h3]:text-sm
+                                   [&_b]:text-white [&_strong]:text-white"
+                        dangerouslySetInnerHTML={{__html: rentaReport}}
+                    ></div>
+                </div>
+                <div className="flex justify-end pt-4 border-t border-slate-700 mt-4">
+                    <button onClick={handlePrintRentaReport} className="bg-slate-700 px-6 py-2 rounded-lg text-xs font-bold text-white flex items-center gap-2 hover:bg-slate-600 shadow-lg">
+                        <Icons.ExternalLink size={16}/> IMPRIMIR / PDF
+                    </button>
+                </div>
+            </Modal>
+
              <div className="flex justify-between items-center bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
                 <div><h2 className="text-xl font-display font-bold text-white">Resultados y Fiscalidad</h2><p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Consolidación Anual de Rendimiento</p></div>
                 <div className="flex gap-2">
@@ -738,34 +831,35 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                         <Icons.Upload size={14}/> {syncStatus === 'unsaved' ? 'SINCRONIZAR' : 'SYNC OK'}
                     </button>
                     <button onClick={handleRecalculate} className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg text-xs font-bold uppercase transition-colors shadow-lg border border-blue-400 flex items-center gap-2"><Icons.Refresh size={14}/> Recalcular Datos</button>
+                    
+                    {/* NUEVO BOTÓN: RENTA CON IA */}
+                    <button onClick={() => setIsRentaModalOpen(true)} className="bg-purple-700 hover:bg-purple-600 px-6 py-2 rounded-lg text-xs font-bold uppercase transition-colors shadow-lg border border-purple-400 flex items-center gap-2 text-white">
+                        <Icons.Wand size={14}/> Renta con iA
+                    </button>
+
                     <button onClick={handlePrint} className="bg-slate-700 px-3 py-2 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14} className="rotate-0"/> IMPRIMIR</button>
                 </div>
              </div>
+             
+             {/* ... (Resto de la tabla inalterada) ... */}
              <div className="w-full overflow-x-auto bg-slate-900/50 border border-slate-800 rounded-xl">
                  <table className="w-full text-sm border-collapse min-w-[2000px]">
                      <thead className="bg-slate-800 text-[10px] uppercase font-bold text-slate-400">
                          <tr>
-                             {/* COLUMNAS FIJAS (STICKY) EN CABECERA */}
                              <th className="p-2 text-center border-b border-slate-700 w-10 bg-slate-900 sticky left-0 z-30 border-r border-slate-800"><Icons.CheckCircle size={12}/></th>
                              <th className="p-2 text-center border-b border-slate-700 w-16 bg-slate-900 sticky left-10 z-30 border-r border-slate-800">Año</th>
-                             
                              <th className="p-2 text-center border-b border-slate-700 w-24">Lotes<br/><span className="text-[7px] opacity-60 font-normal">(Tot / Únicos)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 border-l border-slate-700/50 text-green-400">Beneficio<br/><span className="text-[7px] opacity-60 font-normal">(Precio)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 text-red-400">Pérdida<br/><span className="text-[7px] opacity-60 font-normal">(Precio)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 border-l border-slate-700/50 bg-slate-800/30 font-bold text-slate-200">Res. SIN Div<br/><span className="text-[7px] opacity-60 font-normal">(Ing - Pérd)</span></th>
-                             
-                             {/* COLUMNA DIVIDENDOS MOVIDA AQUÍ */}
                              <th className="p-2 text-right border-b border-slate-700 text-blue-400">Dividendos<br/><span className="text-[7px] opacity-60 font-normal">(Cobrados)</span></th>
-                             
                              <th className="p-2 text-right border-b border-slate-700 bg-slate-800/30 font-bold text-white">Res. CON Div<br/><span className="text-[7px] opacity-60 font-normal">(+ Divs)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 text-purple-400">Impuestos<br/><span className="text-[7px] opacity-60 font-normal">(19% s/ Sin Div)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 font-bold text-yellow-500">Neto / Acum<br/><span className="text-[7px] opacity-60 font-normal">(Res - Imp)</span></th>
-                             
                              <th className="p-2 text-right border-b border-slate-700 border-l-4 border-slate-900 bg-[#1e2330] text-slate-300">Res. SIN Div<br/><span className="text-[7px] opacity-60 font-normal">(Renta)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-slate-400">Gtos Broker<br/><span className="text-[7px] opacity-60 font-normal">(Total)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-slate-300">Ajustes<br/><span className="text-[7px] opacity-60 font-normal">(Manual)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-blue-200 font-bold">Base Imp. 19%<br/><span className="text-[7px] opacity-60 font-normal">(Res + Adj)</span></th>
-                             
                              <th className="p-2 text-right border-b border-slate-700 border-l-4 border-slate-900 bg-orange-900/10 text-orange-400 w-24">1er AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 bg-orange-900/10 text-orange-400 w-24">2do AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 bg-orange-900/10 text-orange-400 w-24">3er AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
@@ -777,18 +871,13 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                          const d = resultsData[year] || { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, resNoDiv:0, resWithDiv:0, tax:0, accumulated:0, fees:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0, comp1:0, comp2:0, comp3:0, comp4:0, compRest:0 }; 
                          return ( 
                              <tr key={year} className={`hover:bg-slate-900/40 transition-colors ${d.locked ? 'opacity-70' : ''}`}>
-                                 {/* COLUMNAS FIJAS (STICKY) EN BODY */}
                                  <td className="p-2 text-center bg-slate-900 sticky left-0 z-20 border-r border-slate-800"><input type="checkbox" checked={d.locked} onChange={()=>toggleLock(year)} className="w-3 h-3 accent-red-500 cursor-pointer" /></td>
                                  <td className="p-2 text-center font-bold text-white bg-slate-900 sticky left-10 z-20 border-r border-slate-800">{year}</td>
-                                 
                                  <td className="p-2 text-center text-slate-400 text-[10px]">{formatN(d.soldCount, 0)} <span className="text-slate-600">/</span> <span className="text-slate-300 font-bold">{formatN(d.uniqueCount, 0)}</span></td>
                                  <td className="p-2 border-l border-slate-800/50"><input type="number" step="0.01" value={d.profitPrice} onChange={e=>handleEdit(year, 'profitPrice', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-green-500 outline-none" /></td>
                                  <td className="p-2"><input type="number" step="0.01" value={d.lossPrice} onChange={e=>handleEdit(year, 'lossPrice', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-red-500 outline-none" /></td>
                                  <td className="p-2 border-l border-slate-800/50 bg-slate-900/20"><input type="number" step="0.01" value={d.resNoDiv} onChange={e=>handleEdit(year, 'resNoDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resNoDiv >=0 ? 'text-slate-200':'text-red-400'}`} /></td>
-                                 
-                                 {/* DIVIDENDOS MOVIDOS AQUI */}
                                  <td className="p-2"><input type="number" step="0.01" value={d.dividends} onChange={e=>handleEdit(year, 'dividends', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-blue-400 outline-none" /></td>
-                                 
                                  <td className="p-2 bg-slate-900/20"><input type="number" step="0.01" value={d.resWithDiv} onChange={e=>handleEdit(year, 'resWithDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resWithDiv >=0 ? 'text-white':'text-red-400'}`} /></td>
                                  <td className="p-2"><input type="number" step="0.01" value={d.tax} onChange={e=>handleEdit(year, 'tax', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-purple-400 font-bold outline-none" /></td>
                                  <td className="p-2 border-r border-slate-800 bg-slate-900/10"><input type="number" step="0.01" value={d.accumulated} onChange={e=>handleEdit(year, 'accumulated', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.accumulated >= 0 ? 'text-yellow-500' : 'text-red-500'}`} /></td>
@@ -4966,8 +5055,8 @@ const App = () => {
 
                 )}
                 {activeTab === 'dividends' && <DividendTab portfolio={portfolio} setPortfolio={updatePortfolio} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} />}
-                {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={updateResultsData} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} />}
-                
+                {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={updateResultsData} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} apiKey={apiKey} aiModel={aiModel} />}
+
                 {activeTab === 'analysis' && (
                     <AnalysisTab 
                         apiKey={apiKey} 
