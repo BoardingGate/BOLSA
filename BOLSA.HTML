@@ -1039,6 +1039,19 @@ const DividendTab = ({ portfolio, setPortfolio, baseCurrency, syncStatus, onManu
         return `${date.getDate().toString().padStart(2,'0')}/${(date.getMonth()+1).toString().padStart(2,'0')}/${date.getFullYear().toString().slice(-2)}`;
     };
 
+    const paymentSchedule = useMemo(() => {
+        const schedule = {};
+        const prevYear = selectedYear - 1;
+        portfolio.forEach(p => {
+            // Filtramos dividendos que ocurrieron exactamente en el año previo y tuvieron cobro neto
+            const monthsInPrevYear = (p.dividends || [])
+                .filter(d => d.year === prevYear && d.net > 0)
+                .map(d => d.month);
+            schedule[p.id] = [...new Set(monthsInPrevYear)];
+        });
+        return schedule;
+    }, [portfolio, selectedYear]);
+
     const filtered = useMemo(() => {
         return portfolio.filter(p => { 
             if (showAllHistory) return (p.dividends && p.dividends.length > 0) || p.annualDividend > 0;
@@ -1287,15 +1300,39 @@ const handlePrint = () => {
                                     <td className="p-2 bg-yellow-900/5 text-right font-mono space-x-1.5 text-[9px]">
                                         <span className="text-green-300">{formatN(r.n)}</span>|<span className="text-slate-400">{formatN(r.o)}</span>|<span className="text-slate-400">{formatN(r.d)}</span>|<span className="text-white font-bold">{formatN(r.b)}</span>
                                     </td>
-                                    {r.rowMonths.map((m, i) => ( 
-                                        <td key={i} className={`p-1 border-l border-slate-800 ${i % 2 === 0 ? 'bg-white/[0.04]' : ''} ${showAllHistory ? 'bg-slate-900/30' : ''}`}>
-                                            <div className="grid grid-cols-3 gap-1">
-                                                <input type="number" step="0.01" value={m.n || ''} onChange={e => handleDivChange(r.id, i, 'net', e.target.value)} disabled={showAllHistory} className={`w-full text-center text-green-400 bg-transparent border-none p-0 focus:ring-1 focus:ring-green-500 ${showAllHistory ? 'opacity-30 cursor-not-allowed' : ''}`} />
-                                                <input type="number" step="0.01" value={m.o || ''} onChange={e => handleDivChange(r.id, i, 'taxOrigin', e.target.value)} disabled={showAllHistory} className={`w-full text-center text-slate-400 bg-transparent border-none p-0 focus:ring-1 focus:ring-slate-500 ${showAllHistory ? 'opacity-30 cursor-not-allowed' : ''}`} />
-                                                <input type="number" step="0.01" value={m.d || ''} onChange={e => handleDivChange(r.id, i, 'taxDest', e.target.value)} disabled={showAllHistory} className={`w-full text-center text-slate-400 bg-transparent border-none p-0 focus:ring-1 focus:ring-slate-500 ${showAllHistory ? 'opacity-30 cursor-not-allowed' : ''}`} />
-                                            </div>
-                                        </td> 
-                                    ))}
+
+
+                                    {r.rowMonths.map((m, i) => {
+                                        // Comprobar si el mes i tuvo pagos en el año anterior
+                                        const isExpected = !showAllHistory && paymentSchedule[r.id]?.includes(i);
+                                        const hasData = (m.n || m.o || m.d);
+                                        
+                                        return ( 
+                                            <td key={i} 
+                                                className={`p-1 border-l border-slate-800 transition-all duration-300
+                                                    ${i % 2 === 0 ? 'bg-white/[0.04]' : ''} 
+                                                    ${showAllHistory ? 'bg-slate-900/30' : ''}
+                                                    ${isExpected && !hasData ? 'bg-blue-600/10 shadow-[inset_0_0_0_1px_rgba(59,130,246,0.3)]' : ''}
+                                                    ${isExpected && hasData ? 'bg-green-500/5' : ''}
+                                                `}>
+                                                <div className="grid grid-cols-3 gap-1">
+                                                    <input 
+                                                        type="number" 
+                                                        step="0.01" 
+                                                        value={m.n || ''} 
+                                                        onChange={e => handleDivChange(r.id, i, 'net', e.target.value)} 
+                                                        disabled={showAllHistory} 
+                                                        placeholder={isExpected && !m.n ? "•" : ""}
+                                                        className={`w-full text-center text-green-400 bg-transparent border-none p-0 focus:ring-1 focus:ring-green-500 ${showAllHistory ? 'opacity-30 cursor-not-allowed' : ''} ${isExpected && !m.n ? 'placeholder-blue-400 font-bold' : ''}`} 
+                                                    />
+                                                    <input type="number" step="0.01" value={m.o || ''} onChange={e => handleDivChange(r.id, i, 'taxOrigin', e.target.value)} disabled={showAllHistory} className={`w-full text-center text-slate-400 bg-transparent border-none p-0 focus:ring-1 focus:ring-slate-500 ${showAllHistory ? 'opacity-30 cursor-not-allowed' : ''}`} />
+                                                    <input type="number" step="0.01" value={m.d || ''} onChange={e => handleDivChange(r.id, i, 'taxDest', e.target.value)} disabled={showAllHistory} className={`w-full text-center text-slate-400 bg-transparent border-none p-0 focus:ring-1 focus:ring-slate-500 ${showAllHistory ? 'opacity-30 cursor-not-allowed' : ''}`} />
+                                                </div>
+                                            </td> 
+                                        );
+                                    })}
+
+
                                     <td className="p-2 text-center bg-purple-900/10 font-bold text-purple-300">{formatN(r.diBruto)}</td>
                                     <td className="p-2 text-center bg-purple-900/10 border-l border-slate-800 font-bold text-purple-300">{formatN(r.di15)}</td>
                                 </tr> 
@@ -2119,6 +2156,20 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     useEffect(() => { if (noteToast) { const timer = setTimeout(() => setNoteToast(null), 30000); return () => clearTimeout(timer); } }, [noteToast]);
     const requestSort = (key) => { let direction = 'desc'; if (sortConfig.key === key && sortConfig.direction === 'desc') { direction = 'asc'; } setSortConfig({ key, direction }); };
 
+    const handleSnapshotNotes = () => {
+        const now = new Date().toLocaleString();
+        const s = globalMetrics.stats;
+        const f = (v) => formatMoney(v, baseCurrency);
+        const p = (v) => formatN(v) + "%";
+
+        const lineActive = `ACTIVOS: Inv: ${f(s.active.inv)} | Val: ${f(s.active.cur)} | Bal: ${f(s.active.plPrice)} | Simp: ${p(s.active.plP_S)} | Anual: ${p(s.active.plP_A)} | Divs: ${f(s.active.divN)} | FX: ${f(s.active.fX)} | Total: ${f(s.active.plTotal)} (${p(s.active.plT_S)})`;
+        const lineSold   = `VENTAS:  Inv: ${f(s.sold.inv)} | Val: ${f(s.sold.cur)} | Bal: ${f(s.sold.plPrice)} | Simp: ${p(s.sold.plP_S)} | Anual: ${p(s.sold.plP_A)} | Divs: ${f(s.sold.divN)} | FX: ${f(s.sold.fX)} | Total: ${f(s.sold.plTotal)} (${p(s.sold.plT_S)})`;
+        const lineTotal  = `TOTAL:   Inv: ${f(s.total.inv)} | Val: ${f(s.total.cur)} | Bal: ${f(s.total.plPrice)} | Simp: ${p(s.total.plP_S)} | Anual: ${p(s.total.plP_A)} | Divs: ${f(s.total.divN)} | FX: ${f(s.total.fX)} | Total: ${f(s.total.plTotal)} (${p(s.total.plT_S)})`;
+
+        const snapshot = `${now}\n${lineActive}\n${lineSold}\n${lineTotal}\n==================\n\n`;
+        setGlobalNotes(prev => prev + snapshot);
+    };
+
     const handleYearJump = (direction) => {
         let targetYear;
         const currentYear = new Date().getFullYear();
@@ -2181,9 +2232,11 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const [newsResult, setNewsResult] = useState(null);
     const [isNewsModalOpen, setIsNewsModalOpen] = useState(false);
     const [isNewsSelectionModalOpen, setIsNewsSelectionModalOpen] = useState(false);
+    const [customNewsTopic, setCustomNewsTopic] = useState('');
 
     // FUNCIÓN PARA OBTENER NOTICIAS
     const fetchNews = async (type) => {
+        if (type === 'custom' && !customNewsTopic.trim()) return alert("Por favor, introduce un tema de búsqueda.");
         setIsNewsSelectionModalOpen(false); 
         
         const now = new Date();
@@ -2214,11 +2267,10 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                 2. AGNOSIA TEMPORAL: Ignora cualquier noticia anterior al ${limit7d}. Si no hay nada nuevo, indica "Sin noticias recientes".
                 3. ESTRUCTURA: Agrupar por TICKER (usar <h3> para el ticker).
                 4. CADA NOTICIA: Fecha exacta, Titular, Resumen de 3 frases y enlace URL directo a la fuente.
-              
                 
                 FORMATO: Responde solo con etiquetas HTML (h3, div, p, a).
             `;
-        } else {
+        } else if (type === 'general') {
             prompt = `
                 SISTEMA: ROL ANALISTA MACROECONÓMICO SENIOR.
                 FECHA ACTUAL DE REFERENCIA: ${todayStr}.
@@ -2232,12 +2284,25 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                 
                 FORMATO: Responde solo con etiquetas HTML (h3, div, p, a).
             `;
+        } else if (type === 'custom') {
+            prompt = `
+                SISTEMA: ROL ANALISTA DE INVESTIGACIÓN FINANCIERA.
+                FECHA ACTUAL DE REFERENCIA: ${todayStr}.
+                TAREA: Realizar una búsqueda exhaustiva en Internet sobre noticias y eventos relevantes publicados en los ÚLTIMOS 7 DÍAS sobre el tema específico: "${customNewsTopic}".
+                
+                REQUISITOS ESTRICTOS:
+                1. Idioma: Castellano.
+                2. RELEVANCIA: Filtra solo noticias que tengan impacto económico o financiero relacionado con el tema.
+                3. ESTRUCTURA: Agrupar por subtemas o relevancia (usar <h3>).
+                4. CADA NOTICIA: Fecha, Titular, Resumen ejecutivo del evento y enlace URL directo a la fuente.
+                
+                FORMATO: Responde solo con etiquetas HTML (h3, div, p, a).
+            `;
         }
 
         setAnalyzingNews(true);
         try {
             const res = await askGemini(apiKey, prompt, aiModel);
-            // Limpieza y validación de respuesta
             let cleanHtml = res.trim();
             cleanHtml = cleanHtml.replace(/```html/g, '').replace(/```/g, '');
             const startIdx = cleanHtml.indexOf('<');
@@ -2254,13 +2319,14 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             setInfoModal({ 
                 isOpen: true, 
                 title: 'Error de Rastreo', 
-                msg: 'Fallo al obtener noticias: ' + e.message + '\n\nInténtalo de nuevo en unos segundos.', 
+                msg: 'Fallo al obtener noticias: ' + e.message, 
                 type: 'error' 
             });
         } finally {
             setAnalyzingNews(false);
+            if (type === 'custom') setCustomNewsTopic('');
         }
-    };    
+    };
 
   
     // FUNCIÓN PARA IMPRIMIR NOTICIAS
@@ -3328,8 +3394,24 @@ const RenderHistoryCard = () => {
                 </div> 
             </Modal>
 
+
             <Modal isOpen={isNotesModalOpen} title="Block de Notas de la Cartera" onClose={() => setIsNotesModalOpen(false)} size="md">
-                <div className="flex flex-col gap-4"><p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Notas Generales, Estrategia o Recordatorios:</p><textarea value={globalNotes} onChange={(e) => setGlobalNotes(e.target.value)} placeholder="Escribe aquí tus notas..." className="w-full h-80 bg-slate-950 border border-slate-700 rounded-xl p-4 text-sm text-slate-200 font-sans leading-relaxed focus:border-yellow-500/50 focus:outline-none custom-scrollbar shadow-inner"/><div className="flex justify-between items-center bg-slate-800/30 p-3 rounded-lg border border-slate-700"><span className="text-[9px] text-slate-500 italic">* Estas notas se sincronizan automáticamente con tu copia en la nube.</span><button onClick={() => { onManualSync(); setIsNotesModalOpen(false); }} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-bold text-[10px] uppercase transition-colors">Guardar y Sincronizar</button></div></div>
+                <div className="flex flex-col gap-4">
+                    <div className="flex justify-between items-center">
+                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Notas Generales, Estrategia o Recordatorios:</p>
+                        <button 
+                            onClick={handleSnapshotNotes}
+                            className="bg-yellow-600 hover:bg-yellow-500 text-white px-3 py-1 rounded text-[9px] font-black uppercase transition-colors shadow-lg border border-yellow-400"
+                        >
+                            Anotar Estado Actual
+                        </button>
+                    </div>
+                    <textarea value={globalNotes} onChange={(e) => setGlobalNotes(e.target.value)} placeholder="Escribe aquí tus notas..." className="w-full h-80 bg-slate-950 border border-slate-700 rounded-xl p-4 text-sm text-slate-200 font-sans leading-relaxed focus:border-yellow-500/50 focus:outline-none custom-scrollbar shadow-inner"/>
+                    <div className="flex justify-between items-center bg-slate-800/30 p-3 rounded-lg border border-slate-700">
+                        <span className="text-[9px] text-slate-500 italic">* Estas notas se sincronizan automáticamente con tu copia en la nube.</span>
+                        <button onClick={() => { onManualSync(); setIsNotesModalOpen(false); }} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-bold text-[10px] uppercase transition-colors">Guardar y Sincronizar</button>
+                    </div>
+                </div>
             </Modal>
 
              {/* --- MODAL DE NOTICIAS --- */}
@@ -3358,8 +3440,7 @@ const RenderHistoryCard = () => {
                 </div>
             )}
 
-
-            <Modal isOpen={isNewsSelectionModalOpen} title="¿Qué noticias deseas consultar?" onClose={() => setIsNewsSelectionModalOpen(false)} size="sm">
+<Modal isOpen={isNewsSelectionModalOpen} title="¿Qué noticias deseas consultar?" onClose={() => setIsNewsSelectionModalOpen(false)} size="sm">
             <div className="flex flex-col gap-4 p-2">
                 <button 
                     onClick={() => fetchNews('portfolio')}
@@ -3382,8 +3463,29 @@ const RenderHistoryCard = () => {
                         <div className="text-[10px] text-slate-400">Noticias macro, economía y bolsa mundial reciente</div>
                     </div>
                 </button>
+
+                {/* OPCIÓN: TEMA PERSONALIZADO */}
+                <div className="mt-2 p-4 bg-slate-950 border border-slate-700 rounded-xl shadow-inner">
+                    <label className="text-[10px] font-black text-slate-500 uppercase mb-2 block tracking-widest">Búsqueda sobre tema libre</label>
+                    <div className="flex gap-2">
+                        <input 
+                            type="text" 
+                            value={customNewsTopic} 
+                            onChange={(e) => setCustomNewsTopic(e.target.value)} 
+                            placeholder="Ej: Tipos de interés, Nvidia, Crypto..." 
+                            className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:border-blue-500 outline-none transition-colors"
+                        />
+                        <button 
+                            onClick={() => fetchNews('custom')}
+                            className="bg-blue-600 hover:bg-blue-500 text-white p-2 rounded-lg transition-colors flex items-center justify-center min-w-[40px]"
+                        >
+                            <Icons.Search size={18}/>
+                        </button>
+                    </div>
+                </div>
             </div>
         </Modal>
+            
 
 {/* --- MODAL DE RESULTADOS DE NOTICIAS --- */}
 <Modal isOpen={isNewsModalOpen} title="Radar de Noticias iA" onClose={() => setIsNewsModalOpen(false)} size="lg">
