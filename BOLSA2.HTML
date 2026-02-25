@@ -617,6 +617,7 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
 
         try {
             const formatD = (d) => { if(!d) return ''; const date = new Date(d); return `${date.getDate().toString().padStart(2,'0')}/${(date.getMonth()+1).toString().padStart(2,'0')}/${date.getFullYear()}`; };
+            const isISIN = (str) => /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/i.test(String(str).trim());
             
             // 1. Recopilar Datos Dividendos (Desglose Ticker a Ticker)
             let divBruto = 0, divRetEsp = 0, divRetExt = 0, divDobleImp15 = 0;
@@ -641,18 +642,25 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                 }
             });
 
-            // 2. Recopilar Datos Ventas (Desglose operación a operación)
-            const salesList = [];
-            let totalGain = 0, totalLoss = 0;
+            // 2. Recopilar Datos Ventas (Desglose operación a operación) separando Acciones y Fondos ISIN
+            const stockSalesList = [];
+            const fundSalesList = [];
+            let totalGainStocks = 0, totalLossStocks = 0;
+            let totalGainFunds = 0, totalLossFunds = 0;
+
             portfolio.filter(p => p.sellDate && new Date(p.sellDate).getFullYear() === rentaYear).forEach(p => {
                 const shares = parseFloat(p.shares) || 0;
                 const cost = (parseFloat(p.buyPrice) * shares * parseFloat(p.buyFx)) + (p.feesIncludedInPrice ? 0 : parseFloat(p.fees||0)) + parseFloat(p.adjustments||0);
                 const revenue = (parseFloat(p.sellPrice) * shares * parseFloat(p.sellFx)) - (p.sellFeesIncludedInPrice ? 0 : parseFloat(p.sellFees||0)) - parseFloat(p.sellAdjustments||0);
                 const pl = revenue - cost;
                 
-                if (pl >= 0) totalGain += pl; else totalLoss += Math.abs(pl);
-                
-                salesList.push(`Fecha Compra: ${formatD(p.buyDate)} | Fecha Venta: ${formatD(p.sellDate)} | Acción: ${p.ticker} (${p.name}) | Compra: ${formatMoney(cost, baseCurrency)} | Venta: ${formatMoney(revenue, baseCurrency)} | Resultado: ${formatMoney(pl, baseCurrency)}`);
+                if (isISIN(p.ticker)) {
+                    if (pl >= 0) totalGainFunds += pl; else totalLossFunds += Math.abs(pl);
+                    fundSalesList.push(`Fecha Compra: ${formatD(p.buyDate)} | Fecha Venta: ${formatD(p.sellDate)} | Fondo: ${p.ticker} (${p.name}) | Compra: ${formatMoney(cost, baseCurrency)} | Reembolso: ${formatMoney(revenue, baseCurrency)} | Resultado: ${formatMoney(pl, baseCurrency)}`);
+                } else {
+                    if (pl >= 0) totalGainStocks += pl; else totalLossStocks += Math.abs(pl);
+                    stockSalesList.push(`Fecha Compra: ${formatD(p.buyDate)} | Fecha Venta: ${formatD(p.sellDate)} | Acción: ${p.ticker} (${p.name}) | Compra: ${formatMoney(cost, baseCurrency)} | Venta: ${formatMoney(revenue, baseCurrency)} | Resultado: ${formatMoney(pl, baseCurrency)}`);
+                }
             });
 
             // 3. Recopilar Compensaciones Pendientes (4 años anteriores)
@@ -685,10 +693,14 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
             --> TOTALES DIVIDENDOS: Bruto: ${formatMoney(divBruto, baseCurrency)} | Ret. Extranjera: ${formatMoney(divRetExt, baseCurrency)} | Ret. España: ${formatMoney(divRetEsp, baseCurrency)} | Base para Deducción Doble Imposición (Límite 15% aplicado): ${formatMoney(divDobleImp15, baseCurrency)}
 
             2. DESGLOSE DE VENTA DE ACCIONES:
-            ${salesList.length > 0 ? salesList.join('\n') : 'No se realizaron ventas este ejercicio.'}
-            --> TOTALES VENTAS: Ganancias brutas totales: ${formatMoney(totalGain, baseCurrency)} | Pérdidas brutas totales: ${formatMoney(totalLoss, baseCurrency)}
+            ${stockSalesList.length > 0 ? stockSalesList.join('\n') : 'No se realizaron ventas de acciones este ejercicio.'}
+            --> TOTALES ACCIONES: Ganancias brutas totales: ${formatMoney(totalGainStocks, baseCurrency)} | Pérdidas brutas totales: ${formatMoney(totalLossStocks, baseCurrency)}
 
-            3. COMPENSACIÓN DE PÉRDIDAS DE AÑOS ANTERIORES:
+            3. DESGLOSE DE REEMBOLSOS DE FONDOS DE INVERSIÓN:
+            ${fundSalesList.length > 0 ? fundSalesList.join('\n') : 'No se realizaron reembolsos de fondos de inversión este ejercicio.'}
+            --> TOTALES FONDOS: Ganancias brutas totales: ${formatMoney(totalGainFunds, baseCurrency)} | Pérdidas brutas totales: ${formatMoney(totalLossFunds, baseCurrency)}
+
+            4. COMPENSACIÓN DE PÉRDIDAS DE AÑOS ANTERIORES:
             - Saldo total pendiente aplicable este año: ${formatMoney(pendingComp, baseCurrency)}
             ${compDetails.length > 0 ? compDetails.join('\n') : '- No hay saldos pendientes de años anteriores.'}
 
@@ -700,14 +712,18 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
 
             <h3>2. INSTRUCCIONES PARA DECLARAR VENTA DE ACCIONES</h3>
             <p>Indica la sección y las CASILLAS correspondientes en Renta Web. Aconseja brevemente sobre la agrupación de operaciones.</p>
-            [AQUÍ DEBES GENERAR OTRA TABLA HTML con las operaciones de venta desglosadas arriba (Columnas: Fecha compra, Fecha venta, Acción, Importe Compra, Importe Venta, Plusvalía/Pérdida). INCLUYE UNA FILA FINAL DE TOTALES AL PIE DE LA TABLA separando Ganancias y Pérdidas. Aplica el mismo estilo de tabla que en dividendos].
+            [AQUÍ DEBES GENERAR OTRA TABLA HTML con las operaciones de venta de acciones desglosadas arriba (Columnas: Fecha compra, Fecha venta, Acción, Importe Compra, Importe Venta, Plusvalía/Pérdida). INCLUYE UNA FILA FINAL DE TOTALES AL PIE DE LA TABLA separando Ganancias y Pérdidas. Aplica el mismo estilo de tabla que en dividendos].
 
-            <h3>3. APLICACIÓN DE COMPENSACIONES PENDIENTES</h3>
+            <h3>3. INSTRUCCIONES PARA DECLARAR REEMBOLSOS DE FONDOS DE INVERSIÓN</h3>
+            <p>Indica de forma clara en qué apartado y en qué CASILLAS EXACTAS del Modelo 100 se declaran las ganancias y pérdidas patrimoniales derivadas de la transmisión o reembolso de acciones o participaciones de Instituciones de Inversión Colectiva (Fondos). <b>IMPORTANTE:</b> Indica explícitamente cuál es la casilla donde el usuario debe anotar la <b>Retención Practicada</b> (habitualmente del 19%) sobre las plusvalías de los fondos.</p>
+            [AQUÍ DEBES GENERAR OTRA TABLA HTML con las operaciones de fondos desglosadas arriba (Columnas: Fecha compra, Fecha venta, Fondo, Importe Compra, Importe Reembolso, Plusvalía/Pérdida). INCLUYE UNA FILA FINAL DE TOTALES AL PIE DE LA TABLA separando Ganancias y Pérdidas. Si no hubo reembolsos de fondos, simplemente indícalo amablemente].
+
+            <h3>4. APLICACIÓN DE COMPENSACIONES PENDIENTES</h3>
             <p>Explica en párrafos MUY CORTOS en qué apartado de la Base Imponible del Ahorro debe entrar el usuario para compensar los ${formatMoney(pendingComp, baseCurrency)} de años pasados.</p>
 
-            <h3>4. RESUMEN FINAL DE CASILLAS E IMPORTES A INTRODUCIR</h3>
+            <h3>5. RESUMEN FINAL DE CASILLAS E IMPORTES A INTRODUCIR</h3>
             <ul>
-                [Crea una lista limpia y espaciada con el formato: <b>Casilla XXX:</b> Importe correspondiente y descripción corta.]
+                [Crea una lista limpia y espaciada con el formato: <b>Casilla XXX:</b> Importe correspondiente y descripción corta. ¡Asegúrate de incluir la casilla de retenciones de fondos si aplica!]
             </ul>
             `;
 
@@ -727,7 +743,6 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
             setIsGeneratingRenta(false);
         }
     };
-
 
     const handlePrint = () => { 
         // ... (Código de impresión original intacto) ...
