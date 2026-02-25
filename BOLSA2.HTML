@@ -2502,6 +2502,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         const calc = (items) => {
             let inv = 0, cur = 0, divN = 0, fX = 0, weightedDays = 0, intra = 0, prevValTotal = 0;
             let sumBuyPE = 0, countBuyPE = 0, sumCurPE = 0, countCurPE = 0;
+            let totalFeesAdj = 0; // NUEVA VARIABLE PARA ACUMULAR GASTOS/AJUSTES
 
             items.forEach(p => {
                 const isS = !!p.sellDate;
@@ -2511,6 +2512,11 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                 const eF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
                 const vN = (eP * p.shares * eF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
                 
+                // CÁLCULO DE GASTOS Y AJUSTES DE ESTA OPERACIÓN
+                const currentFees = isS ? (parseFloat(p.sellFees) || 0) : (parseFloat(p.fees) || 0);
+                const currentAdj = isS ? (parseFloat(p.sellAdjustments) || 0) : (parseFloat(p.adjustments) || 0);
+                totalFeesAdj += (currentFees + currentAdj);
+
                 if (!isS && p.previousClose) {
                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                     intra += (eP - prevP) * p.shares * eF;
@@ -2527,7 +2533,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             const avgD = inv > 0 ? weightedDays / inv : 0;
             const rP = calcReturns(inv, cur, avgD);
             const rT = calcReturns(inv, cur + divN, avgD);
-            return { num: items.length, inv, cur, divN, fX, plPrice: cur - inv, plTotal: (cur + divN) - inv, plP_S: rP.simple, plP_A: rP.annual, plT_S: rT.simple, plT_A: rT.annual, intra, intraPct: prevValTotal !== 0 ? (intra / prevValTotal) * 100 : 0, avgBuyPE: countBuyPE > 0 ? sumBuyPE / countBuyPE : 0, avgCurPE: countCurPE > 0 ? sumCurPE / countCurPE : 0 };
+            return { num: items.length, inv, cur, divN, fX, plPrice: cur - inv, plTotal: (cur + divN) - inv, plP_S: rP.simple, plP_A: rP.annual, plT_S: rT.simple, plT_A: rT.annual, intra, intraPct: prevValTotal !== 0 ? (intra / prevValTotal) * 100 : 0, avgBuyPE: countBuyPE > 0 ? sumBuyPE / countBuyPE : 0, avgCurPE: countCurPE > 0 ? sumCurPE / countCurPE : 0, totalFeesAdj };
         };
 
         // 1. PANELES SUPERIORES: Calculados sobre la cartera base (Filtros Texto/Fecha + Check, IGNORA botones Todo/Activa/Venta)
@@ -2543,6 +2549,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         return { stats, gridMetrics };
     }, [baseFilteredPortfolio, visiblePortfolio, baseCurrency]);
 
+
     const stats = globalMetrics.stats;
     const gridTotals = {
         tFx: globalMetrics.gridMetrics.fX,
@@ -2553,7 +2560,8 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         tIntra: globalMetrics.gridMetrics.intra,
         tIntraPct: globalMetrics.gridMetrics.intraPct,
         avgBuyPE: globalMetrics.gridMetrics.avgBuyPE,
-        avgCurPE: globalMetrics.gridMetrics.avgCurPE
+        avgCurPE: globalMetrics.gridMetrics.avgCurPE,
+        tFeesAdj: globalMetrics.gridMetrics.totalFeesAdj
     };
 
     const historicalStats = useMemo(() => {
@@ -3131,7 +3139,7 @@ const handlePrint = () => {
             tDivs += ds;
             html += `<tr><td><b class="${plPrice>=0?'profit':'loss'}">${p.name}</b><br/>${p.ticker}${p.group ? `<br/>[${p.group}]` : ''}</td><td class="center"><span class="blue">${formatDateES(p.buyDate)}</span>${p.sellDate ? `<br/><span class="orange">${formatDateES(p.sellDate)}</span>` : ''}<br/><b>${formatN(days, 0)}d</b></td><td class="num"><b>${formatN(p.shares)}</b></td><td class="num"><b>I:${formatN(p.buyPrice)}</b><br/><b>${isS?'V':'A'}:${formatN(curP)}</b></td><td class="center">${formatN(p.buyFx,4)}<br/>${formatN(curF,4)}</td><td class="center">${formatN(isS?p.sellFees:p.fees)}<br/>${formatN(isS?p.sellAdjustments:p.adjustments)}</td><td class="num"><b>${formatMoney(cost, baseCurrency)}</b></td><td class="num"><b>${formatMoney(vF, baseCurrency)}</b></td><td class="num"><span class="${plPrice>=0?'profit':'loss'}">${formatMoney(plPrice, baseCurrency)}</span></td><td class="num"><span class="blue">${formatMoney(ds, baseCurrency)}</span></td><td class="num"><span class="${plTotal>=0?'profit':'loss'}">${formatMoney(plTotal, baseCurrency)}</span></td><td class="num"><span class="${plTotal>=0?'profit':'loss'}">${formatN(rs.simple)}%</span></td><td class="num">${formatN(rs.annual)}%</td></tr>`; 
         }); 
-        html += `<tr class="total-row"><td colspan="6" style="text-align:right; text-transform:uppercase;">TOTALES ACUMULADOS: <b>FX: ${formatMoney(gridTotals.tFx, baseCurrency)}</b></td><td class="num">${formatMoney(gridTotals.tCost, baseCurrency)}</td><td class="num">${formatMoney(gridTotals.tVal, baseCurrency)}</td><td class="num"><span class="${(gridTotals.tVal - gridTotals.tCost)>=0?'profit':'loss'}">${formatMoney(gridTotals.tVal - gridTotals.tCost, baseCurrency)}</span></td><td class="num"><span class="blue">${formatMoney(tDivs, baseCurrency)}</span></td><td class="num"><span class="${gridTotals.tRes>=0?'profit':'loss'}">${formatMoney(gridTotals.tRes, baseCurrency)}</span></td><td class="num"><span class="${gridTotals.tRes>=0?'profit':'loss'}">${formatN(gridTotals.tPct)}%</span></td><td class="center" style="font-size:6px; font-family:monospace;">I: ${formatN(gridTotals.avgBuyPE, 1)}<br/>A: ${formatN(gridTotals.avgCurPE, 1)}</td><td></td></tr>`;
+        html += `<tr class="total-row"><td colspan="4" style="text-align:right; text-transform:uppercase;">TOTALES ACUMULADOS:</td><td class="center"><b>FX:<br/>${formatMoney(gridTotals.tFx, baseCurrency)}</b></td><td class="center"><b>${formatMoney(gridTotals.tFeesAdj, baseCurrency)}</b></td><td class="num">${formatMoney(gridTotals.tCost, baseCurrency)}</td><td class="num">${formatMoney(gridTotals.tVal, baseCurrency)}</td><td class="num"><span class="${(gridTotals.tVal - gridTotals.tCost)>=0?'profit':'loss'}">${formatMoney(gridTotals.tVal - gridTotals.tCost, baseCurrency)}</span></td><td class="num"><span class="blue">${formatMoney(tDivs, baseCurrency)}</span></td><td class="num"><span class="${gridTotals.tRes>=0?'profit':'loss'}">${formatMoney(gridTotals.tRes, baseCurrency)}</span></td><td class="num"><span class="${gridTotals.tRes>=0?'profit':'loss'}">${formatN(gridTotals.tPct)}%</span></td><td class="center" style="font-size:6px; font-family:monospace;">I: ${formatN(gridTotals.avgBuyPE, 1)}<br/>A: ${formatN(gridTotals.avgCurPE, 1)}</td></tr>`;
         html += `</tbody></table>`; html += `<div style="display:flex; justify-content:flex-end; margin-top:20px;">${historyCardHTML}</div>`; html += `</body></html>`; 
         printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(() => printWindow.print(), 500); 
     };
@@ -3512,8 +3520,8 @@ const RenderHistoryCard = () => {
                         {/* 7 */}<td className="p-2 text-right bg-slate-900/50 border-l border-r border-slate-700"><span className={(gridTotals.tIntra||0) >= 0 ? 'text-green-400' : 'text-red-400'}>{formatMoney(gridTotals.tIntra||0, baseCurrency)}</span></td>
                         {/* 8 */}<td className="p-2"></td>
                         {/* 9 */}<td className="p-2 text-center text-slate-300 font-mono">{formatMoney(gridTotals.tFx||0, baseCurrency)}</td>
-                        {/* 10 */}<td className="p-2"></td>
-                        {/* 11 */}<td className="p-2 text-right font-mono text-slate-300">{formatMoney(gridTotals.tCost||0, baseCurrency)}</td>
+                        {/* 10 */}<td className="p-2 text-center text-slate-300 font-mono">{formatMoney(gridTotals.tFeesAdj||0, baseCurrency)}</td>
+                        {/* 11 */}<td className="p-2 text-right font-mono text-slate-300">{formatMoney(gridTotals.tCost||0, baseCurrency)}</td>                        
                         {/* 12 PESOS */}<td className="p-2 text-center text-[9px] text-slate-600">--</td>
                         {/* 13 */}<td className="p-2 text-right font-mono bg-[#0f121a] border-l border-slate-800 text-white">{formatMoney(gridTotals.tVal||0, baseCurrency)}</td>
                         {/* 14 */}<td className="p-2 text-right font-mono bg-[#0f121a] border-r border-slate-800"><span className={(gridTotals.tRes||0) >= 0 ? 'text-green-400' : 'text-red-400'}>{formatMoney(gridTotals.tRes||0, baseCurrency)}</span></td>
