@@ -2247,47 +2247,40 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const [sortConfig, setSortConfig] = usePersistentState('bg_port_sort_config', { key: 'date', direction: 'desc' });
     const [updateText, setUpdateText] = useState('');
 
-   const getMarketStatus = (p) => {
+     const getMarketStatus = (p) => {
         if (p.isIndex) return { open: true };
         const t = (p.ticker || "").toUpperCase();
         const now = new Date();
         
-        // 1. Detección Exhaustiva de Mercados Europeos (Apertura 09:00 España)
-        // Incluye: España (.MC, BME), Alemania (.DE, XETRA), Francia (.PA, EPA), Holanda (.AS, AMS), 
-        // Italia (.MI, BIT, MIL), Bélgica (.BR, EBR), Portugal (.LS, ELI)
-        const isEurope = /(.MC|.DE|.PA|.AS|.MI|.BR|.LS|.MA|BME:|XETRA:|EPA:|AMS:|BIT:|MIL:|EBR:|ELI:)/.test(t);
-        const isUK = /(.L|LSE:)/.test(t);
+        // 1. Identificar Mercado (Referencia Hora España)
+        // Mercados que abren a las 09:00: España, Alemania, Francia, Holanda, Italia, Portugal, Bélgica, Londres
+        const isEurope = /(.MC|.DE|.PA|.AS|.MI|.BR|.LS|.MA|BME:|XETRA:|EPA:|AMS:|BIT:|MIL:|EBR:|ELI:|LSE:|.L)/.test(t);
 
-        let marketTz = "America/New_York";
-        let openTimeLocal = 930; // 09:30 AM en el país de origen
-        let displayOpenTime = "15:30"; // Hora que verá el usuario si está cerrado
+        // Obtenemos la hora actual en España (formato 24h)
+        const horaEsp = parseInt(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', hour: 'numeric', hour12: false }).format(now));
+        const minEsp = parseInt(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', minute: 'numeric' }).format(now));
+        const tiempoActual = horaEsp * 100 + minEsp;
+
+        let horaAperturaVal = 1530; // Por defecto USA (15:30)
+        let horaAperturaTexto = "15:30";
 
         if (isEurope) {
-            marketTz = "Europe/Madrid";
-            openTimeLocal = 900;
-            displayOpenTime = "09:00";
-        } else if (isUK) {
-            marketTz = "Europe/London";
-            openTimeLocal = 800; // Las 08:00 de Londres son las 09:00 de España
-            displayOpenTime = "09:00";
+            horaAperturaVal = 900; // Europa (09:00)
+            horaAperturaTexto = "09:00";
         }
 
-        try {
-            // Obtenemos la hora actual EXACTA en el mercado de origen
-            const localTime = new Intl.DateTimeFormat('en-GB', { timeZone: marketTz, hour: 'numeric', minute: 'numeric', hour12: false }).format(now);
-            const [h, m] = localTime.split(':').map(Number);
-            const currentTimeVal = h * 100 + m;
-
-            // Comprobamos si el texto de Google Finance indica que la fecha NO es de hoy
-            // (Si contiene un nombre de mes o una fecha larga, es cierre de día anterior)
+        // 2. Lógica de Decisión
+        // Si el reloj aún no ha llegado a la hora de apertura
+        if (tiempoActual < horaAperturaVal) {
+            // Comprobamos si Google Finance dice por texto que los datos ya son de hoy (por si acaso)
             const q = (p.quoteDate || "").toLowerCase();
-            const isTodayInGoogle = q.includes(":") && !/[a-z]{3}/.test(q);
-
-            // Cerrado si: aún no es la hora de abrir O Google nos da una fecha antigua
-            if (currentTimeVal < openTimeLocal || (!isTodayInGoogle && p.quoteDate)) {
-                return { open: false, msg: `Abre ${displayOpenTime}` };
+            const diaHoy = now.getDate().toString();
+            const esHoyEnGoogle = q.includes("hace") || q.includes("min") || (q.includes(":") && q.includes(diaHoy));
+            
+            if (!esHoyEnGoogle) {
+                return { open: false, msg: `Abre ${horaAperturaTexto}` };
             }
-        } catch (e) { return { open: true }; }
+        }
         
         return { open: true };
     };
@@ -3462,6 +3455,7 @@ const RenderHistoryCard = () => {
                                 const rs = calcReturns(cost, vF + ds, days); 
 
                               
+                             
                                 let intraVal = 0, intraPct = 0, hasIntra = false;
                                 const mStatus = getMarketStatus(p); 
 
@@ -3492,7 +3486,7 @@ const RenderHistoryCard = () => {
                                         <td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td>
                                         <td className="p-3 text-right text-xs font-mono">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td>
 
-                                        
+
                                         <td className="p-3 text-right font-mono text-xs border-l border-r border-slate-800 bg-slate-900/20">
                                             {hasIntra ? (
                                                 <div>
