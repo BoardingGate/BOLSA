@@ -1850,7 +1850,10 @@ function fetchStockData(tickersString) {
           res.success = true;
           res.n = (html.match(/<div class="zz7u7b">([^<]+)<\/div>/) || [])[1];
           
-          // Lógica de extras (PE, Div, MC, EPS, Beta, 52H)
+          // EXTRAEMOS LA FECHA DE LA COTIZACIÓN
+          var dateMatch = html.match(/<div class="ygm7ab">([^<]+)<\/div>/);
+          res.dt = dateMatch ? dateMatch[1] : "";
+
           var getV = function(labels) {
             for (var k=0; k<labels.length; k++) {
               var m = html.match(new RegExp(labels[k] + '[\\s\\S]*?<div class="P6K39c">([^<]+)<\\/div>'));
@@ -2839,7 +2842,8 @@ const updatePrices = async (isAuto = false) => {
                     updatesMap[item.id] = {
                         currentPrice: cleanVal(stockData.p),
                         currentPE: stockData.pe ? cleanVal(stockData.pe) : item.currentPE,
-                        previousClose: stockData.pc ? cleanVal(stockData.pc) : item.previousClose
+                        previousClose: stockData.pc ? cleanVal(stockData.pc) : item.previousClose,
+                        quoteDate: stockData.dt || "" // GUARDAMOS LA FECHA DE LA COTIZACIÓN
                     };
                     if (item.stockCurrency === baseCurrency) {
                         updatesMap[item.id].currentFx = 1;
@@ -2850,7 +2854,7 @@ const updatePrices = async (isAuto = false) => {
                     const reason = stockData ? (stockData.reason || "Sin datos") : "No encontrado";
                     totallyFailed.push(`${item.ticker} (${reason})`);
                 }
-            });
+            });        
         }
 
         setUpdateProgress(60);
@@ -3444,13 +3448,32 @@ const RenderHistoryCard = () => {
                                 const days = calculateDays(p.buyDate, p.sellDate || new Date()); 
                                 const rs = calcReturns(cost, vF + ds, days); 
 
-                                let intraVal = 0, intraPct = 0, hasIntra = false;
-                                const mStatus = getMarketOpenInfo(p.ticker);
-                                if (!isS && p.previousClose && mStatus.isOpenOrPassed) {
-                                    const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
-                                    intraVal = (curP - prevP) * p.shares * curF;
-                                    intraPct = prevP !== 0 ? ((curP - prevP) / prevP) * 100 : 0;
-                                    hasIntra = true;
+
+                                let intraVal = 0, intraPct = 0, hasIntra = false, marketOpenMsg = "";
+                                
+                                // DETERMINAMOS HORA DE APERTURA SEGÚN TICKER
+                                const getOpenTime = (t) => {
+                                    t = t.toUpperCase();
+                                    if (t.includes(".MC") || t.includes("BME:")) return "09:00";
+                                    if (t.includes(".DE") || t.includes("XETRA:")) return "09:00";
+                                    if (t.includes(".L") || t.includes("LSE:")) return "09:00";
+                                    if (t.includes(".PA") || t.includes("EPA:")) return "09:00";
+                                    return "15:30"; // USA por defecto
+                                };
+
+                                if (!isS && p.previousClose) {
+                                    const todayStr = new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }).toLowerCase().replace('.', '');
+                                    const qDate = (p.quoteDate || "").toLowerCase();
+                                    
+                                    // SI ES ÍNDICE O LA FECHA DE COTIZACIÓN CONTIENE EL DÍA DE HOY (O EL SCRIPT NO TRAE FECHA)
+                                    if (p.isIndex || !p.quoteDate || qDate.includes(todayStr) || qDate.includes("hace") || qDate.includes("min")) {
+                                        const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
+                                        intraVal = (curP - prevP) * p.shares * curF;
+                                        intraPct = prevP !== 0 ? ((curP - prevP) / prevP) * 100 : 0;
+                                        hasIntra = true;
+                                    } else {
+                                        marketOpenMsg = `Abre ${getOpenTime(p.ticker)}`;
+                                    }
                                 }
 
                                 return ( 
@@ -3472,7 +3495,18 @@ const RenderHistoryCard = () => {
                                         <td className="p-3 text-center text-[10px] font-bold"><div className="text-blue-400">{formatDateES(p.buyDate)}</div>{p.sellDate && <div className="text-orange-400">{formatDateES(p.sellDate)}</div>}<div className="text-slate-500 text-[9px] mt-1">{formatN(days, 0)} días</div></td>
                                         <td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td>
                                         <td className="p-3 text-right text-xs font-mono">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td>
-                                        <td className="p-3 text-right font-mono text-xs border-l border-r border-slate-800 bg-slate-900/20">{hasIntra ? (<div><div className={intraVal >= 0 ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>{formatMoney(intraVal, baseCurrency)}</div><div className={`text-[9px] ${intraPct >= 0 ? 'text-green-500' : 'text-red-500'}`}>{formatN(intraPct)}%</div></div>) : (!isS && !mStatus.isOpenOrPassed ? <span className="text-[10px] text-slate-500 uppercase font-bold tracking-tighter">Abre {mStatus.openTimeStr}</span> : <span className="text-slate-600">-</span>)}</td>
+                                    
+                                        <td className="p-3 text-right font-mono text-xs border-l border-r border-slate-800 bg-slate-900/20">
+                                            {hasIntra ? (
+                                                <div>
+                                                    <div className={intraVal >= 0 ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>{formatMoney(intraVal, baseCurrency)}</div>
+                                                    <div className={`text-[9px] ${intraPct >= 0 ? 'text-green-500' : 'text-red-500'}`}>{formatN(intraPct)}%</div>
+                                                </div>
+                                            ) : (
+                                                <span className="text-[10px] text-slate-500 uppercase font-bold tracking-tighter">{marketOpenMsg || "-"}</span>
+                                            )}
+                                        </td>
+                                        
                                         <td className="p-3 text-center text-[10px] font-mono text-slate-400">I: {formatN(p.buyFx, 4)}<br/>A: {formatN(curF, 4)}</td>
                                         <td className="p-3 text-center text-[9px] font-mono">{(() => { const fxDevVal = (p.isIndex ? 0 : (p.shares * (isS ? p.sellPrice : p.currentPrice) * (curF - p.buyFx))); return <div className={fxDevVal >= 0 ? 'text-green-500' : 'text-red-500'}>{formatMoney(fxDevVal, baseCurrency)}</div>; })()}</td>
                                         <td className="p-3 text-center text-[10px] font-mono text-slate-400">G: {formatN(isS?p.sellFees:p.fees)}<br/>A: {formatN(isS?p.sellAdjustments:p.adjustments)}</td>
