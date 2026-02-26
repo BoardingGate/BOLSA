@@ -1002,21 +1002,23 @@ const StatsDashboard = ({ portfolio, baseCurrency, taxTotal }) => {
                   let maxInv = 0, minInv = Infinity;
 
                   items.forEach(p => {
-                      const cost = r2((p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice?0:(p.fees||0)) + (p.adjustments||0));
-                      const isS = !!p.sellDate;
-                      const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice/(p.indexDivisor||1) : p.currentPrice);
-                      const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
-                      const val = r2((curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice?0:(p.sellFees||0)) + (p.sellAdjustments||0) : 0));
-                      const divs = (p.dividends || []).reduce((acc,d) => acc+d.net, 0);
-                      const plTotal = r2((val + divs) - cost);
-                      const days = calculateDays(p.buyDate, p.sellDate || new Date());
+                        const isS = !!p.sellDate;
+                        const costT = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+                        const eP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
+                        const eF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
+                        const vN = (eP * p.shares * eF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+                        totalFeesAdj += isS ? (parseFloat(p.sellFees)||0)+(parseFloat(p.sellAdjustments)||0) : (parseFloat(p.fees)||0)+(parseFloat(p.adjustments)||0);
+        
+                        // SUMATORIO INTRADÍA: Si es Índice (p.isIndex) entra SIEMPRE. Si no, pasa por getMarketStatus.
+                        if (!isS && p.previousClose && (p.isIndex || getMarketStatus(p).open)) {
+                            const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
+                            intra += (eP - prevP) * p.shares * eF;
+                            prevValTotal += (prevP * p.shares * eF);
+                        }
+                        if (!p.isIndex) fX += (p.shares * (isS ? p.sellPrice : p.currentPrice) * (eF - p.buyFx));
+                        inv += costT; cur += vN; (p.dividends || []).forEach(dv => divN += dv.net);
+                    });  
 
-                      totalInv += cost; totalCur += val; divTotal += divs; daysTotal += days;
-                      maxInv = Math.max(maxInv, cost); minInv = Math.min(minInv, cost);
-                      maxDays = Math.max(maxDays, days); minDays = Math.min(minDays, days);
-
-                      if(plTotal >= 0) { winCount++; winAmt += plTotal; } else { lossCount++; lossAmt += plTotal; }
-                  });
                   if(minInv === Infinity) minInv = 0; if(minDays === Infinity) minDays = 0;
                   const finalValuation = totalCur + divTotal;
                   const ratio = totalInv > 0 ? finalValuation / totalInv : 0;
@@ -1820,7 +1822,6 @@ function fetchStockData(tickersString) {
   var tickerList = tickersString.split(",");
   var requests = [];
   var validTickers = [];
-
   for (var i = 0; i < tickerList.length; i++) {
     var rawTicker = tickerList[i].trim();
     if(!rawTicker) continue;
@@ -1832,10 +1833,9 @@ function fetchStockData(tickersString) {
        var gTicker = parts.length === 2 ? parts[1] + ":" + parts[0] : rawTicker;
        url = "https://www.google.com/finance/quote/" + encodeURIComponent(gTicker);
     }
-    requests.push({ url: url, method: "GET", muteHttpExceptions: true, headers: { "User-Agent": "Mozilla/5.0..." } });
+    requests.push({ url: url, method: "GET", muteHttpExceptions: true, headers: { "User-Agent": "Mozilla/5.0" } });
     validTickers.push(rawTicker);
   }
-
   var results = {};
   try {
     var responses = UrlFetchApp.fetchAll(requests);
@@ -1849,8 +1849,9 @@ function fetchStockData(tickersString) {
           res.p = cleanNumGAS(priceMatch[1]);
           res.success = true;
           res.n = (html.match(/<div class="zz7u7b">([^<]+)<\/div>/) || [])[1];
-          
-          // Lógica de extras (PE, Div, MC, EPS, Beta, 52H)
+          // CAPTURAR FECHA DE GOOGLE
+          var dateMatch = html.match(/<div class="ygm7ab"[^>]*>([^<]+)<\/div>/) || html.match(/<div class="mfs7Fc"[^>]*>([^<]+)<\/div>/);
+          res.dt = dateMatch ? dateMatch[1] : "";
           var getV = function(labels) {
             for (var k=0; k<labels.length; k++) {
               var m = html.match(new RegExp(labels[k] + '[\\s\\S]*?<div class="P6K39c">([^<]+)<\\/div>'));
@@ -2247,6 +2248,46 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const [filterType, setFilterType] = usePersistentState('bg_port_filter_type', 'active'); 
     const [sortConfig, setSortConfig] = usePersistentState('bg_port_sort_config', { key: 'date', direction: 'desc' });
     const [updateText, setUpdateText] = useState('');
+
+     const getMarketStatus = (p) => {
+        if (p.isIndex) return { open: true };
+        const t = (p.ticker || "").toUpperCase();
+        const now = new Date();
+        
+        // 1. Identificar Mercado (Referencia Hora España)
+        // Mercados que abren a las 09:00: España, Alemania, Francia, Holanda, Italia, Portugal, Bélgica, Londres
+        const isEurope = /(.MC|.DE|.PA|.AS|.MI|.BR|.LS|.MA|BME:|XETRA:|EPA:|AMS:|BIT:|MIL:|EBR:|ELI:|LSE:|.L)/.test(t);
+
+        // Obtenemos la hora actual en España (formato 24h)
+        const horaEsp = parseInt(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', hour: 'numeric', hour12: false }).format(now));
+        const minEsp = parseInt(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', minute: 'numeric' }).format(now));
+        const tiempoActual = horaEsp * 100 + minEsp;
+
+        let horaAperturaVal = 1530; // Por defecto USA (15:30)
+        let horaAperturaTexto = "15:30";
+
+        if (isEurope) {
+            horaAperturaVal = 900; // Europa (09:00)
+            horaAperturaTexto = "09:00";
+        }
+
+        // 2. Lógica de Decisión
+        // Si el reloj aún no ha llegado a la hora de apertura
+        if (tiempoActual < horaAperturaVal) {
+            // Comprobamos si Google Finance dice por texto que los datos ya son de hoy (por si acaso)
+            const q = (p.quoteDate || "").toLowerCase();
+            const diaHoy = now.getDate().toString();
+            const esHoyEnGoogle = q.includes("hace") || q.includes("min") || (q.includes(":") && q.includes(diaHoy));
+            
+            if (!esHoyEnGoogle) {
+                return { open: false, msg: `Abre ${horaAperturaTexto}` };
+            }
+        }
+        
+        return { open: true };
+    };
+
+    
     
     // --- ESTADO PERSISTENTE PARA VISIBILIDAD DE SECCIONES ---
     const [visibleSections, setVisibleSections] = usePersistentState('bg_visible_sections', { table: true, diverging: true, stats: true, charts: true, chartTV: true });
@@ -2272,10 +2313,49 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
     const formatDateES = (d) => { if(!d) return ''; const date = new Date(d); return `${date.getDate().toString().padStart(2,'0')}-${(date.getMonth()+1).toString().padStart(2,'0')}-${date.getFullYear()}`; };
     const cleanVal = (v) => { if (typeof v === 'number') return v; const n = parseFloat(String(v).replace(/[^0-9.-]/g, '')); return isNaN(n) ? 0 : n; };
+  
     const getRegion = (ticker) => { if (!ticker) return 'S/D'; if (ticker.includes(':')) return ticker.split(':')[0].toUpperCase(); const t = ticker.toUpperCase(); if (t.endsWith('.MC')) return 'BME (ES)'; if (t.endsWith('.DE')) return 'XETRA (DE)'; if (t.endsWith('.PA')) return 'EURONEXT (FR)'; if (t.endsWith('.L')) return 'LSE (UK)'; return 'US/OTROS'; };
     const isISIN = (str) => /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/i.test(String(str).trim());
 
+    const getMarketOpenInfo = (ticker) => {
+        const now = new Date();
+        const day = now.getDay();
+        // Fines de semana damos por válido que muestre el último intradía de cierre
+        if (day === 0 || day === 6) return { isOpenOrPassed: true, openTimeStr: '' };
+
+        const t = (ticker || '').toUpperCase();
+        let tz = 'America/New_York';
+        let openH = 9, openM = 30;
+
+        if (t.endsWith('.MC') || t.endsWith('.DE') || t.endsWith('.PA') || t.endsWith('.AS') || t.endsWith('.MI') || t.includes('BME:') || t.includes('XETRA:') || t.includes('EURONEXT:') || t.includes('MIL:')) {
+            tz = 'Europe/Madrid'; openH = 9; openM = 0;
+        } else if (t.endsWith('.L')) {
+            tz = 'Europe/London'; openH = 8; openM = 0;
+        } else if (t.endsWith('.T') || t.includes('TYO:')) {
+            tz = 'Asia/Tokyo'; openH = 9; openM = 0;
+        }
+
+        try {
+            const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: 'numeric', hour12: false }).formatToParts(now);
+            const mH = parseInt(parts.find(p => p.type === 'hour').value) % 24;
+            const mM = parseInt(parts.find(p => p.type === 'minute').value);
+            
+            // Si la hora en el mercado origen es menor a la de su apertura
+            if (mH * 100 + mM < openH * 100 + openM) {
+                let openStr = "15:30"; // Hora España por defecto USA
+                if (tz === 'Europe/Madrid') openStr = "09:00";
+                if (tz === 'Europe/London') openStr = "09:00";
+                if (tz === 'Asia/Tokyo') openStr = "01:00";
+                return { isOpenOrPassed: false, openTimeStr: openStr };
+            }
+        } catch (e) {}
+        
+        return { isOpenOrPassed: true, openTimeStr: '' };
+    };
+
     const toggleView = (key) => setVisibleSections(prev => ({...prev, [key]: !prev[key]}));
+  
+
 
     useEffect(() => { if (noteToast) { const timer = setTimeout(() => setNoteToast(null), 30000); return () => clearTimeout(timer); } }, [noteToast]);
     const requestSort = (key) => { let direction = 'desc'; if (sortConfig.key === key && sortConfig.direction === 'desc') { direction = 'asc'; } setSortConfig({ key, direction }); };
@@ -2314,10 +2394,11 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           if (sortConfig.key === 'customOrder') { const aOrd = a.customOrder || ''; const bOrd = b.customOrder || ''; return aOrd.localeCompare(bOrd, undefined, { numeric: true, sensitivity: 'base' }) * (sortConfig.direction === 'asc' ? 1 : -1); }
           if (sortConfig.key === 'yield') { const getPL = (p) => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); return vF - cost; }; return (getPL(a) - getPL(b)) * dir; } 
           if (sortConfig.key === 'percent') { const getPct = (p) => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); const ds = (p.dividends || []).reduce((acc,d)=>acc+d.net,0); const days = calculateDays(p.buyDate, p.sellDate || new Date()); return calcReturns(cost, vF + ds, days).simple; }; return (getPct(a) - getPct(b)) * dir; } 
-          
+
         if (sortConfig.key === 'intraday') { 
               const getIntra = (p) => {
-                  if (p.sellDate || !p.previousClose) return 0;
+                  const mStatus = getMarketOpenInfo(p.ticker);
+                  if (p.sellDate || !p.previousClose || !mStatus.isOpenOrPassed) return 0;
                   const curP = p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice;
                   const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                   const curF = p.isIndex ? p.buyFx : p.currentFx;
@@ -2326,6 +2407,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
               return (getIntra(a) - getIntra(b)) * dir; 
           }
 
+        
           // --- NUEVOS CASOS DE ORDENACIÓN ---
           if (sortConfig.key === 'totalCost') {
               const getCost = (p) => (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
@@ -2506,9 +2588,9 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     // MOTOR DE CÁLCULO UNIFICADO PARA TODA LA PESTAÑA
     const globalMetrics = useMemo(() => {
         const calc = (items) => {
+            // DECLARACIÓN INICIAL DE TODAS LAS VARIABLES
             let inv = 0, cur = 0, divN = 0, fX = 0, weightedDays = 0, intra = 0, prevValTotal = 0;
-            let sumBuyPE = 0, countBuyPE = 0, sumCurPE = 0, countCurPE = 0;
-            let totalFeesAdj = 0; // NUEVA VARIABLE PARA ACUMULAR GASTOS/AJUSTES
+            let sumBuyPE = 0, countBuyPE = 0, sumCurPE = 0, countCurPE = 0, totalFeesAdj = 0;
 
             items.forEach(p => {
                 const isS = !!p.sellDate;
@@ -2518,18 +2600,17 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                 const eF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
                 const vN = (eP * p.shares * eF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
                 
-                // CÁLCULO DE GASTOS Y AJUSTES DE ESTA OPERACIÓN
-                const currentFees = isS ? (parseFloat(p.sellFees) || 0) : (parseFloat(p.fees) || 0);
-                const currentAdj = isS ? (parseFloat(p.sellAdjustments) || 0) : (parseFloat(p.adjustments) || 0);
-                totalFeesAdj += (currentFees + currentAdj);
+                // Cálculo de gastos y ajustes
+                totalFeesAdj += isS ? (parseFloat(p.sellFees)||0)+(parseFloat(p.sellAdjustments)||0) : (parseFloat(p.fees)||0)+(parseFloat(p.adjustments)||0);
 
-                if (!isS && p.previousClose) {
+                // INTRADÍA: Si es Índice entra SIEMPRE. Si no, comprueba horario de apertura.
+                if (!isS && p.previousClose && (p.isIndex || getMarketStatus(p).open)) {
                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                     intra += (eP - prevP) * p.shares * eF;
                     prevValTotal += (prevP * p.shares * eF);
                 }
-                if (!p.isIndex) fX += (p.shares * (isS ? p.sellPrice : p.currentPrice) * (eF - p.buyFx));
 
+                if (!p.isIndex) fX += (p.shares * (isS ? p.sellPrice : p.currentPrice) * (eF - p.buyFx));
                 inv += costT; cur += vN; weightedDays += (d * costT);
                 (p.dividends || []).forEach(dv => divN += dv.net);
                 if (p.buyPE > 0) { sumBuyPE += p.buyPE; countBuyPE++; }
@@ -2542,19 +2623,8 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             return { num: items.length, inv, cur, divN, fX, plPrice: cur - inv, plTotal: (cur + divN) - inv, plP_S: rP.simple, plP_A: rP.annual, plT_S: rT.simple, plT_A: rT.annual, intra, intraPct: prevValTotal !== 0 ? (intra / prevValTotal) * 100 : 0, avgBuyPE: countBuyPE > 0 ? sumBuyPE / countBuyPE : 0, avgCurPE: countCurPE > 0 ? sumCurPE / countCurPE : 0, totalFeesAdj };
         };
 
-        // 1. PANELES SUPERIORES: Calculados sobre la cartera base (Filtros Texto/Fecha + Check, IGNORA botones Todo/Activa/Venta)
-        const stats = {
-            active: calc(baseFilteredPortfolio.filter(p => !p.sellDate)),
-            sold: calc(baseFilteredPortfolio.filter(p => !!p.sellDate)),
-            total: calc(baseFilteredPortfolio)
-        };
-
-        // 2. PIE DE TABLA: Calculado SOLO sobre lo que se ve explícitamente en la rejilla
-        const gridMetrics = calc(visiblePortfolio);
-
-        return { stats, gridMetrics };
+        return { stats: { active: calc(baseFilteredPortfolio.filter(p => !p.sellDate)), sold: calc(baseFilteredPortfolio.filter(p => !!p.sellDate)), total: calc(baseFilteredPortfolio) }, gridMetrics: calc(visiblePortfolio) };
     }, [baseFilteredPortfolio, visiblePortfolio, baseCurrency]);
-
 
     const stats = globalMetrics.stats;
     const gridTotals = {
@@ -2794,7 +2864,8 @@ const updatePrices = async (isAuto = false) => {
                     updatesMap[item.id] = {
                         currentPrice: cleanVal(stockData.p),
                         currentPE: stockData.pe ? cleanVal(stockData.pe) : item.currentPE,
-                        previousClose: stockData.pc ? cleanVal(stockData.pc) : item.previousClose
+                        previousClose: stockData.pc ? cleanVal(stockData.pc) : item.previousClose,
+                        quoteDate: stockData.dt || "" // GUARDAMOS LA FECHA DE LA COTIZACIÓN
                     };
                     if (item.stockCurrency === baseCurrency) {
                         updatesMap[item.id].currentFx = 1;
@@ -2805,7 +2876,7 @@ const updatePrices = async (isAuto = false) => {
                     const reason = stockData ? (stockData.reason || "Sin datos") : "No encontrado";
                     totallyFailed.push(`${item.ticker} (${reason})`);
                 }
-            });
+            });        
         }
 
         setUpdateProgress(60);
@@ -3400,15 +3471,18 @@ const RenderHistoryCard = () => {
                                 const rs = calcReturns(cost, vF + ds, days); 
 
                                 let intraVal = 0, intraPct = 0, hasIntra = false;
-                                if (!isS && p.previousClose) {
+                                const mStatus = getMarketStatus(p); 
+
+                                if (!isS && p.previousClose && (p.isIndex || mStatus.open)) {
                                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                                     intraVal = (curP - prevP) * p.shares * curF;
                                     intraPct = prevP !== 0 ? ((curP - prevP) / prevP) * 100 : 0;
                                     hasIntra = true;
                                 }
-
+                              
                                 return ( 
                                     <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''} ${selectedTicker === p.ticker ? 'bg-blue-600/10 border-l-4 border-blue-500' : ''}`} onClick={() => setSelectedTicker(p.ticker)}>
+
                                         <td className="p-3 text-center sticky left-0 z-[10] bg-slate-900 border-r border-slate-800" onClick={(e) => { e.stopPropagation(); setPortfolio(prev => prev.map(x => x.id === p.id ? {...x, isActive: !x.isActive} : x)); }}>
                                             <input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" />
                                         </td>
@@ -3425,7 +3499,22 @@ const RenderHistoryCard = () => {
                                         <td className="p-3 text-center text-[10px] font-bold"><div className="text-blue-400">{formatDateES(p.buyDate)}</div>{p.sellDate && <div className="text-orange-400">{formatDateES(p.sellDate)}</div>}<div className="text-slate-500 text-[9px] mt-1">{formatN(days, 0)} días</div></td>
                                         <td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td>
                                         <td className="p-3 text-right text-xs font-mono">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td>
-                                        <td className="p-3 text-right font-mono text-xs border-l border-r border-slate-800 bg-slate-900/20">{hasIntra ? (<div><div className={intraVal >= 0 ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>{formatMoney(intraVal, baseCurrency)}</div><div className={`text-[9px] ${intraPct >= 0 ? 'text-green-500' : 'text-red-500'}`}>{formatN(intraPct)}%</div></div>) : <span className="text-slate-600">-</span>}</td>
+
+
+                                        <td className="p-3 text-right font-mono text-xs border-l border-r border-slate-800 bg-slate-900/20">
+                                            {hasIntra ? (
+                                                <div>
+                                                    <div className={intraVal >= 0 ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>{formatMoney(intraVal, baseCurrency)}</div>
+                                                    <div className={`text-[9px] ${intraPct >= 0 ? 'text-green-500' : 'text-red-500'}`}>{formatN(intraPct)}%</div>
+                                                </div>
+                                            ) : (
+                                                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter">
+                                                    {!isS && mStatus.msg ? mStatus.msg : "-"}
+                                                </span>
+                                            )}
+                                        </td>
+
+                                        
                                         <td className="p-3 text-center text-[10px] font-mono text-slate-400">I: {formatN(p.buyFx, 4)}<br/>A: {formatN(curF, 4)}</td>
                                         <td className="p-3 text-center text-[9px] font-mono">{(() => { const fxDevVal = (p.isIndex ? 0 : (p.shares * (isS ? p.sellPrice : p.currentPrice) * (curF - p.buyFx))); return <div className={fxDevVal >= 0 ? 'text-green-500' : 'text-red-500'}>{formatMoney(fxDevVal, baseCurrency)}</div>; })()}</td>
                                         <td className="p-3 text-center text-[10px] font-mono text-slate-400">G: {formatN(isS?p.sellFees:p.fees)}<br/>A: {formatN(isS?p.sellAdjustments:p.adjustments)}</td>
