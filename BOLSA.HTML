@@ -1,6 +1,6 @@
 <!DOCTYPE html>   
 <html lang="es">
-<head>
+<head> 
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>BoardingGate - Gestor de Cartera iA</title>
@@ -985,8 +985,10 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
           );
       };
 
-      // --- COMPONENTE: DASHBOARD ESTADÍSTICO (ACTUALIZADO) ---
-const StatsDashboard = ({ portfolio, baseCurrency, taxTotal }) => {
+
+
+// --- COMPONENTE: DASHBOARD ESTADÍSTICO (CORREGIDO) ---
+      const StatsDashboard = ({ portfolio, baseCurrency, taxTotal }) => {
           const [view, setView] = useState(0); 
 
           const metrics = useMemo(() => {
@@ -1003,20 +1005,20 @@ const StatsDashboard = ({ portfolio, baseCurrency, taxTotal }) => {
 
                   items.forEach(p => {
                         const isS = !!p.sellDate;
-                        const costT = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+                        const costT = r2((p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0));
                         const eP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
                         const eF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
-                        const vN = (eP * p.shares * eF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
-                        totalFeesAdj += isS ? (parseFloat(p.sellFees)||0)+(parseFloat(p.sellAdjustments)||0) : (parseFloat(p.fees)||0)+(parseFloat(p.adjustments)||0);
-        
-                        // SUMATORIO INTRADÍA: Si es Índice (p.isIndex) entra SIEMPRE. Si no, pasa por getMarketStatus.
-                        if (!isS && p.previousClose && (p.isIndex || getMarketStatus(p).open)) {
-                            const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
-                            intra += (eP - prevP) * p.shares * eF;
-                            prevValTotal += (prevP * p.shares * eF);
-                        }
-                        if (!p.isIndex) fX += (p.shares * (isS ? p.sellPrice : p.currentPrice) * (eF - p.buyFx));
-                        inv += costT; cur += vN; (p.dividends || []).forEach(dv => divN += dv.net);
+                        const vN = r2((eP * p.shares * eF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0));
+                        
+                        const divs = (p.dividends || []).reduce((acc,d) => acc+d.net, 0);
+                        const plTotal = r2((vN + divs) - costT);
+                        const days = calculateDays(p.buyDate, p.sellDate || new Date());
+
+                        totalInv += costT; totalCur += vN; divTotal += divs; daysTotal += days;
+                        maxInv = Math.max(maxInv, costT); minInv = Math.min(minInv, costT);
+                        maxDays = Math.max(maxDays, days); minDays = Math.min(minDays, days);
+
+                        if(plTotal >= 0) { winCount++; winAmt += plTotal; } else { lossCount++; lossAmt += Math.abs(plTotal); }
                     });  
 
                   if(minInv === Infinity) minInv = 0; if(minDays === Infinity) minDays = 0;
@@ -1025,6 +1027,7 @@ const StatsDashboard = ({ portfolio, baseCurrency, taxTotal }) => {
                   const yieldPct = totalInv > 0 ? (divTotal / totalInv) * 100 : 0;
                   return { count: items.length, winCount, lossCount, winAmt, lossAmt, avgDays: items.length ? daysTotal/items.length : 0, maxDays, minDays, avgCap: items.length ? totalInv/items.length : 0, maxInv, minInv, balance: (totalCur - totalInv), divs: divTotal, yieldPct, accum: (totalCur - totalInv + divTotal), ratio, totalInv, finalValuation };
               };
+              
               const openM = calcGroup(active); const closedM = calcGroup(closed);
               const globalInv = openM.totalInv + closedM.totalInv; const globalVal = openM.finalValuation + closedM.finalValuation; const totalRatio = globalInv > 0 ? globalVal / globalInv : 0;
               
@@ -1135,6 +1138,9 @@ const StatsDashboard = ({ portfolio, baseCurrency, taxTotal }) => {
               </div>
           );
       };
+
+
+
 
 
 
@@ -2408,14 +2414,15 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     }, [portfolio, filterText, filterDateStart, filterDateEnd]);
 
     // --- 2. CÁLCULO DE TOTALES (YA INCLUYE totalFeesAdj DEFINIDO) ---
-    const globalMetrics = useMemo(() => {
+   const globalMetrics = useMemo(() => {
         const calc = (items) => {
+            // 1. DECLARACIÓN DE VARIABLES (Aquí está definido totalFeesAdj y d)
             let inv = 0, cur = 0, divN = 0, fX = 0, weightedDays = 0, intra = 0, prevValTotal = 0, totalFeesAdj = 0;
             let sumBuyPE = 0, countBuyPE = 0, sumCurPE = 0, countCurPE = 0;
 
             items.forEach(p => {
                 const isS = !!p.sellDate;
-                const d = calculateDays(p.buyDate, p.sellDate || new Date()); // <--- AQUÍ ESTÁ LA "d" QUE FALTABA
+                const d = calculateDays(p.buyDate, p.sellDate || new Date());
                 const costT = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
                 const eP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
                 const eF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
@@ -2477,7 +2484,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         avgCurPE: globalMetrics.gridMetrics.avgCurPE,
         tFeesAdj: globalMetrics.gridMetrics.totalFeesAdj
     };
-
+ 
     const historicalStats = useMemo(() => {
         const activeP = baseFilteredPortfolio.filter(p => !p.sellDate);
         const soldP = baseFilteredPortfolio.filter(p => !!p.sellDate);
