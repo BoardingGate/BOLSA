@@ -2588,9 +2588,9 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     // MOTOR DE CÁLCULO UNIFICADO PARA TODA LA PESTAÑA
     const globalMetrics = useMemo(() => {
         const calc = (items) => {
-            // DECLARACIÓN DE TODAS LAS VARIABLES (Evita el error de "not defined")
-            let inv = 0, cur = 0, divN = 0, fX = 0, weightedDays = 0, intra = 0, prevValTotal = 0, totalFeesAdj = 0;
-            let sumBuyPE = 0, countBuyPE = 0, sumCurPE = 0, countCurPE = 0;
+            // DECLARACIÓN INICIAL DE TODAS LAS VARIABLES
+            let inv = 0, cur = 0, divN = 0, fX = 0, weightedDays = 0, intra = 0, prevValTotal = 0;
+            let sumBuyPE = 0, countBuyPE = 0, sumCurPE = 0, countCurPE = 0, totalFeesAdj = 0;
 
             items.forEach(p => {
                 const isS = !!p.sellDate;
@@ -2600,10 +2600,10 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                 const eF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
                 const vN = (eP * p.shares * eF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
                 
-                // Sumamos gastos y ajustes
+                // Cálculo de gastos y ajustes
                 totalFeesAdj += isS ? (parseFloat(p.sellFees)||0)+(parseFloat(p.sellAdjustments)||0) : (parseFloat(p.fees)||0)+(parseFloat(p.adjustments)||0);
 
-                // INTRADÍA: Si es Índice entra SIEMPRE. Si no, comprueba horario.
+                // INTRADÍA: Si es Índice entra SIEMPRE. Si no, comprueba horario de apertura.
                 if (!isS && p.previousClose && (p.isIndex || getMarketStatus(p).open)) {
                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                     intra += (eP - prevP) * p.shares * eF;
@@ -2620,28 +2620,11 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             const avgD = inv > 0 ? weightedDays / inv : 0;
             const rP = calcReturns(inv, cur, avgD);
             const rT = calcReturns(inv, cur + divN, avgD);
-            
-            return { 
-                num: items.length, inv, cur, divN, fX, 
-                plPrice: cur - inv, plTotal: (cur + divN) - inv, 
-                plP_S: rP.simple, plP_A: rP.annual, 
-                plT_S: rT.simple, plT_A: rT.annual, 
-                intra, intraPct: prevValTotal !== 0 ? (intra / prevValTotal) * 100 : 0, 
-                avgBuyPE: countBuyPE > 0 ? sumBuyPE / countBuyPE : 0, 
-                avgCurPE: countCurPE > 0 ? sumCurPE / countCurPE : 0, 
-                totalFeesAdj 
-            };
+            return { num: items.length, inv, cur, divN, fX, plPrice: cur - inv, plTotal: (cur + divN) - inv, plP_S: rP.simple, plP_A: rP.annual, plT_S: rT.simple, plT_A: rT.annual, intra, intraPct: prevValTotal !== 0 ? (intra / prevValTotal) * 100 : 0, avgBuyPE: countBuyPE > 0 ? sumBuyPE / countBuyPE : 0, avgCurPE: countCurPE > 0 ? sumCurPE / countCurPE : 0, totalFeesAdj };
         };
 
-        return { 
-            stats: { 
-                active: calc(baseFilteredPortfolio.filter(p => !p.sellDate)), 
-                sold: calc(baseFilteredPortfolio.filter(p => !!p.sellDate)), 
-                total: calc(baseFilteredPortfolio) 
-            }, 
-            gridMetrics: calc(visiblePortfolio) 
-        };
-    }, [baseFilteredPortfolio, visiblePortfolio, baseCurrency]);   
+        return { stats: { active: calc(baseFilteredPortfolio.filter(p => !p.sellDate)), sold: calc(baseFilteredPortfolio.filter(p => !!p.sellDate)), total: calc(baseFilteredPortfolio) }, gridMetrics: calc(visiblePortfolio) };
+    }, [baseFilteredPortfolio, visiblePortfolio, baseCurrency]);
 
     const stats = globalMetrics.stats;
     const gridTotals = {
@@ -3489,7 +3472,7 @@ const RenderHistoryCard = () => {
 
                                 let intraVal = 0, intraPct = 0, hasIntra = false;
                                 const mStatus = getMarketStatus(p); 
-                                
+
                                 if (!isS && p.previousClose && (p.isIndex || mStatus.open)) {
                                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                                     intraVal = (curP - prevP) * p.shares * curF;
