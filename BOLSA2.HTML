@@ -1832,7 +1832,7 @@ function fetchStockData(tickersString) {
        var gTicker = parts.length === 2 ? parts[1] + ":" + parts[0] : rawTicker;
        url = "https://www.google.com/finance/quote/" + encodeURIComponent(gTicker);
     }
-    requests.push({ url: url, method: "GET", muteHttpExceptions: true, headers: { "User-Agent": "Mozilla/5.0..." } });
+    requests.push({ url: url, method: "GET", muteHttpExceptions: true, headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" } });
     validTickers.push(rawTicker);
   }
 
@@ -1850,8 +1850,8 @@ function fetchStockData(tickersString) {
           res.success = true;
           res.n = (html.match(/<div class="zz7u7b">([^<]+)<\/div>/) || [])[1];
           
-          // CAPTURA DE FECHA/HORA DE COTIZACIÓN
-          var dateMatch = html.match(/<div class="ygm7ab"[^>]*>([^<]+)<\/div>/);
+          // CAPTURA MEJORADA DE FECHA (buscamos el div que contiene la fecha o el "cerrado")
+          var dateMatch = html.match(/<div class="ygm7ab"[^>]*>([^<]+)<\/div>/) || html.match(/<div class="mfs7Fc"[^>]*>([^<]+)<\/div>/);
           res.dt = dateMatch ? dateMatch[1] : "";
 
           var getV = function(labels) {
@@ -1874,7 +1874,6 @@ function fetchStockData(tickersString) {
   } catch(err) { return ContentService.createTextOutput(JSON.stringify({error: err.toString()})).setMimeType(ContentService.MimeType.JSON); }
   return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
 }
-
 
 function cleanNumGAS(str) {
   if (!str) return 0;
@@ -2550,60 +2549,67 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     // MOTOR DE CÁLCULO UNIFICADO PARA TODA LA PESTAÑA
     const globalMetrics = useMemo(() => {
-        const getOpenTime = (t) => {
-            t = (t || "").toUpperCase();
-            if (t.includes(".MC") || t.includes("BME:")) return "09:00";
-            if (t.includes(".DE") || t.includes("XETRA:")) return "09:00";
-            if (t.includes(".L") || t.includes("LSE:")) return "09:00";
-            if (t.includes(".PA") || t.includes("EPA:")) return "09:00";
-            return "15:30";
-        };
+        const checkMarketStatus = (p) => {
+            if (p.isIndex) return { open: true };
+            const t = (p.ticker || "").toUpperCase();
+            const now = new Date();
+            
+            // 1. Definir zona horaria y apertura según sufijo
+            let marketTz = "America/New_York", openH = 15, openM = 30; // Default USA (Hora España)
+            if (t.includes(".MC") || t.includes("BME:") || t.includes(".DE") || t.includes("XETRA:") || t.includes(".PA") || t.includes(".AS")) {
+                marketTz = "Europe/Madrid"; openH = 9; openM = 0;
+            } else if (t.includes(".L") || t.includes("LSE:")) {
+                marketTz = "Europe/London"; openH = 9; openM = 0;
+            }
 
-        const isMarketOpen = (p) => {
-            if (p.isIndex) return true; // Índices y fondos suelen computar siempre
-            if (!p.quoteDate) return true;
-            const today = new Date();
-            const dayNum = today.getDate().toString();
-            const q = p.quoteDate.toLowerCase();
-            // Si la fecha de la cotización NO contiene el número del día de hoy, y contiene caracteres de fecha, está cerrada
-            // Google Finance suele poner "15:43" (abierta) o "10 feb" (cerrada)
-            const containsDateNumbers = /[0-9]/.test(q);
-            const hasTodayDate = q.includes(dayNum);
-            const isJustTime = q.includes(":") && !q.includes("/"); // Formato HH:MM
-            return (isJustTime || q.includes("hace") || q.includes("min") || hasTodayDate);
+            // 2. Comprobar hora actual en la zona del mercado
+            const localTime = new Intl.DateTimeFormat('en-GB', { timeZone: marketTz, hour: 'numeric', minute: 'numeric', hour12: false }).format(now);
+            const [h, m] = localTime.split(':').map(Number);
+            const currentTimeVal = h * 100 + m;
+            const openTimeVal = marketTz === "America/New_York" ? 930 : 900; // Hora local del mercado
+
+            // 3. Validar con el texto de Google
+            const q = (p.quoteDate || "").toLowerCase();
+            const dayNum = now.getDate().toString();
+            const isTodayInGoogle = q.includes(":") || q.includes("hace") || q.includes("min") || q.includes(dayNum);
+            
+            // Si el mercado aún no ha abierto por reloj O Google dice que la fecha es antigua
+            if (currentTimeVal < openTimeVal || !isTodayInGoogle) {
+                const msg = marketTz === "America/New_York" ? "15:30" : "09:00";
+                return { open: false, msg: `Abre ${msg}` };
+            }
+            return { open: true };
         };
 
         const calc = (items) => {
-            let inv = 0, cur = 0, divN = 0, fX = 0, weightedDays = 0, intra = 0, prevValTotal = 0;
-            let sumBuyPE = 0, countBuyPE = 0, sumCurPE = 0, countCurPE = 0, totalFeesAdj = 0;
-
+            let inv = 0, cur = 0, divN = 0, fX = 0, weightedDays = 0, intra = 0, prevValTotal = 0, totalFeesAdj = 0;
             items.forEach(p => {
                 const isS = !!p.sellDate;
                 const costT = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
                 const eP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
                 const eF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
                 const vN = (eP * p.shares * eF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
-                
                 totalFeesAdj += isS ? (parseFloat(p.sellFees)||0)+(parseFloat(p.sellAdjustments)||0) : (parseFloat(p.fees)||0)+(parseFloat(p.adjustments)||0);
 
-                // LÓGICA DE INTRADÍA PARA EL TOTAL
-                if (!isS && p.previousClose && isMarketOpen(p)) {
+                // SUMATORIO INTRADÍA (Solo si checkMarketStatus dice que está abierto)
+                if (!isS && p.previousClose && checkMarketStatus(p).open) {
                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                     intra += (eP - prevP) * p.shares * eF;
                     prevValTotal += (prevP * p.shares * eF);
                 }
-
                 if (!p.isIndex) fX += (p.shares * (isS ? p.sellPrice : p.currentPrice) * (eF - p.buyFx));
-                inv += costT; cur += vN;
-                (p.dividends || []).forEach(dv => divN += dv.net);
+                inv += costT; cur += vN; (p.dividends || []).forEach(dv => divN += dv.net);
             });
-
             return { num: items.length, inv, cur, divN, fX, plPrice: cur - inv, plTotal: (cur + divN) - inv, intra, intraPct: prevValTotal !== 0 ? (intra / prevValTotal) * 100 : 0, totalFeesAdj };
         };
 
-        return { stats: { active: calc(baseFilteredPortfolio.filter(p => !p.sellDate)), sold: calc(baseFilteredPortfolio.filter(p => !!p.sellDate)), total: calc(baseFilteredPortfolio) }, gridMetrics: calc(visiblePortfolio) };
+        return { 
+            stats: { active: calc(baseFilteredPortfolio.filter(p => !p.sellDate)), sold: calc(baseFilteredPortfolio.filter(p => !!p.sellDate)), total: calc(baseFilteredPortfolio) }, 
+            gridMetrics: calc(visiblePortfolio),
+            checkMarketStatus // Exportamos la función para usarla en las filas
+        };
     }, [baseFilteredPortfolio, visiblePortfolio, baseCurrency]);
-  
+
 
     const stats = globalMetrics.stats;
     const gridTotals = {
@@ -3450,17 +3456,17 @@ const RenderHistoryCard = () => {
                                 const rs = calcReturns(cost, vF + ds, days); 
 
 
-                                let intraVal = 0, intraPct = 0, hasIntra = false, marketOpenMsg = "";
-                                
-                                const getOpenTime = (t) => {
-                                    t = (t || "").toUpperCase();
-                                    if (t.includes(".MC") || t.includes("BME:")) return "09:00";
-                                    if (t.includes(".DE") || t.includes("XETRA:")) return "09:00";
-                                    if (t.includes(".L") || t.includes("LSE:")) return "09:00";
-                                    if (t.includes(".PA") || t.includes("EPA:")) return "09:00";
-                                    return "15:30";
-                                };
-
+                                let intraVal = 0, intraPct = 0, hasIntra = false, marketStatus = { open: true };
+                                if (!isS && p.previousClose) {
+                                    marketStatus = globalMetrics.checkMarketStatus(p);
+                                    if (marketStatus.open) {
+                                        const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
+                                        intraVal = (curP - prevP) * p.shares * curF;
+                                        intraPct = prevP !== 0 ? ((curP - prevP) / prevP) * 100 : 0;
+                                        hasIntra = true;
+                                    }
+                                }
+                              
                                 const marketOpen = (() => {
                                     if (p.isIndex) return true;
                                     if (!p.quoteDate) return true;
@@ -3507,10 +3513,11 @@ const RenderHistoryCard = () => {
                                                     <div className={`text-[9px] ${intraPct >= 0 ? 'text-green-500' : 'text-red-500'}`}>{formatN(intraPct)}%</div>
                                                 </div>
                                             ) : (
-                                                <span className="text-[10px] text-slate-500 font-bold">{!isS && marketOpenMsg ? marketOpenMsg : "-"}</span>
+                                                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter">
+                                                    {!isS && marketStatus.msg ? marketStatus.msg : "-"}
+                                                </span>
                                             )}
                                         </td>
-
                                         
                                         <td className="p-3 text-center text-[10px] font-mono text-slate-400">I: {formatN(p.buyFx, 4)}<br/>A: {formatN(curF, 4)}</td>
                                         <td className="p-3 text-center text-[9px] font-mono">{(() => { const fxDevVal = (p.isIndex ? 0 : (p.shares * (isS ? p.sellPrice : p.currentPrice) * (curF - p.buyFx))); return <div className={fxDevVal >= 0 ? 'text-green-500' : 'text-red-500'}>{formatMoney(fxDevVal, baseCurrency)}</div>; })()}</td>
