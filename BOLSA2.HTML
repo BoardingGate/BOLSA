@@ -2272,10 +2272,49 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
     const formatDateES = (d) => { if(!d) return ''; const date = new Date(d); return `${date.getDate().toString().padStart(2,'0')}-${(date.getMonth()+1).toString().padStart(2,'0')}-${date.getFullYear()}`; };
     const cleanVal = (v) => { if (typeof v === 'number') return v; const n = parseFloat(String(v).replace(/[^0-9.-]/g, '')); return isNaN(n) ? 0 : n; };
-    const getRegion = (ticker) => { if (!ticker) return 'S/D'; if (ticker.includes(':')) return ticker.split(':')[0].toUpperCase(); const t = ticker.toUpperCase(); if (t.endsWith('.MC')) return 'BME (ES)'; if (t.endsWith('.DE')) return 'XETRA (DE)'; if (t.endsWith('.PA')) return 'EURONEXT (FR)'; if (t.endsWith('.L')) return 'LSE (UK)'; return 'US/OTROS'; };
+  
+        const getRegion = (ticker) => { if (!ticker) return 'S/D'; if (ticker.includes(':')) return ticker.split(':')[0].toUpperCase(); const t = ticker.toUpperCase(); if (t.endsWith('.MC')) return 'BME (ES)'; if (t.endsWith('.DE')) return 'XETRA (DE)'; if (t.endsWith('.PA')) return 'EURONEXT (FR)'; if (t.endsWith('.L')) return 'LSE (UK)'; return 'US/OTROS'; };
     const isISIN = (str) => /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/i.test(String(str).trim());
 
+    const getMarketOpenInfo = (ticker) => {
+        const now = new Date();
+        const day = now.getDay();
+        // Fines de semana damos por válido que muestre el último intradía de cierre
+        if (day === 0 || day === 6) return { isOpenOrPassed: true, openTimeStr: '' };
+
+        const t = (ticker || '').toUpperCase();
+        let tz = 'America/New_York';
+        let openH = 9, openM = 30;
+
+        if (t.endsWith('.MC') || t.endsWith('.DE') || t.endsWith('.PA') || t.endsWith('.AS') || t.endsWith('.MI') || t.includes('BME:') || t.includes('XETRA:') || t.includes('EURONEXT:') || t.includes('MIL:')) {
+            tz = 'Europe/Madrid'; openH = 9; openM = 0;
+        } else if (t.endsWith('.L')) {
+            tz = 'Europe/London'; openH = 8; openM = 0;
+        } else if (t.endsWith('.T') || t.includes('TYO:')) {
+            tz = 'Asia/Tokyo'; openH = 9; openM = 0;
+        }
+
+        try {
+            const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: 'numeric', hour12: false }).formatToParts(now);
+            const mH = parseInt(parts.find(p => p.type === 'hour').value) % 24;
+            const mM = parseInt(parts.find(p => p.type === 'minute').value);
+            
+            // Si la hora en el mercado origen es menor a la de su apertura
+            if (mH * 100 + mM < openH * 100 + openM) {
+                let openStr = "15:30"; // Hora España por defecto USA
+                if (tz === 'Europe/Madrid') openStr = "09:00";
+                if (tz === 'Europe/London') openStr = "09:00";
+                if (tz === 'Asia/Tokyo') openStr = "01:00";
+                return { isOpenOrPassed: false, openTimeStr: openStr };
+            }
+        } catch (e) {}
+        
+        return { isOpenOrPassed: true, openTimeStr: '' };
+    };
+
     const toggleView = (key) => setVisibleSections(prev => ({...prev, [key]: !prev[key]}));
+  
+
 
     useEffect(() => { if (noteToast) { const timer = setTimeout(() => setNoteToast(null), 30000); return () => clearTimeout(timer); } }, [noteToast]);
     const requestSort = (key) => { let direction = 'desc'; if (sortConfig.key === key && sortConfig.direction === 'desc') { direction = 'asc'; } setSortConfig({ key, direction }); };
@@ -2314,10 +2353,11 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           if (sortConfig.key === 'customOrder') { const aOrd = a.customOrder || ''; const bOrd = b.customOrder || ''; return aOrd.localeCompare(bOrd, undefined, { numeric: true, sensitivity: 'base' }) * (sortConfig.direction === 'asc' ? 1 : -1); }
           if (sortConfig.key === 'yield') { const getPL = (p) => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); return vF - cost; }; return (getPL(a) - getPL(b)) * dir; } 
           if (sortConfig.key === 'percent') { const getPct = (p) => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); const ds = (p.dividends || []).reduce((acc,d)=>acc+d.net,0); const days = calculateDays(p.buyDate, p.sellDate || new Date()); return calcReturns(cost, vF + ds, days).simple; }; return (getPct(a) - getPct(b)) * dir; } 
-          
+
         if (sortConfig.key === 'intraday') { 
               const getIntra = (p) => {
-                  if (p.sellDate || !p.previousClose) return 0;
+                  const mStatus = getMarketOpenInfo(p.ticker);
+                  if (p.sellDate || !p.previousClose || !mStatus.isOpenOrPassed) return 0;
                   const curP = p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice;
                   const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                   const curF = p.isIndex ? p.buyFx : p.currentFx;
@@ -2326,6 +2366,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
               return (getIntra(a) - getIntra(b)) * dir; 
           }
 
+        
           // --- NUEVOS CASOS DE ORDENACIÓN ---
           if (sortConfig.key === 'totalCost') {
               const getCost = (p) => (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
