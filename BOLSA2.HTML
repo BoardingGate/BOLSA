@@ -2272,47 +2272,9 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
     const formatDateES = (d) => { if(!d) return ''; const date = new Date(d); return `${date.getDate().toString().padStart(2,'0')}-${(date.getMonth()+1).toString().padStart(2,'0')}-${date.getFullYear()}`; };
     const cleanVal = (v) => { if (typeof v === 'number') return v; const n = parseFloat(String(v).replace(/[^0-9.-]/g, '')); return isNaN(n) ? 0 : n; };
-  
     const getRegion = (ticker) => { if (!ticker) return 'S/D'; if (ticker.includes(':')) return ticker.split(':')[0].toUpperCase(); const t = ticker.toUpperCase(); if (t.endsWith('.MC')) return 'BME (ES)'; if (t.endsWith('.DE')) return 'XETRA (DE)'; if (t.endsWith('.PA')) return 'EURONEXT (FR)'; if (t.endsWith('.L')) return 'LSE (UK)'; return 'US/OTROS'; };
     const isISIN = (str) => /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/i.test(String(str).trim());
 
-    const getMarketOpenInfo = (ticker) => {
-        const now = new Date();
-        const day = now.getDay();
-        // Fines de semana damos por válido que muestre el último intradía de cierre
-        if (day === 0 || day === 6) return { isOpenOrPassed: true, openTimeStr: '' };
-
-        const t = (ticker || '').toUpperCase();
-        let tz = 'America/New_York';
-        let openH = 9, openM = 30;
-
-        if (t.endsWith('.MC') || t.endsWith('.DE') || t.endsWith('.PA') || t.endsWith('.AS') || t.endsWith('.MI') || t.includes('BME:') || t.includes('XETRA:') || t.includes('EURONEXT:') || t.includes('MIL:')) {
-            tz = 'Europe/Madrid'; openH = 9; openM = 0;
-        } else if (t.endsWith('.L')) {
-            tz = 'Europe/London'; openH = 8; openM = 0;
-        } else if (t.endsWith('.T') || t.includes('TYO:')) {
-            tz = 'Asia/Tokyo'; openH = 9; openM = 0;
-        }
-
-        try {
-            const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: 'numeric', hour12: false }).formatToParts(now);
-            const mH = parseInt(parts.find(p => p.type === 'hour').value) % 24;
-            const mM = parseInt(parts.find(p => p.type === 'minute').value);
-            
-            // Si la hora en el mercado origen es menor a la de su apertura
-            if (mH * 100 + mM < openH * 100 + openM) {
-                let openStr = "15:30"; // Hora España por defecto USA
-                if (tz === 'Europe/Madrid') openStr = "09:00";
-                if (tz === 'Europe/London') openStr = "09:00";
-                if (tz === 'Asia/Tokyo') openStr = "01:00";
-                return { isOpenOrPassed: false, openTimeStr: openStr };
-            }
-        } catch (e) {}
-        
-        return { isOpenOrPassed: true, openTimeStr: '' };
-    };
-
-    const toggleView = (key) => setVisibleSections(prev => ({...prev, [key]: !prev[key]}));
     const toggleView = (key) => setVisibleSections(prev => ({...prev, [key]: !prev[key]}));
 
     useEffect(() => { if (noteToast) { const timer = setTimeout(() => setNoteToast(null), 30000); return () => clearTimeout(timer); } }, [noteToast]);
@@ -2353,11 +2315,9 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           if (sortConfig.key === 'yield') { const getPL = (p) => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); return vF - cost; }; return (getPL(a) - getPL(b)) * dir; } 
           if (sortConfig.key === 'percent') { const getPct = (p) => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); const ds = (p.dividends || []).reduce((acc,d)=>acc+d.net,0); const days = calculateDays(p.buyDate, p.sellDate || new Date()); return calcReturns(cost, vF + ds, days).simple; }; return (getPct(a) - getPct(b)) * dir; } 
           
-     
-          if (sortConfig.key === 'intraday') { 
+        if (sortConfig.key === 'intraday') { 
               const getIntra = (p) => {
-                  const mStatus = getMarketOpenInfo(p.ticker);
-                  if (p.sellDate || !p.previousClose || !mStatus.isOpenOrPassed) return 0;
+                  if (p.sellDate || !p.previousClose) return 0;
                   const curP = p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice;
                   const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                   const curF = p.isIndex ? p.buyFx : p.currentFx;
@@ -2559,18 +2519,15 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                 const vN = (eP * p.shares * eF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
                 
                 // CÁLCULO DE GASTOS Y AJUSTES DE ESTA OPERACIÓN
-               const currentFees = isS ? (parseFloat(p.sellFees) || 0) : (parseFloat(p.fees) || 0);
+                const currentFees = isS ? (parseFloat(p.sellFees) || 0) : (parseFloat(p.fees) || 0);
                 const currentAdj = isS ? (parseFloat(p.sellAdjustments) || 0) : (parseFloat(p.adjustments) || 0);
                 totalFeesAdj += (currentFees + currentAdj);
 
-                const mStatus = getMarketOpenInfo(p.ticker);
-
-                if (!isS && p.previousClose && mStatus.isOpenOrPassed) {
+                if (!isS && p.previousClose) {
                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                     intra += (eP - prevP) * p.shares * eF;
                     prevValTotal += (prevP * p.shares * eF);
                 }
-
                 if (!p.isIndex) fX += (p.shares * (isS ? p.sellPrice : p.currentPrice) * (eF - p.buyFx));
 
                 inv += costT; cur += vN; weightedDays += (d * costT);
@@ -3442,10 +3399,8 @@ const RenderHistoryCard = () => {
                                 const days = calculateDays(p.buyDate, p.sellDate || new Date()); 
                                 const rs = calcReturns(cost, vF + ds, days); 
 
-
                                 let intraVal = 0, intraPct = 0, hasIntra = false;
-                                const mStatus = getMarketOpenInfo(p.ticker);
-                                if (!isS && p.previousClose && mStatus.isOpenOrPassed) {
+                                if (!isS && p.previousClose) {
                                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                                     intraVal = (curP - prevP) * p.shares * curF;
                                     intraPct = prevP !== 0 ? ((curP - prevP) / prevP) * 100 : 0;
@@ -3470,7 +3425,7 @@ const RenderHistoryCard = () => {
                                         <td className="p-3 text-center text-[10px] font-bold"><div className="text-blue-400">{formatDateES(p.buyDate)}</div>{p.sellDate && <div className="text-orange-400">{formatDateES(p.sellDate)}</div>}<div className="text-slate-500 text-[9px] mt-1">{formatN(days, 0)} días</div></td>
                                         <td className="p-3 text-right font-mono font-bold text-white">{formatN(p.shares)}</td>
                                         <td className="p-3 text-right text-xs font-mono">I: {formatN(p.buyPrice)}<br/><span className="text-blue-400 font-bold">{isS?'V:':'A:'} {formatN(curP, 3)}</span></td>
-                                        <td className="p-3 text-right font-mono text-xs border-l border-r border-slate-800 bg-slate-900/20">{hasIntra ? (<div><div className={intraVal >= 0 ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>{formatMoney(intraVal, baseCurrency)}</div><div className={`text-[9px] ${intraPct >= 0 ? 'text-green-500' : 'text-red-500'}`}>{formatN(intraPct)}%</div></div>) : (!isS && !mStatus.isOpenOrPassed ? <span className="text-[10px] text-slate-500 uppercase font-bold tracking-tighter">Abre {mStatus.openTimeStr}</span> : <span className="text-slate-600">-</span>)}</td>
+                                        <td className="p-3 text-right font-mono text-xs border-l border-r border-slate-800 bg-slate-900/20">{hasIntra ? (<div><div className={intraVal >= 0 ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>{formatMoney(intraVal, baseCurrency)}</div><div className={`text-[9px] ${intraPct >= 0 ? 'text-green-500' : 'text-red-500'}`}>{formatN(intraPct)}%</div></div>) : <span className="text-slate-600">-</span>}</td>
                                         <td className="p-3 text-center text-[10px] font-mono text-slate-400">I: {formatN(p.buyFx, 4)}<br/>A: {formatN(curF, 4)}</td>
                                         <td className="p-3 text-center text-[9px] font-mono">{(() => { const fxDevVal = (p.isIndex ? 0 : (p.shares * (isS ? p.sellPrice : p.currentPrice) * (curF - p.buyFx))); return <div className={fxDevVal >= 0 ? 'text-green-500' : 'text-red-500'}>{formatMoney(fxDevVal, baseCurrency)}</div>; })()}</td>
                                         <td className="p-3 text-center text-[10px] font-mono text-slate-400">G: {formatN(isS?p.sellFees:p.fees)}<br/>A: {formatN(isS?p.sellAdjustments:p.adjustments)}</td>
