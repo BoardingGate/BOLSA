@@ -2257,35 +2257,33 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const [updateText, setUpdateText] = useState('');
 
     // --- 1. LÓGICA DE APERTURA DE MERCADOS ---
-    const getMarketStatus = (p) => {
-        // 1. Obtener la hora actual REAL en España independientemente del reloj del dispositivo
-        const madridTime = new Intl.DateTimeFormat('es-ES', {
-            timeZone: 'Europe/Madrid',
-            hour: 'numeric',
-            minute: 'numeric',
-            weekday: 'short',
-            hour12: false
-        }).formatToParts(new Date());
-
-        const h = parseInt(madridTime.find(part => part.type === 'hour').value);
-        const m = parseInt(madridTime.find(part => part.type === 'minute').value);
-        const diaSemana = new Date().getDay(); // 0: Dom, 6: Sáb (esto es local pero suele valer)
-        const horaActual = h * 100 + m; // Ejemplo: 15:35 -> 1535
-
-        if (diaSemana === 0 || diaSemana === 6) return { open: false, msg: "MERCADO CERRADO" };
+   const getMarketStatus = (p) => {
+        if (p.isIndex) return { open: true };
 
         const t = (p.ticker || "").toUpperCase();
         
-        const isSpain = /(.MC|BME:)/.test(t);
-        const isEurope = /(.DE|.PA|.AS|.MI|.BR|.LS|.MA|XETRA:|EPA:|AMS:|BIT:|MIL:|EBR:|ELI:|LSE:|.L)/.test(t);
+        const euPrefix = ["BME:", "BIT:", "XETRA:", "EPA:", "AMS:", "MIL:", "EBR:", "ELI:", "LSE:", "FRA:"];
+        const euSuffix = [".MC", ".DE", ".PA", ".AS", ".MI", ".BR", ".LS", ".MA", ".L"];
         
-        if (isSpain || isEurope) {
-            if (horaActual < 900) return { open: false, msg: "Abre 09:00" };
-            if (horaActual > 1740) return { open: false, msg: "CERRADO" };
+        const isEurope = euPrefix.some(pre => t.startsWith(pre)) || euSuffix.some(suf => t.endsWith(suf));
+
+        const madrid = new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'Europe/Madrid', hour: 'numeric', minute: 'numeric', hour12: false
+        }).formatToParts(new Date());
+        const h = parseInt(madrid.find(x => x.type === 'hour').value);
+        const m = parseInt(madrid.find(x => x.type === 'minute').value);
+        const horaReloj = h * 100 + m;
+        const dia = new Date().getDay();
+
+        if (dia === 0 || dia === 6) return { open: false, msg: "MERCADO CERRADO" };
+
+        if (isEurope) {
+            if (horaReloj < 900) return { open: false, msg: "Abre 09:00" };
+            if (horaReloj >= 1735) return { open: false, msg: "CERRADO" };
             return { open: true };
         } else {
-         if (horaActual < 1530) return { open: false, msg: "Abre 15:30" };
-            if (horaActual > 2205) return { open: false, msg: "CERRADO" };
+            if (horaReloj < 1530) return { open: false, msg: "Abre 15:30" };
+            if (horaReloj >= 2205) return { open: false, msg: "CERRADO" };
             return { open: true };
         }
     };
@@ -2354,10 +2352,14 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           if (sortConfig.key === 'percent') { const getPct = (p) => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); const ds = (p.dividends || []).reduce((acc,d)=>acc+d.net,0); const days = calculateDays(p.buyDate, p.sellDate || new Date()); return calcReturns(cost, vF + ds, days).simple; }; return (getPct(a) - getPct(b)) * dir; } 
 
 
+
+
           if (sortConfig.key === 'intraday') { 
               const getIntra = (p) => {
+
+                 
+                  
                   const mStatus = getMarketStatus(p);
-                  // Solo calculamos si NO está vendida, tiene cierre anterior y el mercado está ABIERTO según el reloj
                   if (p.sellDate || !p.previousClose || !mStatus.open) return 0;
                   const curP = p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice;
                   const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
@@ -3326,15 +3328,14 @@ const RenderHistoryCard = () => {
                                 const rs = calcReturns(cost, vF + ds, days); 
 
                               let intraVal = 0, intraPct = 0, hasIntra = false;
-                                const mStatus = getMarketStatus(p); 
-                                
+                             
+                                const mStatus = getMarketStatus(p); // Calculamos el estado individual de esta acción
+
                                 if (!isS && p.previousClose && mStatus.open) {
                                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
-                                    intraVal = (curP - prevP) * p.shares * curF;
-                                    intraPct = prevP !== 0 ? ((curP - prevP) / prevP) * 100 : 0;
-                                    hasIntra = true;
-                                }
-                              
+                                    intra += (eP - prevP) * p.shares * eF;
+                                    prevValTotal += (prevP * p.shares * eF);
+                                }    
 
                                 return ( 
                                     <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''} ${selectedTicker === p.ticker ? 'bg-blue-600/10 border-l-4 border-blue-500' : ''}`} onClick={() => setSelectedTicker(p.ticker)}>
