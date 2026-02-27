@@ -4959,6 +4959,9 @@ const App = () => {
     const [appPin, setAppPin] = usePersistentState('bg_app_pin', '');
     const [isPinLocked, setIsPinLocked] = useState(!!appPin);
     const [enteredPin, setEnteredPin] = useState('');
+
+    const [showExamplePrompt, setShowExamplePrompt] = useState(false);
+    const [isLoadingExamples, setIsLoadingExamples] = useState(false);
     
     const [blockAction, setBlockAction] = useState(false);
     const _0xAuth = useMemo(() => _s_st === _0xT, [_s_st]);
@@ -5025,6 +5028,45 @@ const App = () => {
     useEffect(() => { if (!gScriptUrl || refreshInterval < 1 || !isAppReady) return; const intervalMs = (refreshInterval + 1) * 60 * 1000; const timer = setInterval(() => { if (syncStatus === 'unsaved') { uploadToCloud(); } }, intervalMs); return () => clearInterval(timer); }, [refreshInterval, gScriptUrl, syncStatus, isAppReady]);
     useEffect(() => { if(appPin && appPin.length === 4) setIsPinLocked(true); else setIsPinLocked(false); }, []);
 
+    useEffect(() => {
+        // isAppReady asegura que ya terminó de comprobar gDrive (si lo hubiera)
+        // portfolio.length === 0 asegura que está vacío
+        // !_0xAuth asegura que no tiene puesta la licencia de instalación
+        if (isAppReady && portfolio.length === 0 && !_0xAuth) {
+            setShowExamplePrompt(true);
+        } else {
+            setShowExamplePrompt(false);
+        }
+    }, [isAppReady, portfolio.length, _0xAuth]);
+
+    // Función para descargar e inyectar el JSON
+    const handleLoadExamples = async () => {
+        setIsLoadingExamples(true);
+        try {
+            // Llama al JSON alojado en la misma ruta raíz de Github Pages
+            const response = await fetch('./BoardingGate_Ejemplos.json');
+            if (!response.ok) throw new Error("No se pudo localizar el archivo BoardingGate_Ejemplos.json en el servidor.");
+            
+            const data = await response.json();
+            
+            // Restaura los datos relevantes del JSON (igual que en una restauración local)
+            if (data.portfolio) setPortfolio(data.portfolio); 
+            if (data.resultsData) setResultsData(data.resultsData); 
+            if (data.baseCurrency) setBaseCurrency(data.baseCurrency);
+            if (data.globalNotes) setGlobalNotes(data.globalNotes);
+            
+            // Fuerza la actualización de estado para que la app lo detecte como cambio no guardado
+            setLocalTimestamp(Date.now());
+            setSyncStatus('unsaved');
+            setShowExamplePrompt(false);
+        } catch (error) {
+            alert("Error al cargar los datos de ejemplo: " + error.message);
+            setShowExamplePrompt(false);
+        } finally {
+            setIsLoadingExamples(false);
+        }
+    };
+
     const renderConflictModal = () => {
         if (!conflictModal.isOpen) return null;
         const localDate = new Date(localTimestamp).toLocaleString();
@@ -5055,6 +5097,30 @@ const App = () => {
     return (
         <div className="h-full flex flex-col bg-[#0a0a0a] text-white overflow-hidden relative">
             {renderConflictModal()}
+
+            {/* MODAL DE CARGA DE EJEMPLOS */}
+            <Modal isOpen={showExamplePrompt} title="👋 ¡Bienvenido a BoardingGate!" onClose={() => setShowExamplePrompt(false)} size="sm">
+                <div className="text-center space-y-4">
+                    <div className="bg-blue-500/10 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto text-blue-400 border border-blue-500/20">
+                        <Icons.Briefcase size={30}/>
+                    </div>
+                    <p className="text-slate-300 text-sm font-medium leading-relaxed">
+                        Parece que es tu primera vez aquí, no tienes registros y la aplicación no está activada.
+                        <br/><br/>
+                        ¿Deseas cargar una cartera de <b>datos de ejemplo</b> para probar y ver cómo funciona la plataforma antes de empezar?
+                    </p>
+                    <div className="flex gap-2 mt-4">
+                        <button onClick={() => setShowExamplePrompt(false)} className="flex-1 bg-slate-700 hover:bg-slate-600 py-3 rounded-xl font-bold uppercase text-[10px] text-white transition-colors">
+                            No, Empezar de cero
+                        </button>
+                        <button onClick={handleLoadExamples} disabled={isLoadingExamples} className="flex-1 bg-blue-600 hover:bg-blue-500 py-3 rounded-xl font-bold text-white uppercase text-[10px] transition-colors flex items-center justify-center gap-2">
+                            {isLoadingExamples ? <Icons.Loader size={14} className="animate-spin" /> : <Icons.Upload size={14}/>}
+                            Sí, Cargar Ejemplos
+                        </button>
+                    </div>
+                </div>
+            </Modal>
+
             {syncMessage && <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[200] bg-blue-600/90 text-white px-6 py-3 rounded-full shadow-2xl font-bold text-xs flex items-center gap-2 fade-in backdrop-blur-md border border-white/10">{syncStatus === 'uploading' ? <Icons.Upload className="animate-bounce"/> : syncStatus === 'error' ? <Icons.AlertCircle/> : <Icons.CheckCircle/>} {syncMessage}</div>}
             {!isAppReady && !conflictModal.isOpen && <div className="fixed inset-0 z-[250] bg-black flex flex-col items-center justify-center"><Icons.Loader size={40} className="text-blue-500 animate-spin mb-4"/><div className="text-slate-400 text-xs uppercase font-bold tracking-widest animate-pulse">Sincronizando con la Nube...</div></div>}
             <header className="shrink-0 bg-slate-900 border-b border-slate-800 px-6 py-4 flex justify-between items-center z-50"><div><h1 className="text-2xl font-display font-bold">Boarding<span className="text-blue-600">Gate</span></h1><p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Gestor de Cartera de Valores iA</p></div><nav className="flex bg-slate-800 rounded-lg p-1 gap-1 border border-slate-700 overflow-x-auto whitespace-nowrap custom-scrollbar"><button onClick={() => setActiveTab('portfolio')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'portfolio' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Briefcase size={14}/> Cartera</button><button onClick={() => setActiveTab('dividends')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'dividends' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.DollarSign size={14}/> Dividendos</button><button onClick={() => setActiveTab('results')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'results' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.ChartBar size={14}/> Resultados</button><button onClick={() => setActiveTab('analysis')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'analysis' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Search size={14}/> Estudio</button><button onClick={() => setActiveTab('settings')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'settings' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Icons.Settings size={14}/> Ajustes</button></nav></header>
