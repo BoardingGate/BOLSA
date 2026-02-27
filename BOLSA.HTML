@@ -2257,37 +2257,37 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const [updateText, setUpdateText] = useState('');
 
     // --- 1. LÓGICA DE APERTURA DE MERCADOS ---
-    const getMarketStatus = (p) => {
+   const getMarketStatus = (p) => {
         if (p.isIndex) return { open: true };
+
         const t = (p.ticker || "").toUpperCase();
-        const now = new Date();
         
-        const isEurope = /(.MC|.DE|.PA|.AS|.MI|.BR|.LS|.MA|BME:|XETRA:|EPA:|AMS:|BIT:|MIL:|EBR:|ELI:|LSE:|.L)/.test(t);
+        const euPrefix = ["BME:", "BIT:", "XETRA:", "EPA:", "AMS:", "MIL:", "EBR:", "ELI:", "LSE:", "FRA:"];
+        const euSuffix = [".MC", ".DE", ".PA", ".AS", ".MI", ".BR", ".LS", ".MA", ".L"];
+        
+        const isEurope = euPrefix.some(pre => t.startsWith(pre)) || euSuffix.some(suf => t.endsWith(suf));
 
-        const horaEsp = parseInt(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', hour: 'numeric', hour12: false }).format(now));
-        const minEsp = parseInt(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', minute: 'numeric' }).format(now));
-        const tiempoActual = horaEsp * 100 + minEsp;
+        const madrid = new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'Europe/Madrid', hour: 'numeric', minute: 'numeric', hour12: false
+        }).formatToParts(new Date());
+        const h = parseInt(madrid.find(x => x.type === 'hour').value);
+        const m = parseInt(madrid.find(x => x.type === 'minute').value);
+        const horaReloj = h * 100 + m;
+        const dia = new Date().getDay();
 
-        let horaAperturaVal = 1530; 
-        let horaAperturaTexto = "15:30";
+        if (dia === 0 || dia === 6) return { open: false, msg: "MERCADO CERRADO" };
 
         if (isEurope) {
-            horaAperturaVal = 900; 
-            horaAperturaTexto = "09:00";
+            if (horaReloj < 900) return { open: false, msg: "Abre 09:00" };
+            if (horaReloj >= 1735) return { open: false, msg: "CERRADO" };
+            return { open: true };
+        } else {
+            if (horaReloj < 1530) return { open: false, msg: "Abre 15:30" };
+            if (horaReloj >= 2205) return { open: false, msg: "CERRADO" };
+            return { open: true };
         }
-
-        if (tiempoActual < horaAperturaVal) {
-            const q = (p.quoteDate || "").toLowerCase();
-            const diaHoy = now.getDate().toString();
-            const esHoyEnGoogle = q.includes("hace") || q.includes("min") || (q.includes(":") && q.includes(diaHoy));
-            
-            if (!esHoyEnGoogle) {
-                return { open: false, msg: `Abre ${horaAperturaTexto}` };
-            }
-        }
-        
-        return { open: true };
     };
+
 
     const [visibleSections, setVisibleSections] = usePersistentState('bg_visible_sections', { table: true, diverging: true, stats: true, charts: true, chartTV: true });
     const [updating, setUpdating] = useState(false);
@@ -2342,17 +2342,23 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         setFilterDateEnd(`${targetYear}-12-31`);
     };
 
+
+
     const filteredPortfolio = useMemo(() => {
         let list = portfolio.filter(p => { if (filterType === 'active' && p.sellDate) return false; if (filterType === 'sold' && !p.sellDate) return false; if (filterText) { const txt = filterText.toUpperCase(); const matchTicker = p.ticker.toUpperCase().includes(txt); const matchName = (p.name || '').toUpperCase().includes(txt); const matchGroup = (p.group || '').toUpperCase().includes(txt); if (!matchTicker && !matchName && !matchGroup) return false; } if (filterDateStart || filterDateEnd) { let dateToCheck = p.buyDate; if (filterType === 'sold') dateToCheck = p.sellDate; else if (filterType === 'all') dateToCheck = p.sellDate || p.buyDate; if (filterDateStart && dateToCheck < filterDateStart) return false; if (filterDateEnd && dateToCheck > filterDateEnd) return false; } return true; });
         return list.sort((a, b) => { const dir = sortConfig.direction === 'asc' ? 1 : -1; 
           if (sortConfig.key === 'customOrder') { const aOrd = a.customOrder || ''; const bOrd = b.customOrder || ''; return aOrd.localeCompare(bOrd, undefined, { numeric: true, sensitivity: 'base' }) * (sortConfig.direction === 'asc' ? 1 : -1); }
           if (sortConfig.key === 'yield') { const getPL = (p) => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); return vF - cost; }; return (getPL(a) - getPL(b)) * dir; } 
           if (sortConfig.key === 'percent') { const getPct = (p) => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); const ds = (p.dividends || []).reduce((acc,d)=>acc+d.net,0); const days = calculateDays(p.buyDate, p.sellDate || new Date()); return calcReturns(cost, vF + ds, days).simple; }; return (getPct(a) - getPct(b)) * dir; } 
-          
+
+
+
+
           if (sortConfig.key === 'intraday') { 
               const getIntra = (p) => {
+     
                   const mStatus = getMarketStatus(p);
-                  if (p.sellDate || !p.previousClose || !(p.isIndex || mStatus.open)) return 0;
+                  if (p.sellDate || !p.previousClose || !mStatus.open) return 0;
                   const curP = p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice;
                   const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                   const curF = p.isIndex ? p.buyFx : p.currentFx;
@@ -2360,6 +2366,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
               };
               return (getIntra(a) - getIntra(b)) * dir; 
           }
+  
 
           if (sortConfig.key === 'totalCost') {
               const getCost = (p) => (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
@@ -2430,9 +2437,9 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                 
                 totalFeesAdj += isS ? (parseFloat(p.sellFees)||0)+(parseFloat(p.sellAdjustments)||0) : (parseFloat(p.fees)||0)+(parseFloat(p.adjustments)||0);
 
-                const mStatus = getMarketStatus(p);
-                
-                if (!isS && p.previousClose && (p.isIndex || mStatus.open)) {
+                const mStatus = getMarketStatus(p); 
+
+                if (!isS && p.previousClose && mStatus.open) {
                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                     intra += (eP - prevP) * p.shares * eF;
                     prevValTotal += (prevP * p.shares * eF);
@@ -3318,11 +3325,14 @@ const RenderHistoryCard = () => {
                                 const days = calculateDays(p.buyDate, p.sellDate || new Date()); 
                                 const rs = calcReturns(cost, vF + ds, days); 
 
-                               let intraVal = 0, intraPct = 0, hasIntra = false;
+                                let intraVal = 0, intraPct = 0, hasIntra = false; // <-- ESTA LÍNEA ES VITAL
                                 const mStatus = getMarketStatus(p); 
-
-                                if (!isS && p.previousClose && (p.isIndex || mStatus.open)) {
+                                
+                                if (!isS && p.previousClose && mStatus.open) {
+                                    const curP = p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice;
                                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
+                                    const curF = p.isIndex ? p.buyFx : p.currentFx;
+                                    
                                     intraVal = (curP - prevP) * p.shares * curF;
                                     intraPct = prevP !== 0 ? ((curP - prevP) / prevP) * 100 : 0;
                                     hasIntra = true;
