@@ -2258,58 +2258,46 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     // --- 1. LÓGICA DE APERTURA DE MERCADOS ---
     const getMarketStatus = (p) => {
-        if (p.isIndex) return { open: true };
+        if (p.isIndex) return { open: true }; // Índices siempre activos
+        
         const t = (p.ticker || "").toUpperCase();
         const now = new Date();
-        const day = now.getDay(); // 0: Domingo, 6: Sábado
-
+        const day = now.getDay(); // 0: Dom, 6: Sáb
+        
+        // 1. Clasificación por Ticker
         const isEurope = /(.MC|.DE|.PA|.AS|.MI|.BR|.LS|.MA|BME:|XETRA:|EPA:|AMS:|BIT:|MIL:|EBR:|ELI:|LSE:|.L)/.test(t);
-        const isUSA = /(NYSE:|NASDAQ:|ARCA:|AMEX:|.US)/.test(t) || (!isEurope && !t.includes(':'));
+        // Si no es Europa, asumimos USA (NYSE/NASDAQ)
+        const isUSA = !isEurope;
 
+        // 2. Si es fin de semana, todo cerrado
         if (day === 0 || day === 6) {
-            return { open: false, msg: "MERCADO CERRADO" };
+            return { open: false, msg: "CERRADO" };
         }
 
-        const horaEsp = parseInt(new Intl.DateTimeFormat('en-GB', { 
-            timeZone: 'Europe/Madrid', 
-            hour: 'numeric', 
-            hour12: false 
-        }).format(now));
-        const minEsp = parseInt(new Intl.DateTimeFormat('en-GB', { 
-            timeZone: 'Europe/Madrid', 
-            minute: 'numeric' 
-        }).format(now));
-        const tiempoActual = horaEsp * 100 + minEsp;
+        // 3. Obtener hora y minutos actuales (Hora de España)
+        const hora = now.getHours();
+        const min = now.getMinutes();
+        const horaActual = hora * 100 + min; // Ejemplo: 15:35 -> 1535
 
-        let hApertura = 1530; 
-        let hCierre = 2200;
-        let msgAbre = "Abre 15:30";
-
+        // 4. Lógica para ESPAÑA / EUROPA (09:00 a 17:35)
         if (isEurope) {
-            hApertura = 900;
-            hCierre = 1735;
-            msgAbre = "Abre 09:00";
+            if (horaActual < 900) return { open: false, msg: "Abre 09:00" };
+            if (horaActual > 1740) return { open: false, msg: "CERRADO" };
+            return { open: true };
         }
 
-        if (tiempoActual < hApertura) {
-            return { open: false, msg: msgAbre };
+        // 5. Lógica para USA (15:30 a 22:00)
+        if (isUSA) {
+            if (horaActual < 1530) return { open: false, msg: "Abre 15:30" };
+            if (horaActual > 2205) return { open: false, msg: "CERRADO" };
+            return { open: true };
         }
 
-        if (tiempoActual > hCierre) {
-            return { open: false, msg: "MERCADO CERRADO" };
-        }
-
-        const q = (p.quoteDate || "").toLowerCase();
-        const diaHoy = now.getDate().toString();
-        
-        const esHoyEnGoogle = q.includes("hace") || q.includes("min") || q.includes(":") || q.includes(diaHoy);
-        
-        if (!esHoyEnGoogle && q !== "") {
-            return { open: false, msg: "Esperando Datos..." };
-        }
-        
         return { open: true };
-    };
+
+
+
+
     const [visibleSections, setVisibleSections] = usePersistentState('bg_visible_sections', { table: true, diverging: true, stats: true, charts: true, chartTV: true });
     const [updating, setUpdating] = useState(false);
     const [updateProgress, setUpdateProgress] = useState(0); 
@@ -3339,18 +3327,19 @@ const RenderHistoryCard = () => {
                                 const days = calculateDays(p.buyDate, p.sellDate || new Date()); 
                                 const rs = calcReturns(cost, vF + ds, days); 
 
-                              
-                                let intraVal = 0, intraPct = 0, hasIntra = false;
+                              let intraVal = 0, intraPct = 0, hasIntra = false;
                                 const mStatus = getMarketStatus(p); 
                                 
-                                // He añadido la condición !isS (no vendida) y mStatus.open
                                 if (!isS && p.previousClose && mStatus.open) {
+                                    const curP = p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice;
                                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
+                                    const curF = p.isIndex ? p.buyFx : p.currentFx;
+                                    
                                     intraVal = (curP - prevP) * p.shares * curF;
                                     intraPct = prevP !== 0 ? ((curP - prevP) / prevP) * 100 : 0;
                                     hasIntra = true;
                                 }
-
+                              
 
                                 return ( 
                                     <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''} ${selectedTicker === p.ticker ? 'bg-blue-600/10 border-l-4 border-blue-500' : ''}`} onClick={() => setSelectedTicker(p.ticker)}>
