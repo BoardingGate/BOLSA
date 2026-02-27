@@ -1859,26 +1859,14 @@ function doPost(e) {
     return ContentService.createTextOutput(JSON.stringify({status: "error", error: e.toString()})).setMimeType(ContentService.MimeType.JSON); 
   } finally { lock.releaseLock(); }
 }
+
 function doGet(e) {
-  if (e.parameter.tickers) { 
-    return fetchStockData(e.parameter.tickers); 
-  }
-  
+  if (e.parameter.tickers) { return fetchStockData(e.parameter.tickers); }
   try {
-    var fileName = "BOARDINGGATE_DB.json";
-    var files = DriveApp.getFilesByName(fileName);
-    
-    if (files.hasNext()) {
-      var file = files.next();
-      var content = file.getBlob().getDataAsString();
-      // Forzamos la salida como texto limpio para evitar problemas de parseo
-      return ContentService.createTextOutput(content).setMimeType(ContentService.MimeType.JSON);
-    } else {
-      return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
-    }
-  } catch(err) {
-    return ContentService.createTextOutput(JSON.stringify({error: err.toString(), timestamp: 0})).setMimeType(ContentService.MimeType.JSON);
-  }
+    var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
+    if (files.hasNext()) { return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON); }
+    return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
+  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
 }
 
 function fetchStockData(tickersString) {
@@ -4997,112 +4985,24 @@ const App = () => {
         }
     }, [blockAction]);
 
-
     const updatePortfolio = (newVal, triggerSync = true) => { 
         setPortfolio(newVal); 
-        if (triggerSync) setSyncStatus('unsaved'); 
-    };
-
-    const updateResultsData = (newVal) => { 
-        setResultsData(newVal); 
-        setSyncStatus('unsaved'); 
-    };
-     
-const uploadToCloud = async (isForce = false) => {
-        const url = simpleDecrypt(gScriptUrl);
-        if (!url) return alert("Configura la URL de Google Script.");
-        
-        setSyncStatus('uploading');
-        setSyncMessage('Verificando integridad...');
-
-        try {
-            // 1. PETICIÓN DE COMPROBACIÓN (CON ANTI-CACHÉ AGRESIVO)
-            const response = await fetch(`${url}${url.includes('?') ? '&' : '?'}nocache=${Date.now()}`);
-            
-            if (!response.ok) throw new Error("La nube no responde");
-            
-            const cloudData = await response.json();
-            
-            // CONVERSIÓN ESTRICTA A NÚMERO
-            const cloudTS = Number(cloudData.timestamp) || 0;
-            const localTS = Number(localTimestamp) || 0;
-
-            // --- LÍNEA DE DIAGNÓSTICO (Solo para pruebas, quitar si molesta) ---
-            console.log(`DEBUG: Nube(${cloudTS}) vs Local(${localTS})`);
-            // -----------------------------------------------------------------
-
-            // 2. LOGICA DE BLOQUEO
-            if (!isForce && cloudTS > localTS) {
-                // Si llegamos aquí es que la nube es más nueva
-                setSyncStatus('idle');
-                setSyncMessage('');
-                setConflictModal({ isOpen: true, cloudData });
-                return; 
-            }
-
-            // 3. PROCESO DE GUARDADO
-            setSyncMessage('Escribiendo en Drive...');
-            const newTimestamp = Date.now();
-            const payload = { 
-                timestamp: newTimestamp, 
-                portfolio, resultsData, apiKey, baseCurrency, 
-                refreshInterval, version: 3, appPin, globalNotes, 
-                aiModel, availableModels, gScriptUrl 
-            };
-
-            // El envío de datos (POST) no necesita leer respuesta, usamos no-cors
-            await fetch(url, { 
-                method: 'POST', 
-                mode: 'no-cors', 
-                body: JSON.stringify(payload) 
-            });
-
-            // 4. ÉXITO: Sincronizamos el reloj local con lo que acabamos de subir
-            setLocalTimestamp(newTimestamp);
-            setSyncStatus('synced');
-            setSyncMessage('✅ Sincronizado');
-            setTimeout(() => setSyncMessage(''), 3000);
-
-        } catch (e) {
-            console.error("Error Sync:", e);
-            alert("Error de sincronización: " + e.message);
-            setSyncStatus('error');
-            setSyncMessage('❌ Error');
+        if (triggerSync) {
+            setLocalTimestamp(Date.now()); 
+            setSyncStatus('unsaved'); 
         }
     };
 
-    const checkForCloudUpdates = async () => { 
-        const url = simpleDecrypt(gScriptUrl); 
-        if (!url) { setIsAppReady(true); return; } 
-        setSyncStatus('checking'); 
-        try { 
-            // Anti-caché también en el arranque
-            const response = await fetch(`${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`); 
-            const cloudData = await response.json(); 
-            const cloudTS = parseInt(cloudData.timestamp) || 0; 
-            const localTS = parseInt(localTimestamp) || 0; 
+    const updateResultsData = (newVal) => { setResultsData(newVal); setLocalTimestamp(Date.now()); setSyncStatus('unsaved'); };
 
-            if (cloudTS > localTS) { 
-                setConflictModal({ isOpen: true, cloudData }); 
-                setSyncStatus('idle'); 
-            } else { 
-                setSyncStatus(localTS > cloudTS ? 'unsaved' : 'synced'); 
-                setIsAppReady(true); 
-            } 
-        } catch (e) { 
-            setSyncStatus('error'); 
-            setIsAppReady(true); 
-        } 
-    };
-
-
+    const uploadToCloud = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) return alert("Configura la URL de Google Script en Ajustes."); setSyncStatus('uploading'); setSyncMessage('Subiendo datos...'); try { const now = Date.now(); const payload = { timestamp: now, portfolio, resultsData, apiKey, baseCurrency, refreshInterval, version: 3, appPin, globalNotes, aiModel, availableModels, gScriptUrl }; await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); setLocalTimestamp(now); setSyncStatus('synced'); setSyncMessage('✅ Sincronizado'); setTimeout(() => setSyncMessage(''), 3000); } catch (e) { console.error(e); setSyncStatus('error'); setSyncMessage('❌ Error al subir'); } };
+    const checkForCloudUpdates = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) { setIsAppReady(true); return; } setSyncStatus('checking'); try { const response = await fetch(url); const cloudData = await response.json(); const cloudTS = cloudData.timestamp || 0; const localTS = localTimestamp || 0; if (cloudTS > (localTS + 10000)) { setConflictModal({ isOpen: true, cloudData }); setSyncStatus('idle'); } else { setSyncStatus(localTS > cloudTS ? 'unsaved' : 'synced'); setIsAppReady(true); } } catch (e) { console.error("Error comprobando nube:", e); setSyncStatus('error'); setIsAppReady(true); } };
 
    
-const handleApplyCloudData = () => { 
+      const handleApplyCloudData = () => { 
         const data = conflictModal.cloudData; 
         if (!data) return; 
-
-        // Restauración masiva de parámetros
+        // RESTAURA DESDE LA NUBE EXACTAMENTE LOS 11 PARÁMETROS
         if (data.portfolio) setPortfolio(data.portfolio); 
         if (data.resultsData) setResultsData(data.resultsData); 
         if (data.apiKey !== undefined) setApiKey(data.apiKey); 
@@ -5114,29 +5014,19 @@ const handleApplyCloudData = () => {
         if (data.availableModels) setAvailableModels(data.availableModels); 
         if (data.globalNotes !== undefined) setGlobalNotes(data.globalNotes); 
         
-        // SINCRONIZACIÓN DE RELOJES:
-        setLocalTimestamp(parseInt(data.timestamp)); 
+        setLocalTimestamp(data.timestamp); 
         setConflictModal({ isOpen: false, cloudData: null }); 
         setSyncStatus('synced'); 
-        setSyncMessage('✅ Nube descargada'); 
+        setSyncMessage('✅ Datos descargados'); 
         setIsAppReady(true); 
+        setTimeout(() => setSyncMessage(''), 3000); 
     };
     
-    const handleKeepLocalData = () => { 
-        setConflictModal({ isOpen: false, cloudData: null });
-        // Cerramos el modal y forzamos la subida de nuestros datos locales
-        uploadToCloud(true); 
-    };
-   
+    const handleKeepLocalData = () => { setLocalTimestamp(Date.now()); setConflictModal({ isOpen: false, cloudData: null }); setSyncStatus('unsaved'); setIsAppReady(true); };
+
     useEffect(() => { if (gScriptUrl) { checkForCloudUpdates(); } else { setIsAppReady(true); } }, []);
     useEffect(() => { if (!gScriptUrl || refreshInterval < 1 || !isAppReady) return; const intervalMs = (refreshInterval + 1) * 60 * 1000; const timer = setInterval(() => { if (syncStatus === 'unsaved') { uploadToCloud(); } }, intervalMs); return () => clearInterval(timer); }, [refreshInterval, gScriptUrl, syncStatus, isAppReady]);
     useEffect(() => { if(appPin && appPin.length === 4) setIsPinLocked(true); else setIsPinLocked(false); }, []);
-
-    useEffect(() => {
-        if (isAppReady && syncStatus === 'synced') {
-            setSyncStatus('unsaved');
-        }
-    }, [apiKey, baseCurrency, refreshInterval, gScriptUrl, appPin, globalNotes, aiModel, availableModels]);
 
     useEffect(() => {
         // isAppReady asegura que ya terminó de comprobar gDrive (si lo hubiera)
@@ -5166,6 +5056,7 @@ const handleApplyCloudData = () => {
             if (data.globalNotes) setGlobalNotes(data.globalNotes);
             
             // Fuerza la actualización de estado para que la app lo detecte como cambio no guardado
+            setLocalTimestamp(Date.now());
             setSyncStatus('unsaved');
             setShowExamplePrompt(false);
         } catch (error) {
@@ -5287,4 +5178,4 @@ const handleApplyCloudData = () => {
       createRoot(document.getElementById('root')).render(<App />);
     </script>
 </body>
-</html>
+</html>f
