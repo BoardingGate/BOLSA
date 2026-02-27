@@ -5001,40 +5001,37 @@ const uploadToCloud = async (isForce = false) => {
         if (!url) return alert("Configura la URL de Google Script en Ajustes.");
         
         setSyncStatus('uploading');
-        setSyncMessage('Comprobando integridad...');
+        setSyncMessage('Verificando nube...');
 
         try {
-            if (!isForce) {
-                // Añadimos un timestamp a la URL para evitar la caché del navegador (?cb=...)
-                const response = await fetch(`${url}${url.includes('?') ? '&' : '?'}cb=${Date.now()}`);
-                const cloudData = await response.json();
-                const cloudTS = cloudData.timestamp || 0;
-                const localTS = localTimestamp || 0;
+            // 1. OBTENER DATOS REALES DE LA NUBE (SIN CACHÉ)
+            // Usamos un parámetro aleatorio 't' para que el navegador no use la respuesta vieja
+            const checkRes = await fetch(`${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`, {
+                method: 'GET',
+                cache: 'no-store'
+            });
+            const cloudData = await checkRes.json();
+            
+            const cloudTS = parseInt(cloudData.timestamp) || 0;
+            const localTS = parseInt(localTimestamp) || 0;
 
-                // Si la nube tiene una fecha posterior a nuestra última sincronización...
-                if (cloudTS > localTS) {
-                    setSyncStatus('idle');
-                    setSyncMessage('');
-                    setConflictModal({ isOpen: true, cloudData });
-                    return; 
-                }
+            // 2. CONTROL DE CONFLICTO ESTRICTO
+            // Si la nube es un solo milisegundo más reciente, detenemos y preguntamos.
+            if (!isForce && cloudTS > localTS) {
+                setSyncStatus('idle');
+                setSyncMessage('');
+                setConflictModal({ isOpen: true, cloudData });
+                return; // ABORTAMOS LA SUBIDA
             }
 
+            // 3. PROCEDER CON EL GUARDADO SI TODO ESTÁ OK
             setSyncMessage('Subiendo datos...');
-            const now = Date.now();
+            const newTimestamp = Date.now();
             const payload = { 
-                timestamp: now, 
-                portfolio, 
-                resultsData, 
-                apiKey, 
-                baseCurrency, 
-                refreshInterval, 
-                version: 3, 
-                appPin, 
-                globalNotes, 
-                aiModel, 
-                availableModels, 
-                gScriptUrl 
+                timestamp: newTimestamp, 
+                portfolio, resultsData, apiKey, baseCurrency, 
+                refreshInterval, version: 3, appPin, globalNotes, 
+                aiModel, availableModels, gScriptUrl 
             };
 
             await fetch(url, { 
@@ -5044,28 +5041,51 @@ const uploadToCloud = async (isForce = false) => {
                 body: JSON.stringify(payload) 
             });
 
-            // AQUÍ es el único lugar donde actualizamos el timestamp local tras subir
-            setLocalTimestamp(now);
+            // 4. ACTUALIZAR REFERENCIA LOCAL TRAS ÉXITO
+            setLocalTimestamp(newTimestamp);
             setSyncStatus('synced');
-            setSyncMessage('✅ Sincronizado');
+            setSyncMessage('✅ Guardado en Drive');
             setTimeout(() => setSyncMessage(''), 3000);
 
         } catch (e) {
-            console.error(e);
+            console.error("Error Sync:", e);
             setSyncStatus('error');
             setSyncMessage('❌ Error de conexión');
         }
     };
-  
 
-    const checkForCloudUpdates = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) { setIsAppReady(true); return; } setSyncStatus('checking'); try { const response = await fetch(url); const cloudData = await response.json(); const cloudTS = cloudData.timestamp || 0; const localTS = localTimestamp || 0; if (cloudTS > (localTS + 10000)) { setConflictModal({ isOpen: true, cloudData }); setSyncStatus('idle'); } else { setSyncStatus(localTS > cloudTS ? 'unsaved' : 'synced'); setIsAppReady(true); } } catch (e) { console.error("Error comprobando nube:", e); setSyncStatus('error'); setIsAppReady(true); } };
+    const checkForCloudUpdates = async () => { 
+        const url = simpleDecrypt(gScriptUrl); 
+        if (!url) { setIsAppReady(true); return; } 
+        setSyncStatus('checking'); 
+        try { 
+            // Anti-caché también en el arranque
+            const response = await fetch(`${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`); 
+            const cloudData = await response.json(); 
+            const cloudTS = parseInt(cloudData.timestamp) || 0; 
+            const localTS = parseInt(localTimestamp) || 0; 
+
+            if (cloudTS > localTS) { 
+                setConflictModal({ isOpen: true, cloudData }); 
+                setSyncStatus('idle'); 
+            } else { 
+                setSyncStatus(localTS > cloudTS ? 'unsaved' : 'synced'); 
+                setIsAppReady(true); 
+            } 
+        } catch (e) { 
+            setSyncStatus('error'); 
+            setIsAppReady(true); 
+        } 
+    };
+
+
 
    
-
-    const handleApplyCloudData = () => { 
+const handleApplyCloudData = () => { 
         const data = conflictModal.cloudData; 
         if (!data) return; 
 
+        // Restauración masiva de parámetros
         if (data.portfolio) setPortfolio(data.portfolio); 
         if (data.resultsData) setResultsData(data.resultsData); 
         if (data.apiKey !== undefined) setApiKey(data.apiKey); 
@@ -5077,14 +5097,14 @@ const uploadToCloud = async (isForce = false) => {
         if (data.availableModels) setAvailableModels(data.availableModels); 
         if (data.globalNotes !== undefined) setGlobalNotes(data.globalNotes); 
         
-        // Actualizamos nuestro tiempo local con el tiempo exacto de la nube
+        // SINCRONIZACIÓN DE RELOJES:
+        setLocalTimestamp(parseInt(data.timestamp)); 
         setConflictModal({ isOpen: false, cloudData: null }); 
-        setSyncMessage('✅ Datos descargados'); 
+        setSyncStatus('synced'); 
+        setSyncMessage('✅ Nube descargada'); 
         setIsAppReady(true); 
-        setLocalTimestamp(data.timestamp);
-        setSyncStatus('synced');
     };
-
+    
     const handleKeepLocalData = () => { 
         setConflictModal({ isOpen: false, cloudData: null });
         // Cerramos el modal y forzamos la subida de nuestros datos locales
@@ -5129,7 +5149,6 @@ const uploadToCloud = async (isForce = false) => {
             if (data.globalNotes) setGlobalNotes(data.globalNotes);
             
             // Fuerza la actualización de estado para que la app lo detecte como cambio no guardado
-            setLocalTimestamp(Date.now());
             setSyncStatus('unsaved');
             setShowExamplePrompt(false);
         } catch (error) {
