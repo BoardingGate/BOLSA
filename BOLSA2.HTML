@@ -2258,38 +2258,37 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     // --- 1. LÓGICA DE APERTURA DE MERCADOS ---
     const getMarketStatus = (p) => {
-        if (p.isIndex) return { open: true }; // Índices siempre activos
-        
+        // 1. Obtener la hora actual REAL en España independientemente del reloj del dispositivo
+        const madridTime = new Intl.DateTimeFormat('es-ES', {
+            timeZone: 'Europe/Madrid',
+            hour: 'numeric',
+            minute: 'numeric',
+            weekday: 'short',
+            hour12: false
+        }).formatToParts(new Date());
+
+        const h = parseInt(madridTime.find(part => part.type === 'hour').value);
+        const m = parseInt(madridTime.find(part => part.type === 'minute').value);
+        const diaSemana = new Date().getDay(); // 0: Dom, 6: Sáb (esto es local pero suele valer)
+        const horaActual = h * 100 + m; // Ejemplo: 15:35 -> 1535
+
+        if (diaSemana === 0 || diaSemana === 6) return { open: false, msg: "MERCADO CERRADO" };
+
         const t = (p.ticker || "").toUpperCase();
-        const now = new Date();
-        const day = now.getDay(); // 0: Dom, 6: Sáb
         
-       const isEurope = /(.MC|.DE|.PA|.AS|.MI|.BR|.LS|.MA|BME:|XETRA:|EPA:|AMS:|BIT:|MIL:|EBR:|ELI:|LSE:|.L)/.test(t);
-        const isUSA = !isEurope;
-
-        if (day === 0 || day === 6) {
-            return { open: false, msg: "CERRADO" };
-        }
-
-        const hora = now.getHours();
-        const min = now.getMinutes();
-        const horaActual = hora * 100 + min; // Ejemplo: 15:35 -> 1535
-
-        if (isEurope) {
+        const isSpain = /(.MC|BME:)/.test(t);
+        const isEurope = /(.DE|.PA|.AS|.MI|.BR|.LS|.MA|XETRA:|EPA:|AMS:|BIT:|MIL:|EBR:|ELI:|LSE:|.L)/.test(t);
+        
+        if (isSpain || isEurope) {
             if (horaActual < 900) return { open: false, msg: "Abre 09:00" };
             if (horaActual > 1740) return { open: false, msg: "CERRADO" };
             return { open: true };
-        }
-
-        if (isUSA) {
-            if (horaActual < 1530) return { open: false, msg: "Abre 15:30" };
+        } else {
+         if (horaActual < 1530) return { open: false, msg: "Abre 15:30" };
             if (horaActual > 2205) return { open: false, msg: "CERRADO" };
             return { open: true };
         }
-
-        return { open: true };
-    
-     }
+    };
 
 
     const [visibleSections, setVisibleSections] = usePersistentState('bg_visible_sections', { table: true, diverging: true, stats: true, charts: true, chartTV: true });
@@ -2354,14 +2353,14 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
           
           if (sortConfig.key === 'intraday') { 
               const getIntra = (p) => {
-                  const mStatus = getMarketStatus(p);
-                  if (p.sellDate || !p.previousClose || !(p.isIndex || mStatus.open)) return 0;
-                  const curP = p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice;
-                  const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
-                  const curF = p.isIndex ? p.buyFx : p.currentFx;
-                  return (curP - prevP) * p.shares * curF;
-              };
-              return (getIntra(a) - getIntra(b)) * dir; 
+                  const mStatus = getMarketStatus(p); // Añade esta línea si no está
+
+                    if (!isS && p.previousClose && mStatus.open) { // Añade mStatus.open aquí
+                        const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
+                        intra += (eP - prevP) * p.shares * eF;
+                        prevValTotal += (prevP * p.shares * eF);
+                    }  
+                  return (getIntra(a) - getIntra(b)) * dir; 
           }
 
           if (sortConfig.key === 'totalCost') {
@@ -3325,10 +3324,7 @@ const RenderHistoryCard = () => {
                                 const mStatus = getMarketStatus(p); 
                                 
                                 if (!isS && p.previousClose && mStatus.open) {
-                                    const curP = p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice;
                                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
-                                    const curF = p.isIndex ? p.buyFx : p.currentFx;
-                                    
                                     intraVal = (curP - prevP) * p.shares * curF;
                                     intraPct = prevP !== 0 ? ((curP - prevP) / prevP) * 100 : 0;
                                     hasIntra = true;
