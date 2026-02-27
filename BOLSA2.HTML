@@ -5001,31 +5001,21 @@ const uploadToCloud = async (isForce = false) => {
         if (!url) return alert("Configura la URL de Google Script en Ajustes.");
         
         setSyncStatus('uploading');
-        setSyncMessage('Sincronizando con Drive...');
+        setSyncMessage('Verificando nube...');
 
         try {
-            // 1. PETICIÓN PARANOICA (Anti-Caché total)
-            const checkRes = await fetch(`${url}${url.includes('?') ? '&' : '?'}cb=${Date.now()}`, {
-                method: 'GET',
-                mode: 'cors', // Cambiamos a cors para poder leer la respuesta
-                cache: 'no-store',
-                headers: {
-                    'Cache-Control': 'no-cache',
-                    'Pragma': 'no-cache'
-                }
-            });
+            // 1. CONSULTA PREVIA (Anti-caché mediante la URL)
+            const response = await fetch(`${url}${url.includes('?') ? '&' : '?'}cb=${Date.now()}`);
+            const cloudData = await response.json();
             
-            const cloudData = await checkRes.json();
-            
-            // Convertimos a número para evitar errores de comparación de texto
+            // Forzamos conversión a número para evitar fallos de lógica
             const cloudTS = Number(cloudData.timestamp) || 0;
             const localTS = Number(localTimestamp) || 0;
 
-            console.log("DEBUG SYNC -> Nube:", cloudTS, "Local:", localTS);
+            console.log("Sincronización - Nube:", cloudTS, "Local:", localTS);
 
-            // 2. COMPROBACIÓN ESTRICTA
-            // Solo permitimos subir si nuestra fecha es IGUAL o MAYOR a la de la nube.
-            // Si la nube es superior (aunque sea por 1ms), hay conflicto.
+            // 2. DETECCIÓN DE CONFLICTO
+            // Si la nube es más reciente (aunque sea por 1 segundo), avisamos.
             if (!isForce && cloudTS > localTS) {
                 setSyncStatus('idle');
                 setSyncMessage('');
@@ -5033,7 +5023,8 @@ const uploadToCloud = async (isForce = false) => {
                 return; 
             }
 
-            // 3. SUBIDA DE DATOS
+            // 3. SUBIDA (Solo si no hay conflicto o es forzado)
+            setSyncMessage('Subiendo datos...');
             const newTimestamp = Date.now();
             const payload = { 
                 timestamp: newTimestamp, 
@@ -5042,7 +5033,7 @@ const uploadToCloud = async (isForce = false) => {
                 aiModel, availableModels, gScriptUrl 
             };
 
-            // Nota: POST a Google Script siempre es mode: 'no-cors'
+            // El POST a Google Script siempre debe ser mode: 'no-cors'
             await fetch(url, { 
                 method: 'POST', 
                 mode: 'no-cors', 
@@ -5050,16 +5041,16 @@ const uploadToCloud = async (isForce = false) => {
                 body: JSON.stringify(payload) 
             });
 
-            // 4. ACTUALIZAR REFERENCIA LOCAL
+            // 4. ACTUALIZAR REFERENCIA LOCAL TRAS EL ÉXITO
             setLocalTimestamp(newTimestamp);
             setSyncStatus('synced');
-            setSyncMessage('✅ Guardado');
+            setSyncMessage('✅ Sincronizado');
             setTimeout(() => setSyncMessage(''), 3000);
 
         } catch (e) {
-            console.error("Error crítico en Sync:", e);
+            console.error("Fallo de red:", e);
             setSyncStatus('error');
-            setSyncMessage('❌ Error: Datos no guardados');
+            setSyncMessage('❌ Error de conexión');
         }
     };
 
