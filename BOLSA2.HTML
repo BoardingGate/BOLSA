@@ -2261,34 +2261,55 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         if (p.isIndex) return { open: true };
         const t = (p.ticker || "").toUpperCase();
         const now = new Date();
-        
+        const day = now.getDay(); // 0: Domingo, 6: Sábado
+
         const isEurope = /(.MC|.DE|.PA|.AS|.MI|.BR|.LS|.MA|BME:|XETRA:|EPA:|AMS:|BIT:|MIL:|EBR:|ELI:|LSE:|.L)/.test(t);
+        const isUSA = /(NYSE:|NASDAQ:|ARCA:|AMEX:|.US)/.test(t) || (!isEurope && !t.includes(':'));
 
-        const horaEsp = parseInt(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', hour: 'numeric', hour12: false }).format(now));
-        const minEsp = parseInt(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', minute: 'numeric' }).format(now));
-        const tiempoActual = horaEsp * 100 + minEsp;
-
-        let horaAperturaVal = 1530; 
-        let horaAperturaTexto = "15:30";
-
-        if (isEurope) {
-            horaAperturaVal = 900; 
-            horaAperturaTexto = "09:00";
+        if (day === 0 || day === 6) {
+            return { open: false, msg: "MERCADO CERRADO" };
         }
 
-        if (tiempoActual < horaAperturaVal) {
-            const q = (p.quoteDate || "").toLowerCase();
-            const diaHoy = now.getDate().toString();
-            const esHoyEnGoogle = q.includes("hace") || q.includes("min") || (q.includes(":") && q.includes(diaHoy));
-            
-            if (!esHoyEnGoogle) {
-                return { open: false, msg: `Abre ${horaAperturaTexto}` };
-            }
+        const horaEsp = parseInt(new Intl.DateTimeFormat('en-GB', { 
+            timeZone: 'Europe/Madrid', 
+            hour: 'numeric', 
+            hour12: false 
+        }).format(now));
+        const minEsp = parseInt(new Intl.DateTimeFormat('en-GB', { 
+            timeZone: 'Europe/Madrid', 
+            minute: 'numeric' 
+        }).format(now));
+        const tiempoActual = horaEsp * 100 + minEsp;
+
+        let hApertura = 1530; 
+        let hCierre = 2200;
+        let msgAbre = "Abre 15:30";
+
+        if (isEurope) {
+            hApertura = 900;
+            hCierre = 1735;
+            msgAbre = "Abre 09:00";
+        }
+
+        if (tiempoActual < hApertura) {
+            return { open: false, msg: msgAbre };
+        }
+
+        if (tiempoActual > hCierre) {
+            return { open: false, msg: "MERCADO CERRADO" };
+        }
+
+        const q = (p.quoteDate || "").toLowerCase();
+        const diaHoy = now.getDate().toString();
+        
+        const esHoyEnGoogle = q.includes("hace") || q.includes("min") || q.includes(":") || q.includes(diaHoy);
+        
+        if (!esHoyEnGoogle && q !== "") {
+            return { open: false, msg: "Esperando Datos..." };
         }
         
         return { open: true };
     };
-
     const [visibleSections, setVisibleSections] = usePersistentState('bg_visible_sections', { table: true, diverging: true, stats: true, charts: true, chartTV: true });
     const [updating, setUpdating] = useState(false);
     const [updateProgress, setUpdateProgress] = useState(0); 
@@ -3318,15 +3339,18 @@ const RenderHistoryCard = () => {
                                 const days = calculateDays(p.buyDate, p.sellDate || new Date()); 
                                 const rs = calcReturns(cost, vF + ds, days); 
 
-                               let intraVal = 0, intraPct = 0, hasIntra = false;
+                              
+                                let intraVal = 0, intraPct = 0, hasIntra = false;
                                 const mStatus = getMarketStatus(p); 
-
-                                if (!isS && p.previousClose && (p.isIndex || mStatus.open)) {
+                                
+                                // He añadido la condición !isS (no vendida) y mStatus.open
+                                if (!isS && p.previousClose && mStatus.open) {
                                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                                     intraVal = (curP - prevP) * p.shares * curF;
                                     intraPct = prevP !== 0 ? ((curP - prevP) / prevP) * 100 : 0;
                                     hasIntra = true;
                                 }
+
 
                                 return ( 
                                     <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''} ${selectedTicker === p.ticker ? 'bg-blue-600/10 border-l-4 border-blue-500' : ''}`} onClick={() => setSelectedTicker(p.ticker)}>
