@@ -4987,15 +4987,70 @@ const App = () => {
 
     const updatePortfolio = (newVal, triggerSync = true) => { 
         setPortfolio(newVal); 
-        if (triggerSync) {
-            setLocalTimestamp(Date.now()); 
-            setSyncStatus('unsaved'); 
-        }
+        if (triggerSync) markAsChanged(); 
     };
 
-    const updateResultsData = (newVal) => { setResultsData(newVal); setLocalTimestamp(Date.now()); setSyncStatus('unsaved'); };
+    const updateResultsData = (newVal) => { 
+        setResultsData(newVal); 
+        markAsChanged(); 
+    };    
 
-    const uploadToCloud = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) return alert("Configura la URL de Google Script en Ajustes."); setSyncStatus('uploading'); setSyncMessage('Subiendo datos...'); try { const now = Date.now(); const payload = { timestamp: now, portfolio, resultsData, apiKey, baseCurrency, refreshInterval, version: 3, appPin, globalNotes, aiModel, availableModels, gScriptUrl }; await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); setLocalTimestamp(now); setSyncStatus('synced'); setSyncMessage('✅ Sincronizado'); setTimeout(() => setSyncMessage(''), 3000); } catch (e) { console.error(e); setSyncStatus('error'); setSyncMessage('❌ Error al subir'); } };
+    const updateConfig = (setter, val) => {
+        setter(val);
+        markAsChanged();
+    };
+
+    const uploadToCloud = async (forceOverride = false) => { 
+        const url = simpleDecrypt(gScriptUrl); 
+        if (!url) return alert("Configura la URL de Google Script en Ajustes."); 
+        
+        setSyncStatus('uploading'); 
+        setSyncMessage('Verificando integridad...');
+
+        try { 
+            // 1. COMPROBACIÓN DE COLISIÓN (Solo si no es una subida forzada)
+            if (forceOverride !== true) {
+                const response = await fetch(url);
+                const cloudData = await response.json();
+                const cloudTS = cloudData.timestamp || 0;
+
+                // Si la nube tiene una copia más reciente (margen de 5 segundos)
+                if (cloudTS > (localTimestamp + 5000)) {
+                    setConflictModal({ isOpen: true, cloudData });
+                    setSyncStatus('idle');
+                    setSyncMessage('');
+                    return; // ABORTAMOS LA SUBIDA
+                }
+            }
+
+            // 2. PROCEDER CON LA SUBIDA SI TODO ES CORRECTO
+            setSyncMessage('Subiendo datos...');
+            const now = Date.now(); 
+            const payload = { 
+                timestamp: now, portfolio, resultsData, apiKey, baseCurrency, 
+                refreshInterval, version: 3, appPin, globalNotes, 
+                aiModel, availableModels, gScriptUrl 
+            }; 
+
+            await fetch(url, { 
+                method: 'POST', mode: 'no-cors', 
+                headers: { 'Content-Type': 'application/json' }, 
+                body: JSON.stringify(payload) 
+            }); 
+            
+            setLocalTimestamp(now); 
+            setSyncStatus('synced'); 
+            setSyncMessage('✅ Sincronizado'); 
+            setTimeout(() => setSyncMessage(''), 3000); 
+
+        } catch (e) { 
+            console.error(e); 
+            setSyncStatus('error'); 
+            setSyncMessage('❌ Error de conexión'); 
+        } 
+    };
+
+
     const checkForCloudUpdates = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) { setIsAppReady(true); return; } setSyncStatus('checking'); try { const response = await fetch(url); const cloudData = await response.json(); const cloudTS = cloudData.timestamp || 0; const localTS = localTimestamp || 0; if (cloudTS > (localTS + 10000)) { setConflictModal({ isOpen: true, cloudData }); setSyncStatus('idle'); } else { setSyncStatus(localTS > cloudTS ? 'unsaved' : 'synced'); setIsAppReady(true); } } catch (e) { console.error("Error comprobando nube:", e); setSyncStatus('error'); setIsAppReady(true); } };
 
    
@@ -5022,8 +5077,11 @@ const App = () => {
         setTimeout(() => setSyncMessage(''), 3000); 
     };
     
-    const handleKeepLocalData = () => { setLocalTimestamp(Date.now()); setConflictModal({ isOpen: false, cloudData: null }); setSyncStatus('unsaved'); setIsAppReady(true); };
-
+    const handleKeepLocalData = () => { 
+        setConflictModal({ isOpen: false, cloudData: null }); 
+        // El usuario decide que su versión local es la que debe mandar
+        uploadToCloud(true); 
+    }; 
     useEffect(() => { if (gScriptUrl) { checkForCloudUpdates(); } else { setIsAppReady(true); } }, []);
     useEffect(() => { if (!gScriptUrl || refreshInterval < 1 || !isAppReady) return; const intervalMs = (refreshInterval + 1) * 60 * 1000; const timer = setInterval(() => { if (syncStatus === 'unsaved') { uploadToCloud(); } }, intervalMs); return () => clearInterval(timer); }, [refreshInterval, gScriptUrl, syncStatus, isAppReady]);
     useEffect(() => { if(appPin && appPin.length === 4) setIsPinLocked(true); else setIsPinLocked(false); }, []);
@@ -5141,8 +5199,8 @@ const App = () => {
                         _x_lim={_0xCap} 
                         _x_trig={setBlockAction} 
                         globalNotes={globalNotes} 
-                        setGlobalNotes={setGlobalNotes}
-                      
+                        setGlobalNotes={(val) => updateConfig(setGlobalNotes, val)}
+                                            
                         onAnalyze={(ticker) => {
                             setAnalysisTicker(ticker);
                             setActiveTab('analysis');
@@ -5167,7 +5225,20 @@ const App = () => {
                     />
                 )}
                 
-                {activeTab === 'settings' && <SettingsTab apiKey={apiKey} setApiKey={setApiKey} _x_stat={_0xAuth} _x_act={_0xReg} baseCurrency={baseCurrency} setBaseCurrency={setBaseCurrency} refreshInterval={refreshInterval} setRefreshInterval={setRefreshInterval} portfolio={portfolio} setPortfolio={updatePortfolio} onForceBackup={uploadToCloud} gScriptUrl={gScriptUrl} setGScriptUrl={setGScriptUrl} resultsData={resultsData} setResultsData={updateResultsData} appPin={appPin} setAppPin={setAppPin} aiModel={aiModel} setAiModel={setAiModel} availableModels={availableModels} setAvailableModels={setAvailableModels} globalNotes={globalNotes} setGlobalNotes={setGlobalNotes} />}
+               {activeTab === 'settings' && <SettingsTab 
+                    apiKey={apiKey} setApiKey={(val) => updateConfig(setApiKey, val)} 
+                    _x_stat={_0xAuth} _x_act={_0xReg} 
+                    baseCurrency={baseCurrency} setBaseCurrency={(val) => updateConfig(setBaseCurrency, val)} 
+                    refreshInterval={refreshInterval} setRefreshInterval={(val) => updateConfig(setRefreshInterval, val)} 
+                    portfolio={portfolio} setPortfolio={updatePortfolio} 
+                    onForceBackup={uploadToCloud} 
+                    gScriptUrl={gScriptUrl} setGScriptUrl={(val) => updateConfig(setGScriptUrl, val)} 
+                    resultsData={resultsData} setResultsData={updateResultsData} 
+                    appPin={appPin} setAppPin={(val) => updateConfig(setAppPin, val)} 
+                    aiModel={aiModel} setAiModel={(val) => updateConfig(setAiModel, val)} 
+                    availableModels={availableModels} setAvailableModels={(val) => updateConfig(setAvailableModels, val)} 
+                    globalNotes={globalNotes} setGlobalNotes={(val) => updateConfig(setGlobalNotes, val)} 
+                />}
 
        </main>
             <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase"><div>BoardingGate 3.3 (Secure PIN)</div><div className="flex gap-4"><span>Estado: {syncStatus === 'synced' ? 'Sincronizado en gDrive' : syncStatus === 'unsaved' ? 'Cambios sin guardar en gDrive' : 'Comprobando...'}</span><span>Ult. Mod. Datos Local: {localTimestamp > 0 ? new Date(localTimestamp).toLocaleTimeString() : 'N/A'}</span></div></footer>
