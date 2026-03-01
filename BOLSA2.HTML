@@ -3692,7 +3692,7 @@ const DependencyGraph = ({ data, onClose }) => {
     const canvasRef = useRef(null);
     const [tooltip, setTooltip] = useState(null);
 
-    // Función de impresión segura integrada
+    // Función de impresión corregida (Sin etiquetas script que rompan Babel)
     const handlePrint = () => {
         if (!canvasRef.current) return;
         const dataUrl = canvasRef.current.toDataURL("image/png");
@@ -3704,10 +3704,15 @@ const DependencyGraph = ({ data, onClose }) => {
             <h2>RED ESTRUCTURAL: ${data.center.ticker}</h2>
             <p style="font-size:11px; color:#94a3b8; margin-bottom:20px;">El tamaño de los nodos representa su dependencia estratégica. Flechas entrantes = Proveedores. Flechas salientes = Clientes.</p>
             <img src="${dataUrl}" />
-            <script>window.onload = function() { setTimeout(() => { window.print(); window.close(); }, 500); }</script>
             </body></html>
         `);
         printWindow.document.close();
+        
+        // Ejecutamos la impresión desde aquí, sin inyectar tags
+        setTimeout(() => { 
+            printWindow.focus();
+            printWindow.print(); 
+        }, 500);
     };
 
     useEffect(() => {
@@ -3775,7 +3780,6 @@ const DependencyGraph = ({ data, onClose }) => {
         const onMove = (e) => {
             const pos = getPos(e);
             if (draggedNode) {
-                // Previene el scroll de la página en móviles si estamos arrastrando un nodo
                 if (e.cancelable) e.preventDefault(); 
                 draggedNode.x = pos.x; 
                 draggedNode.y = pos.y;
@@ -3860,7 +3864,6 @@ const DependencyGraph = ({ data, onClose }) => {
                 ctx.lineWidth = n === hoverNode ? 4 : 2; ctx.strokeStyle = n.color; ctx.stroke();
                 
                 ctx.fillStyle = '#fff'; 
-                // El tamaño del texto también escala un poco con el radio para que quepa bien
                 const fontSize = n.type === 'center' ? 14 : Math.max(9, Math.min(14, n.r/2.5));
                 ctx.font = `bold ${fontSize}px sans-serif`;
                 ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -3875,10 +3878,12 @@ const DependencyGraph = ({ data, onClose }) => {
         return () => { 
             cancelAnimationFrame(animationFrameId); 
             window.removeEventListener('resize', resize); 
-            canvas.removeEventListener('touchstart', onStart);
-            canvas.removeEventListener('touchmove', onMove);
-            canvas.removeEventListener('touchend', onEnd);
-            canvas.removeEventListener('touchcancel', onEnd);
+            if (canvas) {
+                canvas.removeEventListener('touchstart', onStart);
+                canvas.removeEventListener('touchmove', onMove);
+                canvas.removeEventListener('touchend', onEnd);
+                canvas.removeEventListener('touchcancel', onEnd);
+            }
         };
     }, [data]);
 
@@ -3890,7 +3895,6 @@ const DependencyGraph = ({ data, onClose }) => {
                     <p className="text-xs text-slate-400 mt-1 hidden sm:block">Arrastra los nodos libremente. El tamaño indica el grado de dependencia (Weight).</p>
                 </div>
                 <div className="flex gap-3">
-                    {/* BOTÓN IMPRIMIR CORREGIDO */}
                     <button onClick={handlePrint} className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-2"><Icons.ExternalLink size={16}/> IMPRIMIR GRAFO</button>
                     <button onClick={onClose} className="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-2"><Icons.X size={16}/> CERRAR</button>
                 </div>
@@ -3914,6 +3918,7 @@ const DependencyGraph = ({ data, onClose }) => {
         </div>
     );
 };
+
 
 
 const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiModel, gScriptUrl }) => {
