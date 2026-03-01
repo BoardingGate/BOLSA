@@ -11,6 +11,9 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script>
+        Babel = { generatorOpts: { compact: true, minified: true } };
+    </script>
 
     <!-- PDF.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -3688,17 +3691,31 @@ const RenderHistoryCard = () => {
 
 
 // --- COMPONENTE: MOTOR DE GRAFOS DE INTERDEPENDENCIA ---
-const DependencyGraph = ({ data, onClose, onPrintReq }) => {
+const DependencyGraph = ({ data, onClose }) => {
     const canvasRef = useRef(null);
     const [tooltip, setTooltip] = useState(null);
 
-    // Exportar la función de impresión al padre
-    useEffect(() => {
-        if (onPrintReq) onPrintReq(() => canvasRef.current.toDataURL("image/png"));
-    }, [onPrintReq]);
+    // Función de impresión segura integrada
+    const handlePrint = () => {
+        if (!canvasRef.current) return;
+        const dataUrl = canvasRef.current.toDataURL("image/png");
+        const printWindow = window.open('', '', 'height=800,width=1200');
+        printWindow.document.write(`
+            <html><head><title>Grafo de Interdependencias - ${data.center.ticker}</title>
+            <style>body{margin:0; background:#0f172a; color:#fff; font-family:sans-serif; text-align:center;} img{max-width:100%; height:auto; margin-top: 10px; border: 1px solid #334155; border-radius: 8px;} h2{color:#60a5fa; margin-top:20px; font-family: monospace; letter-spacing: 2px;}</style>
+            </head><body>
+            <h2>RED ESTRUCTURAL: ${data.center.ticker}</h2>
+            <p style="font-size:11px; color:#94a3b8; margin-bottom:20px;">El tamaño de los nodos representa su dependencia estratégica. Flechas entrantes = Proveedores. Flechas salientes = Clientes.</p>
+            <img src="${dataUrl}" />
+            <script>window.onload = function() { setTimeout(() => { window.print(); window.close(); }, 500); }</script>
+            </body></html>
+        `);
+        printWindow.document.close();
+    };
 
     useEffect(() => {
         const canvas = canvasRef.current;
+        if (!canvas) return;
         const ctx = canvas.getContext('2d');
         let animationFrameId;
 
@@ -3715,58 +3732,60 @@ const DependencyGraph = ({ data, onClose, onPrintReq }) => {
         const W = canvas.width;
         const H = canvas.height;
 
-        // 1. Nodo Central
-        const centerNode = { id: 'center', info: data.center, x: W/2, y: H/2, vx: 0, vy: 0, r: 40, type: 'center', color: '#3b82f6', mass: 15 };
+        // Nodo central (Tamaño base grande)
+        const centerNode = { id: 'center', info: data.center, x: W/2, y: H/2, vx: 0, vy: 0, r: 45, type: 'center', color: '#3b82f6', mass: 20 };
         nodes.push(centerNode);
 
-        // 2. Nodos Proveedores (A la izquierda)
+        // Nodos y enlaces (Tamaños PROPORCIONALES al Weight)
         (data.suppliers || []).forEach((sup, i) => {
             const w = parseInt(sup.weight) || 50;
-            const r = 15 + (w / 100) * 25; // Tamaño proporcional
-            const node = { id: `sup_${i}`, info: sup, x: W/4 + (Math.random()*100-50), y: H/2 + (i*90 - 150), vx: 0, vy: 0, r: r, type: 'supplier', color: '#f59e0b', mass: 2 };
+            const r = 10 + (w / 100) * 40; // Escala más agresiva (de 10 a 50px de radio)
+            const node = { id: `sup_${i}`, info: sup, x: W/4 + (Math.random()*100-50), y: H/2 + (i*100 - 150), vx: 0, vy: 0, r: r, type: 'supplier', color: '#f59e0b', mass: r/10 };
             nodes.push(node);
-            links.push({ source: node, target: centerNode, type: 'supply' }); // Flujo Hacia el centro
+            links.push({ source: node, target: centerNode, type: 'supply' }); 
         });
 
-        // 3. Nodos Clientes (A la derecha)
         (data.clients || []).forEach((cli, i) => {
             const w = parseInt(cli.weight) || 50;
-            const r = 15 + (w / 100) * 25;
-            const node = { id: `cli_${i}`, info: cli, x: 3*W/4 + (Math.random()*100-50), y: H/2 + (i*90 - 150), vx: 0, vy: 0, r: r, type: 'client', color: '#10b981', mass: 2 };
+            const r = 10 + (w / 100) * 40; // Escala más agresiva
+            const node = { id: `cli_${i}`, info: cli, x: 3*W/4 + (Math.random()*100-50), y: H/2 + (i*100 - 150), vx: 0, vy: 0, r: r, type: 'client', color: '#10b981', mass: r/10 };
             nodes.push(node);
-            links.push({ source: centerNode, target: node, type: 'consume' }); // Flujo Desde el centro
+            links.push({ source: centerNode, target: node, type: 'consume' }); 
         });
 
-        // 4. Generar Partículas en movimiento
         links.forEach(link => {
-            const numParticles = link.type === 'supply' ? 3 : 3;
-            for(let i=0; i<numParticles; i++) {
+            for(let i=0; i<3; i++) {
                 particles.push({ link, progress: Math.random(), speed: 0.002 + Math.random()*0.003 });
             }
         });
 
-        // Controles de Ratón
         let draggedNode = null;
         let hoverNode = null;
 
-        const getMousePos = (e) => {
+        // Función unificada para obtener coordenadas de Ratón y Táctil
+        const getPos = (e) => {
             const rect = canvas.getBoundingClientRect();
-            return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+            const clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches && e.touches.length > 0 ? e.touches[0].clientY : e.clientY;
+            return { x: clientX - rect.left, y: clientY - rect.top, rawX: clientX, rawY: clientY };
         };
 
-        canvas.onmousedown = (e) => {
-            const pos = getMousePos(e);
-            draggedNode = nodes.find(n => Math.hypot(n.x - pos.x, n.y - pos.y) < n.r + 5);
+        const onStart = (e) => {
+            const pos = getPos(e);
+            draggedNode = nodes.find(n => Math.hypot(n.x - pos.x, n.y - pos.y) < n.r + 15); // Margen generoso para dedos
         };
 
-        canvas.onmousemove = (e) => {
-            const pos = getMousePos(e);
+        const onMove = (e) => {
+            const pos = getPos(e);
             if (draggedNode) {
-                draggedNode.x = pos.x; draggedNode.y = pos.y;
+                // Previene el scroll de la página en móviles si estamos arrastrando un nodo
+                if (e.cancelable) e.preventDefault(); 
+                draggedNode.x = pos.x; 
+                draggedNode.y = pos.y;
             } else {
                 hoverNode = nodes.find(n => Math.hypot(n.x - pos.x, n.y - pos.y) < n.r + 5);
                 if (hoverNode) {
-                    setTooltip({ x: e.clientX, y: e.clientY, info: hoverNode.info, type: hoverNode.type, weight: hoverNode.info.weight });
+                    setTooltip({ x: pos.rawX, y: pos.rawY, info: hoverNode.info, type: hoverNode.type, weight: hoverNode.info.weight });
                     canvas.style.cursor = 'pointer';
                 } else {
                     setTooltip(null);
@@ -3775,17 +3794,26 @@ const DependencyGraph = ({ data, onClose, onPrintReq }) => {
             }
         };
 
-        canvas.onmouseup = () => { draggedNode = null; };
-        canvas.onmouseout = () => { draggedNode = null; setTooltip(null); };
+        const onEnd = () => { draggedNode = null; };
 
-        // Bucle Principal (Físicas y Dibujo)
+        // Asignar eventos Ratón
+        canvas.onmousedown = onStart;
+        canvas.onmousemove = onMove;
+        canvas.onmouseup = onEnd;
+        canvas.onmouseout = () => { onEnd(); setTooltip(null); };
+
+        // Asignar eventos Táctiles (Touch) pasivos
+        canvas.addEventListener('touchstart', onStart, {passive: false});
+        canvas.addEventListener('touchmove', onMove, {passive: false});
+        canvas.addEventListener('touchend', onEnd);
+        canvas.addEventListener('touchcancel', onEnd);
+
         const render = () => {
             ctx.clearRect(0, 0, W, H);
-            const k = 0.02; // Constante del muelle (enlaces)
-            const rep = 4000; // Repulsión entre nodos
-            const damping = 0.85; // Fricción
+            const k = 0.025; 
+            const rep = 6000; 
+            const damping = 0.82; 
 
-            // Físicas: Repulsión global
             for (let i = 0; i < nodes.length; i++) {
                 for (let j = i + 1; j < nodes.length; j++) {
                     const dx = nodes[j].x - nodes[i].x; const dy = nodes[j].y - nodes[i].y;
@@ -3797,34 +3825,29 @@ const DependencyGraph = ({ data, onClose, onPrintReq }) => {
                 }
             }
 
-            // Físicas: Atracción de Enlaces
             links.forEach(link => {
                 const dx = link.target.x - link.source.x; const dy = link.target.y - link.source.y;
                 const dist = Math.hypot(dx, dy) || 1;
-                const targetDist = 280; // Distancia ideal del enlace
-                const force = (dist - targetDist) * k;
+                const force = (dist - 250) * k;
                 const fx = (dx / dist) * force; const fy = (dy / dist) * force;
                 if (link.source !== draggedNode) { link.source.vx += fx / link.source.mass; link.source.vy += fy / link.source.mass; }
                 if (link.target !== draggedNode) { link.target.vx -= fx / link.target.mass; link.target.vy -= fy / link.target.mass; }
             });
 
-            // Aplicar velocidades y límites
             nodes.forEach(n => {
                 if (n !== draggedNode) {
-                    if (n.type === 'center') { n.vx += (W/2 - n.x) * 0.02; n.vy += (H/2 - n.y) * 0.02; } // Centro anclado suave
+                    if (n.type === 'center') { n.vx += (W/2 - n.x) * 0.04; n.vy += (H/2 - n.y) * 0.04; } 
                     n.vx *= damping; n.vy *= damping;
                     n.x += n.vx; n.y += n.vy;
                     n.x = Math.max(n.r, Math.min(W - n.r, n.x)); n.y = Math.max(n.r, Math.min(H - n.r, n.y));
                 }
             });
 
-            // Dibujar Líneas
             links.forEach(link => {
                 ctx.beginPath(); ctx.moveTo(link.source.x, link.source.y); ctx.lineTo(link.target.x, link.target.y);
                 ctx.strokeStyle = "rgba(255,255,255,0.15)"; ctx.lineWidth = 1.5; ctx.stroke();
             });
 
-            // Dibujar Partículas (Flujo)
             particles.forEach(p => {
                 p.progress += p.speed; if (p.progress > 1) p.progress = 0;
                 const x = p.link.source.x + (p.link.target.x - p.link.source.x) * p.progress;
@@ -3834,14 +3857,15 @@ const DependencyGraph = ({ data, onClose, onPrintReq }) => {
                 ctx.fill(); ctx.shadowBlur = 10; ctx.shadowColor = ctx.fillStyle; ctx.fill(); ctx.shadowBlur = 0;
             });
 
-            // Dibujar Nodos
             nodes.forEach(n => {
                 ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
                 ctx.fillStyle = '#0f172a'; ctx.fill();
-                ctx.lineWidth = n === hoverNode ? 5 : 2; ctx.strokeStyle = n.color; ctx.stroke();
+                ctx.lineWidth = n === hoverNode ? 4 : 2; ctx.strokeStyle = n.color; ctx.stroke();
                 
-                // Texto del Ticker
-                ctx.fillStyle = '#fff'; ctx.font = n.type === 'center' ? 'bold 14px sans-serif' : 'bold 10px sans-serif';
+                ctx.fillStyle = '#fff'; 
+                // El tamaño del texto también escala un poco con el radio para que quepa bien
+                const fontSize = n.type === 'center' ? 14 : Math.max(9, Math.min(14, n.r/2.5));
+                ctx.font = `bold ${fontSize}px sans-serif`;
                 ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                 const label = n.info.ticker !== 'N/A' ? n.info.ticker : n.info.name.substring(0,8);
                 ctx.fillText(label, n.x, n.y);
@@ -3851,7 +3875,14 @@ const DependencyGraph = ({ data, onClose, onPrintReq }) => {
         };
         render();
 
-        return () => { cancelAnimationFrame(animationFrameId); window.removeEventListener('resize', resize); };
+        return () => { 
+            cancelAnimationFrame(animationFrameId); 
+            window.removeEventListener('resize', resize); 
+            canvas.removeEventListener('touchstart', onStart);
+            canvas.removeEventListener('touchmove', onMove);
+            canvas.removeEventListener('touchend', onEnd);
+            canvas.removeEventListener('touchcancel', onEnd);
+        };
     }, [data]);
 
     return (
@@ -3859,17 +3890,17 @@ const DependencyGraph = ({ data, onClose, onPrintReq }) => {
             <div className="flex justify-between items-center p-4 bg-slate-900 border-b border-slate-800 shrink-0">
                 <div>
                     <h2 className="text-xl font-bold text-blue-400 font-display flex items-center gap-3"><Icons.Network size={24}/> GRAFO DE INTERDEPENDENCIAS: {data.center.ticker}</h2>
-                    <p className="text-xs text-slate-400 mt-1">Arrastra los nodos para reorganizar la red. El tamaño indica el grado de dependencia de la empresa.</p>
+                    <p className="text-xs text-slate-400 mt-1 hidden sm:block">Arrastra los nodos libremente. El tamaño indica el grado de dependencia (Weight).</p>
                 </div>
                 <div className="flex gap-3">
-                    <button onClick={() => onPrintReq()} className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-2"><Icons.ExternalLink size={16}/> IMPRIMIR GRAFO</button>
+                    {/* BOTÓN IMPRIMIR CORREGIDO */}
+                    <button onClick={handlePrint} className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-2"><Icons.ExternalLink size={16}/> IMPRIMIR GRAFO</button>
                     <button onClick={onClose} className="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-2"><Icons.X size={16}/> CERRAR</button>
                 </div>
             </div>
-            <div className="flex-1 relative overflow-hidden" style={{ cursor: 'grab' }}>
+            <div className="flex-1 relative overflow-hidden" style={{ cursor: 'grab', touchAction: 'none' }}>
                 <canvas ref={canvasRef} className="w-full h-full block"></canvas>
                 
-                {/* Tooltip Dinámico */}
                 {tooltip && (
                     <div className="absolute z-10 bg-slate-800/90 border border-slate-600 p-3 rounded-xl shadow-2xl backdrop-blur-md pointer-events-none transform -translate-x-1/2 -translate-y-[120%]" 
                          style={{ left: tooltip.x, top: tooltip.y, minWidth: '200px' }}>
@@ -4005,11 +4036,12 @@ const REPORT_TITLES = {
             }
             
             Reglas críticas:
-            - 'weight' es un número de 10 a 100 indicando magnitud de dependencia.
+            - 'weight' es un número de 10 a 100 indicando magnitud de dependencia. ¡IMPORTANTE! Asigna valores muy variados (ej: 15, 40, 95) para que gráficamente se note la diferencia de dependencia. No pongas a todos 70 u 80.
             - Si la empresa no cotiza, pon ticker "N/A".
             - Incluye máximo 6 proveedores y 6 clientes.
             - No incluyas markdown (nada de \`\`\`json).
-            `;
+            `;    
+
 
             const res = await askGemini(apiKey, prompt, aiModel);
             
