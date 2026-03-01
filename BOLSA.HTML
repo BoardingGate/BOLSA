@@ -3692,27 +3692,21 @@ const DependencyGraph = ({ data, onClose }) => {
     const canvasRef = useRef(null);
     const [tooltip, setTooltip] = useState(null);
 
-    // Función de impresión corregida (Sin etiquetas script que rompan Babel)
     const handlePrint = () => {
         if (!canvasRef.current) return;
         const dataUrl = canvasRef.current.toDataURL("image/png");
         const printWindow = window.open('', '', 'height=800,width=1200');
         printWindow.document.write(`
-            <html><head><title>Grafo de Interdependencias - ${data.center.ticker}</title>
+            <html><head><title>Grafo de Interdependencias (Nivel 2) - ${data.center.ticker}</title>
             <style>body{margin:0; background:#0f172a; color:#fff; font-family:sans-serif; text-align:center;} img{max-width:100%; height:auto; margin-top: 10px; border: 1px solid #334155; border-radius: 8px;} h2{color:#60a5fa; margin-top:20px; font-family: monospace; letter-spacing: 2px;}</style>
             </head><body>
-            <h2>RED ESTRUCTURAL: ${data.center.ticker}</h2>
-            <p style="font-size:11px; color:#94a3b8; margin-bottom:20px;">El tamaño de los nodos representa su dependencia estratégica. Flechas entrantes = Proveedores. Flechas salientes = Clientes.</p>
+            <h2>RED ESTRUCTURAL NIVEL 2: ${data.center.ticker}</h2>
+            <p style="font-size:11px; color:#94a3b8; margin-bottom:20px;">Nodos interconectados a 2 niveles de profundidad. Tamaño = Nivel de Dependencia.</p>
             <img src="${dataUrl}" />
             </body></html>
         `);
         printWindow.document.close();
-        
-        // Ejecutamos la impresión desde aquí, sin inyectar tags
-        setTimeout(() => { 
-            printWindow.focus();
-            printWindow.print(); 
-        }, 500);
+        setTimeout(() => { printWindow.focus(); printWindow.print(); }, 500);
     };
 
     useEffect(() => {
@@ -3721,42 +3715,78 @@ const DependencyGraph = ({ data, onClose }) => {
         const ctx = canvas.getContext('2d');
         let animationFrameId;
 
-        const resize = () => {
-            canvas.width = canvas.parentElement.clientWidth;
-            canvas.height = canvas.parentElement.clientHeight;
-        };
+        const resize = () => { canvas.width = canvas.parentElement.clientWidth; canvas.height = canvas.parentElement.clientHeight; };
         resize();
         window.addEventListener('resize', resize);
 
-        const nodes = [];
-        const links = [];
-        const particles = [];
         const W = canvas.width;
         const H = canvas.height;
 
-        // Nodo central (Tamaño base grande)
-        const centerNode = { id: 'center', info: data.center, x: W/2, y: H/2, vx: 0, vy: 0, r: 45, type: 'center', color: '#3b82f6', mass: 20 };
-        nodes.push(centerNode);
+        // Mapeo para evitar duplicados y crear un GRAFO REAL, no un árbol
+        const nodesMap = new Map();
+        const linksArr = [];
 
-        // Nodos y enlaces (Tamaños PROPORCIONALES al Weight)
+        const addNode = (info, type, level, initX, initY) => {
+            const key = info.ticker !== 'N/A' ? info.ticker : info.name;
+            if (!nodesMap.has(key)) {
+                const w = parseInt(info.weight) || 50;
+                // Radios según nivel para no saturar la pantalla
+                const baseR = level === 0 ? 45 : (level === 1 ? 15 + (w/100)*35 : 8 + (w/100)*15);
+                const color = level === 0 ? '#3b82f6' : (type.includes('supplier') ? '#f59e0b' : '#10b981');
+                
+                nodesMap.set(key, {
+                    id: key, info: info, x: initX + (Math.random()*40-20), y: initY + (Math.random()*40-20), 
+                    vx: 0, vy: 0, r: baseR, type: level === 0 ? 'center' : type, 
+                    color: color, mass: Math.max(2, baseR/8), level: level
+                });
+            }
+            return nodesMap.get(key);
+        };
+
+        // 1. Nodo Central
+        const centerNode = addNode(data.center, 'center', 0, W/2, H/2);
+
+        // 2. Procesar Proveedores y sus sub-niveles
         (data.suppliers || []).forEach((sup, i) => {
-            const w = parseInt(sup.weight) || 50;
-            const r = 10 + (w / 100) * 40; // Escala más agresiva (de 10 a 50px de radio)
-            const node = { id: `sup_${i}`, info: sup, x: W/4 + (Math.random()*100-50), y: H/2 + (i*100 - 150), vx: 0, vy: 0, r: r, type: 'supplier', color: '#f59e0b', mass: r/10 };
-            nodes.push(node);
-            links.push({ source: node, target: centerNode, type: 'supply' }); 
+            const supNode = addNode(sup, 'supplier', 1, W/3, H/2 + (i*100 - 150));
+            linksArr.push({ source: supNode, target: centerNode, type: 'supply' });
+            
+            (sup.suppliers || []).forEach((subSup, j) => {
+                const subNode = addNode(subSup, 'supplier', 2, W/5, H/2 + (j*80 - 100));
+                linksArr.push({ source: subNode, target: supNode, type: 'supply' });
+            });
+            
+            (sup.clients || []).forEach((subCli, j) => {
+                const subNode = addNode(subCli, 'client', 2, W/2, H/4); 
+                if (subNode.id !== centerNode.id) linksArr.push({ source: supNode, target: subNode, type: 'consume' });
+            });
         });
 
+        // 3. Procesar Clientes y sus sub-niveles
         (data.clients || []).forEach((cli, i) => {
-            const w = parseInt(cli.weight) || 50;
-            const r = 10 + (w / 100) * 40; // Escala más agresiva
-            const node = { id: `cli_${i}`, info: cli, x: 3*W/4 + (Math.random()*100-50), y: H/2 + (i*100 - 150), vx: 0, vy: 0, r: r, type: 'client', color: '#10b981', mass: r/10 };
-            nodes.push(node);
-            links.push({ source: centerNode, target: node, type: 'consume' }); 
+            const cliNode = addNode(cli, 'client', 1, 2*W/3, H/2 + (i*100 - 150));
+            linksArr.push({ source: centerNode, target: cliNode, type: 'consume' });
+            
+            (cli.suppliers || []).forEach((subSup, j) => {
+                const subNode = addNode(subSup, 'supplier', 2, W/2, 3*H/4);
+                if (subNode.id !== centerNode.id) linksArr.push({ source: subNode, target: cliNode, type: 'supply' });
+            });
+            
+            (cli.clients || []).forEach((subCli, j) => {
+                const subNode = addNode(subCli, 'client', 2, 4*W/5, H/2 + (j*80 - 100));
+                linksArr.push({ source: cliNode, target: subNode, type: 'consume' });
+            });
         });
+
+        const nodes = Array.from(nodesMap.values());
+        const links = linksArr;
+        const particles = [];
 
         links.forEach(link => {
-            for(let i=0; i<3; i++) {
+            // Menos partículas para enlaces de nivel 2 para no saturar visualmente
+            const isL2 = link.source.level === 2 || link.target.level === 2;
+            const numP = isL2 ? 1 : 3;
+            for(let i=0; i<numP; i++) {
                 particles.push({ link, progress: Math.random(), speed: 0.002 + Math.random()*0.003 });
             }
         });
@@ -3764,7 +3794,6 @@ const DependencyGraph = ({ data, onClose }) => {
         let draggedNode = null;
         let hoverNode = null;
 
-        // Función unificada para obtener coordenadas de Ratón y Táctil
         const getPos = (e) => {
             const rect = canvas.getBoundingClientRect();
             const clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
@@ -3774,47 +3803,38 @@ const DependencyGraph = ({ data, onClose }) => {
 
         const onStart = (e) => {
             const pos = getPos(e);
-            draggedNode = nodes.find(n => Math.hypot(n.x - pos.x, n.y - pos.y) < n.r + 15); // Margen generoso para dedos
+            draggedNode = nodes.find(n => Math.hypot(n.x - pos.x, n.y - pos.y) < n.r + 15);
         };
 
         const onMove = (e) => {
             const pos = getPos(e);
             if (draggedNode) {
                 if (e.cancelable) e.preventDefault(); 
-                draggedNode.x = pos.x; 
-                draggedNode.y = pos.y;
+                draggedNode.x = pos.x; draggedNode.y = pos.y;
             } else {
                 hoverNode = nodes.find(n => Math.hypot(n.x - pos.x, n.y - pos.y) < n.r + 5);
                 if (hoverNode) {
-                    setTooltip({ x: pos.rawX, y: pos.rawY, info: hoverNode.info, type: hoverNode.type, weight: hoverNode.info.weight });
+                    setTooltip({ x: pos.rawX, y: pos.rawY, info: hoverNode.info, type: hoverNode.type, level: hoverNode.level, weight: hoverNode.info.weight });
                     canvas.style.cursor = 'pointer';
                 } else {
-                    setTooltip(null);
-                    canvas.style.cursor = 'grab';
+                    setTooltip(null); canvas.style.cursor = 'grab';
                 }
             }
         };
 
         const onEnd = () => { draggedNode = null; };
 
-        // Asignar eventos Ratón
-        canvas.onmousedown = onStart;
-        canvas.onmousemove = onMove;
-        canvas.onmouseup = onEnd;
-        canvas.onmouseout = () => { onEnd(); setTooltip(null); };
-
-        // Asignar eventos Táctiles (Touch) pasivos
-        canvas.addEventListener('touchstart', onStart, {passive: false});
-        canvas.addEventListener('touchmove', onMove, {passive: false});
-        canvas.addEventListener('touchend', onEnd);
-        canvas.addEventListener('touchcancel', onEnd);
+        canvas.onmousedown = onStart; canvas.onmousemove = onMove; canvas.onmouseup = onEnd; canvas.onmouseout = () => { onEnd(); setTooltip(null); };
+        canvas.addEventListener('touchstart', onStart, {passive: false}); canvas.addEventListener('touchmove', onMove, {passive: false});
+        canvas.addEventListener('touchend', onEnd); canvas.addEventListener('touchcancel', onEnd);
 
         const render = () => {
             ctx.clearRect(0, 0, W, H);
-            const k = 0.025; 
-            const rep = 6000; 
-            const damping = 0.82; 
+            const k = 0.015; // Muelle más suave
+            const rep = 8000; // Repulsión fuerte
+            const damping = 0.85; 
 
+            // Físicas: Repulsión
             for (let i = 0; i < nodes.length; i++) {
                 for (let j = i + 1; j < nodes.length; j++) {
                     const dx = nodes[j].x - nodes[i].x; const dy = nodes[j].y - nodes[i].y;
@@ -3826,46 +3846,85 @@ const DependencyGraph = ({ data, onClose }) => {
                 }
             }
 
+            // Físicas: Atracción Enlaces
             links.forEach(link => {
                 const dx = link.target.x - link.source.x; const dy = link.target.y - link.source.y;
                 const dist = Math.hypot(dx, dy) || 1;
-                const force = (dist - 250) * k;
+                const isL2 = link.source.level === 2 || link.target.level === 2;
+                const targetDist = isL2 ? 150 : 250;
+                
+                const force = (dist - targetDist) * k;
                 const fx = (dx / dist) * force; const fy = (dy / dist) * force;
                 if (link.source !== draggedNode) { link.source.vx += fx / link.source.mass; link.source.vy += fy / link.source.mass; }
                 if (link.target !== draggedNode) { link.target.vx -= fx / link.target.mass; link.target.vy -= fy / link.target.mass; }
             });
 
+            // Físicas: Fricción y Límites
             nodes.forEach(n => {
                 if (n !== draggedNode) {
-                    if (n.type === 'center') { n.vx += (W/2 - n.x) * 0.04; n.vy += (H/2 - n.y) * 0.04; } 
+                    if (n.type === 'center') { n.vx += (W/2 - n.x) * 0.05; n.vy += (H/2 - n.y) * 0.05; } 
                     n.vx *= damping; n.vy *= damping;
                     n.x += n.vx; n.y += n.vy;
                     n.x = Math.max(n.r, Math.min(W - n.r, n.x)); n.y = Math.max(n.r, Math.min(H - n.r, n.y));
                 }
             });
 
+            // DIBUJAR ENLACES (Corregido para visibilidad)
             links.forEach(link => {
-                ctx.beginPath(); ctx.moveTo(link.source.x, link.source.y); ctx.lineTo(link.target.x, link.target.y);
-                ctx.strokeStyle = "rgba(255,255,255,0.15)"; ctx.lineWidth = 1.5; ctx.stroke();
+                ctx.beginPath(); 
+                ctx.moveTo(link.source.x, link.source.y); 
+                ctx.lineTo(link.target.x, link.target.y);
+                
+                const isL2 = link.source.level === 2 || link.target.level === 2;
+                
+                // Nivel 1 más grueso, Nivel 2 más fino pero con opacidad alta para que se vea
+                ctx.strokeStyle = isL2 ? "rgba(255, 255, 255, 0.25)" : "rgba(255, 255, 255, 0.5)"; 
+                ctx.lineWidth = isL2 ? 1.5 : 2.5; 
+                
+                // Nivel 2 línea punteada
+                if (isL2) {
+                    ctx.setLineDash([5, 5]); 
+                } else {
+                    ctx.setLineDash([]); 
+                }
+                
+                ctx.stroke();
+                ctx.setLineDash([]); // Resetear pincel siempre al final
             });
 
+            // DIBUJAR FLUJOS (Partículas con Glow)
             particles.forEach(p => {
-                p.progress += p.speed; if (p.progress > 1) p.progress = 0;
+                p.progress += p.speed; 
+                if (p.progress > 1) p.progress = 0;
+                
                 const x = p.link.source.x + (p.link.target.x - p.link.source.x) * p.progress;
                 const y = p.link.source.y + (p.link.target.y - p.link.source.y) * p.progress;
-                ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2);
+                
+                const isL2 = p.link.source.level === 2 || p.link.target.level === 2;
+                
+                ctx.beginPath(); 
+                ctx.arc(x, y, isL2 ? 2 : 3.5, 0, Math.PI * 2);
+                
                 ctx.fillStyle = p.link.type === 'supply' ? '#fcd34d' : '#6ee7b7';
-                ctx.fill(); ctx.shadowBlur = 10; ctx.shadowColor = ctx.fillStyle; ctx.fill(); ctx.shadowBlur = 0;
+                ctx.fill(); 
+                
+                // Glow Effect
+                ctx.shadowBlur = isL2 ? 5 : 12; 
+                ctx.shadowColor = ctx.fillStyle; 
+                ctx.fill(); 
+                ctx.shadowBlur = 0; // Resetear glow
             });
 
+            // DIBUJAR NODOS
             nodes.forEach(n => {
                 ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
                 ctx.fillStyle = '#0f172a'; ctx.fill();
-                ctx.lineWidth = n === hoverNode ? 4 : 2; ctx.strokeStyle = n.color; ctx.stroke();
+                ctx.lineWidth = n === hoverNode ? 4 : (n.level === 2 ? 1.5 : 2.5); 
+                ctx.strokeStyle = n.color; ctx.stroke();
                 
-                ctx.fillStyle = '#fff'; 
-                const fontSize = n.type === 'center' ? 14 : Math.max(9, Math.min(14, n.r/2.5));
-                ctx.font = `bold ${fontSize}px sans-serif`;
+                ctx.fillStyle = n.level === 2 ? '#cbd5e1' : '#fff'; 
+                const fontSize = n.type === 'center' ? 14 : Math.max(8, Math.min(12, n.r/2.2));
+                ctx.font = `${n.level===2?'normal':'bold'} ${fontSize}px sans-serif`;
                 ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                 const label = n.info.ticker !== 'N/A' ? n.info.ticker : n.info.name.substring(0,8);
                 ctx.fillText(label, n.x, n.y);
@@ -3891,8 +3950,8 @@ const DependencyGraph = ({ data, onClose }) => {
         <div className="fixed inset-0 z-[500] bg-black flex flex-col fade-in">
             <div className="flex justify-between items-center p-4 bg-slate-900 border-b border-slate-800 shrink-0">
                 <div>
-                    <h2 className="text-xl font-bold text-blue-400 font-display flex items-center gap-3"><Icons.Network size={24}/> GRAFO DE INTERDEPENDENCIAS: {data.center.ticker}</h2>
-                    <p className="text-xs text-slate-400 mt-1 hidden sm:block">Arrastra los nodos libremente. El tamaño indica el grado de dependencia (Weight).</p>
+                    <h2 className="text-xl font-bold text-blue-400 font-display flex items-center gap-3"><Icons.Network size={24}/> GRAFO DE INTERDEPENDENCIAS (NIVEL 2): {data.center.ticker}</h2>
+                    <p className="text-xs text-slate-400 mt-1 hidden sm:block">Físicas de red neuronal. Líneas punteadas indican Nivel 2. Tamaño = Nivel de Dependencia.</p>
                 </div>
                 <div className="flex gap-3">
                     <button onClick={handlePrint} className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-2"><Icons.ExternalLink size={16}/> IMPRIMIR GRAFO</button>
@@ -3906,7 +3965,8 @@ const DependencyGraph = ({ data, onClose }) => {
                     <div className="absolute z-10 bg-slate-800/90 border border-slate-600 p-3 rounded-xl shadow-2xl backdrop-blur-md pointer-events-none transform -translate-x-1/2 -translate-y-[120%]" 
                          style={{ left: tooltip.x, top: tooltip.y, minWidth: '200px' }}>
                         <div className={`text-[10px] font-black uppercase mb-1 ${tooltip.type === 'center' ? 'text-blue-400' : tooltip.type === 'supplier' ? 'text-orange-400' : 'text-green-400'}`}>
-                            {tooltip.type === 'center' ? 'OBJETIVO PRINCIPAL' : tooltip.type === 'supplier' ? 'PROVEEDOR CLAVE' : 'CLIENTE DIRECTO'}
+                            {tooltip.type === 'center' ? 'OBJETIVO PRINCIPAL' : tooltip.type === 'supplier' ? 'PROVEEDOR' : 'CLIENTE'} 
+                            {tooltip.level > 0 && ` (Nivel ${tooltip.level})`}
                         </div>
                         <div className="font-bold text-white text-sm">{tooltip.info.name}</div>
                         <div className="text-xs text-slate-300 font-mono mt-1">Ticker: {tooltip.info.ticker}</div>
@@ -3918,7 +3978,6 @@ const DependencyGraph = ({ data, onClose }) => {
         </div>
     );
 };
-
 
 
 const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiModel, gScriptUrl }) => {
@@ -4018,7 +4077,7 @@ const REPORT_TITLES = {
     useEffect(() => { if (initialTicker) setTicker(initialTicker); }, [initialTicker]);
 
 
-    const handleGenerateGraph = async () => {
+const handleGenerateGraph = async () => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key para generar el grafo.', type: 'error' });
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker en el buscador superior.', type: 'info' });
 
@@ -4026,24 +4085,40 @@ const REPORT_TITLES = {
         try {
             const prompt = `
             Actúa como experto en inteligencia competitiva y cadena de suministro global.
-            Para la empresa identificada con el ticker "${ticker}", necesito que identifiques su cadena de valor directa.
-            1. Identifica sus principales PROVEEDORES (empresas que le suministran componentes, tecnología, servicios vitales o materias primas).
-            2. Identifica sus principales CLIENTES B2B (empresas que compran sus productos/servicios en gran volumen).
+            Para la empresa con el ticker "${ticker}", identifica su cadena de valor directa e indirecta (NIVEL 2).
             
-            Responde ÚNICA Y EXCLUSIVAMENTE con un JSON válido con esta estructura exacta y ningún texto adicional:
+            NIVEL 1:
+            1. Identifica máx. 4 PROVEEDORES principales directos.
+            2. Identifica máx. 4 CLIENTES B2B principales directos.
+            
+            NIVEL 2 (Para cada uno de los anteriores):
+            - Identifica 1 o 2 de SUS propios proveedores clave.
+            - Identifica 1 o 2 de SUS propios clientes clave.
+
+            Responde ÚNICA Y EXCLUSIVAMENTE con un JSON válido con esta estructura anidada exacta:
             {
-              "center": {"ticker": "${ticker}", "name": "Nombre real de la empresa analizada", "country": "País Sede"},
-              "suppliers": [ {"ticker": "TICKER_PROV", "name": "Nombre Proveedor", "country": "País", "weight": 90} ],
-              "clients": [ {"ticker": "TICKER_CLI", "name": "Nombre Cliente", "country": "País", "weight": 70} ]
+              "center": {"ticker": "${ticker}", "name": "Nombre Real", "country": "País"},
+              "suppliers": [
+                {
+                  "ticker": "TICKER_P1", "name": "Nombre Prov 1", "country": "País", "weight": 90,
+                  "suppliers": [{"ticker": "TICKER_P1_P1", "name": "Prov de Prov 1", "country": "País", "weight": 60}],
+                  "clients": [{"ticker": "TICKER_P1_C1", "name": "Cliente de Prov 1", "country": "País", "weight": 50}]
+                }
+              ],
+              "clients": [
+                {
+                  "ticker": "TICKER_C1", "name": "Nombre Cli 1", "country": "País", "weight": 80,
+                  "suppliers": [{"ticker": "TICKER_C1_P1", "name": "Prov de Cli 1", "country": "País", "weight": 40}],
+                  "clients": [{"ticker": "TICKER_C1_C1", "name": "Cliente de Cli 1", "country": "País", "weight": 50}]
+                }
+              ]
             }
             
             Reglas críticas:
-            - 'weight' es un número de 10 a 100 indicando magnitud de dependencia. ¡IMPORTANTE! Asigna valores muy variados (ej: 15, 40, 95) para que gráficamente se note la diferencia de dependencia. No pongas a todos 70 u 80.
-            - Si la empresa no cotiza, pon ticker "N/A".
-            - Incluye máximo 6 proveedores y 6 clientes.
-            - No incluyas markdown (nada de \`\`\`json).
-            `;    
-
+            - 'weight' es un número de 10 a 100 indicando magnitud de dependencia.
+            - Si una empresa no cotiza en bolsa, usa "N/A" en el campo ticker.
+            - No incluyas markdown (nada de \`\`\`json). Abre { y cierra }.
+            `;
 
             const res = await askGemini(apiKey, prompt, aiModel);
             
@@ -5291,11 +5366,11 @@ const handleFixedAnalysis = async (promptId) => {
             </Modal>
 
             {/* --- INICIO DE LO NUEVO --- */}
-            {generatingGraph && (
+                     {generatingGraph && (
                 <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center fade-in">
                     <Icons.Network size={60} className="text-orange-500 mb-4 animate-pulse" />
-                    <div className="text-xl font-bold text-white animate-pulse">Trazando red de interdependencias...</div>
-                    <div className="text-xs text-slate-400 mt-2">Buscando proveedores y clientes en la base de datos global</div>
+                    <div className="text-xl font-bold text-white animate-pulse">Rastreando Cadena de Valor (Nivel 1 y 2)...</div>
+                    <div className="text-xs text-slate-400 mt-2">Este proceso de IA profunda puede tardar entre 10 y 20 segundos.</div>
                 </div>
             )}
 
