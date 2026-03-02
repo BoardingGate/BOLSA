@@ -2998,16 +2998,12 @@ const handlePrintHistoric = () => {
             let buyCostForThisAsset = 0; 
             const originalBuyDate = p.buyDate;
 
-            // 1. Extraer Entradas (COMPRAS)
+            // 1. Procesar COMPRAS
             if (p.lots && p.lots.length > 0) {
                 p.lots.forEach(l => {
                     const lShares = parseFloat(l.shares) || 0;
                     if (lShares <= 0) return;
-                    const lPrice = parseFloat(l.price) || 0;
-                    const lFx = parseFloat(l.fx) || 1;
-                    const lFees = parseFloat(l.fees) || 0;
-                    const lAdj = parseFloat(l.adj) || 0;
-                    const lCost = (lShares * lPrice * lFx) + (p.feesIncludedInPrice ? 0 : lFees) + lAdj;
+                    const lCost = (lShares * (parseFloat(l.price) || 0) * (parseFloat(l.fx) || 1)) + (p.feesIncludedInPrice ? 0 : (parseFloat(l.fees) || 0)) + (parseFloat(l.adj) || 0);
                     buyCostForThisAsset += lCost;
 
                     operations.push({
@@ -3018,10 +3014,11 @@ const handlePrintHistoric = () => {
                         ticker: p.ticker,
                         name: p.name,
                         shares: lShares,
-                        price: lPrice,
-                        fx: lFx,
-                        fees: lFees + lAdj,
+                        price: parseFloat(l.price) || 0,
+                        fx: parseFloat(l.fx) || 1,
+                        fees: (parseFloat(l.fees) || 0) + (parseFloat(l.adj) || 0),
                         amount: lCost,
+                        originalBuyAmount: 0, // No aplica en compra
                         days: calculateDays(l.date || p.buyDate, p.sellDate || new Date())
                     });
                 });
@@ -3040,19 +3037,23 @@ const handlePrintHistoric = () => {
                     fx: p.buyFx,
                     fees: (p.fees || 0) + (p.adjustments || 0),
                     amount: cost,
+                    originalBuyAmount: 0,
                     days: calculateDays(p.buyDate, p.sellDate || new Date())
                 });
             }
 
-            // 2. Extraer Salidas (VENTAS)
+            // 2. Procesar VENTA (Si existe)
             if (isSold) {
                 const sellFees = (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0);
                 const revenue = (p.shares * p.sellPrice * p.sellFx) - sellFees;
+                const profit = revenue - buyCostForThisAsset;
+                const days = calculateDays(p.buyDate, p.sellDate);
+                const ret = calcReturns(buyCostForThisAsset, revenue, days);
 
                 operations.push({
                     dateObj: new Date(p.sellDate),
-                    buyDateStr: formatDateES(originalBuyDate), // Fecha en la que se inició la posición
-                    sellDateStr: formatDateES(p.sellDate),     // Fecha de salida
+                    buyDateStr: formatDateES(originalBuyDate),
+                    sellDateStr: formatDateES(p.sellDate),
                     type: 'VENTA',
                     ticker: p.ticker,
                     name: p.name,
@@ -3060,86 +3061,84 @@ const handlePrintHistoric = () => {
                     price: p.sellPrice,
                     fx: p.sellFx,
                     fees: sellFees,
-                    amount: revenue,
-                    profit: revenue - buyCostForThisAsset, 
-                    days: calculateDays(p.buyDate, p.sellDate)
+                    amount: revenue, // Importe de la venta
+                    originalBuyAmount: buyCostForThisAsset, // Informativo (Gris)
+                    profit: profit,
+                    simpleRet: ret.simple,
+                    annualRet: ret.annual,
+                    days: days
                 });
             }
         });
 
-        // Ordenar por fecha del movimiento
         operations.sort((a, b) => a.dateObj - b.dateObj);
 
         let html = `<html><head><title>Histórico</title>`;
-        html += `<style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:7px;} h1{font-size:14px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th{background:#f1f5f9;text-align:left;padding:3px;border-bottom:1px solid #94a3b8;font-size:6px;text-transform:uppercase;} td{padding:3px;border-bottom:1px solid #e2e8f0;vertical-align:top;font-size:7px;} .num{text-align:right;font-family:monospace;white-space:nowrap;} .center{text-align:center;} .buy-t{color:#2563eb;font-weight:bold;} .sell-t{color:#ea580c;font-weight:bold;} .subtotal-row td { background: #f8fafc; border-top: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1; font-weight: bold; } .year-row td { background: #f1f5f9; border-top: 2px solid #94a3b8; font-weight: bold; font-size: 7.5px; }</style></head><body>`;
-        html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>HISTÓRICO CRONOLÓGICO DE OPERACIONES</h1><div style="font-size:8px;color:#666;">(Cartera visible en rejilla)</div></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`;
-        html += `<table><thead><tr><th class="center">Fecha Compra</th><th class="center">Fecha Venta</th><th>Activo / Ticker</th><th class="center">Tipo</th><th class="num">Títulos</th><th class="num">Precio</th><th class="center">FX</th><th class="center">Gtos/Adj</th><th class="num">Importe Compra</th><th class="num">Importe Venta</th><th class="num">Resultado</th></tr></thead><tbody>`;
+        html += `<style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:7px;} h1{font-size:14px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th{background:#f1f5f9;text-align:left;padding:3px;border-bottom:1px solid #94a3b8;font-size:6px;text-transform:uppercase;} td{padding:3px;border-bottom:1px solid #e2e8f0;vertical-align:top;font-size:7px;} .num{text-align:right;font-family:monospace;white-space:nowrap;} .center{text-align:center;} .buy-t{color:#2563eb;font-weight:bold;} .sell-t{color:#ea580c;font-weight:bold;} .subtotal-row td { background: #f8fafc; font-weight: bold; border-top: 1px solid #cbd5e1; } .year-row td { background: #f1f5f9; font-weight: bold; border-top: 2px solid #94a3b8; }</style></head><body>`;
+        html += `<h1>HISTÓRICO CRONOLÓGICO DE OPERACIONES</h1><div style="font-size:8px;margin-bottom:5px;">EMISIÓN: ${emissionTime} | Divisa Base: ${baseCurrency}</div>`;
+        html += `<table><thead><tr><th class="center" style="width:60px;">F. Compra</th><th class="center" style="width:100px;">F. Venta / Periodo</th><th style="width:140px;">Activo / Ticker</th><th class="center" style="width:40px;">Tipo</th><th class="num">Títulos</th><th class="num">Precio</th><th class="center">FX</th><th class="center">Gtos</th><th class="num">Imp. Compra</th><th class="num">Imp. Venta</th><th class="num" style="width:130px;">Resultado / Rent.</th></tr></thead><tbody>`;
 
-        let currentMonth = ''; let currentYear = '';
-        let sumMB = 0, sumMS = 0; let sumYB = 0, sumYS = 0;
-        let totalB = 0, totalS = 0;
+        let cM = ''; let cY = '';
+        let mB = 0, mS = 0, mP = 0; let yB = 0, yS = 0, yP = 0;
+        let tB = 0, tS = 0, tP = 0;
 
-        const printSubtotalRow = (label, b, s, isYear) => {
+        const renderTotal = (label, b, s, p, isY) => {
             if (b === 0 && s === 0) return '';
-            const className = isYear ? 'year-row' : 'subtotal-row';
-            const bal = s - b;
-            return `<tr class="${className}">
-                <td colspan="3" style="text-align:left; padding-left:10px; text-transform:uppercase;"><b>${isYear ? 'TOTAL ANUAL' : 'SUBTOTAL MES'} [${label}]:</b></td>
-                <td colspan="5"></td>
-                <td class="num" style="color:#2563eb;">${formatMoney(b, baseCurrency)}</td>
-                <td class="num" style="color:#ea580c;">${formatMoney(s, baseCurrency)}</td>
-                <td class="num" style="color:${bal >= 0 ? '#16a34a' : '#dc2626'};">${formatMoney(bal, baseCurrency)}</td>
-            </tr>`;
+            const sPct = b > 0 ? (p / b) * 100 : 0;
+            return `<tr class="${isY ? 'year-row' : 'subtotal-row'}"><td colspan="8" style="text-align:right; padding-right:10px;"><b>${isY ? 'TOTAL ANUAL' : 'Subtotal Mes'} [${label}]:</b></td><td class="num" style="color:#2563eb;">${formatMoney(b, baseCurrency)}</td><td class="num" style="color:#ea580c;">${formatMoney(s, baseCurrency)}</td><td class="num" style="color:${p>=0?'#16a34a':'#dc2626'};">${formatMoney(p, baseCurrency)} [${formatN(sPct)}%]</td></tr>`;
         };
 
         operations.forEach(op => {
             const mKey = (op.dateObj.getMonth() + 1).toString().padStart(2,'0') + "-" + op.dateObj.getFullYear();
             const yKey = op.dateObj.getFullYear().toString();
 
-            if (currentMonth !== '' && currentMonth !== mKey) {
-                html += printSubtotalRow(currentMonth, sumMB, sumMS, false);
-                sumMB = 0; sumMS = 0;
-            }
-            if (currentYear !== '' && currentYear !== yKey) {
-                html += printSubtotalRow(currentYear, sumYB, sumYS, true);
-                sumYB = 0; sumYS = 0;
-            }
+            if (cM !== '' && cM !== mKey) { html += renderTotal(cM, mB, mS, mP, false); mB = 0; mS = 0; mP = 0; }
+            if (cY !== '' && cY !== yKey) { html += renderTotal(cY, yB, yS, yP, true); yB = 0; yS = 0; yP = 0; }
 
-            currentMonth = mKey; currentYear = yKey;
+            cM = mKey; cY = yKey;
             const isB = op.type === 'COMPRA';
-            if (isB) { sumMB += op.amount; sumYB += op.amount; totalB += op.amount; }
-            else { sumMS += op.amount; sumYS += op.amount; totalS += op.amount; }
+            
+            // Sumas: Solo sumamos 'amount' si es COMPRA a mB, y si es VENTA a mS. 
+            // El originalBuyAmount de las ventas NO se suma para no duplicar.
+            if (isB) { mB += op.amount; yB += op.amount; tB += op.amount; }
+            else { mS += op.amount; yS += op.amount; tS += op.amount; mP += op.profit; yP += op.profit; tP += op.profit; }
 
             html += `<tr>
                 <td class="center"><b>${op.buyDateStr}</b></td>
-                <td class="center"><b>${op.sellDateStr || '---'}</b><br/><span style="font-size:5.5px;color:#666;">(${formatN(op.days,0)} días)</span></td>
-                <td><b>${op.name}</b><br/>${op.ticker}</td>
+                <td class="center"><b>${op.sellDateStr || '---'}</b><br/><span style="font-size:5.5px;color:#666;">${formatN(op.days,0)} días [ ${formatN(op.days/365.25, 1)} ]</span></td>
+                <td><b>${op.name}</b><br/><span style="font-size:6px;color:#666;">${op.ticker}</span></td>
                 <td class="center ${isB ? 'buy-t' : 'sell-t'}">${op.type}</td>
                 <td class="num">${formatN(op.shares)}</td>
                 <td class="num">${formatN(op.price, 3)}</td>
                 <td class="center">${formatN(op.fx, 4)}</td>
                 <td class="center">${formatN(op.fees)}</td>
-                <td class="num">${isB ? formatMoney(op.amount, baseCurrency) : '---'}</td>
-                <td class="num">${!isB ? formatMoney(op.amount, baseCurrency) : '---'}</td>
-                <td class="num">${!isB ? `<b style="color:${op.profit >= 0 ? '#16a34a' : '#dc2626'};">${formatMoney(op.profit, baseCurrency)}</b>` : '---'}</td>
+                <td class="num">
+                    ${isB ? `<b>${formatMoney(op.amount, baseCurrency)}</b>` : `<span style="color:#94a3b8; font-size:6px;">(${formatMoney(op.originalBuyAmount, baseCurrency)})</span>`}
+                </td>
+                <td class="num">${!isB ? `<b>${formatMoney(op.amount, baseCurrency)}</b>` : '---'}</td>
+                <td class="num">
+                    ${!isB ? `
+                        <div style="color:${op.profit >= 0 ? '#16a34a' : '#dc2626'}; font-weight:bold;">${formatMoney(op.profit, baseCurrency)}</div>
+                        <div style="font-size:6px; color:#666;">S: ${formatN(op.simpleRet)}% | A: ${formatN(op.annualRet)}%</div>
+                    ` : '---'}
+                </td>
             </tr>`;
         });
 
-        html += printSubtotalRow(currentMonth, sumMB, sumMS, false);
-        html += printSubtotalRow(currentYear, sumYB, sumYS, true);
+        html += renderTotal(cM, mB, mS, mP, false);
+        html += renderTotal(cY, yB, yS, yP, true);
 
-        const totalBal = totalS - totalB;
-        html += `<tr style="background:#1e293b; color:white; font-weight:bold;">
-            <td colspan="8" style="text-align:right; font-size:8px; padding-right:10px;">RESUMEN GENERAL HISTÓRICO:</td>
-            <td class="num" style="color:#93c5fd;">${formatMoney(totalB, baseCurrency)}</td>
-            <td class="num" style="color:#fdba74;">${formatMoney(totalS, baseCurrency)}</td>
-            <td class="num" style="color:${totalBal >= 0 ? '#4ade80' : '#f87171'}; font-size:8px;">${formatMoney(totalBal, baseCurrency)}</td>
+        const totalPct = tB > 0 ? (tP / tB) * 100 : 0;
+        html += `<tr style="background:#1e293b; color:white; font-weight:bold; font-size:8px;">
+            <td colspan="8" style="text-align:right; padding-right:10px;">RESUMEN GENERAL HISTÓRICO:</td>
+            <td class="num" style="color:#93c5fd;">${formatMoney(tB, baseCurrency)}</td>
+            <td class="num" style="color:#fdba74;">${formatMoney(tS, baseCurrency)}</td>
+            <td class="num" style="color:${tP>=0?'#4ade80':'#f87171'};">${formatMoney(tP, baseCurrency)} [ ${formatN(totalPct)}% ]</td>
         </tr>`;
 
         html += `</tbody></table></body></html>`;
         printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(() => printWindow.print(), 500); 
     };
-
 
 
 
