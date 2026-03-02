@@ -3543,7 +3543,6 @@ const initLots = () => {
     const resetFilters = () => { setFilterText(''); setFilterDateStart(''); setFilterDateEnd(''); setFilterType('active'); setSortConfig({ key: 'date', direction: 'desc' }); };
 
 
-
 const handleSellSubmit = () => {
     if (!sellItem) return;
     const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
@@ -3554,7 +3553,7 @@ const handleSellSubmit = () => {
     const fifo = calculateFIFODetail(sellItem, sellForm.sharesToSell);
     const nowEU = new Date().toLocaleDateString('es-ES');
 
-    // CÁLCULOS PARA LOG: Comparativa Venta vs Compra FIFO
+    // 1. CÁLCULOS PARA EL LOG DE NOTAS (Audit)
     const totalBuyCost = r2((fifo.extracted.buyPrice * sellForm.sharesToSell * fifo.extracted.buyFx) + 
                             (sellItem.feesIncludedInPrice ? 0 : fifo.extracted.fees) + fifo.extracted.adj);
 
@@ -3573,11 +3572,11 @@ BALANCE: Coste ${formatMoney(totalBuyCost, baseCurrency)} | Venta ${formatMoney(
 RESULTADO: ${formatMoney(diff, baseCurrency)} (${diffPct}%)
 DETALLE DE LOTES CONSUMIDOS: ${fifo.extracted.summary}`.trim();
 
-    // 1. GENERAR APUNTE DE VENTA (HISTÓRICO) - Sin array de lotes
+    // 2. GENERAR EL REGISTRO QUE VA AL HISTÓRICO DE VENTAS
     const soldRecord = {
         ...sellItem,
         id: Date.now(),
-        lots: [], 
+        lots: [], // El histórico de venta no lleva lotes hijos
         shares: r6(sellForm.sharesToSell),
         buyPrice: fifo.extracted.buyPrice,
         buyDate: fifo.extracted.buyDate,
@@ -3598,7 +3597,7 @@ DETALLE DE LOTES CONSUMIDOS: ${fifo.extracted.summary}`.trim();
     let updatedPortfolio = [];
 
     if (isPartial) {
-        // 2. RECALCULAR FICHA ACTIVA DESDE SUS LOTES RESTANTES
+        // 3. RECALCULAR FICHA ACTIVA CON LOS LOTES QUE QUEDAN
         let tShares = 0, tCostStockCurr = 0, tCostBaseCurr = 0, tFees = 0, tAdj = 0, tPE = 0;
         let oldestDate = null;
 
@@ -3626,26 +3625,29 @@ DETALLE DE LOTES CONSUMIDOS: ${fifo.extracted.summary}`.trim();
                     lots: fifo.remainingLots,
                     shares: r6(tShares),
                     buyPrice: r6(tCostStockCurr / tShares),
-                    buyFx: rCostStockCurr > 0 ? r6(tCostBaseCurr / tCostStockCurr) : p.buyFx,
+                    // CORRECCIÓN: tCostStockCurr en lugar de rCostStockCurr
+                    buyFx: tCostStockCurr > 0 ? r6(tCostBaseCurr / tCostStockCurr) : p.buyFx,
                     buyPE: r2(tPE / tShares),
                     fees: r2(tFees),
                     adjustments: r2(tAdj),
                     buyDate: oldestDate || p.buyDate,
                     isActive: true,
-                    notes: (p.notes || '') + `\n\n--- Venta parcial de ${formatN(sellForm.sharesToSell)} acc. el ${fDateEU(sellForm.sellDate)}. Quedan ${formatN(tShares)} acc. en cartera. ---`
+                    notes: (p.notes || '') + `\n\n--- Venta parcial de ${formatN(sellForm.sharesToSell)} acc. el ${fDateEU(sellForm.sellDate)}. Quedan ${formatN(tShares)} acc. ---`
                 };
             }
             return p;
         });
     } else {
-        // VENTA TOTAL
+        // VENTA TOTAL: Desactivar el activo original en la tabla de activos
         updatedPortfolio = portfolio.map(p => p.id === sellItem.id ? { ...p, isActive: false } : p);
     }
 
+    // Guardamos la combinación de la cartera actualizada y el nuevo apunte de venta
     setPortfolio([...updatedPortfolio, soldRecord]);
     setIsSellModalOpen(false);
-    setInfoModal({ isOpen: true, title: 'Éxito', msg: 'Venta procesada. La cartera activa se ha actualizado correctamente.', type: 'success' });
+    setInfoModal({ isOpen: true, title: 'Operación Registrada', msg: 'Venta procesada con éxito y cartera sincronizada.', type: 'success' });
 };
+
 
 
 
