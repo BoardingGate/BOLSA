@@ -2354,69 +2354,73 @@ const TradingViewMarketWidget = () => {
       };
 
 
-const calculateFIFODetail = (p, qtyToSell) => {
-    const fDateEU = (d) => d ? d.split('-').reverse().join('-') : '';
-    const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
-    const r6 = (n) => Math.round((parseFloat(n) || 0) * 1000000) / 1000000;
-
-    let lots = p.lots && p.lots.length > 0 ? JSON.parse(JSON.stringify(p.lots)) : [{
-        id: Date.now(), date: p.buyDate, shares: p.shares, price: p.buyPrice, 
-        fx: p.buyFx, fees: p.fees, adj: p.adjustments, pe: p.buyPE
-    }];
-    
-    lots.sort((a, b) => new Date(a.date) - new Date(b.date));
-
-    let remainingToSell = qtyToSell;
-    let extracted = { shares: 0, costBase: 0, costFx: 0, fees: 0, adj: 0, weightedTime: 0, desc: [] };
-    let newLots = [];
-
-    lots.forEach(lot => {
-        if (remainingToSell <= 0) {
-            newLots.push(lot);
-            return;
-        }
-
-        const take = Math.min(lot.shares, remainingToSell);
-        const ratio = take / lot.shares;
-
-        extracted.shares += take;
-        extracted.costBase += (take * lot.price);
-        extracted.costFx += (take * lot.price * lot.fx);
-        extracted.fees = r2(extracted.fees + (lot.fees * ratio));
-        extracted.adj = r2(extracted.adj + (lot.adj * ratio));
-        extracted.weightedTime += (new Date(lot.date).getTime() * take);
+        const calculateFIFODetail = (p, qtyToSell) => {
+            const fDateEU = (d) => d ? d.split('-').reverse().join('-') : '';
+            const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
+            const r6 = (n) => Math.round((parseFloat(n) || 0) * 1000000) / 1000000;
         
-        // DESGLOSE DETALLADO POR LOTE PARA EL LOG
-        extracted.desc.push(`• ${formatN(take)} acc. del ${fDateEU(lot.date)} [Precio: ${formatN(lot.price, 3)} | FX: ${formatN(lot.fx, 4)} | Gtos+Adj: ${formatN(lot.fees + lot.adj)}]`);
-
-        if (lot.shares > take) {
-            newLots.push({
-                ...lot,
-                shares: r6(lot.shares - take),
-                fees: r2(lot.fees * (1 - ratio)),
-                adj: r2(lot.adj * (1 - ratio))
+            // Clonamos lotes o creamos uno virtual si no existen
+            let lots = p.lots && p.lots.length > 0 ? JSON.parse(JSON.stringify(p.lots)) : [{
+                id: Date.now(), date: p.buyDate, shares: p.shares, price: p.buyPrice, 
+                fx: p.buyFx, fees: p.fees, adj: p.adjustments, pe: p.buyPE
+            }];
+            
+            // FIFO: Primero en entrar, primero en salir
+            lots.sort((a, b) => new Date(a.date) - new Date(b.date));
+        
+            let remainingToSell = qtyToSell;
+            let ext = { shares: 0, costBase: 0, costFx: 0, fees: 0, adj: 0, weightedTime: 0, desc: [] };
+            let newLots = [];
+        
+            lots.forEach(lot => {
+                const lS = parseFloat(lot.shares) || 0;
+                const lP = parseFloat(lot.price) || 0;
+                const lF = parseFloat(lot.fx) || 1;
+        
+                if (remainingToSell <= 0) {
+                    newLots.push(lot);
+                    return;
+                }
+        
+                const take = Math.min(lS, remainingToSell);
+                const ratio = take / lS;
+        
+                // Datos para el apunte de VENTA
+                ext.shares += take;
+                ext.costBase += (take * lP);
+                ext.costFx += (take * lP * lF);
+                ext.fees = r2(ext.fees + (lot.fees * ratio));
+                ext.adj = r2(ext.adj + (lot.adj * ratio));
+                ext.weightedTime += (new Date(lot.date).getTime() * take);
+                
+                ext.desc.push(`• ${formatN(take)} acc. del ${fDateEU(lot.date)} [P: ${formatN(lP, 3)} | FX: ${formatN(lF, 4)} | Gtos: ${formatN(r2(lot.fees * ratio) + r2(lot.adj * ratio))}]`);
+        
+                // Datos para lo que SE QUEDA en el lote
+                if (lS > take) {
+                    newLots.push({
+                        ...lot,
+                        shares: r6(lS - take),
+                        fees: r2(lot.fees * (1 - ratio)),
+                        adj: r2(lot.adj * (1 - ratio))
+                    });
+                }
+                remainingToSell -= take;
             });
-        }
-        remainingToSell -= take;
-    });
-
-    const finalAvgPrice = r6(extracted.costBase / extracted.shares);
-    const finalAvgFx = r6(extracted.costFx / extracted.costBase);
-
-    return {
-        extracted: {
-            shares: r6(extracted.shares),
-            buyPrice: finalAvgPrice,
-            buyFx: finalAvgFx,
-            buyDate: new Date(extracted.weightedTime / extracted.shares).toISOString().split('T')[0],
-            buyDateEU: fDateEU(new Date(extracted.weightedTime / extracted.shares).toISOString().split('T')[0]),
-            fees: r2(extracted.fees),
-            adj: r2(extracted.adj),
-            summary: "\n    " + extracted.desc.join('\n    ')
-        },
-        remainingLots: newLots
-    };
-};
+        
+            return {
+                extracted: {
+                    shares: r6(ext.shares),
+                    buyPrice: r6(ext.costBase / ext.shares),
+                    buyFx: r6(ext.costFx / ext.costBase),
+                    buyDate: new Date(ext.weightedTime / ext.shares).toISOString().split('T')[0],
+                    buyDateEU: fDateEU(new Date(ext.weightedTime / ext.shares).toISOString().split('T')[0]),
+                    fees: r2(ext.fees),
+                    adj: r2(ext.adj),
+                    summary: "\n    " + ext.desc.join('\n    ')
+                },
+                remainingLots: newLots
+            };
+        };
 
 
 
@@ -3540,99 +3544,108 @@ const initLots = () => {
 
 
 
-        const handleSellSubmit = () => {
-        if (!sellItem) return;
-        const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
-        const r6 = (n) => Math.round((parseFloat(n) || 0) * 1000000) / 1000000;
-        const fDateEU = (d) => d ? d.split('-').reverse().join('-') : '';
-        
-        const isPartial = sellForm.sharesToSell < sellItem.shares;
-        const fifo = calculateFIFODetail(sellItem, sellForm.sharesToSell);
-        const nowEU = new Date().toLocaleDateString('es-ES');
+const handleSellSubmit = () => {
+    if (!sellItem) return;
+    const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
+    const r6 = (n) => Math.round((parseFloat(n) || 0) * 1000000) / 1000000;
+    const fDateEU = (d) => d ? d.split('-').reverse().join('-') : '';
     
-        // Coste de compra original de las acciones vendidas (usando FX histórico FIFO)
-        const totalBuyCost = r2((fifo.extracted.buyPrice * sellForm.sharesToSell * fifo.extracted.buyFx) + 
-                                (sellItem.feesIncludedInPrice ? 0 : fifo.extracted.fees) + 
-                                fifo.extracted.adj);
-    
-        // Ingreso neto de la venta (usando FX de venta introducido)
-        const totalSellRevenue = r2((sellForm.sellPrice * sellForm.sharesToSell * sellForm.sellFx) - 
-                                    (sellForm.sellFeesIncludedInPrice ? 0 : sellForm.sellFees) - 
-                                    sellForm.sellAdjustments);
-    
-        const diff = r2(totalSellRevenue - totalBuyCost);
-        const diffPct = totalBuyCost !== 0 ? r2((diff / totalBuyCost) * 100) : 0;
-    
-        // COMENTARIO DETALLADO PARA CONSTANCIA DOCUMENTAL
-        const auditComment = `
-    --- REGISTRO DE VENTA ${isPartial ? 'PARCIAL' : 'TOTAL'} (${nowEU}) ---
-    CANTIDAD: ${formatN(sellForm.sharesToSell)} acciones.
-    COMPRA (FIFO Ponderado): P.Medio ${formatN(fifo.extracted.buyPrice, 3)} | FX: ${formatN(fifo.extracted.buyFx, 4)} | Gtos+Adj: ${formatN(fifo.extracted.fees + fifo.extracted.adj)}
-    VENTA: Precio ${formatN(sellForm.sellPrice, 3)} | FX: ${formatN(sellForm.sellFx, 4)} | Gtos+Adj: ${formatN(sellForm.sellFees + sellForm.sellAdjustments)}
-    BALANCE: Coste ${formatMoney(totalBuyCost, baseCurrency)} | Venta ${formatMoney(totalSellRevenue, baseCurrency)}
-    RESULTADO: ${formatMoney(diff, baseCurrency)} (${diffPct}%)
-    DETALLE DE LOTES CONSUMIDOS: ${fifo.extracted.summary}`.trim();
-    
-        // 1. Registro para el HISTÓRICO (Sin el array de lotes para evitar duplicidad)
-        const soldRecord = {
-            ...sellItem,
-            id: Date.now(),
-            lots: [], 
-            shares: r6(sellForm.sharesToSell),
-            buyPrice: fifo.extracted.buyPrice,
-            buyDate: fifo.extracted.buyDate,
-            buyFx: fifo.extracted.buyFx,
-            fees: fifo.extracted.fees,
-            adjustments: fifo.extracted.adj,
-            isActive: true, 
-            sellDate: sellForm.sellDate,
-            sellPrice: sellForm.sellPrice,
-            sellFx: sellForm.sellFx,
-            sellFees: sellForm.sellFees,
-            sellAdjustments: sellForm.sellAdjustments,
-            sellFeesIncludedInPrice: sellForm.sellFeesIncludedInPrice,
-            dividends: [], 
-            notes: (sellItem.notes || '') + "\n\n" + auditComment
-        };
-    
-        let updatedPortfolio = [];
-    
-        if (isPartial) {
-            // 2. Actualizar el registro que queda ACTIVO en cartera
-            let rShares = 0, rCostBase = 0, rCostFx = 0, rFees = 0, rAdj = 0;
-            fifo.remainingLots.forEach(l => {
-                rShares += l.shares;
-                rCostBase += (l.shares * l.price);
-                rCostFx += (l.shares * l.price * l.fx);
-                rFees += l.fees;
-                rAdj += l.adj;
-            });
-    
-            updatedPortfolio = portfolio.map(p => {
-                if (p.id === sellItem.id) {
-                    return {
-                        ...p,
-                        shares: r6(rShares),
-                        buyPrice: r6(rCostBase / rShares),
-                        buyFx: r6(rCostFx / rCostBase),
-                        fees: r2(rFees),
-                        adjustments: r2(rAdj),
-                        lots: fifo.remainingLots,
-                        isActive: true,
-                        notes: (p.notes || '') + `\n\n--- Venta parcial de ${formatN(sellForm.sharesToSell)} acc. el ${fDateEU(sellForm.sellDate)}. Quedan ${formatN(rShares)} acc. ---`
-                    };
-                }
-                return p;
-            });
-        } else {
-            // VENTA TOTAL: Desactivar original
-            updatedPortfolio = portfolio.map(p => p.id === sellItem.id ? { ...p, isActive: false } : p);
-        }
-    
-        setPortfolio([...updatedPortfolio, soldRecord]);
-        setIsSellModalOpen(false);
-        setInfoModal({ isOpen: true, title: 'Éxito', msg: 'Operación registrada con desglose FIFO detallado.', type: 'success' });
+    const isPartial = sellForm.sharesToSell < sellItem.shares;
+    const fifo = calculateFIFODetail(sellItem, sellForm.sharesToSell);
+    const nowEU = new Date().toLocaleDateString('es-ES');
+
+    // CÁLCULOS PARA LOG: Comparativa Venta vs Compra FIFO
+    const totalBuyCost = r2((fifo.extracted.buyPrice * sellForm.sharesToSell * fifo.extracted.buyFx) + 
+                            (sellItem.feesIncludedInPrice ? 0 : fifo.extracted.fees) + fifo.extracted.adj);
+
+    const totalSellRevenue = r2((sellForm.sellPrice * sellForm.sharesToSell * sellForm.sellFx) - 
+                                (sellForm.sellFeesIncludedInPrice ? 0 : sellForm.sellFees) - sellForm.sellAdjustments);
+
+    const diff = r2(totalSellRevenue - totalBuyCost);
+    const diffPct = totalBuyCost !== 0 ? r2((diff / totalBuyCost) * 100) : 0;
+
+    const auditComment = `
+--- REGISTRO DE VENTA ${isPartial ? 'PARCIAL' : 'TOTAL'} (${nowEU}) ---
+CANTIDAD: ${formatN(sellForm.sharesToSell)} acciones.
+COMPRA (FIFO Ponderado): P.Medio ${formatN(fifo.extracted.buyPrice, 3)} | FX: ${formatN(fifo.extracted.buyFx, 4)} | Gtos+Adj: ${formatN(fifo.extracted.fees + fifo.extracted.adj)}
+VENTA: Precio ${formatN(sellForm.sellPrice, 3)} | FX: ${formatN(sellForm.sellFx, 4)} | Gtos+Adj: ${formatN(sellForm.sellFees + sellForm.sellAdjustments)}
+BALANCE: Coste ${formatMoney(totalBuyCost, baseCurrency)} | Venta ${formatMoney(totalSellRevenue, baseCurrency)}
+RESULTADO: ${formatMoney(diff, baseCurrency)} (${diffPct}%)
+DETALLE DE LOTES CONSUMIDOS: ${fifo.extracted.summary}`.trim();
+
+    // 1. GENERAR APUNTE DE VENTA (HISTÓRICO) - Sin array de lotes
+    const soldRecord = {
+        ...sellItem,
+        id: Date.now(),
+        lots: [], 
+        shares: r6(sellForm.sharesToSell),
+        buyPrice: fifo.extracted.buyPrice,
+        buyDate: fifo.extracted.buyDate,
+        buyFx: fifo.extracted.buyFx,
+        fees: fifo.extracted.fees,
+        adjustments: fifo.extracted.adj,
+        isActive: true, 
+        sellDate: sellForm.sellDate,
+        sellPrice: sellForm.sellPrice,
+        sellFx: sellForm.sellFx,
+        sellFees: sellForm.sellFees,
+        sellAdjustments: sellForm.sellAdjustments,
+        sellFeesIncludedInPrice: sellForm.sellFeesIncludedInPrice,
+        dividends: [], 
+        notes: (sellItem.notes || '') + "\n\n" + auditComment
     };
+
+    let updatedPortfolio = [];
+
+    if (isPartial) {
+        // 2. RECALCULAR FICHA ACTIVA DESDE SUS LOTES RESTANTES
+        let tShares = 0, tCostStockCurr = 0, tCostBaseCurr = 0, tFees = 0, tAdj = 0, tPE = 0;
+        let oldestDate = null;
+
+        fifo.remainingLots.forEach(l => {
+            const s = parseFloat(l.shares) || 0;
+            const p = parseFloat(l.price) || 0;
+            const f = parseFloat(l.fx) || 1;
+            
+            tShares += s;
+            tCostStockCurr += (s * p);
+            tCostBaseCurr += (s * p * f);
+            tFees += (parseFloat(l.fees) || 0);
+            tAdj += (parseFloat(l.adj) || 0);
+            tPE += (s * (parseFloat(l.pe) || 0));
+
+            if (l.date && (!oldestDate || new Date(l.date) < new Date(oldestDate))) {
+                oldestDate = l.date;
+            }
+        });
+
+        updatedPortfolio = portfolio.map(p => {
+            if (p.id === sellItem.id) {
+                return {
+                    ...p,
+                    lots: fifo.remainingLots,
+                    shares: r6(tShares),
+                    buyPrice: r6(tCostStockCurr / tShares),
+                    buyFx: rCostStockCurr > 0 ? r6(tCostBaseCurr / tCostStockCurr) : p.buyFx,
+                    buyPE: r2(tPE / tShares),
+                    fees: r2(tFees),
+                    adjustments: r2(tAdj),
+                    buyDate: oldestDate || p.buyDate,
+                    isActive: true,
+                    notes: (p.notes || '') + `\n\n--- Venta parcial de ${formatN(sellForm.sharesToSell)} acc. el ${fDateEU(sellForm.sellDate)}. Quedan ${formatN(tShares)} acc. en cartera. ---`
+                };
+            }
+            return p;
+        });
+    } else {
+        // VENTA TOTAL
+        updatedPortfolio = portfolio.map(p => p.id === sellItem.id ? { ...p, isActive: false } : p);
+    }
+
+    setPortfolio([...updatedPortfolio, soldRecord]);
+    setIsSellModalOpen(false);
+    setInfoModal({ isOpen: true, title: 'Éxito', msg: 'Venta procesada. La cartera activa se ha actualizado correctamente.', type: 'success' });
+};
 
 
 
