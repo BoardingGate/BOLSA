@@ -2356,12 +2356,14 @@ const TradingViewMarketWidget = () => {
 
 
 const calculateFIFODetail = (p, qtyToSell) => {
+    // Función interna para pasar de YYYY-MM-DD a DD-MM-YYYY
+    const fDateEU = (d) => d ? d.split('-').reverse().join('-') : '';
+
     let lots = p.lots && p.lots.length > 0 ? JSON.parse(JSON.stringify(p.lots)) : [{
         id: Date.now(), date: p.buyDate, shares: p.shares, price: p.buyPrice, 
         fx: p.buyFx, fees: p.fees, adj: p.adjustments, pe: p.buyPE
     }];
     
-    // Ordenar por fecha ASC (Primero en entrar)
     lots.sort((a, b) => new Date(a.date) - new Date(b.date));
 
     let remainingToSell = qtyToSell;
@@ -2377,16 +2379,14 @@ const calculateFIFODetail = (p, qtyToSell) => {
         const take = Math.min(lot.shares, remainingToSell);
         const ratio = take / lot.shares;
 
-        // Acumular para el apunte de VENTA
         extracted.shares += take;
         extracted.costBase += (take * lot.price);
         extracted.costFx += (take * lot.price * lot.fx);
         extracted.fees += (lot.fees * ratio);
         extracted.adj += (lot.adj * ratio);
         extracted.weightedTime += (new Date(lot.date).getTime() * take);
-        extracted.desc.push(`${take} acc. del ${lot.date} (P: ${lot.price})`);
+        extracted.desc.push(`${take} acc. compradas el ${fDateEU(lot.date)}`);
 
-        // Calcular remanente para el apunte que se QUEDA
         if (lot.shares > take) {
             newLots.push({
                 ...lot,
@@ -2405,6 +2405,7 @@ const calculateFIFODetail = (p, qtyToSell) => {
             buyPrice: finalAvgPrice,
             buyFx: extracted.costFx / extracted.costBase,
             buyDate: new Date(extracted.weightedTime / extracted.shares).toISOString().split('T')[0],
+            buyDateEU: fDateEU(new Date(extracted.weightedTime / extracted.shares).toISOString().split('T')[0]),
             fees: extracted.fees,
             adj: extracted.adj,
             summary: extracted.desc.join(' | ')
@@ -3532,24 +3533,38 @@ const initLots = () => {
     const handleClone = (p) => { if (portfolio.length >= _x_lim) { _x_trig(true); return; } const clone = { ...p, id: Date.now(), isActive: false, dividends: [] }; setPortfolio(prev => [...prev, clone]); setInfoModal({ isOpen: true, title: 'Éxito', msg: `Copia creada.`, type: 'info' }); };
     const resetFilters = () => { setFilterText(''); setFilterDateStart(''); setFilterDateEnd(''); setFilterType('active'); setSortConfig({ key: 'date', direction: 'desc' }); };
 
-    const handleSellSubmit = () => {
+  const handleSellSubmit = () => {
     if (!sellItem) return;
     const isPartial = sellForm.sharesToSell < sellItem.shares;
     const fifo = calculateFIFODetail(sellItem, sellForm.sharesToSell);
-    const timeStamp = new Date().toLocaleString();
+    const fDateEU = (d) => d ? d.split('-').reverse().join('-') : '';
+    const nowEU = new Date().toLocaleDateString('es-ES');
 
-    // 1. Crear el registro de VENTA (Histórico)
+    // Cálculos monetarios para el comentario
+    const totalBuyCost = (fifo.extracted.shares * fifo.extracted.buyPrice * fifo.extracted.buyFx) + fifo.extracted.fees + fifo.extracted.adj;
+    const totalSellRevenue = (sellForm.sharesToSell * sellForm.sellPrice * sellForm.sellFx) - sellForm.sellFees - sellForm.sellAdjustments;
+    const diff = totalSellRevenue - totalBuyCost;
+
+    // Construcción del comentario detallado
+    const auditComment = `
+--- REGISTRO DE VENTA ${isPartial ? 'PARCIAL' : 'TOTAL'} (${nowEU}) ---
+OPERACIÓN: Venta de ${formatN(sellForm.sharesToSell)} acciones.
+COMPRA (FIFO): Precio medio ${formatN(fifo.extracted.buyPrice, 3)} | FX: ${formatN(fifo.extracted.buyFx, 4)} | Gtos+Adj: ${formatN(fifo.extracted.fees + fifo.extracted.adj)}
+VENTA: Precio ${formatN(sellForm.sellPrice, 3)} | FX: ${formatN(sellForm.sellFx, 4)} | Gtos+Adj: ${formatN(sellForm.sellFees + sellForm.sellAdjustments)}
+DIFERENCIAL: ${formatMoney(diff, baseCurrency)} (${formatN((diff / totalBuyCost) * 100)}%)
+DESGLOSE ORIGEN: ${fifo.extracted.summary}.`.trim();
+
+    // 1. Registro de VENTA para el histórico (SIN LOTES)
     const soldRecord = {
         ...sellItem,
         id: Date.now(),
+        lots: [], // IMPORTANTE: El apunte de venta no lleva el array de lotes
         shares: sellForm.sharesToSell,
-        // Datos de COMPRA asignados por FIFO
         buyPrice: fifo.extracted.buyPrice,
         buyDate: fifo.extracted.buyDate,
         buyFx: fifo.extracted.buyFx,
         fees: fifo.extracted.fees,
         adjustments: fifo.extracted.adj,
-        // Datos de VENTA
         isActive: true, 
         sellDate: sellForm.sellDate,
         sellPrice: sellForm.sellPrice,
@@ -3557,15 +3572,14 @@ const initLots = () => {
         sellFees: sellForm.sellFees,
         sellAdjustments: sellForm.sellAdjustments,
         sellFeesIncludedInPrice: sellForm.sellFeesIncludedInPrice,
-        dividends: [], // Ventas no llevan dividendos para no duplicar
-        notes: (sellItem.notes || '') + `\n--- VENTA PARCIAL (${timeStamp}) ---\nFIFO: Se asigna compra de ${fifo.extracted.summary}.`
+        dividends: [], 
+        notes: (sellItem.notes || '') + "\n\n" + auditComment
     };
 
     let updatedPortfolio = [];
 
     if (isPartial) {
-        // 2. ACTUALIZAR EL REGISTRO QUE SE QUEDA (Remanente)
-        // Calculamos los nuevos promedios del remanente basado en los lotes que quedan
+        // 2. Actualizar el registro ACTIVO
         let rShares = 0, rCostBase = 0, rCostFx = 0, rFees = 0, rAdj = 0;
         fifo.remainingLots.forEach(l => {
             rShares += l.shares;
@@ -3585,27 +3599,21 @@ const initLots = () => {
                     fees: rFees,
                     adjustments: rAdj,
                     lots: fifo.remainingLots,
-                    isActive: true, // Sigue activo porque quedan acciones
-                    notes: (p.notes || '') + `\n--- Venta Parcial realizada el ${sellForm.sellDate} ---\nSe vendieron ${sellForm.sharesToSell} acciones aplicando FIFO.`
+                    isActive: true,
+                    notes: (p.notes || '') + `\n\n--- Venta parcial de ${sellForm.sharesToSell} acc. realizada el ${fDateEU(sellForm.sellDate)}. Quedan ${formatN(rShares)} acc. en cartera. ---`
                 };
             }
             return p;
         });
     } else {
-        // 2. VENTA TOTAL (Comportamiento antiguo mejorado)
-        updatedPortfolio = portfolio.map(p => {
-            if (p.id === sellItem.id) {
-                return { ...p, isActive: false }; // Desactivar original
-            }
-            return p;
-        });
+        // VENTA TOTAL
+        updatedPortfolio = portfolio.map(p => p.id === sellItem.id ? { ...p, isActive: false } : p);
     }
 
     setPortfolio([...updatedPortfolio, soldRecord]);
     setIsSellModalOpen(false);
-    setInfoModal({ isOpen: true, title: 'Operación Registrada', msg: isPartial ? 'Venta parcial procesada. El remanente ha sido recalculado en cartera.' : 'Venta total procesada y movida al histórico.', type: 'success' });
+    setInfoModal({ isOpen: true, title: 'Venta Procesada', msg: 'Se ha generado el apunte de venta y actualizado la cartera.', type: 'success' });
 };
-
 
     // --- NUEVA FUNCIÓN IMPRESIÓN IA ACTUALIZADA (CORRECCIÓN COLORES OSCUROS) ---
     const handlePrintAI = () => { 
@@ -4147,7 +4155,10 @@ const RenderHistoryCard = () => {
                                     <h4 className="text-[10px] font-black text-blue-400 uppercase mb-2">Desglose de Compra (Normativa FIFO)</h4>
                                     <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[10px] font-mono">
                                         <div className="text-slate-400">P. Medio Compra (Propuesto):</div><div className="text-white text-right font-bold">{formatN(fifo.extracted.buyPrice, 3)}</div>
-                                        <div className="text-slate-400">F. Compra Ponderada:</div><div className="text-white text-right">{fifo.extracted.buyDate}</div>
+
+                                        <div className="text-slate-400">F. Compra Ponderada:</div>
+                                        <div className="text-white text-right">{fifo.extracted.buyDateEU}</div> 
+
                                         <div className="text-slate-400">Gastos/Adj. Proporcionales:</div><div className="text-white text-right">{formatN(fifo.extracted.fees + fifo.extracted.adj)}</div>
                                     </div>
                                     <div className="mt-2 pt-2 border-t border-blue-500/20 text-[9px] text-blue-300 italic">
