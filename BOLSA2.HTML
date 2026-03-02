@@ -2384,27 +2384,34 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
 
     // 1. Ejecutar análisis IA (Panel 2)
-    const handleGenerateStrategy = async () => {
-        if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+  const handleGenerateStrategy = async () => {
+        if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key. Configúrala en Ajustes.', type: 'error' });
         if (strategyInputs.capital <= 0 || strategyInputs.risk <= 0) return alert("El capital y riesgo deben ser mayores a 0");
         
         setIsGeneratingStrategy(true);
         try {
-            const prompt = `
-            ROL: Analista Técnico y Gestor de Riesgo Cuantitativo Senior.
-            TICKER A ANALIZAR: ${strategyItem.ticker} (${strategyItem.name})
-            
-            SITUACIÓN ACTUAL DEL CLIENTE:
-            - Acciones en cartera: ${strategyItem.shares}
-            - Precio medio de compra: ${strategyItem.buyPrice}
-            - Nuevo capital a invertir: ${strategyInputs.capital}
-            - Riesgo máximo monetario a asumir: ${strategyInputs.risk}% sobre el capital a invertir.
+            // Le pasamos el precio actual directamente para que no se bloquee intentando buscarlo
+            const currentP = strategyItem.isIndex ? (strategyItem.currentPrice / (strategyItem.indexDivisor || 1)) : strategyItem.currentPrice;
+            const riskMoney = (strategyInputs.capital * strategyInputs.risk / 100).toFixed(2);
 
-            TAREA: Busca el estado de cotización actual, niveles técnicos clave (soportes y resistencias) y noticias recientes. 
-            Determina una estrategia de Trading/Inversión. Calcula matemáticamente los Stops y Objetivos.
-            Calcula las unidades óptimas (optimalShares) asegurando que si salta el Stop Loss 1, la pérdida monetaria no supere el Riesgo Máximo (${strategyInputs.risk}% de ${strategyInputs.capital}).
+            const prompt = `
+            ROL: Analista Técnico y Gestor de Riesgos Cuantitativo.
+            TICKER: ${strategyItem.ticker}
+            PRECIO ACTUAL EN MERCADO: ${currentP}
             
-            RESPONDE ÚNICA Y EXCLUSIVAMENTE CON UN JSON VÁLIDO CON ESTA ESTRUCTURA EXACTA (SIN MARKDOWN NI TEXTO EXTRA):
+            DATOS DEL CLIENTE:
+            - Posición actual: ${strategyItem.shares} acciones.
+            - Precio medio actual: ${strategyItem.buyPrice}
+            - Nuevo capital dispuesto: ${strategyInputs.capital}
+            - Riesgo máximo a asumir en la nueva entrada: ${strategyInputs.risk}% (Máximo ${riskMoney} de pérdida si salta el Stop Loss 1).
+
+            TAREA:
+            1. Define un precio de entrada óptimo (entryZone) cercano a ${currentP}.
+            2. Calcula 2 niveles de Stop Loss coherentes con el análisis técnico.
+            3. Calcula 3 niveles de Take Profit (Objetivos).
+            4. Calcula 'optimalShares' (acciones a comprar): Asegúrate de que si el precio cae de 'entryZone' a 'stopLoss1', la pérdida monetaria de esas nuevas acciones sea exactamente igual a ${riskMoney}.
+            
+            RESPONDE ÚNICA Y EXCLUSIVAMENTE CON UN JSON VÁLIDO (SIN TEXTO ANTES NI DESPUÉS, SOLO LAS LLAVES {}):
             {
                "entryZone": 150.50,
                "stopLoss1": {"price": 145.0, "pct": -3.6, "lossMoney": 55},
@@ -2414,26 +2421,28 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                "target3": {"price": 185.0, "pct": 22.9},
                "optimalShares": 6,
                "successProb": "65%",
-               "recommendation": "Breve análisis técnico y fundamental. ¿Es buen momento para promediar o iniciar posición? Explica la relación riesgo/recompensa."
+               "recommendation": "Explicación breve de la estrategia y justificación."
             }
-            IMPORTANTE: Usa PUNTO DECIMAL para los números.
             `;
 
             const res = await askGemini(apiKey, prompt, aiModel);
             const json = extractJSON(res);
             
-            if (!json || !json.entryZone) throw new Error("La IA no devolvió la estructura JSON requerida.");
+            if (!json || !json.entryZone) {
+                throw new Error("La IA no pudo estructurar la respuesta. Vuelve a intentarlo.");
+            }
             
             setStrategyResult(json);
             
-            // Guardar en la cartera (persistencia en local y nube)
+            // Guardar en la cartera (persistencia)
             setPortfolio(prev => prev.map(x => x.id === strategyItem.id ? {
                 ...x, 
                 strategyCache: { capital: strategyInputs.capital, risk: strategyInputs.risk, result: json }
             } : x));
 
         } catch (e) {
-            setInfoModal({ isOpen: true, title: 'Error Estrategia', msg: e.message, type: 'error' });
+            console.error("Error en IA Strategy:", e);
+            setInfoModal({ isOpen: true, title: 'Error de IA', msg: e.message || 'Se agotó el tiempo de espera. Inténtalo de nuevo.', type: 'error' });
         } finally {
             setIsGeneratingStrategy(false);
         }
@@ -3856,7 +3865,7 @@ const RenderHistoryCard = () => {
 </Modal>
 
 
- {/* ========================================================= */}
+{/* ========================================================= */}
             {/* MODAL COMPLEJO: ESTRATEGIAS, PROMEDIOS Y TRADING IA       */}
             {/* ========================================================= */}
             {strategyItem && (
@@ -3868,76 +3877,95 @@ const RenderHistoryCard = () => {
                         <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
                         <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-2">
                             <h3 className="text-sm font-bold text-blue-400 uppercase tracking-widest flex items-center gap-2"><Icons.Grid size={16}/> Estrategia de Promedio (Lotes)</h3>
-                            <button onClick={() => { setIsStrategyModalOpen(false); onAnalyze(strategyItem.ticker); }} className="bg-blue-900/30 hover:bg-blue-600 border border-blue-500/50 text-blue-300 hover:text-white px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 transition-colors">
-                                <Icons.Search size={12}/> ESTUDIO PROFUNDO ACCIÓN
-                            </button>
-                        </div>
-
-                        {/* Cabeceras Grid */}
-                        <div className="grid grid-cols-[100px_1fr_1fr_1fr_1fr_100px] gap-2 text-[9px] uppercase font-bold text-slate-500 text-center mb-2">
-                            <div>Fecha</div><div>Unidades</div><div>Precio</div><div>FX / Divisa</div><div>Gtos/Adj</div><div className="text-right">Coste Total</div>
-                        </div>
-
-                        {/* FILA 1: DATOS ACTUALES (Read-only) */}
-                        <div className="grid grid-cols-[100px_1fr_1fr_1fr_1fr_100px] gap-2 items-center bg-slate-800/50 p-2 rounded-lg border border-slate-700 mb-2 opacity-80">
-                            <div className="text-[10px] text-center text-slate-400 font-mono">Actual</div>
-                            <div className="text-center font-bold text-white">{formatN(strategyItem.shares)}</div>
-                            <div className="text-center font-bold text-white">{formatN(strategyItem.buyPrice)}</div>
-                            <div className="text-center text-slate-400 font-mono">{formatN(strategyItem.buyFx, 4)}</div>
-                            <div className="text-center text-slate-400 text-[9px]">{formatN(strategyItem.fees)} / {formatN(strategyItem.adjustments)}</div>
-                            <div className="text-right font-mono font-bold text-blue-300">
-                                {formatMoney((strategyItem.shares * strategyItem.buyPrice * strategyItem.buyFx) + (strategyItem.feesIncludedInPrice?0:strategyItem.fees) + strategyItem.adjustments, baseCurrency)}
+                            <div className="flex items-center gap-2">
+                                <button onClick={handleAddSimulatedLot} disabled={!(parseFloat(simLot.shares)>0)} className="bg-green-600 hover:bg-green-500 disabled:bg-slate-700 disabled:text-slate-500 text-white px-4 py-1.5 rounded-lg font-bold text-[10px] shadow-lg transition-colors uppercase">
+                                    <Icons.Plus size={12} className="inline mr-1"/> Añadir Lote
+                                </button>
+                                <button onClick={() => { setIsStrategyModalOpen(false); onAnalyze(strategyItem.ticker); }} className="bg-blue-900/30 hover:bg-blue-600 border border-blue-500/50 text-blue-300 hover:text-white px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 transition-colors">
+                                    <Icons.Search size={12}/> ESTUDIO PROFUNDO
+                                </button>
                             </div>
                         </div>
 
-                        {/* FILA 2: NUEVO LOTE A SIMULAR (Inputs) */}
-                        <div className="grid grid-cols-[100px_1fr_1fr_1fr_1fr_100px] gap-2 items-center bg-slate-950 p-2 rounded-lg border border-blue-500/30 mb-2 shadow-inner">
-                            <input type="date" value={simLot.date} onChange={e => setSimLot({...simLot, date: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-1 text-[10px] text-center focus:border-blue-500 outline-none text-white"/>
-                            <input type="number" value={simLot.shares} placeholder="0" onChange={e => setSimLot({...simLot, shares: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-1 text-xs font-bold text-center text-white focus:border-blue-500 outline-none"/>
-                            <input type="number" step="0.01" value={simLot.price} placeholder="0.00" onChange={e => setSimLot({...simLot, price: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-1 text-xs font-bold text-center text-white focus:border-blue-500 outline-none"/>
-                            <input type="number" step="0.0001" value={simLot.fx} onChange={e => setSimLot({...simLot, fx: e.target.value})} disabled={strategyItem.stockCurrency === baseCurrency} className={`w-full bg-slate-900 border border-slate-700 rounded p-1 text-xs text-center text-white outline-none ${strategyItem.stockCurrency === baseCurrency ? 'opacity-50' : 'focus:border-blue-500'}`}/>
-                            <div className="flex gap-1">
-                                <input type="number" value={simLot.fees} placeholder="Gtos" onChange={e => setSimLot({...simLot, fees: e.target.value})} className="w-1/2 bg-slate-900 border border-slate-700 rounded p-1 text-[10px] text-center text-white outline-none"/>
-                                <input type="number" value={simLot.adj} placeholder="Adj" onChange={e => setSimLot({...simLot, adj: e.target.value})} className="w-1/2 bg-slate-900 border border-slate-700 rounded p-1 text-[10px] text-center text-white outline-none"/>
-                            </div>
-                            <div className="text-right font-mono font-bold text-green-400">
-                                {(() => {
-                                    const s = parseFloat(simLot.shares)||0; const p = parseFloat(simLot.price)||0; const fx = parseFloat(simLot.fx)||1;
-                                    const f = strategyItem.feesIncludedInPrice ? 0 : (parseFloat(simLot.fees)||0); const a = parseFloat(simLot.adj)||0;
-                                    return formatMoney((s*p*fx)+f+a, baseCurrency);
-                                })()}
-                            </div>
+                        {/* SISTEMA DE REJILLA HOMOGÉNEA (7 COLUMNAS) */}
+                        <div className="grid grid-cols-[80px_1fr_1fr_1fr_1fr_1fr_90px] gap-2 text-[9px] uppercase font-bold text-slate-500 text-right mb-2">
+                            <div className="text-center">Fecha</div><div>Unidades</div><div>P. Medio</div><div>FX Medio</div><div>FX Desv.</div><div className="text-center">Gtos/Adj</div><div>Coste Total</div>
                         </div>
 
-                        {/* FILA 3: PROYECCIÓN TOTAL CONSOLIDADA */}
-                        <div className="mt-4 p-3 bg-blue-900/10 border-t border-blue-500/20 flex justify-between items-center rounded-b-xl">
-                            <div className="flex gap-6 items-center">
-                                <span className="text-[10px] uppercase font-bold text-blue-400">Proyección Combinada:</span>
-                                {(() => {
-                                    const cS = strategyItem.shares; const cP = strategyItem.buyPrice; const cFx = strategyItem.buyFx;
-                                    const cCost = (cS * cP * cFx) + (strategyItem.feesIncludedInPrice?0:strategyItem.fees) + strategyItem.adjustments;
-                                    
-                                    const sS = parseFloat(simLot.shares)||0; const sP = parseFloat(simLot.price)||0; const sFx = parseFloat(simLot.fx)||1;
-                                    const sCost = (sS * sP * sFx) + (strategyItem.feesIncludedInPrice?0:(parseFloat(simLot.fees)||0)) + (parseFloat(simLot.adj)||0);
-                                    
-                                    const tShares = cS + sS;
-                                    const tCost = cCost + sCost;
-                                    const tCostBase = (cS * cP) + (sS * sP);
-                                    const newAvgP = tShares > 0 ? tCostBase / tShares : 0;
-                                    
-                                    return (
-                                        <div className="flex gap-4 font-mono">
-                                            <div><span className="text-[8px] text-slate-500 block">Total Uds</span><span className="text-white font-bold">{formatN(tShares)}</span></div>
-                                            <div><span className="text-[8px] text-slate-500 block">Nuevo P. Medio</span><span className={`font-bold ${newAvgP < cP ? 'text-green-400' : 'text-orange-400'}`}>{formatN(newAvgP)}</span></div>
-                                            <div><span className="text-[8px] text-slate-500 block">Coste Total</span><span className="text-white font-bold">{formatMoney(tCost, baseCurrency)}</span></div>
+                        {(() => {
+                            // CÁLCULOS BASE
+                            const curP = strategyItem.isIndex ? (strategyItem.currentPrice / (strategyItem.indexDivisor || 1)) : strategyItem.currentPrice;
+                            const curF = strategyItem.isIndex ? strategyItem.buyFx : strategyItem.currentFx;
+                            
+                            // LÍNEA 1: ACTUAL
+                            const cS = strategyItem.shares || 0; 
+                            const cP = strategyItem.buyPrice || 0; 
+                            const cFx = strategyItem.buyFx || 1;
+                            const cFees = strategyItem.feesIncludedInPrice ? 0 : (strategyItem.fees || 0);
+                            const cAdj = strategyItem.adjustments || 0;
+                            const cCost = (cS * cP * cFx) + cFees + cAdj;
+                            const cFxDev = strategyItem.isIndex ? 0 : (cS * curP * (curF - cFx));
+
+                            // LÍNEA 2: SIMULACIÓN
+                            const sS = parseFloat(simLot.shares) || 0; 
+                            const sP = parseFloat(simLot.price) || 0; 
+                            const sFx = parseFloat(simLot.fx) || 1;
+                            const sFees = strategyItem.feesIncludedInPrice ? 0 : (parseFloat(simLot.fees) || 0);
+                            const sAdj = parseFloat(simLot.adj) || 0;
+                            const sCost = (sS * sP * sFx) + sFees + sAdj;
+                            const sFxDev = strategyItem.isIndex ? 0 : (sS * curP * (curF - sFx));
+
+                            // LÍNEA 3: PROYECCIÓN COMBINADA
+                            const tShares = cS + sS;
+                            const tCostBase = (cS * cP) + (sS * sP);
+                            const newAvgP = tShares > 0 ? tCostBase / tShares : 0;
+                            const tCostFx = (cS * cP * cFx) + (sS * sP * sFx);
+                            const newAvgFx = tCostBase > 0 ? tCostFx / tCostBase : 1;
+                            const tFees = cFees + sFees;
+                            const tAdj = cAdj + sAdj;
+                            const tCostFinal = tCostFx + tFees + tAdj;
+                            const tFxDev = cFxDev + sFxDev;
+
+                            return (
+                                <div className="space-y-2">
+                                    {/* FILA 1: ACTUAL */}
+                                    <div className="grid grid-cols-[80px_1fr_1fr_1fr_1fr_1fr_90px] gap-2 items-center bg-slate-800/50 p-2 rounded-lg border border-slate-700 text-right text-[11px]">
+                                        <div className="text-center text-[10px] text-slate-400 font-mono">ACTUAL</div>
+                                        <div className="font-bold text-white">{formatN(cS)}</div>
+                                        <div className="font-bold text-white">{formatN(cP)}</div>
+                                        <div className="text-slate-300 font-mono">{formatN(cFx, 4)}</div>
+                                        <div className={`font-bold font-mono ${cFxDev >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(cFxDev, baseCurrency)}</div>
+                                        <div className="text-center text-slate-400 text-[10px]">{formatN(cFees)} / {formatN(cAdj)}</div>
+                                        <div className="font-mono font-bold text-blue-300">{formatMoney(cCost, baseCurrency)}</div>
+                                    </div>
+
+                                    {/* FILA 2: SIMULACIÓN (Inputs) */}
+                                    <div className="grid grid-cols-[80px_1fr_1fr_1fr_1fr_1fr_90px] gap-2 items-center bg-slate-950 p-2 rounded-lg border border-blue-500/40 shadow-inner text-right text-[11px]">
+                                        <input type="date" value={simLot.date} onChange={e => setSimLot({...simLot, date: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-1 text-[10px] text-center focus:border-blue-500 outline-none text-white"/>
+                                        <input type="number" value={simLot.shares} placeholder="0" onChange={e => setSimLot({...simLot, shares: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-1 font-bold text-right text-white focus:border-blue-500 outline-none"/>
+                                        <input type="number" step="0.01" value={simLot.price} placeholder="0.00" onChange={e => setSimLot({...simLot, price: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-1 font-bold text-right text-white focus:border-blue-500 outline-none"/>
+                                        <input type="number" step="0.0001" value={simLot.fx} onChange={e => setSimLot({...simLot, fx: e.target.value})} disabled={strategyItem.stockCurrency === baseCurrency} className={`w-full bg-slate-900 border border-slate-700 rounded p-1 text-right text-white outline-none ${strategyItem.stockCurrency === baseCurrency ? 'opacity-50' : 'focus:border-blue-500'}`}/>
+                                        <div className={`font-bold font-mono ${sFxDev >= 0 ? 'text-green-400' : 'text-red-400'}`}>{sS > 0 ? formatMoney(sFxDev, baseCurrency) : '-'}</div>
+                                        <div className="flex gap-1">
+                                            <input type="number" value={simLot.fees} placeholder="Gt" onChange={e => setSimLot({...simLot, fees: e.target.value})} className="w-1/2 bg-slate-900 border border-slate-700 rounded p-1 text-[10px] text-center text-white outline-none"/>
+                                            <input type="number" value={simLot.adj} placeholder="Ad" onChange={e => setSimLot({...simLot, adj: e.target.value})} className="w-1/2 bg-slate-900 border border-slate-700 rounded p-1 text-[10px] text-center text-white outline-none"/>
                                         </div>
-                                    )
-                                })()}
-                            </div>
-                            <button onClick={handleAddSimulatedLot} disabled={!(parseFloat(simLot.shares)>0)} className="bg-green-600 hover:bg-green-500 disabled:bg-slate-700 disabled:text-slate-500 text-white px-6 py-2 rounded-xl font-bold text-xs shadow-lg transition-colors uppercase">
-                                Añadir Lote
-                            </button>
-                        </div>
+                                        <div className="font-mono font-bold text-green-400">{formatMoney(sCost, baseCurrency)}</div>
+                                    </div>
+
+                                    {/* FILA 3: PROYECCIÓN COMBINADA */}
+                                    <div className="grid grid-cols-[80px_1fr_1fr_1fr_1fr_1fr_90px] gap-2 items-center bg-blue-900/20 p-2 rounded-lg border border-blue-500/50 text-right text-[11px] mt-2">
+                                        <div className="text-center text-[10px] text-blue-300 font-bold uppercase">PROYECCIÓN</div>
+                                        <div className="font-bold text-white">{formatN(tShares)}</div>
+                                        <div className={`font-bold ${newAvgP < cP ? 'text-green-400' : newAvgP > cP ? 'text-orange-400' : 'text-white'}`}>{formatN(newAvgP)}</div>
+                                        <div className="text-slate-200 font-mono">{formatN(newAvgFx, 4)}</div>
+                                        <div className={`font-bold font-mono ${tFxDev >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(tFxDev, baseCurrency)}</div>
+                                        <div className="text-center text-slate-400 text-[10px]">{formatN(tFees)} / {formatN(tAdj)}</div>
+                                        <div className="font-mono font-black text-blue-300">{formatMoney(tCostFinal, baseCurrency)}</div>
+                                    </div>
+                                </div>
+                            );
+                        })()}
                     </div>
 
 
@@ -3955,12 +3983,12 @@ const RenderHistoryCard = () => {
                                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Riesgo Máx. Asumible (%):</label>
                                 <div className="flex items-center gap-2">
                                     <input type="number" step="0.5" value={strategyInputs.risk} onChange={e => setStrategyInputs({...strategyInputs, risk: parseFloat(e.target.value)})} className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm font-bold text-white focus:border-purple-500 outline-none"/>
-                                    <span className="text-[10px] font-mono text-red-400 whitespace-nowrap bg-red-900/20 px-2 py-1 rounded">Riesgo: {formatMoney(strategyInputs.capital * (strategyInputs.risk/100), baseCurrency)}</span>
+                                    <span className="text-[10px] font-mono text-red-400 whitespace-nowrap bg-red-900/20 px-2 py-1 rounded border border-red-500/20">Pérdida Máx: {formatMoney(strategyInputs.capital * (strategyInputs.risk/100), baseCurrency)}</span>
                                 </div>
                             </div>
                         </div>
 
-                        <button onClick={handleGenerateStrategy} disabled={isGeneratingStrategy} className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white py-3 rounded-xl font-black uppercase text-xs tracking-widest shadow-lg shadow-purple-900/20 transition-all flex items-center justify-center gap-2 mb-6">
+                        <button onClick={handleGenerateStrategy} disabled={isGeneratingStrategy} className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white py-3 rounded-xl font-black uppercase text-[11px] tracking-widest shadow-lg shadow-purple-900/20 transition-all flex items-center justify-center gap-2 mb-6">
                             {isGeneratingStrategy ? <Icons.Loader size={16} className="animate-spin" /> : <Icons.Wand size={16}/>}
                             {isGeneratingStrategy ? 'Diseñando Estrategia...' : 'Generar Plan de Inversión'}
                         </button>
@@ -3972,19 +4000,19 @@ const RenderHistoryCard = () => {
                                     
                                     {/* Caja Compra y Stops */}
                                     <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
-                                        <div className="flex justify-between items-center mb-3">
+                                        <div className="flex justify-between items-center mb-3 border-b border-slate-700 pb-2">
                                             <span className="text-[10px] uppercase font-bold text-slate-400">Entrada Recomendada</span>
                                             <span className="text-lg font-black text-blue-400 font-mono">{formatN(strategyResult.entryZone)}</span>
                                         </div>
-                                        <div className="space-y-2 border-t border-slate-700 pt-3">
-                                            <div className="flex justify-between items-center text-xs">
+                                        <div className="space-y-2 pt-1">
+                                            <div className="flex justify-between items-center text-[11px]">
                                                 <span className="text-red-400 font-bold">Stop Loss 1</span>
                                                 <div className="text-right font-mono">
                                                     <span className="text-white mr-2">{formatN(strategyResult.stopLoss1?.price)}</span>
                                                     <span className="text-red-400 bg-red-900/30 px-1 rounded">{formatN(strategyResult.stopLoss1?.pct)}%</span>
                                                 </div>
                                             </div>
-                                            <div className="flex justify-between items-center text-xs">
+                                            <div className="flex justify-between items-center text-[11px]">
                                                 <span className="text-red-500 font-bold">Stop Loss 2</span>
                                                 <div className="text-right font-mono">
                                                     <span className="text-white mr-2">{formatN(strategyResult.stopLoss2?.price)}</span>
@@ -3996,20 +4024,20 @@ const RenderHistoryCard = () => {
 
                                     {/* Caja Objetivos */}
                                     <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
-                                        <div className="flex justify-between items-center mb-3">
+                                        <div className="flex justify-between items-center mb-3 border-b border-slate-700 pb-2">
                                             <span className="text-[10px] uppercase font-bold text-slate-400">Objetivos (Take Profit)</span>
-                                            <span className="text-xs font-bold text-green-400 bg-green-900/20 px-2 py-0.5 rounded">Prob: {strategyResult.successProb}</span>
+                                            <span className="text-[10px] font-bold text-green-400 bg-green-900/20 px-2 py-0.5 rounded border border-green-500/20">Prob: {strategyResult.successProb}</span>
                                         </div>
-                                        <div className="space-y-2 border-t border-slate-700 pt-3">
-                                            <div className="flex justify-between items-center text-xs">
+                                        <div className="space-y-2 pt-1">
+                                            <div className="flex justify-between items-center text-[11px]">
                                                 <span className="text-green-300 font-bold">Target 1</span>
                                                 <div className="text-right font-mono"><span className="text-white mr-2">{formatN(strategyResult.target1?.price)}</span><span className="text-green-400">+{formatN(strategyResult.target1?.pct)}%</span></div>
                                             </div>
-                                            <div className="flex justify-between items-center text-xs">
+                                            <div className="flex justify-between items-center text-[11px]">
                                                 <span className="text-green-400 font-bold">Target 2</span>
                                                 <div className="text-right font-mono"><span className="text-white mr-2">{formatN(strategyResult.target2?.price)}</span><span className="text-green-400">+{formatN(strategyResult.target2?.pct)}%</span></div>
                                             </div>
-                                            <div className="flex justify-between items-center text-xs">
+                                            <div className="flex justify-between items-center text-[11px]">
                                                 <span className="text-green-500 font-bold">Target 3</span>
                                                 <div className="text-right font-mono"><span className="text-white mr-2">{formatN(strategyResult.target3?.price)}</span><span className="text-green-400">+{formatN(strategyResult.target3?.pct)}%</span></div>
                                             </div>
@@ -4020,27 +4048,25 @@ const RenderHistoryCard = () => {
                                 {/* Tamaño Óptimo y Traslado */}
                                 <div className="bg-blue-900/20 border border-blue-500/40 p-4 rounded-xl flex items-center justify-between">
                                     <div>
-                                        <div className="text-[10px] text-blue-300 uppercase font-bold mb-1">Tamaño Posición Sugerida (Basado en Riesgo)</div>
+                                        <div className="text-[10px] text-blue-300 uppercase font-bold mb-1">Tamaño Posición (Según Riesgo)</div>
                                         <div className="text-xl font-black text-white font-mono">{strategyResult.optimalShares} Acciones</div>
                                     </div>
                                     <button onClick={transferStrategyToSimLot} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-[10px] uppercase transition-colors shadow-lg flex items-center gap-2">
-                                        <Icons.Upload size={14} className="rotate-180" /> Trasladar al panel superior
+                                        <Icons.Upload size={14} className="rotate-180" /> Trasladar orden al panel superior
                                     </button>
                                 </div>
 
                                 {/* Veredicto Textual */}
                                 <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 border-l-4 border-l-purple-500">
                                     <h4 className="text-[10px] font-bold text-slate-500 uppercase mb-2">Comentario Analista</h4>
-                                    <p className="text-xs text-slate-300 leading-relaxed">{strategyResult.recommendation}</p>
+                                    <p className="text-[11px] text-slate-300 leading-relaxed">{strategyResult.recommendation}</p>
                                 </div>
                             </div>
                         )}
                     </div>
                 </div>
             </Modal>
-            )}
-
-
+            )}  
    
         </div>
     );
