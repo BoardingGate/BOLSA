@@ -2365,19 +2365,37 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     const openStrategyModal = (p) => {
         setStrategyItem(p);
-        setSimLot({ 
-            date: new Date().toISOString().slice(0,10), 
-            shares: '', price: '', fx: p.stockCurrency === baseCurrency ? 1 : p.currentFx, 
-            fees: '', adj: '' 
-        });
         if (p.strategyCache) {
             setStrategyInputs({ capital: p.strategyCache.capital || 1000, risk: p.strategyCache.risk || 2 });
             setStrategyResult(p.strategyCache.result || null);
+            // Recupera el lote simulado si existía, si no, uno en blanco
+            setSimLot(p.strategyCache.simLot || { 
+                date: new Date().toISOString().slice(0,10), shares: '', price: '', fx: p.stockCurrency === baseCurrency ? 1 : p.currentFx, fees: '', adj: '' 
+            });
         } else {
             setStrategyInputs({ capital: 1000, risk: 2 });
             setStrategyResult(null);
+            setSimLot({ date: new Date().toISOString().slice(0,10), shares: '', price: '', fx: p.stockCurrency === baseCurrency ? 1 : p.currentFx, fees: '', adj: '' });
         }
         setIsStrategyModalOpen(true);
+    };
+
+    // NUEVO: Guardar en caché al cerrar el modal
+    const closeStrategyModal = () => {
+        if (strategyItem) {
+            setPortfolio(prev => prev.map(x => x.id === strategyItem.id ? {
+                ...x,
+                strategyCache: {
+                    ...x.strategyCache,
+                    capital: strategyInputs.capital,
+                    risk: strategyInputs.risk,
+                    result: strategyResult,
+                    simLot: simLot // Guardamos lo escrito en el Panel 1
+                }
+            } : x));
+        }
+        setIsStrategyModalOpen(false);
+        setTimeout(() => setStrategyItem(null), 300); // Limpiar tras la animación
     };
 
     const [updateText, setUpdateText] = useState('');
@@ -2419,7 +2437,7 @@ const handleGenerateStrategy = async () => {
                "target3": {"price": 185.0, "pct": 22.9},
                "optimalShares": 6,
                "successProb": "65%",
-               "technicalContext": "Escribe aquí los soportes y resistencias exactos que has encontrado en internet para demostrar que los datos son reales (Ej: Soporte fuerte en la SMA200 a 145.00$).",
+               "technicalContext": "Escribe aquí los soportes y resistencias exactos que has encontrado en internet.",
                "recommendation": "Explicación breve de la estrategia."
             }
             `;
@@ -2427,26 +2445,23 @@ const handleGenerateStrategy = async () => {
             const res = await askGemini(apiKey, prompt, aiModel);
             const json = extractJSON(res);
             
-            if (!json || !json.entryZone) {
-                throw new Error("La IA no pudo estructurar la respuesta. Vuelve a intentarlo.");
-            }
+            if (!json || !json.entryZone) throw new Error("La IA no pudo estructurar la respuesta. Vuelve a intentarlo.");
             
             setStrategyResult(json);
             
+            // Actualizar caché de IA sin borrar el simLot actual
             setPortfolio(prev => prev.map(x => x.id === strategyItem.id ? {
                 ...x, 
-                strategyCache: { capital: strategyInputs.capital, risk: strategyInputs.risk, result: json }
+                strategyCache: { ...x.strategyCache, capital: strategyInputs.capital, risk: strategyInputs.risk, result: json, simLot }
             } : x));
 
         } catch (e) {
-            console.error("Error en IA Strategy:", e);
             setInfoModal({ isOpen: true, title: 'Error de IA', msg: e.message || 'Se agotó el tiempo de espera. Inténtalo de nuevo.', type: 'error' });
         } finally {
             setIsGeneratingStrategy(false);
         }
     };
 
-    // 2. Transferir datos de IA al Lote de Simulación
     const transferStrategyToSimLot = () => {
         if (!strategyResult) return;
         setSimLot(prev => ({
@@ -2456,82 +2471,37 @@ const handleGenerateStrategy = async () => {
         }));
     };
 
-    // 3. Añadir el lote simulado realmente a la cartera
     const handleAddSimulatedLot = () => {
         const sShares = parseFloat(simLot.shares);
         if (isNaN(sShares) || sShares <= 0) return alert("Introduce un número de acciones válido.");
-        
         let currentLots = strategyItem.lots || [];
         
-        // Si la ficha no tenía lotes previos, crear el primero con los datos base de la acción
         if (currentLots.length === 0 && strategyItem.shares > 0) {
-            currentLots.push({
-                id: Date.now() - 1000, 
-                date: strategyItem.buyDate, 
-                shares: strategyItem.shares,
-                price: strategyItem.buyPrice, 
-                fx: strategyItem.buyFx,
-                fees: strategyItem.fees, 
-                adj: strategyItem.adjustments, 
-                pe: strategyItem.buyPE
-            });
+            currentLots.push({ id: Date.now() - 1000, date: strategyItem.buyDate, shares: strategyItem.shares, price: strategyItem.buyPrice, fx: strategyItem.buyFx, fees: strategyItem.fees, adj: strategyItem.adjustments, pe: strategyItem.buyPE });
         }
-
-        // Añadir el nuevo lote
-        const newLot = {
-            id: Date.now(),
-            date: simLot.date,
-            shares: sShares,
-            price: parseFloat(simLot.price) || 0,
-            fx: parseFloat(simLot.fx) || 1,
-            fees: parseFloat(simLot.fees) || 0,
-            adj: parseFloat(simLot.adj) || 0,
-            pe: strategyItem.currentPE || 0 // Hereda el PER actual
-        };
+        currentLots.push({ id: Date.now(), date: simLot.date, shares: sShares, price: parseFloat(simLot.price) || 0, fx: parseFloat(simLot.fx) || 1, fees: parseFloat(simLot.fees) || 0, adj: parseFloat(simLot.adj) || 0, pe: strategyItem.currentPE || 0 });
         
-        currentLots.push(newLot);
-
-        // Recalcular promedios totales
-        let tShares = 0, tCostBase = 0, tCostFx = 0, tFees = 0, tAdj = 0, tPE = 0;
-        let oldestDate = null;
-
+        let tShares = 0, tCostBase = 0, tCostFx = 0, tFees = 0, tAdj = 0, tPE = 0, oldestDate = null;
         currentLots.forEach(l => {
-            const ls = parseFloat(l.shares) || 0;
-            const lp = parseFloat(l.price) || 0;
-            const lfx = parseFloat(l.fx) || 1;
-            
-            tShares += ls;
-            tCostBase += (ls * lp);
-            tCostFx += (ls * lp * lfx);
-            tFees += (parseFloat(l.fees) || 0);
-            tAdj += (parseFloat(l.adj) || 0);
-            tPE += (ls * (parseFloat(l.pe) || 0));
-
-            if (l.date && l.date.length === 10) {
-                if (!oldestDate || new Date(l.date) < new Date(oldestDate)) oldestDate = l.date;
-            }
+            const ls = parseFloat(l.shares) || 0; const lp = parseFloat(l.price) || 0; const lfx = parseFloat(l.fx) || 1;
+            tShares += ls; tCostBase += (ls * lp); tCostFx += (ls * lp * lfx);
+            tFees += (parseFloat(l.fees) || 0); tAdj += (parseFloat(l.adj) || 0); tPE += (ls * (parseFloat(l.pe) || 0));
+            if (l.date && l.date.length === 10) { if (!oldestDate || new Date(l.date) < new Date(oldestDate)) oldestDate = l.date; }
         });
 
-        const newAvgPrice = tShares > 0 ? tCostBase / tShares : 0;
-        const newAvgFx = tCostBase > 0 ? tCostFx / tCostBase : 1;
-        const newAvgPE = tShares > 0 ? tPE / tShares : 0;
-
         const updatedItem = {
-            ...strategyItem,
-            lots: currentLots,
-            shares: Math.round(tShares * 1000000) / 1000000,
-            buyPrice: Math.round(newAvgPrice * 1000000) / 1000000,
-            buyFx: Math.round(newAvgFx * 1000000) / 1000000,
-            buyPE: Math.round(newAvgPE * 100) / 100,
-            fees: Math.round(tFees * 100) / 100,
-            adjustments: Math.round(tAdj * 100) / 100,
-            buyDate: oldestDate || strategyItem.buyDate
+            ...strategyItem, lots: currentLots,
+            shares: Math.round(tShares * 1000000) / 1000000, buyPrice: Math.round((tShares > 0 ? tCostBase / tShares : 0) * 1000000) / 1000000, buyFx: Math.round((tCostBase > 0 ? tCostFx / tCostBase : 1) * 1000000) / 1000000,
+            buyPE: Math.round((tShares > 0 ? tPE / tShares : 0) * 100) / 100, fees: Math.round(tFees * 100) / 100, adjustments: Math.round(tAdj * 100) / 100, buyDate: oldestDate || strategyItem.buyDate,
+            strategyCache: { ...strategyItem.strategyCache, simLot: null } // Limpiamos el lote simulado porque ya se ejecutó
         };
 
         setPortfolio(prev => prev.map(x => x.id === strategyItem.id ? updatedItem : x));
         setIsStrategyModalOpen(false);
-        setInfoModal({ isOpen: true, title: 'Lote Añadido', msg: 'El nuevo lote ha sido incorporado y los promedios recalculados con éxito.', type: 'success' });
+        setInfoModal({ isOpen: true, title: 'Lote Añadido', msg: 'Lote incorporado y promedios recalculados con éxito.', type: 'success' });
+        setTimeout(() => setStrategyItem(null), 300);
     };
+
 
 
     // --- 1. LÓGICA DE APERTURA DE MERCADOS ---
@@ -3871,221 +3841,220 @@ const RenderHistoryCard = () => {
             {/* MODAL COMPLEJO: ESTRATEGIAS, PROMEDIOS Y TRADING IA       */}
             {/* ========================================================= */}
             {strategyItem && (
-            <Modal isOpen={isStrategyModalOpen} title={`Estrategia Integral: ${strategyItem.ticker}`} onClose={() => setIsStrategyModalOpen(false)} size="lg">
+            <Modal isOpen={isStrategyModalOpen} title={`Estrategia Integral: ${strategyItem.ticker}`} onClose={closeStrategyModal} size="lg">
+
                 <div className="space-y-6 p-1">
-                    
-                    {/* PANEL 1: ESTRATEGIA DE PROMEDIO A LA BAJA U OTRAS */}
-                    <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 shadow-xl relative overflow-hidden">
-                        <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
-                        <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-2">
-                            <h3 className="text-sm font-bold text-blue-400 uppercase tracking-widest flex items-center gap-2"><Icons.Grid size={16}/> Estrategia de Promedio (Lotes)</h3>
-                            <div className="flex items-center gap-2">
-                                <button onClick={handleAddSimulatedLot} disabled={!(parseFloat(simLot.shares)>0)} className="bg-green-600 hover:bg-green-500 disabled:bg-slate-700 disabled:text-slate-500 text-white px-4 py-1.5 rounded-lg font-bold text-[10px] shadow-lg transition-colors uppercase">
-                                    <Icons.Plus size={12} className="inline mr-1"/> Añadir Lote
-                                </button>
-                                <button onClick={() => { setIsStrategyModalOpen(false); onAnalyze(strategyItem.ticker); }} className="bg-blue-900/30 hover:bg-blue-600 border border-blue-500/50 text-blue-300 hover:text-white px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 transition-colors">
-                                    <Icons.Search size={12}/> ESTUDIO PROFUNDO
-                                </button>
-                            </div>
-                        </div>
 
-                        {/* SISTEMA DE REJILLA HOMOGÉNEA (7 COLUMNAS) */}
-                        <div className="grid grid-cols-[80px_1fr_1fr_1fr_1fr_1fr_90px] gap-2 text-[9px] uppercase font-bold text-slate-500 text-right mb-2">
-                            <div className="text-center">Fecha</div><div>Unidades</div><div>P. Medio</div><div>FX Medio</div><div>FX Desv.</div><div className="text-center">Gtos/Adj</div><div>Coste Total</div>
-                        </div>
 
-                        {(() => {
-                            // CÁLCULOS BASE
-                            const curP = strategyItem.isIndex ? (strategyItem.currentPrice / (strategyItem.indexDivisor || 1)) : strategyItem.currentPrice;
-                            const curF = strategyItem.isIndex ? strategyItem.buyFx : strategyItem.currentFx;
-                            
-                            // LÍNEA 1: ACTUAL
-                            const cS = strategyItem.shares || 0; 
-                            const cP = strategyItem.buyPrice || 0; 
-                            const cFx = strategyItem.buyFx || 1;
-                            const cFees = strategyItem.feesIncludedInPrice ? 0 : (strategyItem.fees || 0);
-                            const cAdj = strategyItem.adjustments || 0;
-                            const cCost = (cS * cP * cFx) + cFees + cAdj;
-                            const cFxDev = strategyItem.isIndex ? 0 : (cS * curP * (curF - cFx));
-
-                            // LÍNEA 2: SIMULACIÓN
-                            const sS = parseFloat(simLot.shares) || 0; 
-                            const sP = parseFloat(simLot.price) || 0; 
-                            const sFx = parseFloat(simLot.fx) || 1;
-                            const sFees = strategyItem.feesIncludedInPrice ? 0 : (parseFloat(simLot.fees) || 0);
-                            const sAdj = parseFloat(simLot.adj) || 0;
-                            const sCost = (sS * sP * sFx) + sFees + sAdj;
-                            const sFxDev = strategyItem.isIndex ? 0 : (sS * curP * (curF - sFx));
-
-                            // LÍNEA 3: PROYECCIÓN COMBINADA
-                            const tShares = cS + sS;
-                            const tCostBase = (cS * cP) + (sS * sP);
-                            const newAvgP = tShares > 0 ? tCostBase / tShares : 0;
-                            const tCostFx = (cS * cP * cFx) + (sS * sP * sFx);
-                            const newAvgFx = tCostBase > 0 ? tCostFx / tCostBase : 1;
-                            const tFees = cFees + sFees;
-                            const tAdj = cAdj + sAdj;
-                            const tCostFinal = tCostFx + tFees + tAdj;
-                            const tFxDev = cFxDev + sFxDev;
-
-                            return (
-                                <div className="space-y-2">
-                                    {/* FILA 1: ACTUAL */}
-                                    <div className="grid grid-cols-[80px_1fr_1fr_1fr_1fr_1fr_90px] gap-2 items-center bg-slate-800/50 p-2 rounded-lg border border-slate-700 text-right text-[11px]">
-                                        <div className="text-center text-[10px] text-slate-400 font-mono">ACTUAL</div>
-                                        <div className="font-bold text-white">{formatN(cS)}</div>
-                                        <div className="font-bold text-white">{formatN(cP)}</div>
-                                        <div className="text-slate-300 font-mono">{formatN(cFx, 4)}</div>
-                                        <div className={`font-bold font-mono ${cFxDev >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(cFxDev, baseCurrency)}</div>
-                                        <div className="text-center text-slate-400 text-[10px]">{formatN(cFees)} / {formatN(cAdj)}</div>
-                                        <div className="font-mono font-bold text-blue-300">{formatMoney(cCost, baseCurrency)}</div>
-                                    </div>
-
-                                    {/* FILA 2: SIMULACIÓN (Inputs) */}
-                                    <div className="grid grid-cols-[80px_1fr_1fr_1fr_1fr_1fr_90px] gap-2 items-center bg-slate-950 p-2 rounded-lg border border-blue-500/40 shadow-inner text-right text-[11px]">
-                                        <input type="date" value={simLot.date} onChange={e => setSimLot({...simLot, date: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-1 text-[10px] text-center focus:border-blue-500 outline-none text-white"/>
-                                        <input type="number" value={simLot.shares} placeholder="0" onChange={e => setSimLot({...simLot, shares: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-1 font-bold text-right text-white focus:border-blue-500 outline-none"/>
-                                        <input type="number" step="0.01" value={simLot.price} placeholder="0.00" onChange={e => setSimLot({...simLot, price: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-1 font-bold text-right text-white focus:border-blue-500 outline-none"/>
-                                        <input type="number" step="0.0001" value={simLot.fx} onChange={e => setSimLot({...simLot, fx: e.target.value})} disabled={strategyItem.stockCurrency === baseCurrency} className={`w-full bg-slate-900 border border-slate-700 rounded p-1 text-right text-white outline-none ${strategyItem.stockCurrency === baseCurrency ? 'opacity-50' : 'focus:border-blue-500'}`}/>
-                                        <div className={`font-bold font-mono ${sFxDev >= 0 ? 'text-green-400' : 'text-red-400'}`}>{sS > 0 ? formatMoney(sFxDev, baseCurrency) : '-'}</div>
-                                        <div className="flex gap-1">
-                                            <input type="number" value={simLot.fees} placeholder="Gt" onChange={e => setSimLot({...simLot, fees: e.target.value})} className="w-1/2 bg-slate-900 border border-slate-700 rounded p-1 text-[10px] text-center text-white outline-none"/>
-                                            <input type="number" value={simLot.adj} placeholder="Ad" onChange={e => setSimLot({...simLot, adj: e.target.value})} className="w-1/2 bg-slate-900 border border-slate-700 rounded p-1 text-[10px] text-center text-white outline-none"/>
-                                        </div>
-                                        <div className="font-mono font-bold text-green-400">{formatMoney(sCost, baseCurrency)}</div>
-                                    </div>
-
-                                    {/* FILA 3: PROYECCIÓN COMBINADA */}
-                                    <div className="grid grid-cols-[80px_1fr_1fr_1fr_1fr_1fr_90px] gap-2 items-center bg-blue-900/20 p-2 rounded-lg border border-blue-500/50 text-right text-[11px] mt-2">
-                                        <div className="text-center text-[10px] text-blue-300 font-bold uppercase">PROYECCIÓN</div>
-                                        <div className="font-bold text-white">{formatN(tShares)}</div>
-                                        <div className={`font-bold ${newAvgP < cP ? 'text-green-400' : newAvgP > cP ? 'text-orange-400' : 'text-white'}`}>{formatN(newAvgP)}</div>
-                                        <div className="text-slate-200 font-mono">{formatN(newAvgFx, 4)}</div>
-                                        <div className={`font-bold font-mono ${tFxDev >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(tFxDev, baseCurrency)}</div>
-                                        <div className="text-center text-slate-400 text-[10px]">{formatN(tFees)} / {formatN(tAdj)}</div>
-                                        <div className="font-mono font-black text-blue-300">{formatMoney(tCostFinal, baseCurrency)}</div>
+                   {/* PANEL 1: ESTRATEGIA DE PROMEDIO A LA BAJA U OTRAS */}
+                            <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 shadow-xl relative overflow-hidden">
+                                <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
+                                <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-2">
+                                    <h3 className="text-sm font-bold text-blue-400 uppercase tracking-widest flex items-center gap-2"><Icons.Grid size={16}/> Estrategia de Promedio (Lotes)</h3>
+                                    <div className="flex items-center gap-2">
+                                        <button onClick={handleAddSimulatedLot} disabled={!(parseFloat(simLot.shares)>0)} className="bg-green-600 hover:bg-green-500 disabled:bg-slate-700 disabled:text-slate-500 text-white px-4 py-1.5 rounded-lg font-bold text-[10px] shadow-lg transition-colors uppercase">
+                                            <Icons.Plus size={12} className="inline mr-1"/> Añadir Lote
+                                        </button>
+                                        <button onClick={() => { closeStrategyModal(); onAnalyze(strategyItem.ticker); }} className="bg-blue-900/30 hover:bg-blue-600 border border-blue-500/50 text-blue-300 hover:text-white px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 transition-colors">
+                                            <Icons.Search size={12}/> ESTUDIO PROFUNDO
+                                        </button>
                                     </div>
                                 </div>
-                            );
-                        })()}
-                    </div>
 
-
-                    {/* PANEL 2: ESTRATEGIAS DE COMPRA / VENTA (IA) */}
-                    <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 shadow-xl relative overflow-hidden">
-                        <div className="absolute top-0 left-0 w-1 h-full bg-purple-500"></div>
-                        <h3 className="text-sm font-bold text-purple-400 uppercase tracking-widest flex items-center gap-2 mb-4 border-b border-slate-800 pb-2"><Icons.TrendingUp size={16}/> Estrategias de Compra / Venta (iA Wall Street)</h3>
-                        
-                        <div className="grid grid-cols-2 gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800 mb-4 shadow-inner">
-                            <div>
-                                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Capital a Invertir ({baseCurrency}):</label>
-                                <input type="number" value={strategyInputs.capital} onChange={e => setStrategyInputs({...strategyInputs, capital: parseFloat(e.target.value)})} className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm font-bold text-white focus:border-purple-500 outline-none"/>
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Riesgo Máx. Asumible (%):</label>
-                                <div className="flex items-center gap-2">
-                                    <input type="number" step="0.5" value={strategyInputs.risk} onChange={e => setStrategyInputs({...strategyInputs, risk: parseFloat(e.target.value)})} className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm font-bold text-white focus:border-purple-500 outline-none"/>
-                                    <span className="text-[10px] font-mono text-red-400 whitespace-nowrap bg-red-900/20 px-2 py-1 rounded border border-red-500/20">Pérdida Máx: {formatMoney(strategyInputs.capital * (strategyInputs.risk/100), baseCurrency)}</span>
+                                <div className="grid grid-cols-[80px_1fr_1fr_1fr_1fr_1fr_90px] gap-2 text-[9px] uppercase font-bold text-slate-500 text-right mb-2">
+                                    <div className="text-center">Fecha</div><div>Unidades</div><div>P. Medio</div><div>FX Medio</div><div>FX Desv.</div><div className="text-center">Gtos/Adj</div><div>Coste Total</div>
                                 </div>
-                            </div>
-                        </div>
 
-                        <button onClick={handleGenerateStrategy} disabled={isGeneratingStrategy} className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white py-3 rounded-xl font-black uppercase text-[11px] tracking-widest shadow-lg shadow-purple-900/20 transition-all flex items-center justify-center gap-2 mb-6">
-                            {isGeneratingStrategy ? <Icons.Loader size={16} className="animate-spin" /> : <Icons.Wand size={16}/>}
-                            {isGeneratingStrategy ? 'Diseñando Estrategia...' : 'Generar Plan de Inversión'}
-                        </button>
+                                {(() => {
+                                    // LÍNEA 1: ACTUAL
+                                    const cS = strategyItem.shares || 0; const cP = strategyItem.buyPrice || 0; const cFx = strategyItem.buyFx || 1;
+                                    const cFees = strategyItem.feesIncludedInPrice ? 0 : (strategyItem.fees || 0); const cAdj = strategyItem.adjustments || 0;
+                                    const cCost = (cS * cP * cFx) + cFees + cAdj;
+                                    const cFxDev = strategyItem.isIndex ? 0 : (cS * curP * (curF - cFx));
 
-                        {/* RESULTADO DE LA IA */}
-                        {strategyResult && (
-                            <div className="fade-in space-y-4">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    
-                                    {/* Caja Compra y Stops */}
-                                    <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
-                                        <div className="flex justify-between items-center mb-3 border-b border-slate-700 pb-2">
-                                            <span className="text-[10px] uppercase font-bold text-slate-400">Entrada Recomendada</span>
-                                            <span className="text-lg font-black text-blue-400 font-mono">{formatN(strategyResult.entryZone)}</span>
-                                        </div>
-                                        <div className="space-y-2 pt-1">
-                                            <div className="flex justify-between items-center text-[11px]">
-                                                <span className="text-red-400 font-bold">Stop Loss 1</span>
-                                                <div className="text-right font-mono">
-                                                    <span className="text-white mr-2">{formatN(strategyResult.stopLoss1?.price)}</span>
-                                                    <span className="text-red-400 bg-red-900/30 px-1 rounded">{formatN(strategyResult.stopLoss1?.pct)}%</span>
+                                    // LÍNEA 2: SIMULACIÓN
+                                    const sS = parseFloat(simLot.shares) || 0; const sP = parseFloat(simLot.price) || 0; const sFx = parseFloat(simLot.fx) || 1;
+                                    const sFees = strategyItem.feesIncludedInPrice ? 0 : (parseFloat(simLot.fees) || 0); const sAdj = parseFloat(simLot.adj) || 0;
+                                    const sCost = (sS * sP * sFx) + sFees + sAdj;
+                                    const sFxDev = strategyItem.isIndex ? 0 : (sS * curP * (curF - sFx));
+
+                                    // LÍNEA 3: PROYECCIÓN COMBINADA
+                                    const tShares = cS + sS; const tCostBase = (cS * cP) + (sS * sP);
+                                    const newAvgP = tShares > 0 ? tCostBase / tShares : 0;
+                                    const tCostFx = (cS * cP * cFx) + (sS * sP * sFx);
+                                    const newAvgFx = tCostBase > 0 ? tCostFx / tCostBase : 1;
+                                    const tCostFinal = tCostFx + cFees + sFees + cAdj + sAdj;
+                                    const tFxDev = cFxDev + sFxDev;
+
+                                    return (
+                                        <div className="space-y-2">
+                                            <div className="grid grid-cols-[80px_1fr_1fr_1fr_1fr_1fr_90px] gap-2 items-center bg-slate-800/50 p-2 rounded-lg border border-slate-700 text-right text-[11px]">
+                                                <div className="text-center text-[10px] text-slate-400 font-mono">ACTUAL</div>
+                                                <div className="font-bold text-white">{formatN(cS)}</div>
+                                                <div className="font-bold text-white">{formatN(cP)}</div>
+                                                <div className="text-slate-300 font-mono">{formatN(cFx, 4)}</div>
+                                                <div className={`font-bold font-mono ${cFxDev >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(cFxDev, baseCurrency)}</div>
+                                                <div className="text-center text-slate-400 text-[10px]">{formatN(cFees)} / {formatN(cAdj)}</div>
+                                                <div className="font-mono font-bold text-blue-300">{formatMoney(cCost, baseCurrency)}</div>
+                                            </div>
+
+                                            <div className="grid grid-cols-[80px_1fr_1fr_1fr_1fr_1fr_90px] gap-2 items-center bg-slate-950 p-2 rounded-lg border border-blue-500/40 shadow-inner text-right text-[11px]">
+                                                <input type="date" value={simLot.date} onChange={e => setSimLot({...simLot, date: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-1 text-[10px] text-center focus:border-blue-500 outline-none text-white"/>
+                                                <input type="number" value={simLot.shares} placeholder="0" onChange={e => setSimLot({...simLot, shares: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-1 font-bold text-right text-white focus:border-blue-500 outline-none"/>
+                                                <input type="number" step="0.01" value={simLot.price} placeholder="0.00" onChange={e => setSimLot({...simLot, price: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-1 font-bold text-right text-white focus:border-blue-500 outline-none"/>
+                                                <input type="number" step="0.0001" value={simLot.fx} onChange={e => setSimLot({...simLot, fx: e.target.value})} disabled={strategyItem.stockCurrency === baseCurrency} className={`w-full bg-slate-900 border border-slate-700 rounded p-1 text-right text-white outline-none ${strategyItem.stockCurrency === baseCurrency ? 'opacity-50' : 'focus:border-blue-500'}`}/>
+                                                <div className={`font-bold font-mono ${sFxDev >= 0 ? 'text-green-400' : 'text-red-400'}`}>{sS > 0 ? formatMoney(sFxDev, baseCurrency) : '-'}</div>
+                                                <div className="flex gap-1">
+                                                    <input type="number" value={simLot.fees} placeholder="Gt" onChange={e => setSimLot({...simLot, fees: e.target.value})} className="w-1/2 bg-slate-900 border border-slate-700 rounded p-1 text-[10px] text-center text-white outline-none"/>
+                                                    <input type="number" value={simLot.adj} placeholder="Ad" onChange={e => setSimLot({...simLot, adj: e.target.value})} className="w-1/2 bg-slate-900 border border-slate-700 rounded p-1 text-[10px] text-center text-white outline-none"/>
                                                 </div>
+                                                <div className="font-mono font-bold text-green-400">{formatMoney(sCost, baseCurrency)}</div>
                                             </div>
-                                            <div className="flex justify-between items-center text-[11px]">
-                                                <span className="text-red-500 font-bold">Stop Loss 2</span>
-                                                <div className="text-right font-mono">
-                                                    <span className="text-white mr-2">{formatN(strategyResult.stopLoss2?.price)}</span>
-                                                    <span className="text-red-500 bg-red-900/30 px-1 rounded">{formatN(strategyResult.stopLoss2?.pct)}%</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
 
-                                    {/* Caja Objetivos */}
-                                    <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
-                                        <div className="flex justify-between items-center mb-3 border-b border-slate-700 pb-2">
-                                            <span className="text-[10px] uppercase font-bold text-slate-400">Objetivos (Take Profit)</span>
-                                            <span className="text-[10px] font-bold text-green-400 bg-green-900/20 px-2 py-0.5 rounded border border-green-500/20">Prob: {strategyResult.successProb}</span>
-                                        </div>
-                                        <div className="space-y-2 pt-1">
-                                            <div className="flex justify-between items-center text-[11px]">
-                                                <span className="text-green-300 font-bold">Target 1</span>
-                                                <div className="text-right font-mono"><span className="text-white mr-2">{formatN(strategyResult.target1?.price)}</span><span className="text-green-400">+{formatN(strategyResult.target1?.pct)}%</span></div>
-                                            </div>
-                                            <div className="flex justify-between items-center text-[11px]">
-                                                <span className="text-green-400 font-bold">Target 2</span>
-                                                <div className="text-right font-mono"><span className="text-white mr-2">{formatN(strategyResult.target2?.price)}</span><span className="text-green-400">+{formatN(strategyResult.target2?.pct)}%</span></div>
-                                            </div>
-                                            <div className="flex justify-between items-center text-[11px]">
-                                                <span className="text-green-500 font-bold">Target 3</span>
-                                                <div className="text-right font-mono"><span className="text-white mr-2">{formatN(strategyResult.target3?.price)}</span><span className="text-green-400">+{formatN(strategyResult.target3?.pct)}%</span></div>
+                                            <div className="grid grid-cols-[80px_1fr_1fr_1fr_1fr_1fr_90px] gap-2 items-center bg-blue-900/20 p-2 rounded-lg border border-blue-500/50 text-right text-[11px] mt-2">
+                                                <div className="text-center text-[10px] text-blue-300 font-bold uppercase">PROYECCIÓN</div>
+                                                <div className="font-bold text-white">{formatN(tShares)}</div>
+                                                <div className={`font-bold ${newAvgP < cP ? 'text-green-400' : newAvgP > cP ? 'text-orange-400' : 'text-white'}`}>{formatN(newAvgP)}</div>
+                                                <div className="text-slate-200 font-mono">{formatN(newAvgFx, 4)}</div>
+                                                <div className={`font-bold font-mono ${tFxDev >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(tFxDev, baseCurrency)}</div>
+                                                <div className="text-center text-slate-400 text-[10px]">{formatN(cFees + sFees)} / {formatN(cAdj + sAdj)}</div>
+                                                <div className="font-mono font-black text-blue-300">{formatMoney(tCostFinal, baseCurrency)}</div>
                                             </div>
                                         </div>
-                                    </div>
-                                </div>
+                                    );
+                                })()}
+                            </div>
 
-                                {/* Tamaño Óptimo y Traslado */}
-                                <div className="bg-blue-900/20 border border-blue-500/40 p-4 rounded-xl flex items-center justify-between">
+                            {/* PANEL 2: ESTRATEGIAS DE COMPRA / VENTA (IA) */}
+                            <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 shadow-xl relative overflow-hidden">
+                                <div className="absolute top-0 left-0 w-1 h-full bg-purple-500"></div>
+                                <h3 className="text-sm font-bold text-purple-400 uppercase tracking-widest flex items-center gap-2 mb-4 border-b border-slate-800 pb-2"><Icons.TrendingUp size={16}/> Estrategias de Compra / Venta (iA Wall Street)</h3>
+                                
+                                <div className="grid grid-cols-2 gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800 mb-4 shadow-inner">
                                     <div>
-                                        <div className="text-[10px] text-blue-300 uppercase font-bold mb-1">Tamaño Posición (Según Riesgo)</div>
-                                        <div className="text-xl font-black text-white font-mono">{strategyResult.optimalShares} Acciones</div>
+                                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Capital a Invertir ({baseCurrency}):</label>
+                                        <input type="number" value={strategyInputs.capital} onChange={e => setStrategyInputs({...strategyInputs, capital: parseFloat(e.target.value)})} className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm font-bold text-white focus:border-purple-500 outline-none"/>
                                     </div>
-                                    <button onClick={transferStrategyToSimLot} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-[10px] uppercase transition-colors shadow-lg flex items-center gap-2">
-                                        <Icons.Upload size={14} className="rotate-180" /> Trasladar orden al panel superior
-                                    </button>
-                                </div>
-
-                                {/* Veredicto y Contexto Técnico */}
-                                <div className="space-y-2">
-                                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 border-l-4 border-l-blue-500">
-                                        <h4 className="text-[10px] font-bold text-blue-400 uppercase mb-1 flex items-center gap-1">
-                                            <Icons.Search size={12}/> Verificación Técnica (Datos Reales Relevados)
-                                        </h4>
-                                        <p className="text-[11px] text-slate-300 leading-relaxed font-mono">
-                                            {strategyResult.technicalContext || "Soportes/Resistencias extraídos del gráfico actual."}
-                                        </p>
-                                    </div>
-
-                                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 border-l-4 border-l-purple-500">
-                                        <h4 className="text-[10px] font-bold text-purple-400 uppercase mb-1 flex items-center gap-1">
-                                            <Icons.MessageCircle size={12}/> Comentario Analista
-                                        </h4>
-                                        <p className="text-[11px] text-slate-300 leading-relaxed">
-                                            {strategyResult.recommendation}
-                                        </p>
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Riesgo Máx. Asumible (%):</label>
+                                        <div className="flex items-center gap-2">
+                                            <input type="number" step="0.5" value={strategyInputs.risk} onChange={e => setStrategyInputs({...strategyInputs, risk: parseFloat(e.target.value)})} className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm font-bold text-white focus:border-purple-500 outline-none"/>
+                                            <span className="text-[10px] font-mono text-red-400 whitespace-nowrap bg-red-900/20 px-2 py-1 rounded border border-red-500/20">Pérdida Máx: {formatMoney(strategyInputs.capital * (strategyInputs.risk/100), baseCurrency)}</span>
+                                        </div>
                                     </div>
                                 </div>
 
+                                <button onClick={handleGenerateStrategy} disabled={isGeneratingStrategy} className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white py-3 rounded-xl font-black uppercase text-[11px] tracking-widest shadow-lg shadow-purple-900/20 transition-all flex items-center justify-center gap-2 mb-6">
+                                    {isGeneratingStrategy ? <Icons.Loader size={16} className="animate-spin" /> : <Icons.Wand size={16}/>}
+                                    {isGeneratingStrategy ? 'Buscando Datos y Diseñando Estrategia...' : 'Generar Plan de Inversión'}
+                                </button>
+
+                                {/* RESULTADO DE LA IA */}
+                                {strategyResult && (
+                                    <div className="fade-in space-y-4">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            
+                                            {/* Caja Compra y Stops con Cálculo de Desviación */}
+                                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
+                                                <div className="flex justify-between items-start mb-3 border-b border-slate-700 pb-2">
+                                                    <div className="flex flex-col">
+                                                        <span className="text-[10px] uppercase font-bold text-slate-400">Entrada Recomendada</span>
+                                                        <span className="text-[10px] text-slate-500 font-mono mt-1">Actual: [{formatN(curP)}]</span>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <div className="text-lg font-black text-blue-400 font-mono leading-none">{formatN(strategyResult.entryZone)}</div>
+                                                        {(() => {
+                                                            const devM = strategyResult.entryZone - curP;
+                                                            const devP = curP > 0 ? (devM / curP) * 100 : 0;
+                                                            return (
+                                                                <div className={`text-[10px] font-mono font-bold mt-1 ${devM <= 0 ? 'text-red-400' : 'text-green-400'}`}>
+                                                                    Desv: {devM > 0 ? '+' : ''}{formatN(devM)} ({devP > 0 ? '+' : ''}{formatN(devP)}%)
+                                                                </div>
+                                                            );
+                                                        })()}
+                                                    </div>
+                                                </div>
+                                                <div className="space-y-2 pt-1">
+                                                    <div className="flex justify-between items-center text-[11px]">
+                                                        <span className="text-red-400 font-bold">Stop Loss 1</span>
+                                                        <div className="text-right font-mono">
+                                                            <span className="text-white mr-2">{formatN(strategyResult.stopLoss1?.price)}</span>
+                                                            <span className="text-red-400 bg-red-900/30 px-1 rounded">{formatN(strategyResult.stopLoss1?.pct)}%</span>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex justify-between items-center text-[11px]">
+                                                        <span className="text-red-500 font-bold">Stop Loss 2</span>
+                                                        <div className="text-right font-mono">
+                                                            <span className="text-white mr-2">{formatN(strategyResult.stopLoss2?.price)}</span>
+                                                            <span className="text-red-500 bg-red-900/30 px-1 rounded">{formatN(strategyResult.stopLoss2?.pct)}%</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Caja Objetivos */}
+                                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
+                                                <div className="flex justify-between items-center mb-3 border-b border-slate-700 pb-2">
+                                                    <span className="text-[10px] uppercase font-bold text-slate-400">Objetivos (Take Profit)</span>
+                                                    <span className="text-[10px] font-bold text-green-400 bg-green-900/20 px-2 py-0.5 rounded border border-green-500/20">Prob: {strategyResult.successProb}</span>
+                                                </div>
+                                                <div className="space-y-2 pt-1">
+                                                    <div className="flex justify-between items-center text-[11px]">
+                                                        <span className="text-green-300 font-bold">Target 1</span>
+                                                        <div className="text-right font-mono"><span className="text-white mr-2">{formatN(strategyResult.target1?.price)}</span><span className="text-green-400">+{formatN(strategyResult.target1?.pct)}%</span></div>
+                                                    </div>
+                                                    <div className="flex justify-between items-center text-[11px]">
+                                                        <span className="text-green-400 font-bold">Target 2</span>
+                                                        <div className="text-right font-mono"><span className="text-white mr-2">{formatN(strategyResult.target2?.price)}</span><span className="text-green-400">+{formatN(strategyResult.target2?.pct)}%</span></div>
+                                                    </div>
+                                                    <div className="flex justify-between items-center text-[11px]">
+                                                        <span className="text-green-500 font-bold">Target 3</span>
+                                                        <div className="text-right font-mono"><span className="text-white mr-2">{formatN(strategyResult.target3?.price)}</span><span className="text-green-400">+{formatN(strategyResult.target3?.pct)}%</span></div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Tamaño Óptimo y Traslado */}
+                                        <div className="bg-blue-900/20 border border-blue-500/40 p-4 rounded-xl flex items-center justify-between">
+                                            <div>
+                                                <div className="text-[10px] text-blue-300 uppercase font-bold mb-1">Tamaño Posición (Según Riesgo)</div>
+                                                <div className="text-xl font-black text-white font-mono">{strategyResult.optimalShares} Acciones</div>
+                                            </div>
+                                            <button onClick={transferStrategyToSimLot} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-[10px] uppercase transition-colors shadow-lg flex items-center gap-2">
+                                                <Icons.Upload size={14} className="rotate-180" /> Trasladar orden al panel superior
+                                            </button>
+                                        </div>
+
+                                        {/* Veredicto y Contexto Técnico */}
+                                        <div className="space-y-2">
+                                            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 border-l-4 border-l-blue-500">
+                                                <h4 className="text-[10px] font-bold text-blue-400 uppercase mb-1 flex items-center gap-1">
+                                                    <Icons.Search size={12}/> Verificación Técnica (Datos Reales)
+                                                </h4>
+                                                <p className="text-[11px] text-slate-300 leading-relaxed font-mono">
+                                                    {strategyResult.technicalContext || "Soportes/Resistencias extraídos del gráfico actual."}
+                                                </p>
+                                            </div>
+
+                                            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 border-l-4 border-l-purple-500">
+                                                <h4 className="text-[10px] font-bold text-purple-400 uppercase mb-1 flex items-center gap-1">
+                                                    <Icons.MessageCircle size={12}/> Comentario Analista
+                                                </h4>
+                                                <p className="text-[11px] text-slate-300 leading-relaxed">
+                                                    {strategyResult.recommendation}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
-                        )}
-                    </div>
-                </div>
+                        </div>
+                    );
+                })()}
             </Modal>
-            )}  
-   
+            )} 
+ 
         </div>
     );
 };
