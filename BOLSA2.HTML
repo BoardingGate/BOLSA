@@ -2354,7 +2354,6 @@ const TradingViewMarketWidget = () => {
       };
 
 
-
 const calculateFIFODetail = (p, qtyToSell) => {
     const fDateEU = (d) => d ? d.split('-').reverse().join('-') : '';
     const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
@@ -2386,7 +2385,9 @@ const calculateFIFODetail = (p, qtyToSell) => {
         extracted.fees = r2(extracted.fees + (lot.fees * ratio));
         extracted.adj = r2(extracted.adj + (lot.adj * ratio));
         extracted.weightedTime += (new Date(lot.date).getTime() * take);
-        extracted.desc.push(`${formatN(take)} acc. del ${fDateEU(lot.date)}`);
+        
+        // DESGLOSE DETALLADO POR LOTE PARA EL LOG
+        extracted.desc.push(`• ${formatN(take)} acc. del ${fDateEU(lot.date)} [Precio: ${formatN(lot.price, 3)} | FX: ${formatN(lot.fx, 4)} | Gtos+Adj: ${formatN(lot.fees + lot.adj)}]`);
 
         if (lot.shares > take) {
             newLots.push({
@@ -2411,11 +2412,111 @@ const calculateFIFODetail = (p, qtyToSell) => {
             buyDateEU: fDateEU(new Date(extracted.weightedTime / extracted.shares).toISOString().split('T')[0]),
             fees: r2(extracted.fees),
             adj: r2(extracted.adj),
-            summary: extracted.desc.join(' | ')
+            summary: "\n    " + extracted.desc.join('\n    ')
         },
         remainingLots: newLots
     };
 };
+```
+
+### 2. Función de Guardado con Comentario de Auditoría
+Sustituye la función `handleSellSubmit`:
+
+```javascript
+const handleSellSubmit = () => {
+    if (!sellItem) return;
+    const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
+    const r6 = (n) => Math.round((parseFloat(n) || 0) * 1000000) / 1000000;
+    const fDateEU = (d) => d ? d.split('-').reverse().join('-') : '';
+    
+    const isPartial = sellForm.sharesToSell < sellItem.shares;
+    const fifo = calculateFIFODetail(sellItem, sellForm.sharesToSell);
+    const nowEU = new Date().toLocaleDateString('es-ES');
+
+    // Coste de compra original de las acciones vendidas (usando FX histórico FIFO)
+    const totalBuyCost = r2((fifo.extracted.buyPrice * sellForm.sharesToSell * fifo.extracted.buyFx) + 
+                            (sellItem.feesIncludedInPrice ? 0 : fifo.extracted.fees) + 
+                            fifo.extracted.adj);
+
+    // Ingreso neto de la venta (usando FX de venta introducido)
+    const totalSellRevenue = r2((sellForm.sellPrice * sellForm.sharesToSell * sellForm.sellFx) - 
+                                (sellForm.sellFeesIncludedInPrice ? 0 : sellForm.sellFees) - 
+                                sellForm.sellAdjustments);
+
+    const diff = r2(totalSellRevenue - totalBuyCost);
+    const diffPct = totalBuyCost !== 0 ? r2((diff / totalBuyCost) * 100) : 0;
+
+    // COMENTARIO DETALLADO PARA CONSTANCIA DOCUMENTAL
+    const auditComment = `
+--- REGISTRO DE VENTA ${isPartial ? 'PARCIAL' : 'TOTAL'} (${nowEU}) ---
+CANTIDAD: ${formatN(sellForm.sharesToSell)} acciones.
+COMPRA (FIFO Ponderado): P.Medio ${formatN(fifo.extracted.buyPrice, 3)} | FX: ${formatN(fifo.extracted.buyFx, 4)} | Gtos+Adj: ${formatN(fifo.extracted.fees + fifo.extracted.adj)}
+VENTA: Precio ${formatN(sellForm.sellPrice, 3)} | FX: ${formatN(sellForm.sellFx, 4)} | Gtos+Adj: ${formatN(sellForm.sellFees + sellForm.sellAdjustments)}
+BALANCE: Coste ${formatMoney(totalBuyCost, baseCurrency)} | Venta ${formatMoney(totalSellRevenue, baseCurrency)}
+RESULTADO: ${formatMoney(diff, baseCurrency)} (${diffPct}%)
+DETALLE DE LOTES CONSUMIDOS: ${fifo.extracted.summary}`.trim();
+
+    // 1. Registro para el HISTÓRICO (Sin el array de lotes para evitar duplicidad)
+    const soldRecord = {
+        ...sellItem,
+        id: Date.now(),
+        lots: [], 
+        shares: r6(sellForm.sharesToSell),
+        buyPrice: fifo.extracted.buyPrice,
+        buyDate: fifo.extracted.buyDate,
+        buyFx: fifo.extracted.buyFx,
+        fees: fifo.extracted.fees,
+        adjustments: fifo.extracted.adj,
+        isActive: true, 
+        sellDate: sellForm.sellDate,
+        sellPrice: sellForm.sellPrice,
+        sellFx: sellForm.sellFx,
+        sellFees: sellForm.sellFees,
+        sellAdjustments: sellForm.sellAdjustments,
+        sellFeesIncludedInPrice: sellForm.sellFeesIncludedInPrice,
+        dividends: [], 
+        notes: (sellItem.notes || '') + "\n\n" + auditComment
+    };
+
+    let updatedPortfolio = [];
+
+    if (isPartial) {
+        // 2. Actualizar el registro que queda ACTIVO en cartera
+        let rShares = 0, rCostBase = 0, rCostFx = 0, rFees = 0, rAdj = 0;
+        fifo.remainingLots.forEach(l => {
+            rShares += l.shares;
+            rCostBase += (l.shares * l.price);
+            rCostFx += (l.shares * l.price * l.fx);
+            rFees += l.fees;
+            rAdj += l.adj;
+        });
+
+        updatedPortfolio = portfolio.map(p => {
+            if (p.id === sellItem.id) {
+                return {
+                    ...p,
+                    shares: r6(rShares),
+                    buyPrice: r6(rCostBase / rShares),
+                    buyFx: r6(rCostFx / rCostBase),
+                    fees: r2(rFees),
+                    adjustments: r2(rAdj),
+                    lots: fifo.remainingLots,
+                    isActive: true,
+                    notes: (p.notes || '') + `\n\n--- Venta parcial de ${formatN(sellForm.sharesToSell)} acc. el ${fDateEU(sellForm.sellDate)}. Quedan ${formatN(rShares)} acc. ---`
+                };
+            }
+            return p;
+        });
+    } else {
+        // VENTA TOTAL: Desactivar original
+        updatedPortfolio = portfolio.map(p => p.id === sellItem.id ? { ...p, isActive: false } : p);
+    }
+
+    setPortfolio([...updatedPortfolio, soldRecord]);
+    setIsSellModalOpen(false);
+    setInfoModal({ isOpen: true, title: 'Éxito', msg: 'Operación registrada con desglose FIFO detallado.', type: 'success' });
+};
+
 
 
 const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady, _x_lim, _x_trig, globalNotes, setGlobalNotes, onAnalyze, aiModel, gScriptUrl }) => {
