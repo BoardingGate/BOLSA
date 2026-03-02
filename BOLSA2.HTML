@@ -2986,9 +2986,8 @@ const fetchTickerData = async () => {
 
 
 
- // --- NUEVA FUNCIÓN: IMPRESIÓN HISTÓRICA ORDENADA POR FECHA ---
 // --- NUEVA FUNCIÓN: IMPRESIÓN HISTÓRICA MEJORADA ---
-    const handlePrintHistoric = () => {
+const handlePrintHistoric = () => {
         const printWindow = window.open('', '', 'height=800,width=1200');
         const emissionTime = new Date().toLocaleString();
         
@@ -2997,14 +2996,18 @@ const fetchTickerData = async () => {
         visiblePortfolio.forEach(p => {
             const isSold = !!p.sellDate;
             let buyCostForThisAsset = 0; 
-            const originalBuyDate = p.buyDate; // Referencia para la venta
+            const originalBuyDate = p.buyDate;
 
-            // 1. Procesar Compras (Lotes o única)
+            // 1. Extraer Entradas (COMPRAS)
             if (p.lots && p.lots.length > 0) {
                 p.lots.forEach(l => {
                     const lShares = parseFloat(l.shares) || 0;
                     if (lShares <= 0) return;
-                    const lCost = (lShares * (parseFloat(l.price) || 0) * (parseFloat(l.fx) || 1)) + (p.feesIncludedInPrice ? 0 : (parseFloat(l.fees) || 0)) + (parseFloat(l.adj) || 0);
+                    const lPrice = parseFloat(l.price) || 0;
+                    const lFx = parseFloat(l.fx) || 1;
+                    const lFees = parseFloat(l.fees) || 0;
+                    const lAdj = parseFloat(l.adj) || 0;
+                    const lCost = (lShares * lPrice * lFx) + (p.feesIncludedInPrice ? 0 : lFees) + lAdj;
                     buyCostForThisAsset += lCost;
 
                     operations.push({
@@ -3015,9 +3018,9 @@ const fetchTickerData = async () => {
                         ticker: p.ticker,
                         name: p.name,
                         shares: lShares,
-                        price: parseFloat(l.price) || 0,
-                        fx: parseFloat(l.fx) || 1,
-                        fees: (parseFloat(l.fees) || 0) + (parseFloat(l.adj) || 0),
+                        price: lPrice,
+                        fx: lFx,
+                        fees: lFees + lAdj,
                         amount: lCost,
                         days: calculateDays(l.date || p.buyDate, p.sellDate || new Date())
                     });
@@ -3041,15 +3044,15 @@ const fetchTickerData = async () => {
                 });
             }
 
-            // 2. Procesar Venta (Si existe)
+            // 2. Extraer Salidas (VENTAS)
             if (isSold) {
                 const sellFees = (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0);
                 const revenue = (p.shares * p.sellPrice * p.sellFx) - sellFees;
 
                 operations.push({
                     dateObj: new Date(p.sellDate),
-                    buyDateStr: formatDateES(originalBuyDate), // Mostramos cuándo se compró originalmente
-                    sellDateStr: formatDateES(p.sellDate),     // Y cuándo se vende
+                    buyDateStr: formatDateES(originalBuyDate), // Fecha en la que se inició la posición
+                    sellDateStr: formatDateES(p.sellDate),     // Fecha de salida
                     type: 'VENTA',
                     ticker: p.ticker,
                     name: p.name,
@@ -3064,55 +3067,28 @@ const fetchTickerData = async () => {
             }
         });
 
+        // Ordenar por fecha del movimiento
         operations.sort((a, b) => a.dateObj - b.dateObj);
 
-        let html = `<html><head><title>Histórico Cronológico</title>`;
-        html += `<style>
-            @page { size: landscape; margin: 10mm; } 
-            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 7.5px; color: #1e293b; } 
-            h1 { font-size: 14px; margin-bottom: 2px; text-transform: uppercase; border-bottom: 2px solid #334155; padding-bottom: 5px; } 
-            table { width: 100%; border-collapse: collapse; margin-top: 10px; table-layout: fixed; } 
-            th { background: #f8fafc; color: #475569; text-align: left; padding: 6px 4px; border-bottom: 2px solid #cbd5e1; font-size: 6.5px; text-transform: uppercase; } 
-            td { padding: 5px 4px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; } 
-            .num { text-align: right; font-family: 'Courier New', Courier, monospace; font-weight: bold; } 
-            .center { text-align: center; } 
-            .buy-label { color: #2563eb; font-weight: 800; } 
-            .sell-label { color: #ea580c; font-weight: 800; }
-            .subtotal-row { background: #f1f5f9; font-weight: bold; font-size: 8px; }
-            .year-row { background: #e2e8f0; font-weight: bold; font-size: 8.5px; border-top: 2px solid #94a3b8; }
-            .profit-pos { color: #16a34a; } .profit-neg { color: #dc2626; }
-        </style></head><body>`;
-
-        html += `<h1>HISTÓRICO CRONOLÓGICO DE MOVIMIENTOS</h1>`;
-        html += `<div style="margin-bottom:10px;"><b>Emisión:</b> ${emissionTime} | <b>Divisa Base:</b> ${baseCurrency}</div>`;
-        
-        html += `<table><thead><tr>
-            <th style="width:60px;">Fecha Compra</th>
-            <th style="width:60px;">Fecha Venta</th>
-            <th style="width:140px;">Activo / Empresa</th>
-            <th style="width:50px;" class="center">Tipo</th>
-            <th style="width:50px;" class="num">Títulos</th>
-            <th style="width:60px;" class="num">Precio</th>
-            <th style="width:45px;" class="center">FX</th>
-            <th style="width:55px;" class="center">Gtos/Adj</th>
-            <th style="width:90px;" class="num">Inversión (Compra)</th>
-            <th style="width:90px;" class="num">Retorno (Venta)</th>
-            <th style="width:90px;" class="num">Resultado Neto</th>
-        </tr></thead><tbody>`;
+        let html = `<html><head><title>Histórico</title>`;
+        html += `<style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:7px;} h1{font-size:14px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th{background:#f1f5f9;text-align:left;padding:3px;border-bottom:1px solid #94a3b8;font-size:6px;text-transform:uppercase;} td{padding:3px;border-bottom:1px solid #e2e8f0;vertical-align:top;font-size:7px;} .num{text-align:right;font-family:monospace;white-space:nowrap;} .center{text-align:center;} .buy-t{color:#2563eb;font-weight:bold;} .sell-t{color:#ea580c;font-weight:bold;} .subtotal-row td { background: #f8fafc; border-top: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1; font-weight: bold; } .year-row td { background: #f1f5f9; border-top: 2px solid #94a3b8; font-weight: bold; font-size: 7.5px; }</style></head><body>`;
+        html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>HISTÓRICO CRONOLÓGICO DE OPERACIONES</h1><div style="font-size:8px;color:#666;">(Cartera visible en rejilla)</div></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`;
+        html += `<table><thead><tr><th class="center">Fecha Compra</th><th class="center">Fecha Venta</th><th>Activo / Ticker</th><th class="center">Tipo</th><th class="num">Títulos</th><th class="num">Precio</th><th class="center">FX</th><th class="center">Gtos/Adj</th><th class="num">Importe Compra</th><th class="num">Importe Venta</th><th class="num">Resultado</th></tr></thead><tbody>`;
 
         let currentMonth = ''; let currentYear = '';
-        let sumM_B = 0, sumM_S = 0; let sumY_B = 0, sumY_S = 0;
+        let sumMB = 0, sumMS = 0; let sumYB = 0, sumYS = 0;
         let totalB = 0, totalS = 0;
 
-        const renderRowTotal = (label, b, s, isYear) => {
+        const printSubtotalRow = (label, b, s, isYear) => {
             if (b === 0 && s === 0) return '';
             const className = isYear ? 'year-row' : 'subtotal-row';
+            const bal = s - b;
             return `<tr class="${className}">
-                <td colspan="3" style="text-align:left; padding-left:10px;">${isYear ? 'Σ TOTAL ANUAL' : 'Subtotal Mes'} [${label}]</td>
+                <td colspan="3" style="text-align:left; padding-left:10px; text-transform:uppercase;"><b>${isYear ? 'TOTAL ANUAL' : 'SUBTOTAL MES'} [${label}]:</b></td>
                 <td colspan="5"></td>
                 <td class="num" style="color:#2563eb;">${formatMoney(b, baseCurrency)}</td>
                 <td class="num" style="color:#ea580c;">${formatMoney(s, baseCurrency)}</td>
-                <td class="num ${s-b >=0 ? 'profit-pos' : 'profit-neg'}">${formatMoney(s-b, baseCurrency)}</td>
+                <td class="num" style="color:${bal >= 0 ? '#16a34a' : '#dc2626'};">${formatMoney(bal, baseCurrency)}</td>
             </tr>`;
         };
 
@@ -3121,47 +3097,51 @@ const fetchTickerData = async () => {
             const yKey = op.dateObj.getFullYear().toString();
 
             if (currentMonth !== '' && currentMonth !== mKey) {
-                html += renderRowTotal(currentMonth, sumM_B, sumM_S, false);
-                sumM_B = 0; sumM_S = 0;
+                html += printSubtotalRow(currentMonth, sumMB, sumMS, false);
+                sumMB = 0; sumMS = 0;
             }
             if (currentYear !== '' && currentYear !== yKey) {
-                html += renderRowTotal(currentYear, sumY_B, sumY_S, true);
-                sumY_B = 0; sumY_S = 0;
+                html += printSubtotalRow(currentYear, sumYB, sumYS, true);
+                sumYB = 0; sumYS = 0;
             }
 
             currentMonth = mKey; currentYear = yKey;
-            const isBuy = op.type === 'COMPRA';
-            if (isBuy) { sumM_B += op.amount; sumY_B += op.amount; totalB += op.amount; }
-            else { sumM_S += op.amount; sumY_S += op.amount; totalS += op.amount; }
+            const isB = op.type === 'COMPRA';
+            if (isB) { sumMB += op.amount; sumYB += op.amount; totalB += op.amount; }
+            else { sumMS += op.amount; sumYS += op.amount; totalS += op.amount; }
 
             html += `<tr>
                 <td class="center"><b>${op.buyDateStr}</b></td>
-                <td class="center"><b>${op.sellDateStr || '---'}</b><br/><span style="font-size:6px; color:#64748b;">(${formatN(op.days,0)} días)</span></td>
-                <td><div style="font-weight:bold;">${op.name}</div><div style="font-size:6.5px; color:#64748b;">${op.ticker}</div></td>
-                <td class="center ${isBuy ? 'buy-label' : 'sell-label'}">${op.type}</td>
+                <td class="center"><b>${op.sellDateStr || '---'}</b><br/><span style="font-size:5.5px;color:#666;">(${formatN(op.days,0)} días)</span></td>
+                <td><b>${op.name}</b><br/>${op.ticker}</td>
+                <td class="center ${isB ? 'buy-t' : 'sell-t'}">${op.type}</td>
                 <td class="num">${formatN(op.shares)}</td>
                 <td class="num">${formatN(op.price, 3)}</td>
                 <td class="center">${formatN(op.fx, 4)}</td>
                 <td class="center">${formatN(op.fees)}</td>
-                <td class="num" style="color:${isBuy ? '#2563eb' : '#94a3b8'};">${isBuy ? formatMoney(op.amount, baseCurrency) : '---'}</td>
-                <td class="num" style="color:${!isBuy ? '#ea580c' : '#94a3b8'};">${!isBuy ? formatMoney(op.amount, baseCurrency) : '---'}</td>
-                <td class="num">${!isBuy ? `<span class="${op.profit >= 0 ? 'profit-pos' : 'profit-neg'}">${formatMoney(op.profit, baseCurrency)}</span>` : '---'}</td>
+                <td class="num">${isB ? formatMoney(op.amount, baseCurrency) : '---'}</td>
+                <td class="num">${!isB ? formatMoney(op.amount, baseCurrency) : '---'}</td>
+                <td class="num">${!isB ? `<b style="color:${op.profit >= 0 ? '#16a34a' : '#dc2626'};">${formatMoney(op.profit, baseCurrency)}</b>` : '---'}</td>
             </tr>`;
         });
 
-        html += renderRowTotal(currentMonth, sumM_B, sumM_S, false);
-        html += renderRowTotal(currentYear, sumY_B, sumY_S, true);
+        html += printSubtotalRow(currentMonth, sumMB, sumMS, false);
+        html += printSubtotalRow(currentYear, sumYB, sumYS, true);
 
-        html += `<tr style="background:#1e293b; color:white; font-size:10px; font-weight:bold;">
-            <td colspan="8" style="text-align:right; padding:10px;">RESUMEN TOTAL CARTERA VISIBLE:</td>
+        const totalBal = totalS - totalB;
+        html += `<tr style="background:#1e293b; color:white; font-weight:bold;">
+            <td colspan="8" style="text-align:right; font-size:8px; padding-right:10px;">RESUMEN GENERAL HISTÓRICO:</td>
             <td class="num" style="color:#93c5fd;">${formatMoney(totalB, baseCurrency)}</td>
             <td class="num" style="color:#fdba74;">${formatMoney(totalS, baseCurrency)}</td>
-            <td class="num ${totalS-totalB >=0 ? 'profit-pos' : 'profit-neg'}">${formatMoney(totalS-totalB, baseCurrency)}</td>
+            <td class="num" style="color:${totalBal >= 0 ? '#4ade80' : '#f87171'}; font-size:8px;">${formatMoney(totalBal, baseCurrency)}</td>
         </tr>`;
 
         html += `</tbody></table></body></html>`;
         printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(() => printWindow.print(), 500); 
     };
+
+
+
 
 const updatePrices = async (isAuto = false) => {
     const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
