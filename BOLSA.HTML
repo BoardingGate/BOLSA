@@ -2787,15 +2787,93 @@ const handleGenerateStrategy = async () => {
 
     const visiblePortfolio = useMemo(() => filteredPortfolio.filter(p => p.isActive !== false), [filteredPortfolio]);
 
+
     const [analyzingNews, setAnalyzingNews] = useState(false);
     const [newsResult, setNewsResult] = useState(null);
     const [isNewsModalOpen, setIsNewsModalOpen] = useState(false);
     const [isNewsSelectionModalOpen, setIsNewsSelectionModalOpen] = useState(false);
     const [customNewsTopic, setCustomNewsTopic] = useState('');
 
-    const fetchNews = async (type) => { /* Omito fetchNews para mantener brevedad, está intacto en tu código */ };
-    const handlePrintNews = () => { /* Intacto */ };
+    const fetchNews = async (type) => {
+        if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key para consultar noticias. Añádela en Ajustes.', type: 'error' });
+        
+        setIsNewsSelectionModalOpen(false); // Cierra el modal de selección
+        setAnalyzingNews(true); // Activa el loader gigante
+        setNewsResult(null);
 
+        try {
+            let prompt = "";
+            const today = new Date().toLocaleString('es-ES');
+
+            if (type === 'portfolio') {
+                // Extrae hasta 15 empresas únicas de lo que estés viendo en la tabla para no saturar la IA
+                const uniqueAssets = Array.from(new Set(visiblePortfolio.filter(p => p.isActive !== false).map(p => `${p.name} (${p.ticker})`))).slice(0, 15);
+                if (uniqueAssets.length === 0) throw new Error("No hay activos visibles en la tabla para buscar noticias.");
+                
+                prompt = `Actúa como un analista jefe de Bloomberg. FECHA ACTUAL: ${today}.
+                Realiza una búsqueda activa en internet de las noticias más críticas de los ÚLTIMOS 7 DÍAS para las siguientes empresas: ${uniqueAssets.join(', ')}.
+                Agrupa las noticias por empresa usando <h3>. Descarta las que no tengan noticias relevantes. Usa listas <ul> y <li>. Incluye la URL de la fuente original.
+                Usa SOLO formato HTML limpio. Responde en Español.`;
+            } 
+            else if (type === 'general') {
+                prompt = `Actúa como un analista jefe de Bloomberg. FECHA ACTUAL: ${today}.
+                Realiza una búsqueda activa en internet del panorama MACROECONÓMICO Y BURSÁTIL MUNDIAL de las ÚLTIMAS 48 HORAS.
+                Céntrate en: Decisiones de bancos centrales, inflación, datos de empleo importantes, y grandes movimientos de índices mundiales.
+                Estructura por temas usando <h3>. Usa listas <ul> y <li>. Incluye la URL de la fuente original.
+                Usa SOLO formato HTML limpio. Responde en Español.`;
+            } 
+            else if (type === 'custom') {
+                if (!customNewsTopic.trim()) throw new Error("Escribe un tema en el cajón de texto antes de buscar.");
+                prompt = `Actúa como un investigador de noticias financieras. FECHA ACTUAL: ${today}.
+                Realiza una búsqueda exhaustiva en internet de las noticias de los ÚLTIMOS 7 DÍAS sobre este tema específico: "${customNewsTopic}".
+                Estructura las noticias cronológicamente o por impacto usando <h3>. Usa listas <ul> y <li>. Incluye la URL de la fuente original.
+                Usa SOLO formato HTML limpio. Responde en Español.`;
+            }
+
+            const res = await askGemini(apiKey, prompt, aiModel);
+            
+            // Limpieza del HTML recibido de Gemini
+            let cleanHtml = res.trim();
+            cleanHtml = cleanHtml.replace(/```html/g, '').replace(/```/g, '');
+            const startIdx = cleanHtml.indexOf('<');
+            if (startIdx !== -1) cleanHtml = cleanHtml.substring(startIdx);
+
+            if (!cleanHtml || cleanHtml.length < 20) throw new Error("La búsqueda no devolvió resultados relevantes. Inténtalo de nuevo.");
+
+            setNewsResult(cleanHtml);
+            setIsNewsModalOpen(true); // Abre el modal con la respuesta
+
+        } catch (e) {
+            setInfoModal({ isOpen: true, title: 'Fallo en Búsqueda', msg: e.message, type: 'error' });
+        } finally {
+            setAnalyzingNews(false); // Apaga el loader
+        }
+    };
+
+    const handlePrintNews = () => {
+        const printWindow = window.open('', '', 'height=800,width=800');
+        let html = `<html><head><title>Radar de Noticias iA</title><style>
+        body { font-family: sans-serif; padding: 40px; font-size: 12px; line-height: 1.6; color: #000; -webkit-print-color-adjust: exact; }
+        h1 { border-bottom: 4px solid #1e3a8a; color: #1e3a8a; text-transform: uppercase; padding-bottom: 10px; margin-bottom: 5px; }
+        h3 { color: #1e3a8a; border-bottom: 1px solid #ccc; margin-top: 30px; padding-bottom: 5px; text-transform: uppercase; font-size: 14px; }
+        a { color: #2563eb; text-decoration: none; font-weight: bold; }
+        ul { padding-left: 20px; } li { margin-bottom: 8px; }
+        .meta { font-size: 11px; color: #555; margin-bottom: 30px; border-left: 3px solid #eab308; padding-left: 10px; background: #fefce8; padding: 10px; }
+        </style></head><body>
+        <h1>RADAR DE NOTICIAS FINANCIERAS</h1>
+        <div class="meta">
+            <b>EMISIÓN:</b> ${new Date().toLocaleString()}<br/>
+            <b>FUENTE:</b> Búsqueda Inteligente automatizada (Powered by Google Gemini)
+        </div>
+        <div>${newsResult}</div>
+        </body></html>`;
+        printWindow.document.write(html);
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(() => printWindow.print(), 500);
+    };
+
+  
     const baseFilteredPortfolio = useMemo(() => {
         return portfolio.filter(p => {
             if (p.isActive === false) return false;
