@@ -100,7 +100,8 @@
           if (c === 'USD') return `$ ${base}`; if (c === 'GBP') return `£ ${base}`; if (c === 'JPY') return `¥ ${base}`; if (c === 'CHF') return `Fr ${base}`;
           return `${base} €`;
       };
-      
+
+     
       const calculateDays = (d1, d2 = new Date()) => Math.max(1, Math.ceil(Math.abs(new Date(d2) - new Date(d1)) / (1000 * 60 * 60 * 24)));
       const extractJSON = (t) => { try { const m = t.match(/(\{[\s\S]*\}|\[[\s\S]*\])/); return m ? JSON.parse(m[0]) : null; } catch { return null; } };
       const usePersistentState = (key, initialValue) => {
@@ -2484,6 +2485,9 @@ const TradingViewMarketWidget = () => {
 
 const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady, _x_lim, _x_trig, globalNotes, setGlobalNotes, onAnalyze, aiModel, gScriptUrl }) => {
     // --- ESTADOS PERSISTENTES PARA FILTROS ---
+     const [inflacionData, setInflacionData] = usePersistentState('bg_inflacion_data', { 
+            val: 0,  lastCalc: 0 });  
+
     const [selectedTicker, setSelectedTicker] = React.useState(null);
     const [isNotesModalOpen, setIsNotesModalOpen] = useState(false);
     const [filterText, setFilterText] = usePersistentState('bg_port_filter_text', '');
@@ -2549,6 +2553,28 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     }, [simLot, targetSim]);
      
     const [updateText, setUpdateText] = useState('');
+
+    const updateInflationIfNeeded = async () => {
+        const oneMonth = 30 * 24 * 60 * 60 * 1000;
+        const now = Date.now();
+        
+        // Si ya existe y hace menos de 1 mes, no hacemos nada
+        if (inflacionData.lastCalc > 0 && (now - inflacionData.lastCalc) < oneMonth) return;
+    
+        // Si no, pedimos a la IA la inflación acumulada desde el inicio de la cartera
+        const startYear = new Date(historicalStats.consolidated.first).getFullYear();
+        const prompt = `Calcula la inflación acumulada oficial (IPC) en España desde el 1 de enero de ${startYear} hasta la fecha actual (${new Date().toLocaleDateString()}). Devuelve SOLO el número (porcentaje). Ej: 12.5`;
+        
+        try {
+            const res = await askGemini(apiKey, prompt, aiModel);
+            const val = parseFloat(res.replace(/[^0-9.]/g, ''));
+            if (!isNaN(val)) {
+                setInflacionData({ val, lastCalc: now });
+            }
+        } catch (e) {
+            console.error("Error calculando inflación", e);
+        }
+    };
 
 
     // 1. Ejecutar análisis IA (Panel 2)
@@ -3901,53 +3927,70 @@ DETALLE DE LOTES CONSUMIDOS: ${fifo.extracted.summary}`.trim();
     const toggleAllActive = () => { const allActive = filteredPortfolio.every(p => p.isActive !== false); setPortfolio(prev => prev.map(p => { const isVisible = filteredPortfolio.some(fp => fp.id === p.id); return isVisible ? { ...p, isActive: !allActive } : p; })); };
     const yieldOnCost = form.buyPrice > 0 ? (form.annualDividend / form.buyPrice) * 100 : 0;
 
-const RenderHistoryCard = () => {
-        const h = historicalStats;
-        
-        // 1. Rentabilidad Simple (ROI) sobre Capital Medio
-        const roiCons = h.consolidated.avgCap > 0 ? (h.consolidated.profit / h.consolidated.avgCap) * 100 : 0;
-        const roiClosed = h.closed.avgCap > 0 ? (h.closed.profit / h.closed.avgCap) * 100 : 0;
-        
-        // 2. Cálculo Anualizado (CAGR)
-        const getAnn = (r, d) => d > 0 ? ((Math.pow(1 + r/100, 365/d) - 1) * 100) : 0;
-        const annCons = getAnn(roiCons, h.consolidated.diffDays);
-        const annClosed = getAnn(roiClosed, h.closed.diffDays);
 
-        return ( 
-            <div className="glass-panel p-4 rounded-xl border-t-4 border-yellow-500 min-w-[320px] max-w-[400px] flex flex-col justify-between"> 
-                <div>
-                    <div className="flex justify-between items-center mb-2"> 
-                        <span className="text-[10px] font-black uppercase text-yellow-500 flex items-center gap-2"><Icons.Award size={12}/> RENTABILIDAD HISTÓRICA</span> 
-                        <span className="text-[8px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 font-bold">REAL (TIME-WEIGHTED)</span> 
-                    </div> 
-                    
-                    <div className="grid grid-cols-2 gap-4 mb-3 border-b border-slate-700/50 pb-2"> 
-                        <div className="bg-slate-900/40 p-2 rounded-lg"> 
-                            <div className="text-[8px] text-slate-400 uppercase font-bold mb-1">Consolidada (Act+Cerr)</div> 
-                            <div className="flex items-baseline gap-1.5 flex-wrap">
-                                <div className={`text-lg font-black ${roiCons>=0?'text-green-400':'text-red-400'}`}>{formatN(roiCons)}%</div> 
-                                <div className={`text-[9px] font-bold ${annCons>=0?'text-green-500':'text-red-500'}`}>{formatN(annCons)}% Anual</div>
-                            </div>
-                            <div className="flex justify-between items-end mt-1"> 
-                                <div className="text-[8px] text-slate-500">Cap. Medio: <span className="text-slate-300">{formatMoney(h.consolidated.avgCap, baseCurrency)}</span></div> 
-                            </div> 
-                            <div className="text-[8px] font-bold text-yellow-500 text-right mt-1">Benef: {formatMoney(h.consolidated.profit, baseCurrency)}</div> 
+const RenderHistoryCard = () => {
+    const h = historicalStats;
+    
+    // 1. Rentabilidad Simple (ROI) sobre Capital Medio
+    const roiCons = h.consolidated.avgCap > 0 ? (h.consolidated.profit / h.consolidated.avgCap) * 100 : 0;
+    const roiClosed = h.closed.avgCap > 0 ? (h.closed.profit / h.closed.avgCap) * 100 : 0;
+    
+    // 2. Cálculo Anualizado (CAGR)
+    const getAnn = (r, d) => d > 0 ? ((Math.pow(1 + r/100, 365/d) - 1) * 100) : 0;
+    const annCons = getAnn(roiCons, h.consolidated.diffDays);
+    const annClosed = getAnn(roiClosed, h.closed.diffDays);
+    
+    // 3. Diferencia real contra inflación
+    const diffVsInf = roiCons - inflacionData.val;
+
+    return ( 
+        <div className="glass-panel p-4 rounded-xl border-t-4 border-yellow-500 min-w-[320px] max-w-[400px] flex flex-col justify-between"> 
+            <div>
+                <div className="flex justify-between items-center mb-2"> 
+                    <span className="text-[10px] font-black uppercase text-yellow-500 flex items-center gap-2"><Icons.Award size={12}/> RENTABILIDAD HISTÓRICA</span> 
+                    <span className="text-[8px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 font-bold">REAL (TIME-WEIGHTED)</span> 
+                </div> 
+                
+                <div className="grid grid-cols-2 gap-4 mb-3 border-b border-slate-700/50 pb-2"> 
+                    <div className="bg-slate-900/40 p-2 rounded-lg"> 
+                        <div className="text-[8px] text-slate-400 uppercase font-bold mb-1">Consolidada (Act+Cerr)</div> 
+                        <div className="flex items-baseline gap-1.5 flex-wrap">
+                            <div className={`text-lg font-black ${roiCons>=0?'text-green-400':'text-red-400'}`}>{formatN(roiCons)}%</div> 
+                            <div className={`text-[9px] font-bold ${annCons>=0?'text-green-500':'text-red-500'}`}>{formatN(annCons)}% Anual</div>
+                        </div>
+                        <div className="flex justify-between items-end mt-1"> 
+                            <div className="text-[8px] text-slate-500">Cap. Medio: <span className="text-slate-300">{formatMoney(h.consolidated.avgCap, baseCurrency)}</span></div> 
                         </div> 
-                        <div className="bg-slate-900/40 p-2 rounded-lg"> 
-                            <div className="text-[8px] text-slate-400 uppercase font-bold mb-1">Solo Cerradas</div> 
-                            <div className="flex items-baseline gap-1.5 flex-wrap">
-                                <div className={`text-lg font-black ${roiClosed>=0?'text-green-400':'text-red-400'}`}>{formatN(roiClosed)}%</div> 
-                                <div className={`text-[9px] font-bold ${annClosed>=0?'text-green-500':'text-red-500'}`}>{formatN(annClosed)}% Anual</div>
-                            </div>
-                            <div className="flex justify-between items-end mt-1"> 
-                                <div className="text-[8px] text-slate-500">Cap. Medio: <span className="text-slate-300">{formatMoney(h.closed.avgCap, baseCurrency)}</span></div> 
-                            </div> 
-                            <div className="text-[8px] font-bold text-yellow-500 text-right mt-1">Benef: {formatMoney(h.closed.profit, baseCurrency)}</div> 
-                        </div> 
+                        <div className="text-[8px] font-bold text-yellow-500 text-right mt-1">Benef: {formatMoney(h.consolidated.profit, baseCurrency)}</div> 
                     </div> 
+                    <div className="bg-slate-900/40 p-2 rounded-lg"> 
+                        <div className="text-[8px] text-slate-400 uppercase font-bold mb-1">Solo Cerradas</div> 
+                        <div className="flex items-baseline gap-1.5 flex-wrap">
+                            <div className={`text-lg font-black ${roiClosed>=0?'text-green-400':'text-red-400'}`}>{formatN(roiClosed)}%</div> 
+                            <div className={`text-[9px] font-bold ${annClosed>=0?'text-green-500':'text-red-500'}`}>{formatN(annClosed)}% Anual</div>
+                        </div>
+                        <div className="flex justify-between items-end mt-1"> 
+                            <div className="text-[8px] text-slate-500">Cap. Medio: <span className="text-slate-300">{formatMoney(h.closed.avgCap, baseCurrency)}</span></div> 
+                        </div> 
+                        <div className="text-[8px] font-bold text-yellow-500 text-right mt-1">Benef: {formatMoney(h.closed.profit, baseCurrency)}</div> 
+                    </div> 
+                </div> 
+
+                {/* NUEVA SECCIÓN DE INFLACIÓN SOLICITADA */}
+                <div className="border-y border-slate-700/50 py-2 my-2 bg-slate-950/30">
+                    <div className="flex justify-between items-center px-1">
+                        <span className="text-[8px] text-slate-400 uppercase font-bold">Inflación Acum. : </span>
+                        <span className="text-[9px] font-bold text-slate-300 font-mono">{formatN(inflacionData.val)}%</span>
+                    </div>
+                    <div className="flex justify-between items-center px-1 mt-1">
+                        <span className="text-[8px] text-slate-500 uppercase font-bold">vs Rent. Consolidada : </span>
+                        <span className={`text-[9px] font-bold font-mono ${diffVsInf >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {diffVsInf >= 0 ? '+' : ''}{formatN(diffVsInf)}%
+                        </span>
+                    </div>
                 </div>
 
-                {/* PIÉ DEL TARJETÓN HISTÓRICO: Solo Días Invertidos Reales */}
+                {/* PIÉ DEL TARJETÓN HISTÓRICO: AÑOS Y DÍAS */}
                 <div className="grid grid-cols-2 gap-2 text-[9px] text-slate-400 border-t border-slate-800 pt-2 mt-auto"> 
                     <div> 
                         <div className="uppercase font-bold text-slate-500 text-[8px]">Días Inv. Real (Cons)</div> 
@@ -3963,10 +4006,18 @@ const RenderHistoryCard = () => {
                             <span className="opacity-60 font-normal ml-1">({formatN(h.closed.diffDays / 365.25, 1)} años)</span>
                         </div> 
                     </div> 
-                </div>
+                </div> 
+                
+                <div className="mt-1 flex justify-between items-center text-[8px] text-slate-600 font-mono pt-1"> 
+                    <div>Int. Op: {formatN(h.avgIntervalDays, 1)}d</div> 
+                    <div>Pos. Medias: {formatN(h.avgPositions, 1)}</div> 
+                </div> 
             </div> 
-        );
-    };
+        </div> 
+    );
+};
+
+
    
     return (
         <div className="w-full p-4 md:p-6 flex flex-col gap-6">
