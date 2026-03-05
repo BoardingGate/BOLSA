@@ -3896,46 +3896,41 @@ DETALLE DE LOTES CONSUMIDOS: ${fifo.extracted.summary}`.trim();
 
 const RenderHistoryCard = () => {
     const h = historicalStats;
+    // Cálculo de rentabilidad simple
     const roiCons = h.consolidated.avgCap > 0 ? (h.consolidated.profit / h.consolidated.avgCap) * 100 : 0;
     const roiClosed = h.closed.avgCap > 0 ? (h.closed.profit / h.closed.avgCap) * 100 : 0;
+    
+    // Cálculo Anualizado (Añadido para evitar el error 'is not defined')
+    const getAnn = (r, d) => d > 0 ? ((Math.pow(1 + r/100, 365/d) - 1) * 100) : 0;
+    const annCons = getAnn(roiCons, h.consolidated.diffDays);
+    const annClosed = getAnn(roiClosed, h.closed.diffDays);
+    
     const diffVsInf = roiCons - inflacionData.val;
 
     const updateInflationManual = async () => {
         try {
-            // 1. Obtenemos la fecha exacta de tu primera inversión
-            const firstInvestmentDate = new Date(h.consolidated.first);
-            
-            // 2. Formateamos a YYYYMMDD para la API del INE
+            const firstInvestmentDate = new Date(h.consolidated.first || Date.now());
             const yyyymmdd = firstInvestmentDate.toISOString().split('T')[0].replace(/-/g, '');
             
-            // 3. Consultamos la serie IPC (base 2021) desde esa fecha exacta
-            const url = `https://servicios.ine.es/wstempus/js/es/datos_serie/IPC202101?det=1&date=${yyyymmdd}:`;
-            const response = await fetch(url);
+            const response = await fetch(`https://servicios.ine.es/wstempus/js/es/datos_serie/IPC202101?det=1&date=${yyyymmdd}:`);
             const data = await response.json();
             
-            if (data && data.length > 0) {
+            if (data && data.length > 0 && data[0].Data) {
                 const series = data[0].Data;
-                // series[0] es el mes de la primera inversión, series[last] es el mes más reciente
                 const valorInicial = series[0].Valor;
                 const valorFinal = series[series.length - 1].Valor;
-                
-                // Variación porcentual real entre tu fecha de inicio y hoy
                 const ipcCalculado = ((valorFinal - valorInicial) / valorInicial) * 100;
-                
-                setInflacionData({ 
-                    val: parseFloat(ipcCalculado.toFixed(2)), 
-                    lastCalc: Date.now() 
-                });
+                setInflacionData({ val: parseFloat(ipcCalculado.toFixed(2)), lastCalc: Date.now() });
             }
         } catch (e) { 
-            // Plan de contingencia: Si la API del INE falla por CORS (bloqueo navegador), usamos la IA como respaldo
             console.warn("Fallo acceso INE, usando IA:", e);
-            const prompt = `Calcula el IPC acumulado oficial en España desde el ${new Date(h.consolidated.first).toLocaleDateString()} hasta hoy. Devuelve SOLO el número con un decimal (ej: 12.5).`;
+            const prompt = `Calcula el IPC acumulado oficial en España desde el ${new Date(h.consolidated.first || Date.now()).toLocaleDateString()} hasta hoy. Devuelve SOLO el número con un decimal (ej: 12.5).`;
             const res = await askGemini(apiKey, prompt, aiModel);
             const val = parseFloat(res.replace(/[^0-9.]/g, ''));
             if (!isNaN(val)) setInflacionData({ val: val, lastCalc: Date.now() });
         }
     };
+
     return ( 
         <div className="glass-panel p-4 rounded-xl border-t-4 border-yellow-500 min-w-[320px] max-w-[400px] flex flex-col justify-between"> 
             <div>
@@ -3997,6 +3992,8 @@ const RenderHistoryCard = () => {
         </div> 
     );
 };
+
+
 
 
 
