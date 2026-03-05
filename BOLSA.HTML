@@ -3910,11 +3910,9 @@ DETALLE DE LOTES CONSUMIDOS: ${fifo.extracted.summary}`.trim();
     const toggleAllActive = () => { const allActive = filteredPortfolio.every(p => p.isActive !== false); setPortfolio(prev => prev.map(p => { const isVisible = filteredPortfolio.some(fp => fp.id === p.id); return isVisible ? { ...p, isActive: !allActive } : p; })); };
     const yieldOnCost = form.buyPrice > 0 ? (form.annualDividend / form.buyPrice) * 100 : 0;
 
+
 const RenderHistoryCard = () => {
     const h = historicalStats;
-    const [isUpdating, setIsUpdating] = useState(false);
-    
-    // Cálculos de rentabilidad histórica originales
     const roiCons = h.consolidated.avgCap > 0 ? (h.consolidated.profit / h.consolidated.avgCap) * 100 : 0;
     const roiClosed = h.closed.avgCap > 0 ? (h.closed.profit / h.closed.avgCap) * 100 : 0;
     
@@ -3927,15 +3925,16 @@ const RenderHistoryCard = () => {
     const diffVsInf = roiCons - inflacionData.val;
 
     const updateInflationManual = async () => {
-        setIsUpdating(true);
-        const startYear = new Date(h.consolidated.first).getFullYear();
-        const prompt = `Calcula el IPC acumulado oficial en España desde el 1 de enero de ${startYear} hasta hoy ${new Date().toLocaleDateString()}. Devuelve SOLO el número con un decimal (ej: 12.5). No añadas texto ni %.`;
         try {
-            const res = await askGemini(apiKey, prompt, aiModel);
-            const val = parseFloat(res.replace(/[^0-9.]/g, ''));
-            if (!isNaN(val)) setInflacionData({ val, lastCalc: Date.now() });
-        } catch (e) { alert("Error al actualizar IPC: " + e.message); }
-        finally { setIsUpdating(false); }
+            // Fuente INE oficial para datos constantes
+            const response = await fetch("https://servicios.ine.es/wstempus/js/es/datos_serie/IPC202101?det=1&date=20200101:");
+            const data = await response.json();
+            const series = data[0].Data;
+            const valorInicial = series[0].Valor;
+            const valorFinal = series[series.length - 1].Valor;
+            const ipcCalculado = ((valorFinal - valorInicial) / valorInicial) * 100;
+            setInflacionData({ val: parseFloat(ipcCalculado.toFixed(2)), lastCalc: Date.now() });
+        } catch (e) { alert("Error consultando el INE: " + e.message); }
     };
 
     return ( 
@@ -3946,7 +3945,6 @@ const RenderHistoryCard = () => {
                     <span className="text-[8px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 font-bold">REAL (TIME-WEIGHTED)</span> 
                 </div> 
                 
-                {/* BLOQUE SUPERIOR ORIGINAL (Mantenido completo) */}
                 <div className="grid grid-cols-2 gap-4 mb-3 border-b border-slate-700/50 pb-2"> 
                     <div className="bg-slate-900/40 p-2 rounded-lg"> 
                         <div className="text-[8px] text-slate-400 uppercase font-bold mb-1">Consolidada (Act+Cerr)</div> 
@@ -3972,42 +3970,25 @@ const RenderHistoryCard = () => {
                     </div> 
                 </div> 
 
-                {/* BLOQUE IPC (Insertado sin eliminar nada original) */}
+                {/* BLOQUE IPC ESTRATÉGICO */}
                 <div className="bg-slate-950/80 border border-slate-700 rounded-lg p-2 mb-3">
                     <div className="flex justify-between items-center mb-1">
-                        <button onClick={updateInflationManual} className={`text-blue-400 hover:text-white transition-all ${isUpdating ? 'animate-spin' : ''}`}>
-                            <Icons.Refresh size={9}/>
-                        </button>
                         <span className="text-[8px] text-slate-500 uppercase font-bold">IPC Acumulado vs Rent. Consolidada</span>
+                        <button onClick={updateInflationManual} className="text-blue-400 hover:text-white transition-colors"><Icons.Refresh size={9}/></button>
                     </div>
                     <div className="flex justify-between items-center text-[10px] font-bold">
                         <span className="text-slate-300 font-mono">{formatN(inflacionData.val)}%</span>
                         <span className={`font-mono ${diffVsInf >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                            (dif: {diffVsInf >= 0 ? '+' : ''}{formatN(diffVsInf)}%)
+                            {diffVsInf >= 0 ? '+' : ''}{formatN(diffVsInf)}%
                         </span>
                     </div>
                 </div>
-
-                {/* PIÉ DEL TARJETÓN: DÍAS Y AÑOS (COMPLETO) */}
-                <div className="grid grid-cols-2 gap-2 text-[9px] text-slate-400 border-t border-slate-800 pt-2 mt-auto"> 
-                    <div> 
-                        <div className="uppercase font-bold text-slate-500 text-[8px]">Días Inv. Real (Cons)</div> 
-                        <div className="text-slate-200 font-bold">{formatN(h.consolidated.diffDays, 0)} días <span className="opacity-60 font-normal">({formatN(h.consolidated.diffDays / 365.25, 1)} años)</span></div> 
-                    </div> 
-                    <div className="text-right"> 
-                        <div className="uppercase font-bold text-slate-500 text-[8px]">Días Inv. Real (Cerr)</div> 
-                        <div className="text-slate-200 font-bold">{formatN(h.closed.diffDays, 0)} días <span className="opacity-60 font-normal">({formatN(h.closed.diffDays / 365.25, 1)} años)</span></div> 
-                    </div> 
-                </div> 
-                
-                <div className="mt-1 flex justify-between items-center text-[8px] text-slate-600 font-mono pt-1"> 
-                    <div>Int. Op: {formatN(h.avgIntervalDays, 1)}d</div> 
-                    <div>Pos. Medias: {formatN(h.avgPositions, 1)}</div> 
-                </div> 
             </div> 
         </div> 
     );
 };
+
+
 
 
 
