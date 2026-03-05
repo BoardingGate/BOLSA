@@ -2541,23 +2541,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
      
     const [updateText, setUpdateText] = useState('');
 
-    const updateInflationManual = async () => {
-        // Año base (ej: 2020) para que la IA tenga un ancla clara
-        const startYear = new Date(h.consolidated.first).getFullYear();
-        const prompt = `Actúa como un economista estadístico. Calcula el IPC acumulado oficial en España desde el 1 de enero de ${startYear} hasta hoy ${new Date().toLocaleDateString()}. 
-        Responde ÚNICAMENTE con el número del porcentaje acumulado, usa punto decimal. 
-        Ejemplo: si la inflación acumulada es del 15.2%, responde solo: 15.2
-        No añadas texto, ni %, ni explicaciones.`;
-        
-        try {
-            const res = await askGemini(apiKey, prompt, aiModel);
-            // Limpiamos cualquier carácter no numérico por si la IA se pone habladora
-            const val = parseFloat(res.replace(/[^0-9.]/g, ''));
-            if (!isNaN(val)) setInflacionData({ val, lastCalc: Date.now() });
-            else alert("Error: La IA devolvió: " + res);
-        } catch (e) { alert("Error al conectar con IA: " + e.message); }
-    };
-
+   
 
 
     // 1. Ejecutar análisis IA (Panel 2)
@@ -3910,33 +3894,48 @@ DETALLE DE LOTES CONSUMIDOS: ${fifo.extracted.summary}`.trim();
     const toggleAllActive = () => { const allActive = filteredPortfolio.every(p => p.isActive !== false); setPortfolio(prev => prev.map(p => { const isVisible = filteredPortfolio.some(fp => fp.id === p.id); return isVisible ? { ...p, isActive: !allActive } : p; })); };
     const yieldOnCost = form.buyPrice > 0 ? (form.annualDividend / form.buyPrice) * 100 : 0;
 
-
 const RenderHistoryCard = () => {
     const h = historicalStats;
     const roiCons = h.consolidated.avgCap > 0 ? (h.consolidated.profit / h.consolidated.avgCap) * 100 : 0;
     const roiClosed = h.closed.avgCap > 0 ? (h.closed.profit / h.closed.avgCap) * 100 : 0;
-    
-    // Cálculo Anualizado
-    const getAnn = (r, d) => d > 0 ? ((Math.pow(1 + r/100, 365/d) - 1) * 100) : 0;
-    const annCons = getAnn(roiCons, h.consolidated.diffDays);
-    const annClosed = getAnn(roiClosed, h.closed.diffDays);
-    
-    // Diferencia real contra inflación
     const diffVsInf = roiCons - inflacionData.val;
 
     const updateInflationManual = async () => {
         try {
-            // Fuente INE oficial para datos constantes
-            const response = await fetch("https://servicios.ine.es/wstempus/js/es/datos_serie/IPC202101?det=1&date=20200101:");
+            // 1. Obtenemos la fecha exacta de tu primera inversión
+            const firstInvestmentDate = new Date(h.consolidated.first);
+            
+            // 2. Formateamos a YYYYMMDD para la API del INE
+            const yyyymmdd = firstInvestmentDate.toISOString().split('T')[0].replace(/-/g, '');
+            
+            // 3. Consultamos la serie IPC (base 2021) desde esa fecha exacta
+            const url = `https://servicios.ine.es/wstempus/js/es/datos_serie/IPC202101?det=1&date=${yyyymmdd}:`;
+            const response = await fetch(url);
             const data = await response.json();
-            const series = data[0].Data;
-            const valorInicial = series[0].Valor;
-            const valorFinal = series[series.length - 1].Valor;
-            const ipcCalculado = ((valorFinal - valorInicial) / valorInicial) * 100;
-            setInflacionData({ val: parseFloat(ipcCalculado.toFixed(2)), lastCalc: Date.now() });
-        } catch (e) { alert("Error consultando el INE: " + e.message); }
+            
+            if (data && data.length > 0) {
+                const series = data[0].Data;
+                // series[0] es el mes de la primera inversión, series[last] es el mes más reciente
+                const valorInicial = series[0].Valor;
+                const valorFinal = series[series.length - 1].Valor;
+                
+                // Variación porcentual real entre tu fecha de inicio y hoy
+                const ipcCalculado = ((valorFinal - valorInicial) / valorInicial) * 100;
+                
+                setInflacionData({ 
+                    val: parseFloat(ipcCalculado.toFixed(2)), 
+                    lastCalc: Date.now() 
+                });
+            }
+        } catch (e) { 
+            // Plan de contingencia: Si la API del INE falla por CORS (bloqueo navegador), usamos la IA como respaldo
+            console.warn("Fallo acceso INE, usando IA:", e);
+            const prompt = `Calcula el IPC acumulado oficial en España desde el ${new Date(h.consolidated.first).toLocaleDateString()} hasta hoy. Devuelve SOLO el número con un decimal (ej: 12.5).`;
+            const res = await askGemini(apiKey, prompt, aiModel);
+            const val = parseFloat(res.replace(/[^0-9.]/g, ''));
+            if (!isNaN(val)) setInflacionData({ val: val, lastCalc: Date.now() });
+        }
     };
-
     return ( 
         <div className="glass-panel p-4 rounded-xl border-t-4 border-yellow-500 min-w-[320px] max-w-[400px] flex flex-col justify-between"> 
             <div>
@@ -3970,7 +3969,6 @@ const RenderHistoryCard = () => {
                     </div> 
                 </div> 
 
-                {/* BLOQUE IPC ESTRATÉGICO */}
                 <div className="bg-slate-950/80 border border-slate-700 rounded-lg p-2 mb-3">
                     <div className="flex justify-between items-center mb-1">
                         <span className="text-[8px] text-slate-500 uppercase font-bold">IPC Acumulado vs Rent. Consolidada</span>
@@ -3983,13 +3981,22 @@ const RenderHistoryCard = () => {
                         </span>
                     </div>
                 </div>
+
+                <div className="grid grid-cols-2 gap-2 text-[9px] text-slate-400 border-t border-slate-800 pt-2 mt-auto"> 
+                    <div> 
+                        <div className="uppercase font-bold text-slate-500 text-[8px]">Días Inv. Real (Cons)</div> 
+                        <div className="text-slate-200 font-bold">{formatN(h.consolidated.diffDays, 0)} días <span className="opacity-60 font-normal">({formatN(h.consolidated.diffDays / 365.25, 1)} años)</span></div> 
+                    </div> 
+                    <div className="text-right"> 
+                        <div className="uppercase font-bold text-slate-500 text-[8px]">Días Inv. Real (Cerr)</div> 
+                        <div className="text-slate-200 font-bold">{formatN(h.closed.diffDays, 0)} días <span className="opacity-60 font-normal">({formatN(h.closed.diffDays / 365.25, 1)} años)</span></div> 
+                    </div> 
+                </div> 
+                
             </div> 
         </div> 
     );
 };
-
-
-
 
 
 
