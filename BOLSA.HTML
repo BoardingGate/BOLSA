@@ -3933,58 +3933,79 @@ const RenderHistoryCard = () => {
     const roiClosed = h.closed.avgCap > 0 ? (h.closed.profit / h.closed.avgCap) * 100 : 0;
     const diffVsInf = roiCons - inflacionData.val;
 
-    // Función manual para depuración si no carga
-    const forceUpdateInflation = () => {
-        const prompt = `Calcula la inflación acumulada (IPC) en España desde el 1 de enero de ${new Date(h.consolidated.first).getFullYear()} hasta hoy. Devuelve SOLO el número, un decimal. Ej: 12.5`;
-        askGemini(apiKey, prompt, aiModel).then(res => {
+    // Función manual para actualizar IPC
+    const updateInflationManual = async () => {
+        const startYear = new Date(h.consolidated.first).getFullYear();
+        const prompt = `Calcula la inflación acumulada (IPC) oficial en España desde el 1 de enero de ${startYear} hasta hoy. Devuelve SOLO el número con un decimal. Ejemplo: 12.5`;
+        try {
+            const res = await askGemini(apiKey, prompt, aiModel);
             const val = parseFloat(res.replace(/[^0-9.]/g, ''));
             if (!isNaN(val)) setInflacionData({ val, lastCalc: Date.now() });
-        });
+        } catch (e) { alert("Error al actualizar IPC: " + e.message); }
     };
 
     return ( 
-        <div className="glass-panel p-3 rounded-xl border-t-4 border-yellow-500 min-w-[320px] max-w-[320px] flex flex-col justify-between"> 
+        <div className="glass-panel p-4 rounded-xl border-t-4 border-yellow-500 min-w-[320px] max-w-[400px] flex flex-col justify-between"> 
             <div>
                 <div className="flex justify-between items-center mb-2"> 
-                    <span className="text-[9px] font-black uppercase text-yellow-500 flex items-center gap-2">
-                        <Icons.Award size={10}/> RENTABILIDAD HISTÓRICA
-                    </span> 
-                    <span className="text-[7px] bg-slate-800 px-1 py-0.5 rounded text-slate-400 font-bold">REAL (TIME-WEIGHTED)</span> 
+                    <span className="text-[10px] font-black uppercase text-yellow-500 flex items-center gap-2"><Icons.Award size={12}/> RENTABILIDAD HISTÓRICA</span> 
+                    <span className="text-[8px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 font-bold">REAL (TIME-WEIGHTED)</span> 
                 </div> 
                 
-                <div className="grid grid-cols-2 gap-2 mb-3"> 
+                {/* BLOQUE SUPERIOR ORIGINAL (Mantenido) */}
+                <div className="grid grid-cols-2 gap-4 mb-3 border-b border-slate-700/50 pb-2"> 
                     <div className="bg-slate-900/40 p-2 rounded-lg"> 
-                        <div className="text-[7px] text-slate-500 uppercase font-bold">Consolidada</div> 
-                        <div className={`text-[13px] font-black ${roiCons>=0?'text-green-400':'text-red-400'}`}>{formatN(roiCons)}%</div> 
-                        <div className="text-[7px] text-slate-500">Cap. Med: {formatMoney(h.consolidated.avgCap, baseCurrency)}</div> 
+                        <div className="text-[8px] text-slate-400 uppercase font-bold mb-1">Consolidada (Act+Cerr)</div> 
+                        <div className="flex items-baseline gap-1.5 flex-wrap">
+                            <div className={`text-lg font-black ${roiCons>=0?'text-green-400':'text-red-400'}`}>{formatN(roiCons)}%</div> 
+                        </div>
+                        <div className="flex justify-between items-end mt-1"> 
+                            <div className="text-[8px] text-slate-500">Cap. Medio: <span className="text-slate-300">{formatMoney(h.consolidated.avgCap, baseCurrency)}</span></div> 
+                        </div> 
+                        <div className="text-[8px] font-bold text-yellow-500 text-right mt-1">Benef: {formatMoney(h.consolidated.profit, baseCurrency)}</div> 
                     </div> 
                     <div className="bg-slate-900/40 p-2 rounded-lg"> 
-                        <div className="text-[7px] text-slate-500 uppercase font-bold">Solo Cerradas</div> 
-                        <div className={`text-[13px] font-black ${roiClosed>=0?'text-green-400':'text-red-400'}`}>{formatN(roiClosed)}%</div> 
-                        <div className="text-[7px] text-slate-500">Cap. Med: {formatMoney(h.closed.avgCap, baseCurrency)}</div> 
+                        <div className="text-[8px] text-slate-400 uppercase font-bold mb-1">Solo Cerradas</div> 
+                        <div className="flex items-baseline gap-1.5 flex-wrap">
+                            <div className={`text-lg font-black ${roiClosed>=0?'text-green-400':'text-red-400'}`}>{formatN(roiClosed)}%</div> 
+                        </div>
+                        <div className="flex justify-between items-end mt-1"> 
+                            <div className="text-[8px] text-slate-500">Cap. Med: <span className="text-slate-300">{formatMoney(h.closed.avgCap, baseCurrency)}</span></div> 
+                        </div> 
+                        <div className="text-[8px] font-bold text-yellow-500 text-right mt-1">Benef: {formatMoney(h.closed.profit, baseCurrency)}</div> 
                     </div> 
                 </div> 
 
-                {/* LÍNEA ÚNICA COMPACTA DE INFLACIÓN */}
-                <div className="bg-slate-950/50 p-1.5 rounded text-[8px] flex justify-between items-center cursor-pointer hover:bg-slate-800 transition-colors" onClick={forceUpdateInflation} title="Forzar actualización IPC">
-                    <span className="text-slate-400 uppercase font-bold">IPC vs RENT:</span>
-                    <span className="font-mono text-slate-200">{formatN(inflacionData.val)}% <span className="text-slate-600">/</span> <span className={diffVsInf >= 0 ? 'text-green-400' : 'text-red-400'}>{diffVsInf >= 0 ? '+' : ''}{formatN(diffVsInf)}%</span></span>
+                {/* BLOQUE IPC ESTRATÉGICO */}
+                <div className="bg-slate-950/80 border border-slate-700 rounded-lg p-2 mb-2">
+                    <div className="flex justify-between items-center mb-1">
+                        <span className="text-[8px] text-slate-500 uppercase font-bold">IPC Acumulado vs Rent. Consolidada</span>
+                        <button onClick={updateInflationManual} className="text-blue-400 hover:text-white transition-colors"><Icons.Refresh size={10}/></button>
+                    </div>
+                    <div className="flex justify-between items-center text-[10px] font-bold">
+                        <span className="text-slate-300 font-mono">{formatN(inflacionData.val)}%</span>
+                        <span className={`font-mono ${diffVsInf >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {diffVsInf >= 0 ? '+' : ''}{formatN(diffVsInf)}%
+                        </span>
+                    </div>
                 </div>
 
-                {/* PIÉ: AÑOS Y DÍAS MÁS COMPACTO */}
-                <div className="grid grid-cols-2 gap-1 text-[7px] text-slate-500 mt-2"> 
+                {/* PIÉ DEL TARJETÓN: DÍAS Y AÑOS (Tal cual lo tenías) */}
+                <div className="grid grid-cols-2 gap-2 text-[9px] text-slate-400 border-t border-slate-800 pt-2 mt-auto"> 
                     <div> 
-                        <span className="uppercase font-bold">Días (Cons)</span>: <b>{formatN(h.consolidated.diffDays, 0)}</b> <span className="opacity-60">({formatN(h.consolidated.diffDays / 365.25, 1)} a)</span>
+                        <div className="uppercase font-bold text-slate-500 text-[8px]">Días Inv. Real (Cons)</div> 
+                        <div className="text-slate-200 font-bold">{formatN(h.consolidated.diffDays, 0)} días <span className="opacity-60 font-normal">({formatN(h.consolidated.diffDays / 365.25, 1)} años)</span></div> 
                     </div> 
                     <div className="text-right"> 
-                        <span className="uppercase font-bold">Días (Cerr)</span>: <b>{formatN(h.closed.diffDays, 0)}</b> <span className="opacity-60">({formatN(h.closed.diffDays / 365.25, 1)} a)</span>
+                        <div className="uppercase font-bold text-slate-500 text-[8px]">Días Inv. Real (Cerr)</div> 
+                        <div className="text-slate-200 font-bold">{formatN(h.closed.diffDays, 0)} días <span className="opacity-60 font-normal">({formatN(h.closed.diffDays / 365.25, 1)} años)</span></div> 
                     </div> 
                 </div> 
-            </div> 
-            
-            <div className="mt-2 flex justify-between items-center text-[7px] text-slate-600 font-mono border-t border-slate-800 pt-1"> 
-                <div>Int: {formatN(h.avgIntervalDays, 1)}d</div> 
-                <div>Pos: {formatN(h.avgPositions, 1)}</div> 
+                
+                <div className="mt-1 flex justify-between items-center text-[8px] text-slate-600 font-mono pt-1"> 
+                    <div>Int. Op: {formatN(h.avgIntervalDays, 1)}d</div> 
+                    <div>Pos. Medias: {formatN(h.avgPositions, 1)}</div> 
+                </div> 
             </div> 
         </div> 
     );
