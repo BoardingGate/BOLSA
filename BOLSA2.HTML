@@ -3454,34 +3454,37 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                         
                         {/* NUEVO INDICADOR DE RATIO GLOBAL */}
                         {simulationMode !== 'off' && (() => {
-                            // Calculamos el promedio ponderado del ratio de toda la cartera
-                            let totalRiskDistance = 0;
-                            let totalRewardDistance = 0;
-                            let count = 0;
+                            let sumGainDist = 0;
+                            let sumRiskDist = 0;
+                            let validCount = 0;
                         
                             visiblePortfolio.forEach(p => {
-                                if (p.sellDate || p.isActive === false) return;
+                                if (p.sellDate || p.isActive === false || !p.targetPrice || !p.stopLossPrice || p.stopLossPrice >= p.currentPrice) return;
+                                
                                 const curPrice = p.isIndex ? (p.currentPrice / (p.indexDivisor || 1)) : p.currentPrice;
                                 if (curPrice <= 0) return;
                         
-                                // Calculamos distancias porcentuales
-                                if (simulationMode === 'target' && p.targetPrice > curPrice) {
-                                    totalRewardDistance += ((p.targetPrice - curPrice) / curPrice);
-                                    count++;
-                                } 
-                                else if (simulationMode === 'stop' && p.stopLossPrice < curPrice && p.stopLossPrice > 0) {
-                                    totalRiskDistance += ((curPrice - p.stopLossPrice) / curPrice);
-                                    count++;
+                                // Distancias relativas porcentuales
+                                const gainDist = (p.targetPrice - curPrice) / curPrice; // % al objetivo
+                                const riskDist = (curPrice - p.stopLossPrice) / curPrice; // % al stop
+                        
+                                if (gainDist > 0 && riskDist > 0) {
+                                    sumGainDist += gainDist;
+                                    sumRiskDist += riskDist;
+                                    validCount++;
                                 }
                             });
                         
-                            const ratio = totalRiskDistance > 0 ? (totalRewardDistance / totalRiskDistance) : (totalRewardDistance > 0 ? 99 : 0);
+                            // Ratio: Cuántas veces es la Ganancia respecto al Riesgo
+                            const ratio = (sumRiskDist > 0) ? (sumGainDist / sumRiskDist) : 0;
                         
                             return (
                                 <div className="px-3 border-l border-slate-700 ml-2 flex items-center gap-2">
-                                    <span className="text-[9px] text-slate-500 uppercase font-bold">Ratio R/B Global:</span>
+                                    <span className="text-[9px] text-slate-500 uppercase font-bold">
+                                        {simulationMode === 'target' ? 'R/B Ganancia:' : 'R/B Riesgo:'}
+                                    </span>
                                     <span className={`text-[10px] font-black ${simulationMode === 'target' ? (ratio >= 2 ? 'text-green-400' : 'text-yellow-500') : 'text-red-500'}`}>
-                                        {ratio === 99 ? '∞' : formatN(ratio, 2)} : 1
+                                        {validCount > 0 ? `${formatN(ratio, 2)} : 1` : 'N/D'}
                                     </span>
                                 </div>
                             );
