@@ -3454,37 +3454,40 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                         
                         {/* NUEVO INDICADOR DE RATIO GLOBAL */}
                         {simulationMode !== 'off' && (() => {
-                            // Calculamos el ratio global de toda la cartera filtrada
-                            const statsSim = globalMetrics.gridMetrics; // Usa los datos ya calculados del portfolio simulado
-                            const totalProfit = visiblePortfolio.reduce((acc, p) => {
-                                const isTarget = simulationMode === 'target';
-                                const price = isTarget ? (p.targetPrice || p.currentPrice) : (p.stopLossPrice || p.currentPrice);
-                                const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
-                                const val = (price * p.shares * p.currentFx);
-                                return acc + (val - cost);
-                            }, 0);
-                            
-                            // Suma de riesgos (solo posiciones que pierden en la simulación)
-                            const totalRisk = visiblePortfolio.reduce((acc, p) => {
-                                const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
-                                const isTarget = simulationMode === 'target';
-                                const price = isTarget ? (p.targetPrice || p.currentPrice) : (p.stopLossPrice || p.currentPrice);
-                                const val = (price * p.shares * p.currentFx);
-                                const pl = val - cost;
-                                return pl < 0 ? acc + Math.abs(pl) : acc;
-                            }, 0);
-                    
-                            const ratio = totalRisk > 0 ? (totalProfit / totalRisk) : 0;
-                            
+                            // Calculamos el promedio ponderado del ratio de toda la cartera
+                            let totalRiskDistance = 0;
+                            let totalRewardDistance = 0;
+                            let count = 0;
+                        
+                            visiblePortfolio.forEach(p => {
+                                if (p.sellDate || p.isActive === false) return;
+                                const curPrice = p.isIndex ? (p.currentPrice / (p.indexDivisor || 1)) : p.currentPrice;
+                                if (curPrice <= 0) return;
+                        
+                                // Calculamos distancias porcentuales
+                                if (simulationMode === 'target' && p.targetPrice > curPrice) {
+                                    totalRewardDistance += ((p.targetPrice - curPrice) / curPrice);
+                                    count++;
+                                } 
+                                else if (simulationMode === 'stop' && p.stopLossPrice < curPrice && p.stopLossPrice > 0) {
+                                    totalRiskDistance += ((curPrice - p.stopLossPrice) / curPrice);
+                                    count++;
+                                }
+                            });
+                        
+                            const ratio = totalRiskDistance > 0 ? (totalRewardDistance / totalRiskDistance) : (totalRewardDistance > 0 ? 99 : 0);
+                        
                             return (
                                 <div className="px-3 border-l border-slate-700 ml-2 flex items-center gap-2">
                                     <span className="text-[9px] text-slate-500 uppercase font-bold">Ratio R/B Global:</span>
-                                    <span className={`text-[10px] font-black ${ratio >= 1.5 ? 'text-green-400' : 'text-yellow-500'}`}>
-                                        {formatN(ratio, 2)} : 1
+                                    <span className={`text-[10px] font-black ${simulationMode === 'target' ? (ratio >= 2 ? 'text-green-400' : 'text-yellow-500') : 'text-red-500'}`}>
+                                        {ratio === 99 ? '∞' : formatN(ratio, 2)} : 1
                                     </span>
                                 </div>
                             );
                         })()}
+
+
                     </div>
 
 
@@ -3519,7 +3522,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                                 <th className="py-2 px-2 text-center text-blue-400 min-w-[70px] bg-slate-800 sticky top-0 z-[90] border-b border-slate-800">FX Desv.</th>
                                 <th className="py-2 px-2 text-center min-w-[95px] bg-slate-800 sticky top-0 z-[90] border-b border-slate-800">Gastos / Adj</th>
                                 <th className={`py-2 px-2 text-right min-w-[115px] text-blue-200 cursor-pointer group bg-blue-950 sticky top-0 z-[90] border-b border-slate-800 ${sortConfig.key==='totalCost'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('totalCost')}><div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 ${sortConfig.key==='totalCost'?'opacity-100':''}`}/> Coste Total {sortConfig.key==='totalCost' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
-                                <th className="py-2 px-2 text-center min-w-[100px] text-slate-500 font-mono text-[9px] bg-slate-800 sticky top-0 z-[90] border-b border-slate-800">Pesos<br/>(Coste - Valor)</th>
+                                <th className="p-2 px-2 text-center min-w-[100px] text-slate-500 font-mono text-[9px] bg-slate-800 sticky top-0 z-[90] border-b border-slate-800">Pesos<br/>(Coste - Valor)</th>
                                 <th className={`py-2 px-2 text-right min-w-[125px] cursor-pointer group bg-blue-950 text-blue-200 sticky top-0 z-[90] border-b border-slate-800 border-l border-r border-blue-800/30 ${sortConfig.key==='totalValue'?'bg-blue-900 text-white':''}`} onClick={()=>requestSort('totalValue')}><div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 ${sortConfig.key==='totalValue'?'opacity-100':''}`}/>Valoración{sortConfig.key==='totalValue' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
                                 <th className={`py-2 px-2 text-right cursor-pointer text-blue-200 group bg-blue-950 border-r border-blue-800/30 min-w-[125px] sticky top-0 z-[90] border-b ${sortConfig.key==='yield'?'bg-blue-900 text-white':''}`} onClick={()=>requestSort('yield')}><div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 ${sortConfig.key==='yield'?'opacity-100':''}`}/> RENDIMIENTO {sortConfig.key==='yield' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
                                 <th className={`py-2 px-2 text-right cursor-pointer group min-w-[100px] sticky top-0 z-[90] border-b border-slate-800 ${sortConfig.key==='percent'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('percent')}><div className="flex items-center justify-end gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 ${sortConfig.key==='percent'?'opacity-100':''}`}/> % Ben/Pérd (con Div) {sortConfig.key==='percent' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>
