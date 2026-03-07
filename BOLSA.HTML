@@ -2142,7 +2142,7 @@ const TradingViewChart = ({ ticker, onClear }) => {
     const container = useRef();
 
     useEffect(() => {
-        if (!ticker || !container.current) return;
+        if (!container.current) return;
 
         container.current.innerHTML = ""; 
         const script = document.createElement("script");
@@ -2150,10 +2150,13 @@ const TradingViewChart = ({ ticker, onClear }) => {
         script.type = "text/javascript";
         script.async = true;
 
-        let symbol = ticker;
-        if (ticker.includes(":")) {
+        // ASIGNAMOS EL S&P 500 CORRECTO POR DEFECTO
+        let symbol = ticker || "FOREXCOM:SPXUSD";
+        
+        if (ticker && ticker.includes(":")) {
             let [exch, sym] = ticker.split(":");
-            if (exch === 'INDEXSP' || sym === '.INX') symbol = "SP:SPX";
+            // Traducción de Google Finance a TradingView
+            if (exch === 'INDEXSP' || sym === '.INX') symbol = "FOREXCOM:SPXUSD"; 
             else if (exch === 'INDEXNASDAQ' || sym === '.IXIC') symbol = "NASDAQ:IXIC";
             else if (exch === 'INDEXDJI' || sym === '.DJI') symbol = "DJ:DJI";
             else if (exch === 'EPA' || exch === 'AMS' || exch === 'EBR') symbol = `EURONEXT:${sym}`; 
@@ -2162,39 +2165,42 @@ const TradingViewChart = ({ ticker, onClear }) => {
             else symbol = `${exch}:${sym}`;
         }
 
-        script.innerHTML = JSON.stringify({
-            "autosize": true, // Esto hará que llene el contenedor padre
-            "symbol": symbol,
-            "interval": "D",
-            "timezone": "Europe/Madrid",
-            "theme": "dark",
-            "style": "1",
-            "locale": "es",
-            "enable_publishing": false,
-            "hide_side_toolbar": false,
-            "allow_symbol_change": true,
-            "save_image": true,
-            "details": true,
-            "hotlist": true,
-            "calendar": true,
-            "show_popup_button": true,
-            "popup_width": "1000",
-            "popup_height": "750",
-            "support_host": "https://www.tradingview.com",
-            "container_id": "tv_chart_container",
-            "backgroundColor": "rgba(10, 10, 10, 1)",
-            "gridColor": "rgba(42, 46, 57, 0.06)",
-            "studies": [ "RSI@tv-basicstudies", "MASimple@tv-basicstudies" ]
-        });
+       script.innerHTML = JSON.stringify({
+        "autosize": true,
+        "symbol": symbol,
+        "interval": "D",
+        "timezone": "Europe/Madrid",
+        "theme": "dark",
+        "style": "1",
+        "locale": "es",
+        "enable_publishing": false,
+        "hide_top_toolbar": false,
+        "hide_side_toolbar": false,
+        "allow_symbol_change": true,
+        "save_image": false,
+        "details": true,
+        "hotlist": true,
+        "calendar": true,
+        "show_popup_button": true,
+        "popup_width": "1000",
+        "popup_height": "750",
+        "support_host": "https://www.tradingview.com",
+        "container_id": "tv_chart_container",
+        "backgroundColor": "rgba(10, 10, 10, 1)",
+        "gridColor": "rgba(42, 46, 57, 0.06)",
+        "studies": [ 
+            "RSI@tv-basicstudies",
+            "MASimple@tv-basicstudies"
+        ]
+           });
+    
+    container.current.appendChild(script);
 
-        container.current.appendChild(script);
     }, [ticker]);
-
-
-
 
     const portfolioData = JSON.parse(localStorage.getItem('bg_portfolio') || '[]');
     const niveles = portfolioData.find(p => p.ticker === ticker);
+    const displayTicker = ticker || "S&P 500 (SPX)";
 
     return (
         <div className="w-full h-full bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl transition-all border-t-4 border-t-blue-600 flex flex-col">
@@ -2202,15 +2208,15 @@ const TradingViewChart = ({ ticker, onClear }) => {
                 <div className="flex items-center gap-2">
                     <Icons.Candles size={18} className="text-blue-400"/>
                     <span className="text-[10px] font-black text-white uppercase tracking-widest">Análisis Técnico</span>
-                    <span className="px-2 py-0.5 bg-blue-900/50 text-blue-300 text-[9px] rounded font-bold">{ticker}</span>
+                    <span className="px-2 py-0.5 bg-blue-900/50 text-blue-300 text-[9px] rounded font-bold">{displayTicker}</span>
                 </div>
-                <button onClick={onClear} className="text-white hover:bg-red-600 bg-slate-700 transition-colors text-[9px] font-black px-3 py-1 rounded-md">CERRAR</button>
+                {ticker && (
+                    <button onClick={onClear} className="text-white hover:bg-red-600 bg-slate-700 transition-colors text-[9px] font-black px-3 py-1 rounded-md">CERRAR</button>
+                )}
             </div>
             
-            {/* El gráfico */}
-            <div id="tv_chart_container" ref={container} className="flex-1 w-full relative"></div>
+            <div id="tv_chart_container" ref={container} className="flex-1 w-full relative min-h-[500px]"></div>
 
-            {/* --- INSERCIÓN DE ETIQUETAS DE CONTROL (MEJORA) --- */}
             {niveles && (parseFloat(niveles.targetPrice) > 0 || parseFloat(niveles.stopLossPrice) > 0 || parseFloat(niveles.buyPrice) > 0) && (
                     <div className="flex gap-4 p-2 bg-slate-950 border-t border-slate-700 text-[9px] font-bold justify-center shadow-inner overflow-x-auto custom-scrollbar">
                         {parseFloat(niveles.buyPrice) > 0 && (
@@ -2241,79 +2247,75 @@ const TradingViewChart = ({ ticker, onClear }) => {
 };
 
 const TopAnalysisSection = ({ selectedTicker, onClearTicker }) => {
-          const carouselRef = useRef(null);
+    const carouselRef = useRef(null);
 
-          const scrollToPanel = (targetId) => {
-              if (!carouselRef.current) return;
-              const container = carouselRef.current;
-              const panels = container.children;
-              
-              // Calcular índice dependiendo de si el primer panel (Técnico) está visible
-              let index = 0;
-              if (targetId === 'technical' && selectedTicker) index = 0;
-              else if (targetId === 'heatmap') index = selectedTicker ? 1 : 0;
-              else if (targetId === 'markets') index = selectedTicker ? 2 : 1;
+    const scrollToPanel = (targetId) => {
+        if (!carouselRef.current) return;
+        const container = carouselRef.current;
+        const panels = container.children;
+        
+        let index = 0;
+        if (targetId === 'technical') index = 0;
+        else if (targetId === 'heatmap') index = 1;
+        else if (targetId === 'markets') index = 2;
 
-              if (panels[index]) {
-                  panels[index].scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-              }
-          };
+        if (panels[index]) {
+            panels[index].scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        }
+    };
 
-          return (
-              <div className="w-full mb-8 fade-in">
-                  
-                  {/* BARRA DE NAVEGACIÓN VISUAL Y BOTONERA */}
-                  <div className="flex justify-between items-center bg-slate-900/80 border border-slate-700 rounded-t-xl px-4 py-2 mb-1">
-                      <div className="flex items-center gap-2 text-[10px] font-bold text-blue-400 uppercase tracking-widest animate-pulse">
-                          <span>↔ Desliza para ver paneles o haz clic en su título</span>
-                      </div>
-                      <div className="flex gap-4 text-[9px] font-bold text-slate-500 uppercase tracking-wider">
-                          <button 
-                              onClick={() => selectedTicker && scrollToPanel('technical')}
-                              className={`transition-colors ${selectedTicker ? "text-blue-300 hover:text-white cursor-pointer" : "opacity-50 cursor-not-allowed"}`}
-                          >
-                              1. Gráfico Técnico
-                          </button>
-                          <button 
-                              onClick={() => scrollToPanel('heatmap')}
-                              className="text-purple-400 hover:text-purple-200 cursor-pointer transition-colors"
-                          >
-                              2. Mapa de Calor
-                          </button>
-                          <button 
-                              onClick={() => scrollToPanel('markets')}
-                              className="text-green-400 hover:text-green-200 cursor-pointer transition-colors"
-                          >
-                              3. Índices Globales
-                          </button>
-                      </div>
-                  </div>
+    return (
+        <div className="w-full mb-8 fade-in">
+            
+            {/* BARRA DE NAVEGACIÓN VISUAL Y BOTONERA */}
+            <div className="flex justify-between items-center bg-slate-900/80 border border-slate-700 rounded-t-xl px-4 py-2 mb-1">
+                <div className="flex items-center gap-2 text-[10px] font-bold text-blue-400 uppercase tracking-widest animate-pulse">
+                    <span>↔ Desliza para ver paneles o haz clic en su título</span>
+                </div>
+                <div className="flex gap-4 text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                    <button 
+                        onClick={() => scrollToPanel('technical')}
+                        className="text-blue-400 hover:text-blue-200 cursor-pointer transition-colors"
+                    >
+                        1. Gráfico Técnico
+                    </button>
+                    <button 
+                        onClick={() => scrollToPanel('heatmap')}
+                        className="text-purple-400 hover:text-purple-200 cursor-pointer transition-colors"
+                    >
+                        2. Mapa de Calor
+                    </button>
+                    <button 
+                        onClick={() => scrollToPanel('markets')}
+                        className="text-green-400 hover:text-green-200 cursor-pointer transition-colors"
+                    >
+                        3. Índices Globales
+                    </button>
+                </div>
+            </div>
 
-                  {/* CARRUSEL CON ALTURA FIJA DE 650px PARA TODOS */}
-                  <div ref={carouselRef} className="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-4 custom-scrollbar rounded-b-xl scroll-smooth">
-                      
-                      {/* 1. GRÁFICO TÉCNICO (Solo si hay selección) */}
-                      {selectedTicker && (
-                          <div className="snap-center min-w-full lg:min-w-[95%] h-[650px] shadow-2xl relative">
-                              <TradingViewChart ticker={selectedTicker} onClear={onClearTicker} />
-                          </div>
-                      )}
+            {/* CARRUSEL CON ALTURA FIJA DE 650px PARA TODOS */}
+            <div ref={carouselRef} className="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-4 custom-scrollbar rounded-b-xl scroll-smooth">
+                
+                {/* 1. GRÁFICO TÉCNICO (AHORA SIEMPRE VISIBLE) */}
+                <div className="snap-center min-w-full lg:min-w-[95%] h-[650px] shadow-2xl relative">
+                    <TradingViewChart ticker={selectedTicker} onClear={onClearTicker} />
+                </div>
 
-                      {/* 2. MAPA DE CALOR */}
-                      <div className="snap-center min-w-full lg:min-w-[95%] h-[650px] shadow-2xl relative">
-                          <TradingViewHeatmapWidget />
-                      </div>
+                {/* 2. MAPA DE CALOR */}
+                <div className="snap-center min-w-full lg:min-w-[95%] h-[650px] shadow-2xl relative">
+                    <TradingViewHeatmapWidget />
+                </div>
 
-                      {/* 3. ÍNDICES GLOBALES */}
-                      <div className="snap-center min-w-full lg:min-w-[95%] h-[650px] shadow-2xl relative">
-                          <TradingViewMarketWidget />
-                      </div>
+                {/* 3. ÍNDICES GLOBALES */}
+                <div className="snap-center min-w-full lg:min-w-[95%] h-[650px] shadow-2xl relative">
+                    <TradingViewMarketWidget />
+                </div>
 
-                  </div>
-              </div>
-          );
+            </div>
+        </div>
+    );
 };
-
 
 const TradingViewHeatmapWidget = () => {
           const container = useRef();
