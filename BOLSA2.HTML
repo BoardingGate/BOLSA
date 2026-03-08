@@ -3047,14 +3047,29 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         return () => clearInterval(interval); 
     }, [apiKey, refreshInterval, isAppReady]);     
 
-    const fetchTickerData = async () => {
+        const fetchTickerData = async () => {
         if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Introduce un Ticker o ISIN.', type: 'error' });
         setFetchingSingle(true);
         
         try {
-            const scriptUrl = simpleDecrypt(gScriptUrl);
+            const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
             const isIsinCode = isISIN(form.ticker);
-            const fxPair = (form.stockCurrency || 'USD') + baseCurrency;
+            
+            let inferredCurrency = form.stockCurrency; 
+            if (!isIsinCode && form.ticker) {
+                const tUpper = form.ticker.toUpperCase();
+                if (tUpper.startsWith('BME:') || tUpper.startsWith('XETRA:') || tUpper.startsWith('FRA:') || tUpper.startsWith('EPA:') || tUpper.startsWith('AMS:') || tUpper.startsWith('MIL:') || tUpper.startsWith('BIT:')) inferredCurrency = 'EUR';
+                else if (tUpper.startsWith('LSE:') || tUpper.startsWith('LON:')) inferredCurrency = 'GBP';
+                else if (tUpper.startsWith('TSE:') || tUpper.startsWith('TYO:')) inferredCurrency = 'JPY';
+                else if (tUpper.startsWith('TSX:')) inferredCurrency = 'CAD';
+                else if (tUpper.startsWith('ASX:')) inferredCurrency = 'AUD';
+                else if (tUpper.startsWith('SWX:') || tUpper.startsWith('VTX:')) inferredCurrency = 'CHF';
+                else if (tUpper.startsWith('HKG:')) inferredCurrency = 'HKD';
+                else if (tUpper.startsWith('NASDAQ:') || tUpper.startsWith('NYSE:') || tUpper.startsWith('AMEX:')) inferredCurrency = 'USD';
+                else if (!tUpper.includes(':')) inferredCurrency = 'USD'; // Por defecto sin prefijo suele ser mercado americano
+            }
+
+            const fxPair = inferredCurrency + baseCurrency;
             let googleData = null;
 
             if (!isIsinCode && scriptUrl) {
@@ -3068,28 +3083,51 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             const fx = googleData ? googleData[fxPair] : null;
 
             if (stock && stock.success) {
+                const isBase = inferredCurrency === baseCurrency;
                 setForm(prev => ({
-                    ...prev, name: stock.n || prev.name || form.ticker, buyPrice: stock.p || prev.buyPrice,
-                    buyFx: (prev.stockCurrency === baseCurrency) ? 1 : (fx?.success ? fx.p : prev.buyFx), buyPE: stock.pe || prev.buyPE, annualDividend: stock.div || prev.annualDividend
+                    ...prev, 
+                    name: stock.n || prev.name || form.ticker, 
+                    buyPrice: stock.p || prev.buyPrice,
+                    stockCurrency: inferredCurrency, // Inyectamos la divisa inferida
+                    buyFx: isBase ? 1 : (fx?.success ? fx.p : prev.buyFx), 
+                    currentFx: isBase ? 1 : (fx?.success ? fx.p : prev.currentFx),
+                    buyPE: stock.pe || prev.buyPE, 
+                    annualDividend: stock.div || prev.annualDividend
                 }));
                 if (stock.p > 0) { setFetchingSingle(false); return; }
             }
 
-            let prompt = isIsinCode ? `Actúa como API financiera. Busca el fondo con ISIN "${form.ticker}". Responde SOLO JSON: {"n":"nombre completo","p":valor_actual,"currency":"Divisa_ISO","fx":cambio_a_${baseCurrency}}. USA PUNTO DECIMAL.` : `Actúa como API financiera. Busca la acción "${form.ticker}" (${form.stockCurrency}). Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_numero}. USA PUNTO DECIMAL.`;
+            let prompt = isIsinCode 
+                ? `Actúa como API financiera. Busca el fondo con ISIN "${form.ticker}". Identifica su divisa base. Responde SOLO JSON: {"n":"nombre completo","p":valor_actual,"currency":"Divisa_ISO_3_letras","fx":cambio_a_${baseCurrency}}. USA PUNTO DECIMAL.` 
+                : `Actúa como API financiera. Busca la acción "${form.ticker}". Identifica su divisa de cotización en el mercado real. Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"currency":"Divisa_ISO_3_letras","fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_numero}. USA PUNTO DECIMAL.`;
 
             const aiRes = await askGemini(apiKey, prompt, aiModel);
             const json = extractJSON(aiRes);
             
             if (json) {
                 setForm(prev => {
-                    const newCurrency = json.currency || prev.stockCurrency;
-                    return { ...prev, name: json.n || prev.name, buyPrice: json.p || prev.buyPrice, buyFx: json.fx || prev.buyFx, buyPE: isIsinCode ? 0 : (json.pe || prev.buyPE), annualDividend: isIsinCode ? 0 : (json.div || prev.annualDividend), stockCurrency: isIsinCode ? newCurrency : prev.stockCurrency, isIndex: isIsinCode ? true : prev.isIndex };
+                    const newCurrency = json.currency || inferredCurrency;
+                    const isBase = newCurrency === baseCurrency;
+                    return { 
+                        ...prev, 
+                        name: json.n || prev.name, 
+                        buyPrice: json.p || prev.buyPrice, 
+                        stockCurrency: newCurrency,
+                        buyFx: isBase ? 1 : (json.fx || prev.buyFx), 
+                        currentFx: isBase ? 1 : (json.fx || (prev.currentFx || 1)),
+                        buyPE: isIsinCode ? 0 : (json.pe || prev.buyPE), 
+                        annualDividend: isIsinCode ? 0 : (json.div || prev.annualDividend), 
+                        isIndex: isIsinCode ? true : prev.isIndex 
+                    };
                 });
             }
         } catch (e) {
-            setInfoModal({ isOpen: true, title: 'Fallo', msg: `No se pudieron rescatar datos para ${form.ticker}.`, type: 'error' });
+            setInfoModal({ isOpen: true, title: 'Fallo', msg: `No se pudieron rescatar datos completos para ${form.ticker}. Rellena manualmente.`, type: 'error' });
         } finally { setFetchingSingle(false); }
     };
+
+
+   
 
     const handlePrintHistoric = () => {
         const printWindow = window.open('', '', 'height=800,width=1200');
