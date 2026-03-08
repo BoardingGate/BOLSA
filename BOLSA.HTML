@@ -639,6 +639,10 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
             const tax = resNoDiv > 0 ? r2(resNoDiv * 0.19) : 0; 
             runningAccum = r2(runningAccum + resWithDiv); 
 
+            const currentTaxRate = currentData.taxRate !== undefined ? parseFloat(currentData.taxRate) : 19;
+            const tax = resNoDiv > 0 ? r2(resNoDiv * (currentTaxRate / 100)) : 0; 
+
+
             const rentaResNoDiv = resNoDiv;
             const rentaAdj = parseFloat(currentData.rentaAdj) || 0;
             const rentaBase = r2(rentaResNoDiv + rentaAdj);
@@ -649,7 +653,8 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                 finalCompRest = r2(rentaBase + c1 + c2 + c3 + c4); 
             } else { finalCompRest = 0; }
 
-            newData[y] = { ...newData[y], soldCount: lotesTotal, uniqueCount: uniqueTickers.size, profitPrice: yearProfitPrice, dividends: yearDivs, lossPrice: yearLossPrice, fees: yearFees, resNoDiv: resNoDiv, resWithDiv: resWithDiv, tax: tax, accumulated: runningAccum, rentaResNoDiv: rentaResNoDiv, rentaFees: yearFees, rentaAdj: rentaAdj, rentaBase: rentaBase, comp1: parseFloat(currentData.comp1) || 0, comp2: parseFloat(currentData.comp2) || 0, comp3: parseFloat(currentData.comp3) || 0, comp4: parseFloat(currentData.comp4) || 0, compRest: finalCompRest }; 
+            newData[y] = { ...newData[y], soldCount: lotesTotal, uniqueCount: uniqueTickers.size, profitPrice: yearProfitPrice, dividends: yearDivs, lossPrice: yearLossPrice, fees: yearFees, resNoDiv: resNoDiv, resWithDiv: resWithDiv, taxRate: currentTaxRate, tax: tax, accumulated: runningAccum, rentaResNoDiv: rentaResNoDiv, rentaFees: yearFees, rentaAdj: rentaAdj, rentaBase: rentaBase, comp1: parseFloat(currentData.comp1) || 0, comp2: parseFloat(currentData.comp2) || 0, comp3: parseFloat(currentData.comp3) || 0, comp4: parseFloat(currentData.comp4) || 0, compRest: finalCompRest };
+
         }); 
         setResultsData(newData); 
     };
@@ -657,19 +662,26 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
     useEffect(() => { handleRecalculate(); }, [portfolio.length, portfolio]);
 
     const handleEdit = (year, field, val) => { 
-        if (resultsData[year]?.locked && !field.startsWith('renta') && !field.startsWith('comp')) return; 
+        if (resultsData[year]?.locked && !field.startsWith('renta') && !field.startsWith('comp') && field !== 'taxRate') return; 
         const v = parseFloat(val); const safeVal = isNaN(v) ? 0 : r2(v); 
         setResultsData(prev => { 
             const d = { ...prev[year], [field]: safeVal }; 
-            if (field === 'profitPrice' || field === 'lossPrice') { d.resNoDiv = r2(d.profitPrice - d.lossPrice); d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * 0.19) : 0; d.resWithDiv = r2(d.resNoDiv + d.dividends); d.accumulated = r2(d.resNoDiv - d.tax); d.rentaResNoDiv = d.resNoDiv; d.rentaBase = r2(d.rentaResNoDiv + (d.rentaAdj || 0)); }
+            
+            const currentTaxRate = d.taxRate !== undefined ? parseFloat(d.taxRate) : 19;
+
+            if (field === 'profitPrice' || field === 'lossPrice') { d.resNoDiv = r2(d.profitPrice - d.lossPrice); d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * (currentTaxRate / 100)) : 0; d.resWithDiv = r2(d.resNoDiv + d.dividends); d.accumulated = r2(d.resNoDiv - d.tax); d.rentaResNoDiv = d.resNoDiv; d.rentaBase = r2(d.rentaResNoDiv + (d.rentaAdj || 0)); }
             if (field === 'dividends') { d.resWithDiv = r2(d.resNoDiv + d.dividends); }
-            if (field === 'resNoDiv') { d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * 0.19) : 0; d.resWithDiv = r2(d.resNoDiv + d.dividends); d.accumulated = r2(d.resNoDiv - d.tax); d.rentaResNoDiv = d.resNoDiv; d.rentaBase = r2(d.rentaResNoDiv + (d.rentaAdj || 0)); }
+            if (field === 'resNoDiv') { d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * (currentTaxRate / 100)) : 0; d.resWithDiv = r2(d.resNoDiv + d.dividends); d.accumulated = r2(d.resNoDiv - d.tax); d.rentaResNoDiv = d.resNoDiv; d.rentaBase = r2(d.rentaResNoDiv + (d.rentaAdj || 0)); }
             if (field === 'rentaAdj' || field === 'rentaResNoDiv') { d.rentaBase = r2(d.rentaResNoDiv + d.rentaAdj); }
+            
+            if (field === 'taxRate') { d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * (currentTaxRate / 100)) : 0; d.accumulated = r2(d.resNoDiv - d.tax); }
+
             if (['comp1', 'comp2', 'comp3', 'comp4', 'rentaBase', 'profitPrice', 'lossPrice', 'resNoDiv', 'rentaAdj'].includes(field)) { if (d.rentaBase < 0) { const c1 = parseFloat(d.comp1) || 0; const c2 = parseFloat(d.comp2) || 0; const c3 = parseFloat(d.comp3) || 0; const c4 = parseFloat(d.comp4) || 0; d.compRest = r2(d.rentaBase + c1 + c2 + c3 + c4); } else { d.compRest = 0; } } 
             return { ...prev, [year]: d }; 
         }); 
     };
 
+    
     const toggleLock = (year) => { setResultsData(prev => ({ ...prev, [year]: { ...prev[year], locked: !prev[year].locked } })); };
 
     const yearsToShow = getDisplayYears();
@@ -828,7 +840,7 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
         let html = `<html><head><title>Resultados Anuales</title><style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:9px;} h1{font-size:10px;margin-bottom:2px;text-transform:uppercase;} h2{font-size:9px;margin-top:15px;margin-bottom:2px;color:#d97706;} table{width:100%;border-collapse:collapse;margin-bottom:10px;} th{background:#f1f5f9;text-align:center;padding:2px;border:1px solid #94a3b8;font-size:7px;text-transform:uppercase;} td{padding:2px;border:1px solid #e2e8f0;text-align:right;font-family:monospace;font-size:7px;} .gray-bg{background:#f1f5f9;} .dark-bg{background:#e2e8f0;font-weight:bold;} .orange-bg{background:#fff7ed;color:#ea580c;font-weight:bold;} .info-box{border:1px solid #ccc; background:#f9f9f9; padding:5px; font-size:7px; text-align:justify; margin-top:10px;}</style></head><body>`; 
         html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>INFORME DE RESULTADOS ANUALES CARTERA</h1></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`; 
         html += `<h2>1. Rendimiento y Fiscalidad Base</h2>`; 
-        html += `<table><thead><tr><th>Año</th><th>Lotes</th><th>Beneficio</th><th>Pérdida</th><th>Res. SIN Div</th><th>Dividendos</th><th>Res. CON Div</th><th>Impuestos</th><th>Neto/Acum</th><th style="border-left:2px solid #333;">Res. SIN Div (R)</th><th>Gtos Broker</th><th>Ajustes</th><th>Base Imp. 19%</th></tr></thead><tbody>`; 
+        html += `<table><thead><tr><th>Año</th><th>Lotes</th><th>Beneficio</th><th>Pérdida</th><th>Res. SIN Div</th><th>Dividendos</th><th>Res. CON Div</th><th>% Imp.</th><th>Impuestos</th><th>Neto/Acum</th><th style="border-left:2px solid #333;">Res. SIN Div (R)</th><th>Gtos Broker</th><th>Ajustes</th><th>Base Imp. 19%</th></tr></thead><tbody>`;
         yearsToShow.forEach(year => { 
             const d = resultsData[year] || {}; 
             html += `<tr><td style="text-align:center;"><b>${year}</b></td><td style="text-align:center;">${formatN(d.soldCount, 0)}</td><td>${formatMoney(d.profitPrice, baseCurrency)}</td><td style="color:#dc2626;">${formatMoney(d.lossPrice, baseCurrency)}</td><td class="gray-bg">${formatMoney(d.resNoDiv, baseCurrency)}</td><td>${formatMoney(d.dividends, baseCurrency)}</td><td class="gray-bg">${formatMoney(d.resWithDiv, baseCurrency)}</td><td>${formatMoney(d.tax, baseCurrency)}</td><td>${formatMoney(d.accumulated, baseCurrency)}</td><td style="border-left:2px solid #333;">${formatMoney(d.rentaResNoDiv, baseCurrency)}</td><td>${formatMoney(d.rentaFees, baseCurrency)}</td><td>${formatMoney(d.rentaAdj, baseCurrency)}</td><td class="dark-bg">${formatMoney(d.rentaBase, baseCurrency)}</td></tr>`; 
@@ -839,7 +851,7 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
         yearsToShow.forEach(year => { 
             const d = resultsData[year] || {}; 
             if (d.rentaBase < 0 || d.compRest !== 0 || d.comp1 !==0) { 
-                html += `<tr><td style="text-align:center;"><b>${year}</b></td><td style="font-weight:bold; color:${d.rentaBase<0?'red':'black'}">${formatMoney(d.rentaBase, baseCurrency)}</td><td>${formatMoney(d.comp1, baseCurrency)}</td><td>${formatMoney(d.comp2, baseCurrency)}</td><td>${formatMoney(d.comp3, baseCurrency)}</td><td>${formatMoney(d.comp4, baseCurrency)}</td><td class="orange-bg" style="border-left:2px solid #ea580c;">${formatMoney(d.compRest, baseCurrency)}</td></tr>`; 
+                html += `<tr><td style="text-align:center;"><b>${year}</b></td><td style="text-align:center;">${formatN(d.soldCount, 0)}</td><td>${formatMoney(d.profitPrice, baseCurrency)}</td><td style="color:#dc2626;">${formatMoney(d.lossPrice, baseCurrency)}</td><td class="gray-bg">${formatMoney(d.resNoDiv, baseCurrency)}</td><td>${formatMoney(d.dividends, baseCurrency)}</td><td class="gray-bg">${formatMoney(d.resWithDiv, baseCurrency)}</td><td style="text-align:center;">${formatN(d.taxRate !== undefined ? d.taxRate : 19)}%</td><td>${formatMoney(d.tax, baseCurrency)}</td><td>${formatMoney(d.accumulated, baseCurrency)}</td><td style="border-left:2px solid #333;">${formatMoney(d.rentaResNoDiv, baseCurrency)}</td><td>${formatMoney(d.rentaFees, baseCurrency)}</td><td>${formatMoney(d.rentaAdj, baseCurrency)}</td><td class="dark-bg">${formatMoney(d.rentaBase, baseCurrency)}</td></tr>`;                
             } 
         }); 
         html += `</tbody></table>`; 
@@ -955,7 +967,8 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                              <th className="p-2 text-right border-b border-slate-700 border-l border-slate-700/50 bg-slate-800/30 font-bold text-slate-200">Res. SIN Div<br/><span className="text-[7px] opacity-60 font-normal">(Ing - Pérd)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 text-blue-400">Dividendos<br/><span className="text-[7px] opacity-60 font-normal">(Cobrados)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 bg-slate-800/30 font-bold text-white">Res. CON Div<br/><span className="text-[7px] opacity-60 font-normal">(+ Divs)</span></th>
-                             <th className="p-2 text-right border-b border-slate-700 text-purple-400">Impuestos<br/><span className="text-[7px] opacity-60 font-normal">(19% s/ Sin Div)</span></th>
+                             <th className="p-2 text-right border-b border-slate-700 text-purple-300 w-16">% Impto.<br/><span className="text-[7px] opacity-60 font-normal">(Tasa)</span></th>
+                             <th className="p-2 text-right border-b border-slate-700 text-purple-400">Impuestos<br/><span className="text-[7px] opacity-60 font-normal">(s/ Sin Div)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 font-bold text-yellow-500">Neto / Acum<br/><span className="text-[7px] opacity-60 font-normal">(Res - Imp)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 border-l-4 border-slate-900 bg-[#1e2330] text-slate-300">Res. SIN Div<br/><span className="text-[7px] opacity-60 font-normal">(Renta)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-slate-400">Gtos Broker<br/><span className="text-[7px] opacity-60 font-normal">(Total)</span></th>
@@ -968,8 +981,10 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                              <th className="p-2 text-right border-b border-slate-700 bg-orange-600/20 text-yellow-500 font-black border-l border-orange-500/30 w-32">PENDIENTE<br/><span className="text-[7px] opacity-60 font-normal">(Resta)</span></th>
                          </tr>
                      </thead>
-                     <tbody className="divide-y divide-slate-800 font-mono text-xs">{yearsToShow.map(year => { 
-                         const d = resultsData[year] || { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, resNoDiv:0, resWithDiv:0, tax:0, accumulated:0, fees:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0, comp1:0, comp2:0, comp3:0, comp4:0, compRest:0 }; 
+
+
+                    <tbody className="divide-y divide-slate-800 font-mono text-xs">{yearsToShow.map(year => { 
+                         const d = resultsData[year] || { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, resNoDiv:0, resWithDiv:0, taxRate:19, tax:0, accumulated:0, fees:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0, comp1:0, comp2:0, comp3:0, comp4:0, compRest:0 }; 
                          return ( 
                              <tr key={year} className={`hover:bg-slate-900/40 transition-colors ${d.locked ? 'opacity-70' : ''}`}>
                                  <td className="p-2 text-center bg-slate-900 sticky left-0 z-20 border-r border-slate-800"><input type="checkbox" checked={d.locked} onChange={()=>toggleLock(year)} className="w-3 h-3 accent-red-500 cursor-pointer" /></td>
@@ -980,6 +995,10 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                                  <td className="p-2 border-l border-slate-800/50 bg-slate-900/20"><input type="number" step="0.01" value={d.resNoDiv} onChange={e=>handleEdit(year, 'resNoDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resNoDiv >=0 ? 'text-slate-200':'text-red-400'}`} /></td>
                                  <td className="p-2"><input type="number" step="0.01" value={d.dividends} onChange={e=>handleEdit(year, 'dividends', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-blue-400 outline-none" /></td>
                                  <td className="p-2 bg-slate-900/20"><input type="number" step="0.01" value={d.resWithDiv} onChange={e=>handleEdit(year, 'resWithDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resWithDiv >=0 ? 'text-white':'text-red-400'}`} /></td>
+                                 
+                                 {/* CELDA NUEVA EDITABLE DEL PORCENTAJE */}
+                                 <td className="p-2 bg-slate-900/10"><input type="number" step="0.1" value={d.taxRate !== undefined ? d.taxRate : 19} onChange={e=>handleEdit(year, 'taxRate', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-purple-300 outline-none" /></td>
+                                 
                                  <td className="p-2"><input type="number" step="0.01" value={d.tax} onChange={e=>handleEdit(year, 'tax', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-purple-400 font-bold outline-none" /></td>
                                  <td className="p-2 border-r border-slate-800 bg-slate-900/10"><input type="number" step="0.01" value={d.accumulated} onChange={e=>handleEdit(year, 'accumulated', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.accumulated >= 0 ? 'text-yellow-500' : 'text-red-500'}`} /></td>
                                  
@@ -996,6 +1015,7 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                              </tr> 
                          ); 
                      })}
+                    
                      <tr className="bg-slate-900 border-t-2 border-slate-700 text-white font-bold text-xs shadow-xl"><td colSpan="3" className="p-3 text-right text-[10px] uppercase text-slate-500 tracking-widest bg-slate-900 sticky left-0 border-r border-slate-800">Total Global: <span className="text-white ml-2">{formatN(totals.soldCount, 0)} Op.</span></td><td className="p-3 text-right text-green-500">{formatMoney(totals.profitPrice, baseCurrency)}</td><td className="p-3 text-right text-red-500">{formatMoney(totals.lossPrice, baseCurrency)}</td><td className="p-3 text-right text-slate-300">{formatMoney(totals.resNoDiv, baseCurrency)}</td><td className="p-3 text-right text-blue-400">{formatMoney(totals.dividends, baseCurrency)}</td><td className="p-3 text-right text-white text-sm">{formatMoney(totals.resWithDiv, baseCurrency)}</td><td className="p-3 text-right text-purple-400">{formatMoney(totals.tax, baseCurrency)}</td><td className="p-3 bg-slate-950"></td><td className="p-3 bg-[#11151d]"></td><td className="p-3 text-right text-slate-500 bg-[#11151d]">{formatMoney(totals.fees, baseCurrency)}</td><td className="p-3 bg-[#11151d]"></td><td className="p-3 text-right text-blue-200 bg-[#11151d]">{formatMoney(totals.rentaBase, baseCurrency)}</td><td colSpan="5" className="bg-[#11151d]"></td></tr></tbody></table>
              </div>
              <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-6 flex flex-col md:flex-row gap-6">
