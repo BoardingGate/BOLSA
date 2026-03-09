@@ -2948,6 +2948,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                     prevValTotal += (prevP * p.shares * eF);
                 }
 
+
                 if (!p.isIndex) fX += (p.shares * (isS ? p.sellPrice : p.currentPrice) * (eF - p.buyFx));
                 inv += costT; cur += vN; weightedDays += (d * costT);
                 (p.dividends || []).forEach(dv => divN += dv.net);
@@ -3711,19 +3712,36 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                                 const capitalGain = vF - cost; 
                                 const days = calculateDays(p.buyDate, p.sellDate || new Date()); 
                                 const rs = calcReturns(cost, vF + ds, days); 
-                               
+
+
+                                // 1. Modificación en la lógica de cálculo de intra dentro del map (PortfolioTab)
                                 let intraVal = 0, intraPct = 0, hasIntra = false;
                                 const mStatus = getMarketStatus(p); 
                                 if (!isS && p.previousClose && mStatus.open) {
                                     const rawCurP = p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice;
                                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
+                                    const curF = p.isIndex ? p.buyFx : p.currentFx;
                                     intraVal = (rawCurP - prevP) * p.shares * curF;
                                     intraPct = prevP !== 0 ? ((rawCurP - prevP) / prevP) * 100 : 0;
                                     hasIntra = true;
                                 }
-                                const tIntraAbs = Math.abs(gridTotals.tIntra || 0);
-                                const wIntra = tIntraAbs > 0 ? (Math.abs(intraVal) / tIntraAbs) * 100 : 0;
-
+                                
+                                // NUEVO CÁLCULO: Suma de todos los valores absolutos en la tabla visible
+                                const totalAbsIntra = visiblePortfolio.reduce((sum, item) => {
+                                    // Replicamos el cálculo para sumar el valor absoluto de todos
+                                    const mSt = getMarketStatus(item);
+                                    if (!item.sellDate && item.previousClose && mSt.open) {
+                                        const cP = item.isIndex ? item.currentPrice / (item.indexDivisor || 1) : item.currentPrice;
+                                        const pP = item.isIndex ? item.previousClose / (item.indexDivisor || 1) : item.previousClose;
+                                        const f = item.isIndex ? item.buyFx : item.currentFx;
+                                        return sum + Math.abs((cP - pP) * item.shares * f);
+                                    }
+                                    return sum;
+                                }, 0);
+                                
+                                const wIntra = totalAbsIntra > 0 ? (Math.abs(intraVal) / totalAbsIntra) * 100 : 0;
+                                
+                                
                                 const ratio = cost !== 0 ? ((vF - cost) / cost) : 0;
                                 const wC = gridTotals.tCost > 0 ? (cost / gridTotals.tCost) * 100 : 0;
                                 const wV = gridTotals.tVal > 0 ? (vF / gridTotals.tVal) * 100 : 0;
@@ -3731,7 +3749,6 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                                 return ( 
                                     <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''} ${selectedTicker === p.ticker ? 'bg-blue-600/10 border-l-4 border-blue-500' : ''}`} onClick={() => setSelectedTicker(p.ticker)}>
                                         <td className="py-1.5 px-2 text-center sticky left-0 z-[10] bg-slate-900 border-r border-slate-800" onClick={(e) => { e.stopPropagation(); setPortfolio(prev => prev.map(x => x.id === p.id ? {...x, isActive: !x.isActive} : x)); }}><input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" /></td>
-
 
                                         <td 
                                             className="py-1.5 px-2 sticky left-10 z-[10] bg-slate-900 border-r border-slate-800 min-w-[165px] cursor-pointer hover:bg-slate-800 transition-colors group"
@@ -3792,15 +3809,14 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
                                         <td className="py-1.5 px-2 text-right font-mono text-xs border-l border-r border-slate-800 bg-slate-900/20"
                                             style={{ 
-                                                // Si intraVal > 0: Gradiente VERDE (5AE0A6) hacia la izquierda
-                                                // Si intraVal < 0: Gradiente ROJO (E0635A) hacia la izquierda
-                                                // Si intraVal == 0 o no hay datos: Sin gradiente
                                                 background: intraVal > 0 
-                                                    ? `linear-gradient(to left, rgba(90, 224, 166, 0.35) ${wIntra}%, transparent ${wIntra}%)` 
+                                                    ? `linear-gradient(to left, rgba(74, 222, 128, 0.25) ${wIntra}%, transparent ${wIntra}%)` 
                                                     : intraVal < 0 
-                                                        ? `linear-gradient(to left, rgba(224, 99, 90, 0.35) ${wIntra}%, transparent ${wIntra}%)` 
+                                                        ? `linear-gradient(to left, rgba(248, 113, 113, 0.25) ${wIntra}%, transparent ${wIntra}%)` 
                                                         : 'transparent'
-                                            }}>
+                                            }}>    
+
+
                                             {hasIntra && intraVal !== 0 ? (
                                                 <div>
                                                     <div className={intraVal >= 0 ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>
