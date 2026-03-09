@@ -2728,30 +2728,35 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         setInfoModal({ isOpen: true, title: 'Lote Añadido', msg: 'El nuevo lote ha sido incorporado y los promedios recalculados con éxito.', type: 'success' });
     };
 
-   const getMarketStatus = (p) => {
-        if (p.isIndex) return { open: true };
-        const t = (p.ticker || "").toUpperCase();
-        const euPrefix = ["BME:", "BIT:", "XETRA:", "EPA:", "AMS:", "MIL:", "EBR:", "ELI:", "LSE:", "FRA:"];
-        const euSuffix = [".MC", ".DE", ".PA", ".AS", ".MI", ".BR", ".LS", ".MA", ".L"];
-        const isEurope = euPrefix.some(pre => t.startsWith(pre)) || euSuffix.some(suf => t.endsWith(suf));
 
-        const madrid = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', hour: 'numeric', minute: 'numeric', hour12: false }).formatToParts(new Date());
-        const h = parseInt(madrid.find(x => x.type === 'hour').value);
-        const m = parseInt(madrid.find(x => x.type === 'minute').value);
-        const horaReloj = h * 100 + m;
-        const dia = new Date().getDay();
+    const getMarketStatus = (p) => {
+    if (p.isIndex) return { open: true, status: 'OPEN' };
+    const t = (p.ticker || "").toUpperCase();
+    const euPrefix = ["BME:", "BIT:", "XETRA:", "EPA:", "AMS:", "MIL:", "EBR:", "ELI:", "LSE:", "FRA:"];
+    const euSuffix = [".MC", ".DE", ".PA", ".AS", ".MI", ".BR", ".LS", ".MA", ".L"];
+    const isEurope = euPrefix.some(pre => t.startsWith(pre)) || euSuffix.some(suf => t.endsWith(suf));
 
-        if (dia === 0 || dia === 6) return { open: false, msg: "MERCADO CERRADO" };
-        if (isEurope) {
-            if (horaReloj < 900) return { open: false, msg: "Abre 09:00" };
-            if (horaReloj >= 1735) return { open: false, msg: "CERRADO" };
-            return { open: true };
-        } else {
-            if (horaReloj < 1530) return { open: false, msg: "Abre 15:30" };
-            if (horaReloj >= 2205) return { open: false, msg: "CERRADO" };
-            return { open: true };
-        }
-    };
+    const madrid = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', hour: 'numeric', minute: 'numeric', hour12: false }).formatToParts(new Date());
+    const h = parseInt(madrid.find(x => x.type === 'hour').value);
+    const m = parseInt(madrid.find(x => x.type === 'minute').value);
+    const horaReloj = h * 100 + m;
+    const dia = new Date().getDay();
+
+    if (dia === 0 || dia === 6) return { open: false, msg: "CERRADO", status: 'CLOSED' };
+    
+    // Europa: 09:00 a 17:35
+    if (isEurope) {
+        if (horaReloj < 900) return { open: false, msg: "Abre 09:00", status: 'PRE' };
+        if (horaReloj >= 1735) return { open: true, msg: "CERRADO", status: 'CLOSED' }; // Abierto para lectura de datos
+        return { open: true, msg: "ABIERTO", status: 'OPEN' };
+    } 
+    // USA: 15:30 a 22:05
+    else {
+        if (horaReloj < 1530) return { open: false, msg: "Abre 15:30", status: 'PRE' };
+        if (horaReloj >= 2205) return { open: true, msg: "CERRADO", status: 'CLOSED' };
+        return { open: true, msg: "ABIERTO", status: 'OPEN' };
+    }
+};
 
     const [visibleSections, setVisibleSections] = usePersistentState('bg_visible_sections', { table: true, diverging: true, stats: true, charts: true, chartTV: true });
     const [updating, setUpdating] = useState(false);
@@ -3717,7 +3722,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                                 // 1. Modificación en la lógica de cálculo de intra dentro del map (PortfolioTab)
                                 let intraVal = 0, intraPct = 0, hasIntra = false;
                                 const mStatus = getMarketStatus(p); 
-                                if (!isS && p.previousClose && mStatus.open) {
+                                if (!isS && p.previousClose && (mStatus.status === 'OPEN' || mStatus.status === 'CLOSED')) {
                                     const rawCurP = p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice;
                                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                                     const curF = p.isIndex ? p.buyFx : p.currentFx;
@@ -3807,6 +3812,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                                             </div>
                                         </td>
 
+
                                         <td className="py-1.5 px-2 text-right font-mono text-xs border-l border-r border-slate-800 bg-slate-900/20"
                                             style={{ 
                                                 background: intraVal > 0 
@@ -3814,15 +3820,16 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                                                     : intraVal < 0 
                                                         ? `linear-gradient(to left, rgba(248, 113, 113, 0.25) ${wIntra}%, transparent ${wIntra}%)` 
                                                         : 'transparent'
-                                            }}>    
-
-
+                                            }}>
                                             {hasIntra && intraVal !== 0 ? (
                                                 <div>
+                                                    {mStatus.status === 'CLOSED' && (
+                                                        <div className="text-[7px] font-black uppercase text-slate-500 tracking-tighter">CERRADO</div>
+                                                    )}
                                                     <div className={intraVal >= 0 ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>
                                                         {formatMoney(intraVal, baseCurrency)}
                                                     </div>
-                                                    <div className={`text-[8.5px] whitespace-nowrap mt-0.5 ${intraPct >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                                                    <div className={`text-[8.5px] whitespace-nowrap ${intraPct >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                                                         {intraVal >= 0 ? '+' : ''}{formatN(intraVal)} 
                                                         <span className="opacity-80">({intraPct >= 0 ? '+' : ''}{formatN(intraPct)}%)</span>
                                                     </div>
@@ -3834,7 +3841,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                                             )}
                                         </td>
 
-                                       
+                                        
                                         <td className="p-2 text-center font-mono leading-tight"><div className="text-[10px] text-slate-500 mb-0.5">{formatN(p.buyFx, 4)}</div><div className="text-[11px] font-bold text-slate-200">{formatN(curF, 4)}</div></td>
                                         <td className="py-1.5 px-2 text-center text-[9px] font-mono">{(() => { const fxDevVal = (p.isIndex ? 0 : (p.shares * (isS ? p.sellPrice : p.currentPrice) * (curF - p.buyFx))); return <div className={fxDevVal >= 0 ? 'text-green-500' : 'text-red-500'}>{formatMoney(fxDevVal, baseCurrency)}</div>; })()}</td>
                                         <td className="py-1.5 px-2 text-center text-[10px] font-mono text-slate-400">G: {formatN(isS?p.sellFees:p.fees)}<br/>A: {formatN(isS?p.sellAdjustments:p.adjustments)}</td>
