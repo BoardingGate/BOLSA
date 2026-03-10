@@ -581,7 +581,7 @@ const StackedWeightsChart = ({ data, baseCurrency }) => {
 
           return (
               <div className="bg-slate-900/50 p-6 rounded-xl border border-slate-800 flex flex-col w-full min-w-[600px]" style={{ height: `${chartHeight}px` }}>
-                  <h4 className="text-[10px] uppercase font-bold text-slate-400 mb-2 text-center tracking-widest shrink-0">Escala 100% Apilada: Proporción Real de Cartera</h4>
+                  <h4 className="text-[10px] uppercase font-bold text-slate-400 mb-2 text-center tracking-widest shrink-0">Escala 100% Apilada: Proporción Real de Cartera (con dividendos)</h4>
                   <div className="flex-1 flex justify-center gap-12 w-full h-full pb-4">
                       {renderColumn(sortedByCost, totalCost, true)}
                       {renderColumn(sortedByVal, totalVal, false)}
@@ -595,7 +595,7 @@ const CarouselCharts = ({ chartsData, baseCurrency }) => {
           return (
              <div className="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-4 custom-scrollbar items-start">
                 <div className="snap-center min-w-full lg:min-w-[90%] h-[400px]">
-                    <SimpleChart type="line" data={chartsData.evolution} title="Evolución Rendimiento Acumulado" height={400} color="#10b981" />
+                    <SimpleChart type="line" data={chartsData.evolution} title="Evolución Rendimiento Acumulado (con dividendos)" height={400} color="#10b981" />
                 </div>
                 <div className="snap-center min-w-full lg:min-w-[90%]">
                     <StackedWeightsChart data={chartsData.weightsData} baseCurrency={baseCurrency} />
@@ -3068,18 +3068,37 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
             const curP = p.isIndex ? p.currentPrice / (p.indexDivisor||1) : p.currentPrice;
             const curF = p.isIndex ? p.buyFx : p.currentFx;
-            const val = (curP * p.shares * curF); 
+            const divs = (p.dividends || []).reduce((a,b) => a + b.net, 0); // Extrae los dividendos netos
+            const val = (curP * p.shares * curF) + divs; // Los suma al valor actual
             return { ticker: p.ticker, cost, val };
         });
 
         const geoMap = {}; 
         activeFilteredPortfolio.filter(p => !p.sellDate).forEach(p => { const region = getRegion(p.ticker); const val = ((p.currentPrice / (p.isIndex ? p.indexDivisor||1 : 1)) * p.shares * (p.isIndex ? p.buyFx : p.currentFx)); geoMap[region] = (geoMap[region] || 0) + val; }); 
         const geoDiversification = Object.keys(geoMap).map(k => ({ label: k, value: geoMap[k] })).sort((a,b) => b.value - a.value); 
-        const events = activeFilteredPortfolio.map(p => { const isSold = !!p.sellDate; const date = isSold ? p.sellDate : p.buyDate; const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const curP = isSold ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor||1) : p.currentPrice); const curF = isSold ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx); const value = isSold ? (((p.sellPrice * p.shares * p.sellFx) - (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) - (p.sellAdjustments || 0)) - cost) : ((curP * p.shares * curF) - cost); return { date, value, cost, label: p.ticker }; }).sort((a,b) => new Date(a.date) - new Date(b.date)); 
+        
+        const events = activeFilteredPortfolio.map(p => { 
+            const isSold = !!p.sellDate; 
+            const date = isSold ? p.sellDate : p.buyDate; 
+            const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); 
+            const curP = isSold ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor||1) : p.currentPrice); 
+            const curF = isSold ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx); 
+            const divs = (p.dividends || []).reduce((a,b) => a + b.net, 0); // Extrae los dividendos netos
+            
+            // Suma los dividendos al cálculo de beneficio de la gráfica evolutiva
+            const value = isSold 
+                ? (((p.sellPrice * p.shares * p.sellFx) - (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) - (p.sellAdjustments || 0)) - cost + divs) 
+                : ((curP * p.shares * curF) - cost + divs); 
+                
+            return { date, value, cost, label: p.ticker }; 
+        }).sort((a,b) => new Date(a.date) - new Date(b.date)); 
+        
         let accVal = 0; let accCost = 0; 
         const evolution = events.map(e => { accVal += e.value; accCost += e.cost; const roi = accCost !== 0 ? ((accVal) / accCost) * 100 : 0; return { label: e.date, value: accVal, extraPct: r2(roi) }; }); 
+        
         return { weightsData, geoDiversification, evolution }; 
     }, [activeFilteredPortfolio]);
+
 
     const divergingData = useMemo(() => { return activeFilteredPortfolio.map(p => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice/p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const val = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); const pl = val - cost; const pct = cost !== 0 ? (pl/cost)*100 : 0; return { ticker: p.ticker, shares: p.shares, dates: `${formatDateES(p.buyDate)}${isS ? ' → '+formatDateES(p.sellDate) : ''}`, value: pl, pct: pct }; }).sort((a,b) => b.value - a.value); }, [activeFilteredPortfolio]);
     const taxSum = useMemo(() => { if(!resultsData) return 0; return Object.values(resultsData).reduce((acc, y) => acc + (y.tax || 0), 0); }, [resultsData]);
