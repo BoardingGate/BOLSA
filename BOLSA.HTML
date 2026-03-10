@@ -2629,21 +2629,22 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     const [isFetchingAnalysts, setIsFetchingAnalysts] = useState(false);
     const [analystData, setAnalystData] = useState(null);
+    const [isFetchingStrategyNews, setIsFetchingStrategyNews] = useState(false);
+    const [strategyNewsData, setStrategyNewsData] = useState(null);
 
     const openStrategyModal = (p) => {
         setStrategyItem(p);
         
         const curP = p.isIndex ? (p.currentPrice / (p.indexDivisor || 1)) : p.currentPrice;
         const curF = p.stockCurrency === baseCurrency ? 1 : p.currentFx;
-
-
-        
+       
 
         if (p.strategyCache) {
             setStrategyInputs({ capital: p.strategyCache.capital || 1000, risk: p.strategyCache.risk || 2 });
             setStrategyResult(p.strategyCache.result || null);
 
             setAnalystData(p.strategyCache.analystData || null);
+            setStrategyNewsData(p.strategyCache.strategyNewsData || null);    
 
             const savedSimPrice = p.strategyCache.simLot?.price;
             const savedSimFx = p.strategyCache.simLot?.fx;
@@ -2670,17 +2671,19 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             setStrategyInputs({ capital: 1000, risk: 2 });
             setStrategyResult(null);
             setAnalystData(null);
+            setStrategyNewsData(null);
             setSimLot({ date: new Date().toISOString().slice(0,10), shares: '', price: curP, fx: curF, fees: '', adj: '' });
             setTargetSim({ shares: p.shares, price: curP, fx: curF, fees: '', adj: '' });
         }
         setIsStrategyModalOpen(true);
     };
 
+
     useEffect(() => {
         if (isStrategyModalOpen && strategyItem) {
-            setPortfolio(prev => prev.map(x => x.id === strategyItem.id ? { ...x, strategyCache: { ...(x.strategyCache || {}), simLot: simLot, targetSim: targetSim, analystData: analystData } } : x));
+            setPortfolio(prev => prev.map(x => x.id === strategyItem.id ? { ...x, strategyCache: { ...(x.strategyCache || {}), simLot: simLot, targetSim: targetSim, analystData: analystData, strategyNewsData: strategyNewsData } } : x));
         }
-    }, [simLot, targetSim, analystData]);
+    }, [simLot, targetSim, analystData, strategyNewsData]);
 
      
     const [updateText, setUpdateText] = useState('');
@@ -2701,6 +2704,27 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             setIsFetchingAnalysts(false);
         }
     };
+
+     const handleFetchStrategyNews = async () => {
+        if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key. Configúrala en Ajustes.', type: 'error' });
+        setIsFetchingStrategyNews(true);
+        try {
+            const today = new Date().toLocaleString('es-ES');
+            const prompt = `Actúa como un terminal de noticias financieras. FECHA ACTUAL: ${today}. Busca en internet las 3 o 4 noticias más críticas de los ÚLTIMOS 3 DÍAS estrictamente sobre la empresa con ticker ${strategyItem.ticker}. Devuelve la respuesta ÚNICAMENTE en formato HTML limpio (usando <ul>, <li>, <strong>), sin preámbulos, sin markdown (\`\`\`html). Si no hay noticias relevantes, devuelve un <p> indicando que no hay eventos destacables recientes.`;
+            const res = await askGemini(apiKey, prompt, aiModel);
+            
+            let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
+            const startIdx = cleanHtml.indexOf('<');
+            if (startIdx !== -1) cleanHtml = cleanHtml.substring(startIdx);
+            
+            setStrategyNewsData(cleanHtml);
+        } catch(e) {
+            setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' });
+        } finally {
+            setIsFetchingStrategyNews(false);
+        }
+    };
+
 
     const handleGenerateStrategy = async () => {
         if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key. Configúrala en Ajustes.', type: 'error' });
@@ -4579,6 +4603,27 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                         })()}
                     </div>
 
+                    {/* PANEL NOTICIAS (1.8) */}
+                    <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 shadow-xl relative overflow-hidden mt-6">
+                        <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
+                        <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-2">
+                            <h3 className="text-sm font-bold text-blue-400 uppercase tracking-widest flex items-center gap-2"><Icons.Globe size={16}/> Noticias Recientes (Últimos 3 días)</h3>
+                            <button onClick={handleFetchStrategyNews} disabled={isFetchingStrategyNews} className="bg-blue-900/40 hover:bg-blue-600 border border-blue-500/50 text-blue-300 hover:text-white disabled:opacity-50 px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 transition-colors">
+                                {isFetchingStrategyNews ? <Icons.Loader size={12} className="animate-spin"/> : <Icons.Search size={12}/>} 
+                                {strategyNewsData ? 'Actualizar Noticias' : 'Consultar Noticias'}
+                            </button>
+                        </div>
+
+                        {strategyNewsData ? (
+                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-[11px] text-slate-300 leading-relaxed font-sans prose-content [&_strong]:text-white [&_a]:text-blue-400 [&_ul]:pl-4 fade-in" dangerouslySetInnerHTML={{__html: strategyNewsData}}></div>
+                        ) : (
+                            <div className="text-center p-4 bg-slate-950 rounded-xl border border-slate-800 text-[11px] text-slate-500">
+                                Pulsa el botón "Consultar Noticias" para que la IA rastree los eventos más importantes y recientes de <b>{strategyItem.ticker}</b>.
+                            </div>
+                        )}
+                    </div>
+
+
 
                     {/* PANEL PREVISIÓN ANALISTAS (1.75) */}
                     <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 shadow-xl relative overflow-hidden mt-6">
@@ -4670,7 +4715,6 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                             </div>
                         )}
                     </div>
-
 
 
                     {/* PANEL 2: ESTRATEGIAS DE COMPRA / VENTA (IA) */}
