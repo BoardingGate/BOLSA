@@ -491,25 +491,25 @@ const StatsBlock = ({ title, data, color, baseCurrency, type, dateRange, denomBa
     );
 };
 
-
-
-  
-
 const StackedWeightsChart = ({ data, baseCurrency }) => {
           if (!data || data.length === 0) return <div className="text-center text-xs text-slate-500 py-4">Sin datos suficientes</div>;
 
           // 1. Agrupar los datos por Ticker para unificar lotes
           const aggregated = {};
           data.forEach(d => {
-              if (!aggregated[d.ticker]) aggregated[d.ticker] = { ticker: d.ticker, cost: 0, val: 0 };
+              if (!aggregated[d.ticker]) aggregated[d.ticker] = { ticker: d.ticker, cost: 0, val: 0, valNoDiv: 0, divs: 0 };
               aggregated[d.ticker].cost += Math.max(0, d.cost);
               aggregated[d.ticker].val += Math.max(0, d.val);
+              aggregated[d.ticker].valNoDiv += Math.max(0, d.valNoDiv || 0);
+              aggregated[d.ticker].divs += Math.max(0, d.divs || 0);
           });
           const finalData = Object.values(aggregated);
 
           // 2. Calcular los totales reales
           const totalCost = finalData.reduce((sum, d) => sum + d.cost, 0) || 1;
           const totalVal = finalData.reduce((sum, d) => sum + d.val, 0) || 1;
+          const totalValNoDiv = finalData.reduce((sum, d) => sum + d.valNoDiv, 0);
+          const totalDivs = finalData.reduce((sum, d) => sum + d.divs, 0);
 
           // 3. Ordenar independientemente de mayor a menor
           const sortedByCost = [...finalData].sort((a, b) => b.cost - a.cost).filter(d => d.cost > 0);
@@ -521,15 +521,25 @@ const StackedWeightsChart = ({ data, baseCurrency }) => {
           const colorMap = {};
           uniqueTickers.forEach((t, i) => { colorMap[t] = COLORS[i % COLORS.length]; });
 
-          // Escalar la altura del contenedor padre ligeramente si hay muchos valores para asegurar lectura
           const chartHeight = Math.max(650, uniqueTickers.length * 28);
 
           const renderColumn = (sortedData, total, isCost) => (
               <div className="flex flex-col items-center w-1/2 max-w-[320px] h-full">
-                  {/* Cabecera */}
-                  <div className="text-center mb-4 shrink-0">
+                  {/* CABECERA MODIFICADA: Altura fija para alinear y desglose de Dividendos */}
+                  <div className="text-center mb-4 shrink-0 h-[45px] flex flex-col justify-end">
                       <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{isCost ? 'Capital Invertido' : 'Valor Actual'}</div>
-                      <div className="text-sm font-bold text-white">{formatMoney(total, baseCurrency)}</div>
+                      {isCost ? (
+                          <div className="text-sm font-bold text-white mb-1">{formatMoney(total, baseCurrency)}</div>
+                      ) : (
+                          <div className="flex flex-col items-center leading-none mt-1">
+                              <span className="text-[10px] font-bold text-slate-300">{formatMoney(totalValNoDiv, baseCurrency)}</span>
+                              <div className="flex items-baseline gap-1 mt-1">
+                                  <span className="text-[10px] text-blue-400 font-bold">+{formatMoney(totalDivs, baseCurrency)}</span>
+                                  <span className="text-slate-500 text-[10px] ml-0.5 mr-0.5">=</span>
+                                  <span className="text-[13px] font-black text-white">{formatMoney(total, baseCurrency)}</span>
+                              </div>
+                          </div>
+                      )}
                   </div>
                   
                   {/* Barra 100% Apilada */}
@@ -545,33 +555,26 @@ const StackedWeightsChart = ({ data, baseCurrency }) => {
                                   key={d.ticker}
                                   title={`${d.ticker}: ${formatMoney(val, baseCurrency)} (${pct.toFixed(2)}%)`}
                                   className="w-full flex flex-col justify-center items-center text-center border-b border-black/20 hover:brightness-110 transition-all overflow-hidden relative"
-                                  style={{ 
-                                      height: `${pct}%`, // ALTURA ESTRICTAMENTE PROPORCIONAL
-                                      backgroundColor: colorMap[d.ticker] 
-                                  }}
+                                  style={{ height: `${pct}%`, backgroundColor: colorMap[d.ticker] }}
                               >
-                                  {/* RENDERIZADO DINÁMICO SEGÚN TAMAÑO DEL BLOQUE */}
                                   {pct >= 8 ? (
-                                      // Bloque Grande: 3 líneas cómodas
                                       <div className="flex flex-col leading-none px-1 py-0.5">
                                           <span className="text-[10px] font-black text-white drop-shadow-md truncate">{d.ticker}</span>
                                           <span className="text-[9px] font-bold text-white/95 drop-shadow-md mt-1">{formatMoney(val, baseCurrency)}</span>
                                           <span className="text-[8px] font-black text-white/80 drop-shadow-md mt-0.5">{pct.toFixed(2)}%</span>
                                       </div>
                                   ) : pct >= 3 ? (
-                                      // Bloque Mediano: 1 sola línea compacta para ahorrar altura
                                       <div className="flex flex-row items-center gap-1.5 px-1 whitespace-nowrap">
                                           <span className="text-[9px] font-black text-white drop-shadow-md">{d.ticker}</span>
                                           <span className="text-[8px] font-bold text-white/95 drop-shadow-md">{formatMoney(val, baseCurrency)}</span>
                                           <span className="text-[8px] font-black text-white/80 drop-shadow-md">({pct.toFixed(1)}%)</span>
                                       </div>
                                   ) : pct >= 1 ? (
-                                      // Bloque Pequeño: 1 sola línea ultra-compacta
                                       <div className="flex flex-row items-center gap-1 px-1 whitespace-nowrap">
                                           <span className="text-[7.5px] font-black text-white drop-shadow-md">{d.ticker}</span>
                                           <span className="text-[7.5px] font-bold text-white/90 drop-shadow-md">{pct.toFixed(1)}%</span>
                                       </div>
-                                  ) : null /* Bloques minúsculos (<1%) no imprimen texto para no solaparse, pero se ven al pasar el ratón */}
+                                  ) : null}
                               </div>
                           );
                       })}
@@ -595,7 +598,7 @@ const CarouselCharts = ({ chartsData, baseCurrency }) => {
           return (
              <div className="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-4 custom-scrollbar items-start">
                 <div className="snap-center min-w-full lg:min-w-[90%] h-[400px]">
-                    <SimpleChart type="line" data={chartsData.evolution} title="Evolución Rendimiento Acumulado" height={400} color="#10b981" />
+                    <SimpleChart type="line" data={chartsData.evolution} title="Evolución Rendimiento Acumulado (con dividendos)" height={400} color="#10b981" />
                 </div>
                 <div className="snap-center min-w-full lg:min-w-[90%]">
                     <StackedWeightsChart data={chartsData.weightsData} baseCurrency={baseCurrency} />
@@ -3068,18 +3071,37 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
             const curP = p.isIndex ? p.currentPrice / (p.indexDivisor||1) : p.currentPrice;
             const curF = p.isIndex ? p.buyFx : p.currentFx;
-            const val = (curP * p.shares * curF); 
-            return { ticker: p.ticker, cost, val };
+            const divs = (p.dividends || []).reduce((a,b) => a + b.net, 0); 
+            const valNoDiv = (curP * p.shares * curF); // Valor puro sin dividendos
+            const val = valNoDiv + divs; // Total con dividendos
+            return { ticker: p.ticker, cost, val, valNoDiv, divs }; // Pasamos los datos desglosados
         });
 
         const geoMap = {}; 
         activeFilteredPortfolio.filter(p => !p.sellDate).forEach(p => { const region = getRegion(p.ticker); const val = ((p.currentPrice / (p.isIndex ? p.indexDivisor||1 : 1)) * p.shares * (p.isIndex ? p.buyFx : p.currentFx)); geoMap[region] = (geoMap[region] || 0) + val; }); 
         const geoDiversification = Object.keys(geoMap).map(k => ({ label: k, value: geoMap[k] })).sort((a,b) => b.value - a.value); 
-        const events = activeFilteredPortfolio.map(p => { const isSold = !!p.sellDate; const date = isSold ? p.sellDate : p.buyDate; const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const curP = isSold ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor||1) : p.currentPrice); const curF = isSold ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx); const value = isSold ? (((p.sellPrice * p.shares * p.sellFx) - (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) - (p.sellAdjustments || 0)) - cost) : ((curP * p.shares * curF) - cost); return { date, value, cost, label: p.ticker }; }).sort((a,b) => new Date(a.date) - new Date(b.date)); 
+        
+        const events = activeFilteredPortfolio.map(p => { 
+            const isSold = !!p.sellDate; 
+            const date = isSold ? p.sellDate : p.buyDate; 
+            const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); 
+            const curP = isSold ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor||1) : p.currentPrice); 
+            const curF = isSold ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx); 
+            const divs = (p.dividends || []).reduce((a,b) => a + b.net, 0); 
+            
+            const value = isSold 
+                ? (((p.sellPrice * p.shares * p.sellFx) - (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) - (p.sellAdjustments || 0)) - cost + divs) 
+                : ((curP * p.shares * curF) - cost + divs); 
+                
+            return { date, value, cost, label: p.ticker }; 
+        }).sort((a,b) => new Date(a.date) - new Date(b.date)); 
+        
         let accVal = 0; let accCost = 0; 
         const evolution = events.map(e => { accVal += e.value; accCost += e.cost; const roi = accCost !== 0 ? ((accVal) / accCost) * 100 : 0; return { label: e.date, value: accVal, extraPct: r2(roi) }; }); 
+        
         return { weightsData, geoDiversification, evolution }; 
     }, [activeFilteredPortfolio]);
+
 
     const divergingData = useMemo(() => { return activeFilteredPortfolio.map(p => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice/p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const val = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); const pl = val - cost; const pct = cost !== 0 ? (pl/cost)*100 : 0; return { ticker: p.ticker, shares: p.shares, dates: `${formatDateES(p.buyDate)}${isS ? ' → '+formatDateES(p.sellDate) : ''}`, value: pl, pct: pct }; }).sort((a,b) => b.value - a.value); }, [activeFilteredPortfolio]);
     const taxSum = useMemo(() => { if(!resultsData) return 0; return Object.values(resultsData).reduce((acc, y) => acc + (y.tax || 0), 0); }, [resultsData]);
