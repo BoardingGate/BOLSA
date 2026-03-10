@@ -2627,16 +2627,23 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const [strategyResult, setStrategyResult] = useState(null);
     const [isGeneratingStrategy, setIsGeneratingStrategy] = useState(false);
 
+    const [isFetchingAnalysts, setIsFetchingAnalysts] = useState(false);
+    const [analystData, setAnalystData] = useState(null);
 
     const openStrategyModal = (p) => {
         setStrategyItem(p);
         
         const curP = p.isIndex ? (p.currentPrice / (p.indexDivisor || 1)) : p.currentPrice;
         const curF = p.stockCurrency === baseCurrency ? 1 : p.currentFx;
+
+
         
+
         if (p.strategyCache) {
             setStrategyInputs({ capital: p.strategyCache.capital || 1000, risk: p.strategyCache.risk || 2 });
             setStrategyResult(p.strategyCache.result || null);
+
+            setAnalystData(p.strategyCache.analystData || null);
 
             const savedSimPrice = p.strategyCache.simLot?.price;
             const savedSimFx = p.strategyCache.simLot?.fx;
@@ -2662,6 +2669,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         } else {
             setStrategyInputs({ capital: 1000, risk: 2 });
             setStrategyResult(null);
+            setAnalystData(null);
             setSimLot({ date: new Date().toISOString().slice(0,10), shares: '', price: curP, fx: curF, fees: '', adj: '' });
             setTargetSim({ shares: p.shares, price: curP, fx: curF, fees: '', adj: '' });
         }
@@ -2670,11 +2678,29 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     useEffect(() => {
         if (isStrategyModalOpen && strategyItem) {
-            setPortfolio(prev => prev.map(x => x.id === strategyItem.id ? { ...x, strategyCache: { ...(x.strategyCache || {}), simLot: simLot, targetSim: targetSim } } : x));
+            setPortfolio(prev => prev.map(x => x.id === strategyItem.id ? { ...x, strategyCache: { ...(x.strategyCache || {}), simLot: simLot, targetSim: targetSim, analystData: analystData } } : x));
         }
-    }, [simLot, targetSim]);
+    }, [simLot, targetSim, analystData]);
+
      
     const [updateText, setUpdateText] = useState('');
+
+
+    const handleFetchAnalysts = async () => {
+        if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key. Configúrala en Ajustes.', type: 'error' });
+        setIsFetchingAnalysts(true);
+        try {
+            const prompt = `Actúa como API financiera. Busca el consenso actual de analistas de Wall Street para el ticker ${strategyItem.ticker}. Devuelve UNICAMENTE un JSON estricto: {"numAnalysts": 25, "low": 120.5, "mean": 150.0, "high": 180.0, "recommendation": "Comprar"}. Si no hay datos, haz tu mejor estimación basándote en el sector. Usa SOLO números para los precios.`;
+            const res = await askGemini(apiKey, prompt, aiModel);
+            const json = extractJSON(res);
+            if (!json || !json.mean) throw new Error("No se pudieron obtener los datos de consenso.");
+            setAnalystData(json);
+        } catch(e) {
+            setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' });
+        } finally {
+            setIsFetchingAnalysts(false);
+        }
+    };
 
     const handleGenerateStrategy = async () => {
         if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key. Configúrala en Ajustes.', type: 'error' });
@@ -2701,7 +2727,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             2. PROHIBIDO INVENTAR: No uses porcentajes genéricos (como -5% o +10%). Los Stop Loss deben ir colocados ligeramente por debajo de los SOPORTES REALES encontrados. Los Targets (Take Profit) deben ir colocados en las RESISTENCIAS REALES históricas.
             3. RIESGO MATEMÁTICO: Calcula 'optimalShares' (acciones a comprar) garantizando que si el precio cae desde 'entryZone' hasta el 'stopLoss1' REAL, la pérdida monetaria total sea exactamente igual o ligeramente inferior a ${riskMoney}.
             4. PRECIO DE ENTRADA: Calcula teniendo en cuenta los soportes, resistencias, etc, el precio de entrada optimo (indicando entre corchetes el precio actual) y el % de desviación hasta ese precio.
-
+          
             RESPONDE ÚNICA Y EXCLUSIVAMENTE CON UN JSON VÁLIDO (SIN TEXTO EXTRA):
             {
                "entryZone": 150.50,
@@ -4552,7 +4578,99 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                             );
                         })()}
                     </div>
-                    
+
+
+                    {/* PANEL PREVISIÓN ANALISTAS (1.75) */}
+                    <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 shadow-xl relative overflow-hidden mt-6">
+                        <div className="absolute top-0 left-0 w-1 h-full bg-cyan-500"></div>
+                        <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-2">
+                            <h3 className="text-sm font-bold text-cyan-400 uppercase tracking-widest flex items-center gap-2"><Icons.ChartBar size={16}/> Previsión de Analistas (Consenso)</h3>
+                            <button onClick={handleFetchAnalysts} disabled={isFetchingAnalysts} className="bg-cyan-900/40 hover:bg-cyan-600 border border-cyan-500/50 text-cyan-300 hover:text-white disabled:opacity-50 px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 transition-colors">
+                                {isFetchingAnalysts ? <Icons.Loader size={12} className="animate-spin"/> : <Icons.Search size={12}/>} 
+                                {analystData ? 'Actualizar Datos' : 'Consultar Consenso'}
+                            </button>
+                        </div>
+
+                        {analystData ? (() => {
+                            const curP = strategyItem.isIndex ? (strategyItem.currentPrice / (strategyItem.indexDivisor || 1)) : strategyItem.currentPrice;
+                            const cP = strategyItem.buyPrice || 0;
+
+                            const getPcts = (target) => {
+                                const vsCur = curP > 0 ? ((target - curP) / curP) * 100 : 0;
+                                const vsBuy = cP > 0 ? ((target - cP) / cP) * 100 : 0;
+                                return { vsCur, vsBuy };
+                            };
+
+                            const lowP = getPcts(analystData.low);
+                            const meanP = getPcts(analystData.mean);
+                            const highP = getPcts(analystData.high);
+
+                            return (
+                                <div className="space-y-4 fade-in">
+                                    <div className="flex justify-between items-center bg-cyan-900/10 p-3 rounded-xl border border-cyan-500/20 text-[11px]">
+                                        <span className="text-cyan-300">Recomendación Mayoritaria: <strong className="uppercase text-white">{analystData.recommendation}</strong></span>
+                                        <span className="text-cyan-300">Nº Analistas: <strong className="text-white">{analystData.numAnalysts}</strong></span>
+                                    </div>
+
+                                    <div className="grid grid-cols-3 gap-3">
+                                        {/* PESIMISTA */}
+                                        <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-700 text-center">
+                                            <div className="text-[9px] uppercase font-bold text-slate-400 mb-1">Pesimista</div>
+                                            <div className="text-lg font-black text-white font-mono">{formatN(analystData.low)}</div>
+                                            <div className="mt-2 space-y-1">
+                                                <div className="flex justify-between items-center text-[8px] bg-slate-900 p-1.5 rounded">
+                                                    <span className="text-slate-500 uppercase">vs Actual:</span>
+                                                    <span className={lowP.vsCur >= 0 ? 'text-green-400' : 'text-red-400'}>{lowP.vsCur >= 0 ? '+' : ''}{formatN(lowP.vsCur)}%</span>
+                                                </div>
+                                                <div className="flex justify-between items-center text-[8px] bg-slate-900 p-1.5 rounded">
+                                                    <span className="text-slate-500 uppercase">vs Compra:</span>
+                                                    <span className={lowP.vsBuy >= 0 ? 'text-green-400' : 'text-red-400'}>{lowP.vsBuy >= 0 ? '+' : ''}{formatN(lowP.vsBuy)}%</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* CONSENSO */}
+                                        <div className="bg-cyan-900/20 p-3 rounded-xl border border-cyan-500/40 text-center relative shadow-lg transform scale-105 z-10">
+                                            <div className="absolute -top-2 left-1/2 -translate-x-1/2 bg-cyan-600 text-white text-[8px] font-black uppercase px-2 py-0.5 rounded shadow">Medio</div>
+                                            <div className="text-[9px] uppercase font-bold text-cyan-300 mb-1 mt-1">Consenso</div>
+                                            <div className="text-xl font-black text-white font-mono">{formatN(analystData.mean)}</div>
+                                            <div className="mt-2 space-y-1">
+                                                <div className="flex justify-between items-center text-[8px] bg-slate-900 p-1.5 rounded">
+                                                    <span className="text-slate-500 uppercase">vs Actual:</span>
+                                                    <span className={meanP.vsCur >= 0 ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>{meanP.vsCur >= 0 ? '+' : ''}{formatN(meanP.vsCur)}%</span>
+                                                </div>
+                                                <div className="flex justify-between items-center text-[8px] bg-slate-900 p-1.5 rounded">
+                                                    <span className="text-slate-500 uppercase">vs Compra:</span>
+                                                    <span className={meanP.vsBuy >= 0 ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>{meanP.vsBuy >= 0 ? '+' : ''}{formatN(meanP.vsBuy)}%</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* OPTIMISTA */}
+                                        <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-700 text-center">
+                                            <div className="text-[9px] uppercase font-bold text-slate-400 mb-1">Optimista</div>
+                                            <div className="text-lg font-black text-white font-mono">{formatN(analystData.high)}</div>
+                                            <div className="mt-2 space-y-1">
+                                                <div className="flex justify-between items-center text-[8px] bg-slate-900 p-1.5 rounded">
+                                                    <span className="text-slate-500 uppercase">vs Actual:</span>
+                                                    <span className={highP.vsCur >= 0 ? 'text-green-400' : 'text-red-400'}>{highP.vsCur >= 0 ? '+' : ''}{formatN(highP.vsCur)}%</span>
+                                                </div>
+                                                <div className="flex justify-between items-center text-[8px] bg-slate-900 p-1.5 rounded">
+                                                    <span className="text-slate-500 uppercase">vs Compra:</span>
+                                                    <span className={highP.vsBuy >= 0 ? 'text-green-400' : 'text-red-400'}>{highP.vsBuy >= 0 ? '+' : ''}{formatN(highP.vsBuy)}%</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })() : (
+                            <div className="text-center p-4 bg-slate-950 rounded-xl border border-slate-800 text-[11px] text-slate-500">
+                                Pulsa el botón "Consultar Consenso" para que la IA busque en internet los precios objetivos de los analistas de Wall Street para <b>{strategyItem.ticker}</b>.
+                            </div>
+                        )}
+                    </div>
+
 
 
                     {/* PANEL 2: ESTRATEGIAS DE COMPRA / VENTA (IA) */}
