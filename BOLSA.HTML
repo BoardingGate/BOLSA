@@ -117,6 +117,23 @@
         touch-action: pan-x; /* Permite explícitamente el gesto horizontal */
     }
 
+    .timeline-tree { text-align: center; white-space: nowrap; padding: 40px; transform-origin: 50% 0; }
+    .timeline-tree ul { padding-top: 40px; position: relative; display: flex; justify-content: center; }
+    .timeline-tree li { padding: 40px 10px 0 10px; position: relative; list-style-type: none; }
+    
+    /* Conectores: Solo dibujan si hay nodos */
+    .timeline-tree li::before, .timeline-tree li::after { content: ''; position: absolute; top: 0; right: 50%; border-top: 3px solid #475569; width: 50%; height: 40px; }
+    .timeline-tree li::after { right: auto; left: 50%; border-left: 3px solid #475569; }
+    
+    /* Eliminación de líneas sueltas */
+    .timeline-tree li:only-child::after, .timeline-tree li:only-child::before { display: none; }
+    .timeline-tree li:only-child { padding-top: 0; }
+    .timeline-tree li:first-child::before, .timeline-tree li:last-child::after { border: 0 none; }
+    .timeline-tree li:last-child::before { border-right: 3px solid #475569; border-radius: 0 15px 0 0; }
+    .timeline-tree li:first-child::after { border-radius: 15px 0 0 0; }
+    .timeline-tree ul ul::before { content: ''; position: absolute; top: 0; left: 50%; border-left: 3px solid #475569; width: 0; height: 40px; }
+
+
 
       <style>
         /* Aumentar el tamaño de fuentes pequeñas globalmente */
@@ -2794,27 +2811,54 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
 
     if (!isOpen) return null;
 
-    const renderNode = (node) => {
+   
+ const renderNode = (node) => {
         const isLeaf = ['BUY', 'SELL', 'DIV'].includes(node.type);
         const isExpanded = expandedNodes.has(node.id);
+        
+        // Obtenemos los hijos como array para que los selectores CSS de árbol funcionen
         const children = isLeaf ? [] : Object.values(node.children);
-        let bgClass = node.type === 'root' ? "bg-blue-900" : node.type === 'year' ? "bg-purple-900" : node.type === 'month' ? "bg-cyan-900" : node.type === 'BUY' ? "bg-green-900" : node.type === 'SELL' ? "bg-red-900" : "bg-yellow-600";
+
+        let bgClass = node.type === 'root' ? "bg-blue-900" : 
+                      node.type === 'year' ? "bg-purple-900" : 
+                      node.type === 'month' ? "bg-cyan-900" : 
+                      node.type === 'BUY' ? "bg-green-900" : 
+                      node.type === 'SELL' ? "bg-red-900" : "bg-yellow-600";
 
         return (
             <li key={node.id}>
-                <div className={`inline-flex flex-col items-center justify-center p-3 rounded-3xl min-w-[210px] min-h-[170px] border-[3px] shadow-2xl cursor-pointer hover:scale-105 transition-transform relative ${bgClass} border-slate-400 text-white`} onClick={(e) => { e.stopPropagation(); if (isLeaf) onEditItem(node.itemObj); else if (children.length > 0) toggleNode(node.id); }}>
-                    <strong className="text-[14px] font-black uppercase tracking-widest mb-1">{isLeaf ? node.ticker : node.label}</strong>
-                    {isLeaf && <div className="text-[10px] text-slate-100 truncate max-w-[190px] font-bold bg-black/20 px-2 py-0.5 rounded mb-1">{node.extra.name}</div>}
+                <div 
+                    className={`inline-flex flex-col items-center justify-center p-3 rounded-3xl min-w-[210px] min-h-[170px] border-[3px] shadow-2xl cursor-pointer hover:scale-105 transition-transform z-10 relative ${bgClass} border-slate-400 text-white`} 
+                    onClick={(e) => { 
+                        e.stopPropagation(); 
+                        if (isLeaf) { 
+                            onEditItem(node.itemObj); 
+                        } else if (children.length > 0) { 
+                            toggleNode(node.id); 
+                        } 
+                    }}
+                >
+                    <strong className="text-[14px] font-black uppercase tracking-widest drop-shadow-md leading-none mb-1">
+                        {isLeaf ? node.ticker : node.label}
+                    </strong>
                     
+                    {isLeaf && (
+                        <div className="text-[10px] text-slate-100 truncate max-w-[190px] font-bold bg-black/20 px-2 py-0.5 rounded mb-1">
+                            {node.extra.name}
+                        </div>
+                    )}
+
                     {!isLeaf ? (
-                        <div className="text-[10px] font-mono leading-tight text-center mt-2">
+                        <div className="text-[9px] font-mono leading-tight text-center mt-2">
                             <div><span className="opacity-70">C:</span> {formatMoney(node.buys, baseCurrency)}</div>
                             <div><span className="opacity-70">V:</span> {formatMoney(node.sells, baseCurrency)}</div>
                             <div><span className="opacity-70">D:</span> {formatMoney(node.divs, baseCurrency)}</div>
-                            <div className="mt-1 pt-1 border-t border-white/20 font-bold">R: {formatMoney(node.profit, baseCurrency)}</div>
+                            <div className={`mt-1 pt-1 border-t border-white/20 font-bold ${node.profit >= 0 ? 'text-green-300' : 'text-red-300'}`}>
+                                R: {formatMoney(node.profit, baseCurrency)}
+                            </div>
                         </div>
                     ) : node.type === 'DIV' ? (
-                        <div className="text-[9px] font-mono leading-tight text-center w-full px-1">
+                        <div className="text-[8px] font-mono leading-tight text-center w-full px-1">
                             <div className="text-[10px] font-bold text-blue-200 mb-1 bg-black/20 rounded py-0.5">{node.monthName} {node.yearName}</div>
                             <div className="flex justify-between"><span>Bruto:</span> <span>{formatMoney(node.extra.gross, baseCurrency)}</span></div>
                             <div className="flex justify-between text-red-200"><span>Ret.O:</span> <span>{formatMoney(node.extra.origin, baseCurrency)}</span></div>
@@ -2852,12 +2896,25 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
                             </div>
                         </div>
                     )}
-                    {children.length > 0 && <div className="absolute -bottom-2 bg-slate-900 text-white text-[7px] px-2 py-0.5 rounded-full border border-slate-500 shadow-lg">{isExpanded ? 'CONTRAER ▲' : 'EXPANDIR ▼'}</div>}
+                    
+                    {children.length > 0 && (
+                        <div className="absolute -bottom-2 bg-slate-900 text-white text-[7px] px-2 py-0.5 rounded-full border border-slate-500 shadow-lg">
+                            {isExpanded ? 'CONTRAER ▲' : 'EXPANDIR ▼'}
+                        </div>
+                    )}
                 </div>
-                {isExpanded && children.length > 0 && <ul>{children.map(renderNode)}</ul>}
+
+                {/* Esta estructura UL/LI es la que interpreta el CSS de árbol */}
+                {isExpanded && children.length > 0 && (
+                    <ul>
+                        {children.map(child => renderNode(child))}
+                    </ul>
+                )}
             </li>
         );
     };
+
+    
 
     return (
         <div className="fixed inset-0 z-[90] bg-black/95 flex flex-col fade-in">
