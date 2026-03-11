@@ -597,14 +597,14 @@ const StackedWeightsChart = ({ data, baseCurrency }) => {
 const CarouselCharts = ({ chartsData, baseCurrency }) => {
           return (
              <div className="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-4 custom-scrollbar items-start">
-                <div className="snap-center min-w-full lg:min-w-[90%] h-[400px]">
-                    <SimpleChart type="line" data={chartsData.evolution} title="Evolución Rendimiento Acumulado (con dividendos)" height={400} color="#10b981" />
+                <div className="snap-center min-w-full lg:min-w-[90%] h-[550px]">
+                    <SimpleChart type="line" data={chartsData.evolution} title="Evolución Rendimiento Acumulado (con dividendos)" height={550} color="#10b981" />
                 </div>
                 <div className="snap-center min-w-full lg:min-w-[90%]">
                     <StackedWeightsChart data={chartsData.weightsData} baseCurrency={baseCurrency} />
                 </div>
-                <div className="snap-center min-w-full lg:min-w-[90%] h-[400px]">
-                    <SimpleChart type="pie" data={chartsData.geoDiversification} title="Diversificación Geográfica (Bolsa)" height={400} />
+                <div className="snap-center min-w-full lg:min-w-[90%] h-[550px]">
+                    <SimpleChart type="pie" data={chartsData.geoDiversification} title="Diversificación Geográfica (Bolsa)" height={550} />
                 </div>
              </div>
           );
@@ -1186,17 +1186,61 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                   return { ...p, cost, val, divs, plTotal, days, ret, isS };
               };
 
+
               const activeList = active.map(processItem).sort((a,b) => b.plTotal - a.plTotal);
               const closedList = closed.map(processItem).sort((a,b) => b.plTotal - a.plTotal);
+
+              // CÁLCULO DE ÚLTIMA COMPRA Y VENTA
+           const allValid = portfolio.filter(p => p.isActive !== false);
+              
+              let buyEvents = [];
+              allValid.forEach(p => {
+                  if (p.lots && p.lots.length > 0) {
+                      p.lots.forEach(l => {
+                          if (!l.date) return;
+                          const lShares = parseFloat(l.shares) || 0;
+                          const lPrice = parseFloat(l.price) || 0;
+                          const lFx = parseFloat(l.fx) || 1;
+                          const lFees = parseFloat(l.fees) || 0;
+                          const lAdj = parseFloat(l.adj) || 0;
+                          const cost = (lShares * lPrice * lFx) + (p.feesIncludedInPrice ? 0 : lFees) + lAdj;
+                          
+                          buyEvents.push({ ticker: p.ticker, name: p.name, date: l.date, amount: cost, isLot: true });
+                      });
+                  } else if (p.buyDate) {
+                      const cost = (p.shares * p.buyPrice * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+                      buyEvents.push({ ticker: p.ticker, name: p.name, date: p.buyDate, amount: cost, isLot: false });
+                  }
+              });
+
+              buyEvents.sort((a, b) => new Date(b.date) - new Date(a.date));
+              const lastBuy = buyEvents.length > 0 ? buyEvents[0] : null;
+              let lastBuyData = null;
+              if (lastBuy) {
+                  const days = Math.max(0, Math.floor((new Date() - new Date(lastBuy.date)) / (1000*60*60*24)));
+                  lastBuyData = { ...lastBuy, days };
+              }
+
+              const sortedBySell = [...closed].sort((a,b) => new Date(b.sellDate) - new Date(a.sellDate));
+              const lastSell = sortedBySell.length > 0 ? sortedBySell[0] : null;
+              let lastSellData = null;
+              if (lastSell) {
+                  const rev = r2((lastSell.sellPrice * lastSell.shares * lastSell.sellFx) - (lastSell.sellFeesIncludedInPrice?0:(lastSell.sellFees||0)) - (lastSell.sellAdjustments||0));
+                  const days = Math.max(0, Math.floor((new Date() - new Date(lastSell.sellDate)) / (1000*60*60*24)));
+                  lastSellData = { ticker: lastSell.ticker, name: lastSell.name, date: lastSell.sellDate, amount: rev, days };
+              }
 
               return { 
                   openM, closedM, totalRatio, globalInv, globalVal,
                   activeTop4: activeList.slice(0, 4),
                   activeBottom4: activeList.slice(-4).reverse(),
                   closedTop4: closedList.slice(0, 4),
-                  closedBottom4: closedList.slice(-4).reverse()
+                  closedBottom4: closedList.slice(-4).reverse(),
+                  lastBuyData,
+                  lastSellData
               };
           }, [portfolio]);
+ 
 
           const Row = ({ label, leftVal, rightVal, isHeader = false, highlight = false, heightClass = '' }) => ( <div className={`grid grid-cols-3 text-[10px] border-b border-slate-700/50 ${isHeader ? 'bg-slate-700/50 font-bold text-slate-300' : 'hover:bg-slate-800/30'} ${highlight ? 'bg-yellow-900/10' : ''} ${heightClass}`}> <div className="p-1 pl-2 text-slate-400 uppercase font-bold flex items-center">{label}</div> <div className="p-1 text-right border-l border-slate-800 pr-2 font-mono text-slate-200 flex flex-col justify-center">{leftVal}</div> <div className="p-1 text-right border-l border-slate-800 pr-2 font-mono text-slate-200 flex flex-col justify-center">{rightVal}</div> </div> );
           const fK = (v) => { if (Math.abs(v) >= 1000) return (v/1000).toFixed(1) + 'k'; return v.toFixed(0); };
@@ -1249,8 +1293,49 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                               <Row label="Dividendos (%Yield)" leftVal={<span className="text-green-400 font-bold">{formatMoney(metrics.openM.divs, baseCurrency)} <span className="text-[8px] text-slate-400">({formatN(metrics.openM.yieldPct)}%)</span></span>} rightVal={<span className="text-green-400 font-bold">{formatMoney(metrics.closedM.divs, baseCurrency)} <span className="text-[8px] text-slate-400">({formatN(metrics.closedM.yieldPct)}%)</span></span>} />
                               <Row label="Acumulado Ventas" leftVal={<span className={metrics.openM.accum>=0?'text-green-400 font-bold':'text-red-400 font-bold'}>{formatMoney(metrics.openM.accum, baseCurrency)}</span>} rightVal={<span className={metrics.closedM.accum>=0?'text-green-400 font-bold':'text-red-400 font-bold'}>{formatMoney(metrics.closedM.accum, baseCurrency)}</span>} />
                               <div className="p-3 bg-slate-950 border-t border-slate-700 flex justify-between items-center"><div className="text-[10px] text-blue-300 font-bold uppercase">Saldo Histórico Cartera [Total]</div><div className="text-right flex items-baseline gap-3"><div className="text-xl font-black text-white">{formatMoney(metrics.openM.accum + metrics.closedM.accum, baseCurrency)}</div><div className="text-[9px] text-slate-500 font-mono">[ <span className="text-red-400">Imp: {formatMoney(taxTotal, baseCurrency)}</span> | <span className="text-green-400 font-bold">Neto: {formatMoney((metrics.openM.accum + metrics.closedM.accum) - taxTotal, baseCurrency)}</span> ]</div></div></div>
-                          </div></div>
+                          
+                              {/* NUEVO BLOQUE: ÚLTIMAS OPERACIONES */}
+                              <div className="grid grid-cols-2 bg-[#0f121a] border-t border-slate-700 text-[9px] divide-x divide-slate-700">
+                                  <div className="p-2">
+                                      <div className="text-slate-500 uppercase font-bold mb-1 flex justify-between"><span>Última Compra</span> {metrics.lastBuyData && <span className="text-blue-400">Hace {metrics.lastBuyData.days} días</span>}</div>
+                                      {metrics.lastBuyData ? (
+                                          <div className="flex justify-between items-center">
+                                              <div className="truncate pr-2">
+                                                  <div className="text-white font-bold truncate max-w-[120px]">{metrics.lastBuyData.name}</div> 
+                                                  <div className="text-slate-400 font-mono text-[8px] mt-0.5 flex items-center gap-1.5">
+                                                      {metrics.lastBuyData.ticker}
+                                                      {metrics.lastBuyData.isLot && <span className="text-cyan-400 font-normal text-[7px] bg-cyan-900/30 px-1 rounded border border-cyan-500/30">(*Lote)</span>}
+                                                  </div>
+                                              </div>
+                                              <div className="text-right flex flex-col items-end">
+                                                  <span className="text-white font-mono font-bold">{formatMoney(metrics.lastBuyData.amount, baseCurrency)}</span>
+                                                  <span className="text-slate-500 text-[8px] mt-0.5">{metrics.lastBuyData.date.split('-').reverse().join('/')}</span>
+                                              </div>
+                                          </div>
+                                      ) : <span className="text-slate-600 italic">Sin datos</span>}
+                                  </div>
+                                  <div className="p-2">
+                                      <div className="text-slate-500 uppercase font-bold mb-1 flex justify-between"><span>Última Venta</span> {metrics.lastSellData && <span className="text-orange-400">Hace {metrics.lastSellData.days} días</span>}</div>
+                                      {metrics.lastSellData ? (
+                                          <div className="flex justify-between items-center">
+                                              <div className="truncate pr-2">
+                                                  <div className="text-white font-bold truncate max-w-[120px]">{metrics.lastSellData.name}</div> 
+                                                  <div className="text-slate-400 font-mono text-[8px] mt-0.5">{metrics.lastSellData.ticker}</div>
+                                              </div>
+                                              <div className="text-right flex flex-col items-end">
+                                                  <span className="text-white font-mono font-bold">{formatMoney(metrics.lastSellData.amount, baseCurrency)}</span>
+                                                  <span className="text-slate-500 text-[8px] mt-0.5">{metrics.lastSellData.date.split('-').reverse().join('/')}</span>
+                                              </div>
+                                          </div>
+                                      ) : <span className="text-slate-600 italic">Sin datos</span>}
+                                  </div>
+                              </div>
+
+
+                            </div></div>
                       </div>
+
+
                       <div className="min-w-full p-4 flex flex-col gap-4 bg-slate-900">
                           {/* PANEL ABIERTAS */}
                           <div className="flex gap-4">
