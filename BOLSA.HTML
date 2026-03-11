@@ -2692,6 +2692,8 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
     const [expandedNodes, setExpandedNodes] = useState(new Set(['root']));
     const [showActive, setShowActive] = useState(true);
     const [showDividends, setShowDividends] = useState(true);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [scale, setScale] = useState(1);
 
     const fDate = (d) => { if (!d) return ''; const date = new Date(d); return `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear().toString().slice(-2)}`; };
     const MONTHS = ["ENERO", "FEBRE", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOST", "SEPTIE", "OCTUB", "NOVIEM", "DICIE"];
@@ -2703,9 +2705,11 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
         const addData = (dateStr, type, item, amount, profitVal = 0, extra = {}) => {
             if (!dateStr) return;
             const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return;
             const year = d.getFullYear().toString();
+            const month = (d.getMonth() + 1).toString().padStart(2, '0');
             const yId = `Y-${year}`;
-            const mId = `M-${year}-${(d.getMonth() + 1).toString().padStart(2, '0')}`;
+            const mId = `M-${year}-${month}`;
 
             if (!tree.children[yId]) tree.children[yId] = { id: yId, type: 'year', label: year, buys: 0, sells: 0, divs: 0, profit: 0, children: {} };
             if (!tree.children[yId].children[mId]) tree.children[yId].children[mId] = { id: mId, type: 'month', label: `${MONTHS_SHORT[d.getMonth()]} ${year}`, buys: 0, sells: 0, divs: 0, profit: 0, children: [] };
@@ -2718,12 +2722,12 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
             if (type === 'DIV') { tree.divs += amount; yNode.divs += amount; mNode.divs += amount; tree.profit += amount; yNode.profit += amount; mNode.profit += amount; }
 
             mNode.children.push({
-                id: `L-${Date.now()}-${Math.random()}`, type: type, itemObj: item, date: dateStr,
-                ticker: item.ticker, amount: amount, profit: profitVal, extra: extra, monthName: MONTHS[d.getMonth()], yearName: year
+                id: `L-${Date.now()}-${Math.random()}`, type, itemObj: item, date: dateStr,
+                ticker: item.ticker, amount, profit: profitVal, extra, monthName: MONTHS[d.getMonth()], yearName: year
             });
         };
 
-        portfolio.filter(p => p.isActive !== false).forEach(p => {
+        portfolio.filter(p => p.isActive !== false && (p.ticker.toUpperCase().includes(searchQuery.toUpperCase()) || p.name.toUpperCase().includes(searchQuery.toUpperCase()))).forEach(p => {
             const isS = !!p.sellDate;
             const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
             const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
@@ -2732,21 +2736,22 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
                 if (p.lots && p.lots.length > 0) {
                     p.lots.forEach(l => {
                         const lCost = (l.shares * l.price * l.fx) + (p.feesIncludedInPrice ? 0 : (parseFloat(l.fees)||0)) + (parseFloat(l.adj)||0);
-                        const lVal = (l.shares * curP * curF) - (p.feesIncludedInPrice ? 0 : (parseFloat(p.fees)||0)) - (parseFloat(p.adjustments)||0);
-                        const lProfit = isS ? 0 : (lVal - lCost);
-                        addData(l.date || p.buyDate, 'BUY', p, lCost, lProfit, { name: p.name, shares: l.shares, price: l.price, fees: (parseFloat(l.fees)||0)+(parseFloat(l.adj)||0), date: l.date || p.buyDate, isS, cost: lCost, val: lVal });
+                        let lProfit = 0;
+                        if (!isS) { const lVal = (l.shares * curP * curF) - (p.feesIncludedInPrice ? 0 : (parseFloat(p.fees)||0)) - (parseFloat(p.adjustments)||0); lProfit = lVal - lCost; }
+                        addData(l.date || p.buyDate, 'BUY', p, lCost, lProfit, { name: p.name, shares: l.shares, price: l.price, fees: (parseFloat(l.fees)||0)+(parseFloat(l.adj)||0), date: l.date || p.buyDate, isS, cost: lCost, val: !isS ? (l.shares * curP * curF) : 0 });
                     });
                 } else if (p.buyDate) {
                     const cost = (p.shares * p.buyPrice * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees||0)) + (p.adjustments||0);
-                    const val = (p.shares * curP * curF) - (p.sellFeesIncludedInPrice ? 0 : (p.sellFees||0)) - (p.sellAdjustments||0);
-                    addData(p.buyDate, 'BUY', p, cost, isS ? 0 : (val - cost), { name: p.name, shares: p.shares, price: p.buyPrice, fees: (p.fees||0)+(p.adjustments||0), date: p.buyDate, isS, cost: cost, val: val });
+                    let profit = 0;
+                    if (!isS) { const val = (p.shares * curP * curF) - (p.sellFeesIncludedInPrice ? 0 : (p.sellFees||0)) - (p.sellAdjustments||0); profit = val - cost; }
+                    addData(p.buyDate, 'BUY', p, cost, profit, { name: p.name, shares: p.shares, price: p.buyPrice, fees: (p.fees||0)+(p.adjustments||0), date: p.buyDate, isS, cost: cost, val: !isS ? (p.shares * curP * curF) : 0 });
                 }
             }
             if (isS) {
                 const sFees = (p.sellFeesIncludedInPrice ? 0 : (p.sellFees||0)) + (p.sellAdjustments||0);
-                const revenue = (p.shares * p.sellPrice * p.sellFx) - sFees;
+                const sRevenue = (p.shares * p.sellPrice * p.sellFx) - sFees;
                 const costBase = (p.shares * p.buyPrice * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees||0)) + (p.adjustments||0);
-                addData(p.sellDate, 'SELL', p, revenue, revenue - costBase, { name: p.name, shares: p.shares, buyPrice: p.buyPrice, buyFees: (p.fees||0)+(p.adjustments||0), buyDate: p.buyDate, sellPrice: p.sellPrice, sellFees: sFees, sellDate: p.sellDate });
+                addData(p.sellDate, 'SELL', p, sRevenue, sRevenue - costBase, { name: p.name, shares: p.shares, buyPrice: p.buyPrice, buyFees: (p.fees||0)+(p.adjustments||0), buyDate: p.buyDate, sellPrice: p.sellPrice, sellFees: sFees, sellDate: p.sellDate });
             }
             if (showDividends && p.dividends) {
                 p.dividends.forEach(d => {
@@ -2758,14 +2763,11 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
                 });
             }
         });
-
         Object.keys(tree.children).forEach(yId => { if (Object.keys(tree.children[yId].children).length === 0) delete tree.children[yId]; });
         return tree;
-    }, [portfolio, showActive, showDividends]);
+    }, [portfolio, showActive, showDividends, searchQuery]);
 
     const toggleNode = (id) => { setExpandedNodes(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; }); };
-
-    if (!isOpen) return null;
 
     const renderNode = (node) => {
         const isLeaf = ['BUY', 'SELL', 'DIV'].includes(node.type);
@@ -2776,9 +2778,8 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
         return (
             <li key={node.id} className="relative">
                 <div className={`inline-flex flex-col items-center justify-center p-3 rounded-3xl min-w-[210px] min-h-[170px] border-[3px] shadow-2xl cursor-pointer hover:scale-105 transition-transform z-10 relative ${bgClass} border-slate-400 text-white`} onClick={(e) => { e.stopPropagation(); if (isLeaf) onEditItem(node.itemObj); else if (hasChildren) toggleNode(node.id); }}>
-                    <strong className="text-[14px] font-black uppercase tracking-widest leading-none mb-1">{isLeaf ? node.ticker : node.label}</strong>
+                    <strong className="text-[14px] font-black uppercase tracking-widest drop-shadow-md leading-none mb-1">{isLeaf ? node.ticker : node.label}</strong>
                     {isLeaf && <div className="text-[10px] text-slate-100 truncate max-w-[190px] font-bold bg-black/20 px-2 py-0.5 rounded mb-1">{node.extra.name}</div>}
-                    
                     {!isLeaf ? (
                         <div className="text-[10px] font-mono leading-tight text-center mt-2">
                             <div><span className="opacity-70">C:</span> {formatMoney(node.buys, baseCurrency)}</div>
@@ -2795,25 +2796,26 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
                             <div className="mt-1 pt-1 border-t border-yellow-500/50 font-black text-green-200 flex justify-between"><span>Neto:</span> <span>{formatMoney(node.extra.net, baseCurrency)}</span></div>
                         </div>
                     ) : node.type === 'SELL' ? (
-                        <div className="text-[8px] font-mono w-full px-1">
-                            <div className="bg-black/20 rounded p-1 mb-1 text-center">
-                                <div className="font-bold text-blue-200 uppercase">Compra {fDate(node.extra.buyDate)}</div>
-                                <div>{formatN(node.extra.shares)} acc @ {formatN(node.extra.buyPrice)}</div>
+                        <div className="text-[8px] font-mono w-full px-1 text-left">
+                            <div className="bg-black/20 rounded p-1 mb-1">
+                                <div className="font-bold text-blue-200 text-center uppercase">Compra {fDate(node.extra.buyDate)}</div>
+                                <div>Accs: {formatN(node.extra.shares)}</div>
+                                <div>Precio: {formatN(node.extra.buyPrice)}</div>
                                 <div>Gtos: {formatN(node.extra.buyFees)}</div>
-                                <div className="font-black pt-1 border-t border-white/10 mt-1">Total Compra: {formatMoney(node.amount - node.profit, baseCurrency)}</div>
+                                <div className="font-black border-t border-white/10 mt-1">Total: {formatMoney((node.extra.shares * node.extra.buyPrice) + node.extra.buyFees, baseCurrency)}</div>
                             </div>
-                            <div className="bg-black/20 rounded p-1 text-center mb-1">
-                                <div className="font-bold text-orange-200 uppercase">Venta {fDate(node.extra.sellDate)}</div>
-                                <div>{formatN(node.extra.shares)} acc @ {formatN(node.extra.sellPrice)}</div>
+                            <div className="bg-black/20 rounded p-1 mb-1">
+                                <div className="font-bold text-orange-200 text-center uppercase">Venta {fDate(node.extra.sellDate)}</div>
+                                <div>Accs: {formatN(node.extra.shares)}</div>
+                                <div>Precio: {formatN(node.extra.sellPrice)}</div>
                                 <div>Gtos: {formatN(node.extra.sellFees)}</div>
-                                <div className="font-black pt-1 border-t border-white/10 mt-1">Total Venta: {formatMoney(node.amount, baseCurrency)}</div>
+                                <div className="font-black border-t border-white/10 mt-1">Total: {formatMoney(node.amount, baseCurrency)}</div>
                             </div>
                             <div className={`font-black pt-1 border-t border-white/20 text-center ${node.profit >= 0 ? 'text-green-300' : 'text-red-300'}`}>
-                                Benef: {formatMoney(node.profit, baseCurrency)} ({formatN((node.profit / (node.amount - node.profit)) * 100)}%)
+                                Benef: {formatMoney(node.profit, baseCurrency)} ({node.amount > 0 ? formatN((node.profit / (node.amount - node.profit)) * 100) : 0}%)
                             </div>
                         </div>
                     ) : (
-                    
                         <div className="text-[8px] font-mono w-full px-1 text-center">
                             <div className="font-bold text-blue-200 bg-black/20 rounded py-0.5 mb-1">{fDate(node.extra.date)}</div>
                             <div>{formatN(node.extra.shares)} acc @ {formatN(node.extra.price)}</div>
@@ -2824,7 +2826,6 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
                             </div>
                         </div>
                     )}
-                    {!isLeaf && hasChildren && <div className="absolute -bottom-2 bg-slate-900 text-white text-[7px] px-2 py-0.5 rounded-full border border-slate-500 shadow-lg">{isExpanded ? 'CONTRAER ▲' : 'EXPANDIR ▼'}</div>}
                 </div>
                 {isExpanded && hasChildren && <ul>{Array.isArray(node.children) ? node.children.map(renderNode) : Object.values(node.children).map(renderNode)}</ul>}
             </li>
@@ -2833,17 +2834,26 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
 
     return (
         <div className="fixed inset-0 z-[90] bg-black/95 flex flex-col fade-in">
-            <style>{`.timeline-tree { text-align: center; white-space: nowrap; padding: 40px; transform-origin: 0 0; } .timeline-tree ul { padding-top: 40px; position: relative; display: flex; justify-content: center; } .timeline-tree li { float: left; text-align: center; list-style-type: none; position: relative; padding: 40px 10px 0 10px; } .timeline-tree li::before, .timeline-tree li::after { content: ''; position: absolute; top: 0; right: 50%; border-top: 3px solid #475569; width: 50%; height: 40px; } .timeline-tree li::after { right: auto; left: 50%; border-left: 3px solid #475569; } .timeline-tree li:only-child::after, .timeline-tree li:only-child::before { display: none; } .timeline-tree li:only-child { padding-top: 0; } .timeline-tree li:first-child::before, .timeline-tree li:last-child::after { border: 0 none; } .timeline-tree li:last-child::before { border-right: 3px solid #475569; border-radius: 0 15px 0 0; } .timeline-tree li:first-child::after { border-radius: 15px 0 0 0; } .timeline-tree ul ul::before { content: ''; position: absolute; top: 0; left: 50%; border-left: 3px solid #475569; width: 0; height: 40px; transform: translateX(-50%); }`}</style>
+            <style>{`.timeline-tree { text-align: center; white-space: nowrap; padding: 40px; transform-origin: 50% 0; } .timeline-tree ul { padding-top: 40px; position: relative; display: flex; justify-content: center; } .timeline-tree li { padding: 40px 10px 0 10px; position: relative; list-style-type: none; } .timeline-tree li::before, .timeline-tree li::after { content: ''; position: absolute; top: 0; right: 50%; border-top: 3px solid #475569; width: 50%; height: 40px; } .timeline-tree li::after { right: auto; left: 50%; border-left: 3px solid #475569; } .timeline-tree ul ul::before { content: ''; position: absolute; top: 0; left: 50%; border-left: 3px solid #475569; width: 0; height: 40px; }`}</style>
             <div className="flex justify-between items-center p-5 bg-slate-900 border-b border-slate-800 z-50">
                 <div><h2 className="text-2xl font-bold text-emerald-400 font-display flex items-center gap-3"><Icons.Network size={28}/> TIMELINE DEL INVERSOR</h2>
-                    <div className="flex gap-4 items-center bg-slate-800/50 p-2 rounded-xl mt-2 border border-slate-700 w-fit">
-                        <label className="flex items-center gap-2 cursor-pointer text-[10px] font-bold text-slate-300 uppercase"><input type="checkbox" checked={showActive} onChange={e => setShowActive(e.target.checked)} className="custom-checkbox"/> Operaciones Activas</label>
-                        <label className="flex items-center gap-2 cursor-pointer text-[10px] font-bold text-slate-300 uppercase"><input type="checkbox" checked={showDividends} onChange={e => setShowDividends(e.target.checked)} className="custom-checkbox"/> Dividendos</label>
+                    <div className="flex gap-4 items-center bg-slate-800/50 p-2 rounded-xl mt-2 border border-slate-700">
+                        <input type="text" placeholder="Buscar Ticker..." className="bg-black/30 border border-slate-700 rounded px-2 py-1 text-[10px] w-24 text-white" onChange={e=>setSearchQuery(e.target.value)}/>
+                        <label className="flex items-center gap-2 cursor-pointer text-[10px] font-bold text-slate-300 uppercase"><input type="checkbox" checked={showActive} onChange={e => setShowActive(e.target.checked)}/> Activas</label>
+                        <label className="flex items-center gap-2 cursor-pointer text-[10px] font-bold text-slate-300 uppercase"><input type="checkbox" checked={showDividends} onChange={e => setShowDividends(e.target.checked)}/> Dividendos</label>
                     </div>
                 </div>
-                <button onClick={onClose} className="bg-red-600 hover:bg-red-500 text-white px-6 py-3 rounded-xl font-black text-sm flex items-center gap-2"><Icons.X size={18}/> CERRAR GRAFO</button>
+                <div className="flex gap-2">
+                    <button onClick={()=>setScale(s => Math.min(s+0.1, 2))} className="bg-slate-700 px-4 py-2 rounded-lg font-bold">+</button>
+                    <button onClick={()=>setScale(s => Math.max(s-0.1, 0.5))} className="bg-slate-700 px-4 py-2 rounded-lg font-bold">-</button>
+                    <button onClick={onClose} className="bg-red-600 hover:bg-red-500 text-white px-6 py-3 rounded-xl font-black text-sm">CERRAR</button>
+                </div>
             </div>
-            <div className="flex-1 overflow-auto bg-[#0a0a0a] custom-scrollbar p-10 cursor-grab active:cursor-grabbing"><div className="timeline-tree inline-block min-w-max min-h-max"><ul>{renderNode(treeData)}</ul></div></div>
+            <div className="flex-1 overflow-auto bg-[#0a0a0a] custom-scrollbar p-10 cursor-grab active:cursor-grabbing">
+                <div className="timeline-tree inline-block min-w-max min-h-max" style={{ transform: `scale(${scale})` }}>
+                    <ul>{renderNode(treeData)}</ul>
+                </div>
+            </div>
         </div>
     );
 };
