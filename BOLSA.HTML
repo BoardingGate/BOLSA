@@ -2698,6 +2698,8 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
         return d;
     };
 
+    const MONTHS_SHORT = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
+
     const treeData = useMemo(() => {
         const tree = { id: 'root', type: 'root', label: 'CARTERA', buys: 0, sells: 0, divs: 0, profit: 0, children: {} };
 
@@ -2726,7 +2728,10 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
             });
         };
 
-        portfolio.forEach(p => {
+        // FILTRO: Solo procesar acciones que estén activas
+        const activePortfolio = portfolio.filter(p => p.isActive !== false);
+
+        activePortfolio.forEach(p => {
             const isS = !!p.sellDate;
             const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
             const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
@@ -2756,9 +2761,10 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
             if (p.dividends) {
                 p.dividends.forEach(d => {
                     if (d.year && d.month !== undefined) {
-                        const divDate = `${d.year}-${(d.month + 1).toString().padStart(2, '0')}-15`;
+                        const divDate = `${d.year}-${(d.month + 1).toString().padStart(2, '0')}-15`; // Día ficticio solo para ubicarlo en el árbol temporal
+                        const divDisplayStr = `${MONTHS_SHORT[d.month]} ${d.year}`; // Formato MES AÑO
                         const o = parseFloat(d.taxOrigin)||0; const dest = parseFloat(d.taxDest)||0; const net = parseFloat(d.net)||0;
-                        addData(divDate, 'DIV', p, net, net, { name: p.name, gross: net + o + dest, origin: o, dest: dest, net: net, date: divDate });
+                        addData(divDate, 'DIV', p, net, net, { name: p.name, gross: net + o + dest, origin: o, dest: dest, net: net, dateDisplay: divDisplayStr });
                     }
                 });
             }
@@ -2800,47 +2806,46 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
         return (
             <li key={node.id} className="relative">
                 <div 
-                    className={`inline-flex flex-col items-center justify-center p-3 rounded-3xl min-w-[160px] min-h-[140px] border-[3px] shadow-2xl cursor-pointer hover:scale-105 transition-transform z-10 relative ${bgClass} ${borderClass} ${textClass}`}
+                    className={`inline-flex flex-col items-center justify-center p-3 rounded-3xl min-w-[175px] min-h-[155px] border-[3px] shadow-2xl cursor-pointer hover:scale-105 transition-transform z-10 relative ${bgClass} ${borderClass} ${textClass}`}
                     onClick={(e) => { 
                         e.stopPropagation(); 
                         if (isLeaf) { 
                             onEditItem(node.itemObj); 
-                            // Ya NO cerramos el modal, así se queda de fondo
                         } else if (hasChildren) {
                             toggleNode(node.id); 
                         } 
                     }}
                 >
-                    <strong className="text-sm font-black uppercase tracking-widest drop-shadow-md leading-none">{isLeaf ? node.ticker : node.label}</strong>
+                    <strong className="text-[13px] font-black uppercase tracking-widest drop-shadow-md leading-none">{isLeaf ? node.ticker : node.label}</strong>
                     
                     {isLeaf && (
-                        <div className="text-[7.5px] text-slate-300 truncate max-w-[140px] mt-1 font-bold">{node.extra.name}</div>
+                        <div className="text-[9.5px] text-slate-200 truncate max-w-[160px] mt-1.5 font-bold">{node.extra.name}</div>
                     )}
 
                     {!isLeaf ? (
-                        <div className="text-[9px] font-mono leading-tight text-center mt-2">
+                        <div className="text-[10px] font-mono leading-tight text-center mt-2">
                             <div><span className="opacity-70">C:</span> {formatMoney(node.buys, baseCurrency)}</div>
                             <div><span className="opacity-70">V:</span> {formatMoney(node.sells, baseCurrency)}</div>
                             <div><span className="opacity-70">D:</span> {formatMoney(node.divs, baseCurrency)}</div>
                             <div className={`mt-1 pt-1 border-t border-white/20 font-bold ${node.profit >= 0 ? 'text-green-300' : 'text-red-300'}`}>R: {formatMoney(node.profit, baseCurrency)}</div>
                         </div>
                     ) : node.type === 'DIV' ? (
-                        <div className="text-[8.5px] font-mono leading-tight text-center mt-2 w-full px-1">
-                            <div className="text-[7.5px] text-blue-200 mb-1">{fDate(node.extra.date)}</div>
+                        <div className="text-[9px] font-mono leading-tight text-center mt-2 w-full px-1">
+                            <div className="text-[9px] font-bold text-blue-200 mb-1 bg-black/20 rounded py-0.5">{node.extra.dateDisplay}</div>
                             <div className="flex justify-between text-slate-200"><span>Bruto:</span> <span>{formatMoney(node.extra.gross, baseCurrency)}</span></div>
                             <div className="flex justify-between text-red-200"><span>Ret Org:</span> <span>{formatMoney(node.extra.origin, baseCurrency)}</span></div>
                             <div className="flex justify-between text-red-200"><span>Ret Des:</span> <span>{formatMoney(node.extra.dest, baseCurrency)}</span></div>
                             <div className="mt-1 pt-1 border-t border-yellow-500/50 font-black text-green-200 flex justify-between"><span>Neto:</span> <span>{formatMoney(node.extra.net, baseCurrency)}</span></div>
                         </div>
                     ) : (
-                        <div className="text-[8.5px] font-mono leading-tight text-center mt-2 w-full px-1">
-                            <div className="text-[7.5px] text-blue-200 mb-1 flex flex-col">
+                        <div className="text-[9px] font-mono leading-tight text-center mt-2 w-full px-1">
+                            <div className="text-[9px] font-bold text-blue-200 mb-1 flex flex-col bg-black/20 rounded py-0.5 px-1">
                                 {node.type === 'SELL' ? (
                                     <><span>C: {fDate(node.extra.buyDate)}</span><span>V: {fDate(node.extra.sellDate)}</span></>
                                 ) : <span>{fDate(node.extra.date)}</span>}
                             </div>
-                            <div className="text-slate-200">{formatN(node.extra.shares)} acc @ {formatN(node.extra.price)}</div>
-                            <div className="text-slate-400">Gtos/Adj: {formatN(node.extra.fees)}</div>
+                            <div className="text-slate-100">{formatN(node.extra.shares)} acc @ {formatN(node.extra.price)}</div>
+                            <div className="text-slate-300">Gtos/Adj: {formatN(node.extra.fees)}</div>
                             <div className="mt-1 pt-1 border-t border-white/20 font-black">Tot: {formatMoney(node.amount, baseCurrency)}</div>
                             
                             {node.type === 'BUY' && !node.extra.isS && (
@@ -2867,7 +2872,6 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
     };
 
     return (
-        /* Z-INDEX a 90 para que el Modal de Edición (z-[100]) se abra por encima y el Grafo se quede de fondo */
         <div className="fixed inset-0 z-[90] bg-black/95 flex flex-col fade-in">
             <style>{`
                 .timeline-tree { text-align: center; white-space: nowrap; padding: 40px; transform-origin: 0 0; }
@@ -2908,6 +2912,7 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
         </div>
     );
 };
+
 
 
 
@@ -5174,7 +5179,6 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
             </Modal>
             )}  
 
-            {/* INVOCACIÓN DEL GRAFO TIMELINE */}
             <TimelineGraphModal 
                 isOpen={isTimelineModalOpen} 
                 onClose={() => setIsTimelineModalOpen(false)} 
@@ -5184,10 +5188,9 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
                     setForm(item);
                     setEditingId(item.id);
                     setIsModalOpen(true);
-                    setIsTimelineModalOpen(false);
+                    // HEMOS ELIMINADO LA LÍNEA QUE LO CERRABA AQUÍ
                 }} 
             />
-
 
 
         </div>
