@@ -2693,7 +2693,13 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
     const [showActive, setShowActive] = useState(true);
     const [showDividends, setShowDividends] = useState(true);
 
-    const fDate = (d) => { if (!d) return ''; const p = d.split('T')[0].split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0].substring(2)}` : d; };
+    const fDate = (d) => {
+        if (!d) return '';
+        const date = new Date(d);
+        return `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear().toString().slice(-2)}`;
+    };
+
+    const MONTHS = ["ENERO", "FEBRE", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOST", "SEPTIE", "OCTUB", "NOVIEM", "DICIE"];
     const MONTHS_SHORT = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
 
     const treeData = useMemo(() => {
@@ -2720,7 +2726,7 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
 
             mNode.children.push({
                 id: `L-${Date.now()}-${Math.random()}`, type: type, itemObj: item, date: dateStr,
-                ticker: item.ticker, amount: amount, profit: profitVal, extra: extra, divMonth: MONTHS_FULL[d.getMonth()], divYear: year
+                ticker: item.ticker, amount: amount, profit: profitVal, extra: extra, monthName: MONTHS[d.getMonth()], yearName: year
             });
         };
 
@@ -2748,7 +2754,6 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
                 const sFees = (p.sellFeesIncludedInPrice ? 0 : (p.sellFees||0)) + (p.sellAdjustments||0);
                 const sRevenue = (p.shares * p.sellPrice * p.sellFx) - sFees;
                 const costBase = (p.shares * p.buyPrice * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees||0)) + (p.adjustments||0);
-                // Extra para el nodo venta: incluimos datos de compra y venta para la comparativa
                 addData(p.sellDate, 'SELL', p, sRevenue, sRevenue - costBase, { 
                     name: p.name, shares: p.shares, 
                     buyPrice: p.buyPrice, buyFees: (p.fees||0)+(p.adjustments||0), buyDate: p.buyDate,
@@ -2767,51 +2772,62 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
         });
 
         Object.keys(tree.children).forEach(yId => { if (Object.keys(tree.children[yId].children).length === 0) delete tree.children[yId]; });
+        tree.children = Object.values(tree.children).sort((a, b) => b.label.localeCompare(a.label));
+        tree.children.forEach(y => {
+            y.children = Object.values(y.children).sort((a, b) => b.label.localeCompare(a.label));
+            y.children.forEach(m => m.children.sort((a, b) => new Date(b.date) - new Date(a.date)));
+        });
         return tree;
     }, [portfolio, showActive, showDividends]);
+
+    const toggleNode = (id) => { setExpandedNodes(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; }); };
+
+    if (!isOpen) return null;
 
     const renderNode = (node) => {
         const isLeaf = ['BUY', 'SELL', 'DIV'].includes(node.type);
         const isExpanded = expandedNodes.has(node.id);
         const hasChildren = node.children && (Array.isArray(node.children) ? node.children.length > 0 : Object.keys(node.children).length > 0);
+        
         let bgClass = node.type === 'root' ? "bg-blue-900" : node.type === 'year' ? "bg-purple-900" : node.type === 'month' ? "bg-cyan-900" : node.type === 'BUY' ? "bg-green-900" : node.type === 'SELL' ? "bg-red-900" : "bg-yellow-600";
 
         return (
             <li key={node.id} className="relative">
-                <div className={`inline-flex flex-col items-center justify-center p-3 rounded-3xl min-w-[200px] min-h-[160px] border-[3px] shadow-2xl cursor-pointer hover:scale-105 transition-transform z-10 relative ${bgClass} border-slate-400 text-white`} onClick={(e) => { e.stopPropagation(); if (isLeaf) onEditItem(node.itemObj); else if (hasChildren) toggleNode(node.id); }}>
-                    <strong className="text-[14px] font-black uppercase tracking-widest leading-none mb-1">{isLeaf ? node.ticker : node.label}</strong>
-                    {isLeaf && <div className="text-[9.5px] text-slate-100 truncate max-w-[180px] font-bold bg-black/20 px-2 py-0.5 rounded mb-1">{node.extra.name}</div>}
+                <div className={`inline-flex flex-col items-center justify-center p-3 rounded-3xl min-w-[190px] min-h-[170px] border-[3px] shadow-2xl cursor-pointer hover:scale-105 transition-transform z-10 relative ${bgClass} border-slate-400 text-white`} onClick={(e) => { e.stopPropagation(); if (isLeaf) onEditItem(node.itemObj); else if (hasChildren) toggleNode(node.id); }}>
+                    <strong className="text-[14px] font-black uppercase tracking-widest drop-shadow-md leading-none mb-1">{isLeaf ? node.ticker : node.label}</strong>
+                    {isLeaf && <div className="text-[10px] text-slate-100 truncate max-w-[170px] font-bold bg-black/20 px-2 py-0.5 rounded mb-1">{node.extra.name}</div>}
                     
                     {!isLeaf ? (
-                        <div className="text-[9px] font-mono text-center mt-2">
+                        <div className="text-[10px] font-mono leading-tight text-center mt-2">
                             <div><span className="opacity-70">C:</span> {formatMoney(node.buys, baseCurrency)}</div>
                             <div><span className="opacity-70">V:</span> {formatMoney(node.sells, baseCurrency)}</div>
                             <div><span className="opacity-70">D:</span> {formatMoney(node.divs, baseCurrency)}</div>
-                            <div className="mt-1 pt-1 border-t border-white/20 font-bold">R: {formatMoney(node.profit, baseCurrency)}</div>
+                            <div className={`mt-1 pt-1 border-t border-white/20 font-bold ${node.profit >= 0 ? 'text-green-300' : 'text-red-300'}`}>R: {formatMoney(node.profit, baseCurrency)}</div>
                         </div>
                     ) : node.type === 'DIV' ? (
-                        <div className="text-[8px] font-mono text-center w-full px-1">
-                            <div className="flex justify-between"><span>Bruto:</span> <span>{formatMoney(node.extra.gross, baseCurrency)}</span></div>
-                            <div className="flex justify-between"><span>Ret.O:</span> <span>{formatMoney(node.extra.origin, baseCurrency)}</span></div>
-                            <div className="flex justify-between"><span>Ret.D:</span> <span>{formatMoney(node.extra.dest, baseCurrency)}</span></div>
-                            <div className="mt-1 pt-1 border-t border-yellow-500 font-black flex justify-between"><span>Neto:</span> <span>{formatMoney(node.extra.net, baseCurrency)}</span></div>
+                        <div className="text-[9px] font-mono leading-tight text-center w-full px-1">
+                            <div className="text-[10px] font-bold text-blue-200 mb-1 bg-black/20 rounded py-0.5">{node.monthName} {node.yearName}</div>
+                            <div className="flex justify-between text-slate-200"><span>Bruto:</span> <span>{formatMoney(node.extra.gross, baseCurrency)}</span></div>
+                            <div className="flex justify-between text-red-200"><span>Ret.O:</span> <span>{formatMoney(node.extra.origin, baseCurrency)}</span></div>
+                            <div className="flex justify-between text-red-200"><span>Ret.D:</span> <span>{formatMoney(node.extra.dest, baseCurrency)}</span></div>
+                            <div className="mt-1 pt-1 border-t border-yellow-500/50 font-black text-green-200 flex justify-between"><span>Neto:</span> <span>{formatMoney(node.extra.net, baseCurrency)}</span></div>
                         </div>
                     ) : node.type === 'SELL' ? (
-                        <div className="text-[8px] font-mono w-full px-1">
+                        <div className="text-[9px] font-mono w-full px-1">
                             <div className="bg-black/20 rounded p-1 mb-1 text-center">
-                                <div className="font-bold text-blue-200 uppercase">Compra {fDate(node.extra.buyDate)}</div>
-                                <div>{formatN(node.extra.shares)} @ {formatN(node.extra.buyPrice)}</div>
+                                <div className="font-bold text-blue-200 uppercase">Compra: {fDate(node.extra.buyDate)}</div>
+                                <div>{formatN(node.extra.shares)} acc @ {formatN(node.extra.buyPrice)}</div>
                                 <div>Gtos: {formatN(node.extra.buyFees)}</div>
                             </div>
                             <div className="bg-black/20 rounded p-1 text-center">
-                                <div className="font-bold text-orange-200 uppercase">Venta {fDate(node.extra.sellDate)}</div>
-                                <div>{formatN(node.extra.shares)} @ {formatN(node.extra.sellPrice)}</div>
+                                <div className="font-bold text-orange-200 uppercase">Venta: {fDate(node.extra.sellDate)}</div>
+                                <div>{formatN(node.extra.shares)} acc @ {formatN(node.extra.sellPrice)}</div>
                                 <div>Gtos: {formatN(node.extra.sellFees)}</div>
                             </div>
                             <div className="mt-1 pt-1 border-t border-white/20 font-black text-center">Ben: {formatMoney(node.profit, baseCurrency)}</div>
                         </div>
                     ) : (
-                        <div className="text-[8px] font-mono w-full px-1 text-center">
+                        <div className="text-[9px] font-mono w-full px-1 text-center">
                             <div className="font-bold text-blue-200 bg-black/20 rounded py-0.5 mb-1">{fDate(node.extra.date)}</div>
                             <div>{formatN(node.extra.shares)} acc @ {formatN(node.extra.price)}</div>
                             <div>Gtos: {formatN(node.extra.fees)}</div>
@@ -2819,6 +2835,7 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
                             <div className={`font-bold mt-0.5 ${node.profit >= 0 ? 'text-green-300' : 'text-red-300'}`}>{node.extra.isS ? 'Ben: ' : 'Lat: '}{formatMoney(node.profit, baseCurrency)}</div>
                         </div>
                     )}
+                    {!isLeaf && hasChildren && <div className="absolute -bottom-2 bg-slate-900 text-white text-[7px] px-2 py-0.5 rounded-full border border-slate-500 shadow-lg">{isExpanded ? 'CONTRAER ▲' : 'EXPANDIR ▼'}</div>}
                 </div>
                 {isExpanded && hasChildren && <ul>{Array.isArray(node.children) ? node.children.map(renderNode) : Object.values(node.children).map(renderNode)}</ul>}
             </li>
@@ -2827,7 +2844,7 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
 
     return (
         <div className="fixed inset-0 z-[90] bg-black/95 flex flex-col fade-in">
-            <style>{` .timeline-tree { text-align: center; white-space: nowrap; padding: 40px; transform-origin: 0 0; } .timeline-tree ul { padding-top: 40px; position: relative; display: flex; justify-content: center; } .timeline-tree li { float: left; text-align: center; list-style-type: none; position: relative; padding: 40px 10px 0 10px; } .timeline-tree li::before, .timeline-tree li::after { content: ''; position: absolute; top: 0; right: 50%; border-top: 3px solid #475569; width: 50%; height: 40px; } .timeline-tree li::after { right: auto; left: 50%; border-left: 3px solid #475569; } .timeline-tree li:only-child::after, .timeline-tree li:only-child::before { display: none; } .timeline-tree li:first-child::before, .timeline-tree li:last-child::after { border: 0 none; } .timeline-tree li:last-child::before { border-right: 3px solid #475569; border-radius: 0 15px 0 0; } .timeline-tree li:first-child::after { border-radius: 15px 0 0 0; } .timeline-tree ul ul::before { content: ''; position: absolute; top: 0; left: 50%; border-left: 3px solid #475569; width: 0; height: 40px; transform: translateX(-50%); } `}</style>
+            <style>{`.timeline-tree { text-align: center; white-space: nowrap; padding: 40px; transform-origin: 0 0; } .timeline-tree ul { padding-top: 40px; position: relative; display: flex; justify-content: center; } .timeline-tree li { float: left; text-align: center; list-style-type: none; position: relative; padding: 40px 10px 0 10px; } .timeline-tree li::before, .timeline-tree li::after { content: ''; position: absolute; top: 0; right: 50%; border-top: 3px solid #475569; width: 50%; height: 40px; } .timeline-tree li::after { right: auto; left: 50%; border-left: 3px solid #475569; } .timeline-tree li:only-child::after, .timeline-tree li:only-child::before { display: none; } .timeline-tree li:only-child { padding-top: 0; } .timeline-tree li:first-child::before, .timeline-tree li:last-child::after { border: 0 none; } .timeline-tree li:last-child::before { border-right: 3px solid #475569; border-radius: 0 15px 0 0; } .timeline-tree li:first-child::after { border-radius: 15px 0 0 0; } .timeline-tree ul ul::before { content: ''; position: absolute; top: 0; left: 50%; border-left: 3px solid #475569; width: 0; height: 40px; transform: translateX(-50%); }`}</style>
             <div className="flex justify-between items-center p-5 bg-slate-900 border-b border-slate-800 z-50">
                 <div><h2 className="text-2xl font-bold text-emerald-400 font-display flex items-center gap-3"><Icons.Network size={28}/> TIMELINE DEL INVERSOR</h2>
                     <div className="flex gap-4 items-center bg-slate-800/50 p-2 rounded-xl mt-2 border border-slate-700 w-fit">
@@ -2841,6 +2858,7 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
         </div>
     );
 };
+
 
 const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady, _x_lim, _x_trig, globalNotes, setGlobalNotes, onAnalyze, aiModel, gScriptUrl }) => {
     // --- ESTADOS PERSISTENTES PARA FILTROS Y SIMULACIÓN ---
