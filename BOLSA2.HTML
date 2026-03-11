@@ -1191,15 +1191,34 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
               const closedList = closed.map(processItem).sort((a,b) => b.plTotal - a.plTotal);
 
               // CÁLCULO DE ÚLTIMA COMPRA Y VENTA
-              const allValid = portfolio.filter(p => p.isActive !== false);
+           const allValid = portfolio.filter(p => p.isActive !== false);
               
-              const sortedByBuy = [...allValid].filter(p => p.buyDate).sort((a,b) => new Date(b.buyDate) - new Date(a.buyDate));
-              const lastBuy = sortedByBuy.length > 0 ? sortedByBuy[0] : null;
+              let buyEvents = [];
+              allValid.forEach(p => {
+                  if (p.lots && p.lots.length > 0) {
+                      p.lots.forEach(l => {
+                          if (!l.date) return;
+                          const lShares = parseFloat(l.shares) || 0;
+                          const lPrice = parseFloat(l.price) || 0;
+                          const lFx = parseFloat(l.fx) || 1;
+                          const lFees = parseFloat(l.fees) || 0;
+                          const lAdj = parseFloat(l.adj) || 0;
+                          const cost = (lShares * lPrice * lFx) + (p.feesIncludedInPrice ? 0 : lFees) + lAdj;
+                          
+                          buyEvents.push({ ticker: p.ticker, name: p.name, date: l.date, amount: cost, isLot: true });
+                      });
+                  } else if (p.buyDate) {
+                      const cost = (p.shares * p.buyPrice * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+                      buyEvents.push({ ticker: p.ticker, name: p.name, date: p.buyDate, amount: cost, isLot: false });
+                  }
+              });
+
+              buyEvents.sort((a, b) => new Date(b.date) - new Date(a.date));
+              const lastBuy = buyEvents.length > 0 ? buyEvents[0] : null;
               let lastBuyData = null;
               if (lastBuy) {
-                  const cost = r2((lastBuy.buyPrice * lastBuy.shares * lastBuy.buyFx) + (lastBuy.feesIncludedInPrice?0:(lastBuy.fees||0)) + (lastBuy.adjustments||0));
-                  const days = Math.max(0, Math.floor((new Date() - new Date(lastBuy.buyDate)) / (1000*60*60*24)));
-                  lastBuyData = { ticker: lastBuy.ticker, name: lastBuy.name, date: lastBuy.buyDate, amount: cost, days };
+                  const days = Math.max(0, Math.floor((new Date() - new Date(lastBuy.date)) / (1000*60*60*24)));
+                  lastBuyData = { ...lastBuy, days };
               }
 
               const sortedBySell = [...closed].sort((a,b) => new Date(b.sellDate) - new Date(a.sellDate));
@@ -1221,7 +1240,7 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                   lastSellData
               };
           }, [portfolio]);
-  
+ 
 
           const Row = ({ label, leftVal, rightVal, isHeader = false, highlight = false, heightClass = '' }) => ( <div className={`grid grid-cols-3 text-[10px] border-b border-slate-700/50 ${isHeader ? 'bg-slate-700/50 font-bold text-slate-300' : 'hover:bg-slate-800/30'} ${highlight ? 'bg-yellow-900/10' : ''} ${heightClass}`}> <div className="p-1 pl-2 text-slate-400 uppercase font-bold flex items-center">{label}</div> <div className="p-1 text-right border-l border-slate-800 pr-2 font-mono text-slate-200 flex flex-col justify-center">{leftVal}</div> <div className="p-1 text-right border-l border-slate-800 pr-2 font-mono text-slate-200 flex flex-col justify-center">{rightVal}</div> </div> );
           const fK = (v) => { if (Math.abs(v) >= 1000) return (v/1000).toFixed(1) + 'k'; return v.toFixed(0); };
@@ -1281,7 +1300,13 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                                       <div className="text-slate-500 uppercase font-bold mb-1 flex justify-between"><span>Última Compra</span> {metrics.lastBuyData && <span className="text-blue-400">Hace {metrics.lastBuyData.days} días</span>}</div>
                                       {metrics.lastBuyData ? (
                                           <div className="flex justify-between items-center">
-                                              <div className="truncate pr-2"><div className="text-white font-bold truncate max-w-[120px]">{metrics.lastBuyData.name}</div> <div className="text-slate-400 font-mono text-[8px] mt-0.5">{metrics.lastBuyData.ticker}</div></div>
+                                              <div className="truncate pr-2">
+                                                  <div className="text-white font-bold truncate max-w-[120px] flex items-center gap-1">
+                                                      {metrics.lastBuyData.name} 
+                                                      {metrics.lastBuyData.isLot && <span className="text-cyan-400 font-normal text-[8px] bg-cyan-900/30 px-1 rounded border border-cyan-500/30">(*Lote)</span>}
+                                                  </div> 
+                                                  <div className="text-slate-400 font-mono text-[8px] mt-0.5">{metrics.lastBuyData.ticker}</div>
+                                              </div>
                                               <div className="text-right flex flex-col items-end">
                                                   <span className="text-white font-mono font-bold">{formatMoney(metrics.lastBuyData.amount, baseCurrency)}</span>
                                                   <span className="text-slate-500 text-[8px] mt-0.5">{metrics.lastBuyData.date.split('-').reverse().join('/')}</span>
@@ -1293,7 +1318,10 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                                       <div className="text-slate-500 uppercase font-bold mb-1 flex justify-between"><span>Última Venta</span> {metrics.lastSellData && <span className="text-orange-400">Hace {metrics.lastSellData.days} días</span>}</div>
                                       {metrics.lastSellData ? (
                                           <div className="flex justify-between items-center">
-                                              <div className="truncate pr-2"><div className="text-white font-bold truncate max-w-[120px]">{metrics.lastSellData.name}</div> <div className="text-slate-400 font-mono text-[8px] mt-0.5">{metrics.lastSellData.ticker}</div></div>
+                                              <div className="truncate pr-2">
+                                                  <div className="text-white font-bold truncate max-w-[120px]">{metrics.lastSellData.name}</div> 
+                                                  <div className="text-slate-400 font-mono text-[8px] mt-0.5">{metrics.lastSellData.ticker}</div>
+                                              </div>
                                               <div className="text-right flex flex-col items-end">
                                                   <span className="text-white font-mono font-bold">{formatMoney(metrics.lastSellData.amount, baseCurrency)}</span>
                                                   <span className="text-slate-500 text-[8px] mt-0.5">{metrics.lastSellData.date.split('-').reverse().join('/')}</span>
@@ -1301,8 +1329,7 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                                           </div>
                                       ) : <span className="text-slate-600 italic">Sin datos</span>}
                                   </div>
-                              </div>  
-                            
+                              </div>
 
                             </div></div>
                       </div>
