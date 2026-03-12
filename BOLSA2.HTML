@@ -2813,30 +2813,46 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
 
     const toggleNode = (id) => { setExpandedNodes(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; }); };
 
-    // --- NUEVA FUNCIÓN SOLICITADA ---
+    // --- LÓGICA DE IMPRESIÓN SOLICITADA ---
     const printExpandedData = () => {
         const getVisibleNodes = (node) => {
             if (!expandedNodes.has(node.id)) return [];
             let items = [];
-            if (['BUY', 'SELL', 'DIV'].includes(node.type)) {
-                items.push({ ...node.itemObj, type: node.type, amount: node.amount });
-            } else if (node.children) {
-                const childArray = node.type === 'month' ? node.children : Object.values(node.children);
-                childArray.forEach(c => items.push(...getVisibleNodes(c)));
+            if (['BUY', 'SELL', 'DIV'].includes(node.type)) items.push(node.itemObj);
+            else if (node.children) {
+                const childrenArray = node.type === 'month' ? node.children : Object.values(node.children);
+                childrenArray.forEach(c => items.push(...getVisibleNodes(c)));
             }
             return items;
         };
+
+        const visibleItems = [...new Set(getVisibleNodes(treeData))];
+        const printWindow = window.open('', '', 'height=800,width=1200');
         
-        const dataToPrint = [...new Set(getVisibleNodes(treeData))];
-        const printWindow = window.open('', '', 'height=800,width=1000');
-        printWindow.document.write(`<html><head><title>Informe Timeline Desplegado</title>
-        <style>body{font-family:sans-serif;font-size:10px;padding:20px;} table{width:100%;border-collapse:collapse;} th,td{border:1px solid #ccc;padding:6px;text-align:right;} th{background:#f1f5f9;text-align:center;}</style></head><body>
-        <h1>Informe de Datos Desplegados en Timeline</h1>
-        <table><thead><tr><th>Ticker</th><th>Nombre</th><th>Tipo</th><th>Importe</th></tr></thead>
-        <tbody>${dataToPrint.map(i => `<tr><td>${i.ticker}</td><td>${i.name}</td><td>${i.type}</td><td>${formatMoney(i.amount)}</td></tr>`).join('')}</tbody></table>
-        </body></html>`);
-        printWindow.document.close();
-        printWindow.print();
+        let html = `<html><head><title>Informe con Desglose de Lotes</title><style>
+        @page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:7px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th{background:#f1f5f9;text-align:left;padding:3px;border-bottom:1px solid #94a3b8;font-size:6px;text-transform:uppercase;} td{padding:3px;border-bottom:1px solid #e2e8f0;vertical-align:top;font-size:7px;} .num{text-align:right;font-family:monospace;white-space:nowrap;} .center{text-align:center;}
+        </style></head><body><h1>INFORME CON DESGLOSE DE LOTES (TIMELINE DESPLEGADO)</h1><table><thead><tr><th>Valor</th><th>Fecha</th><th>Tipo</th><th>Acciones</th><th>Precio</th><th>Gtos</th><th>Importe</th></tr></thead><tbody>`;
+        
+        visibleItems.forEach(p => {
+             // Reutilizamos la lógica exacta de desglose de lotes original
+             if (p.lots && p.lots.length > 0) {
+                p.lots.forEach(l => {
+                    const lCost = (l.shares * l.price * l.fx) + (p.feesIncludedInPrice ? 0 : (parseFloat(l.fees)||0)) + (parseFloat(l.adj)||0);
+                    html += `<tr><td><b>${p.name}</b><br/>${p.ticker}</td><td class="center">${fDate(l.date)}</td><td class="center">COMPRA</td><td class="num">${formatN(l.shares)}</td><td class="num">${formatN(l.price)}</td><td class="num">${formatN(l.fees)}</td><td class="num"><b>${formatMoney(lCost, baseCurrency)}</b></td></tr>`;
+                });
+             } else {
+                 const cost = (p.shares * p.buyPrice * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+                 html += `<tr><td><b>${p.name}</b><br/>${p.ticker}</td><td class="center">${fDate(p.buyDate)}</td><td class="center">COMPRA</td><td class="num">${formatN(p.shares)}</td><td class="num">${formatN(p.buyPrice)}</td><td class="num">${formatN(p.fees)}</td><td class="num"><b>${formatMoney(cost, baseCurrency)}</b></td></tr>`;
+             }
+             if (p.sellDate) {
+                 const sFees = (p.sellFeesIncludedInPrice ? 0 : (p.sellFees||0)) + (p.sellAdjustments||0);
+                 const sRevenue = (p.shares * p.sellPrice * p.sellFx) - sFees;
+                 html += `<tr><td><b>${p.name}</b><br/>${p.ticker}</td><td class="center">${fDate(p.sellDate)}</td><td class="center" style="color:orange;">VENTA</td><td class="num">${formatN(p.shares)}</td><td class="num">${formatN(p.sellPrice)}</td><td class="num">${formatN(sFees)}</td><td class="num"><b>${formatMoney(sRevenue, baseCurrency)}</b></td></tr>`;
+             }
+        });
+
+        html += `</tbody></table></body></html>`;
+        printWindow.document.write(html); printWindow.document.close(); printWindow.print();
     };
 
     const renderNode = (node) => {
@@ -2844,21 +2860,13 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
         const isExpanded = expandedNodes.has(node.id);
         const children = isLeaf ? [] : Object.values(node.children);
 
-        let bgClass = node.type === 'root' ? "bg-blue-900" : 
-                      node.type === 'year' ? "bg-purple-900" : 
-                      node.type === 'month' ? "bg-cyan-900" : 
-                      node.type === 'BUY' ? "bg-green-900" : 
-                      node.type === 'SELL' ? "bg-red-900" : "bg-yellow-600";
+        let bgClass = node.type === 'root' ? "bg-blue-900" : node.type === 'year' ? "bg-purple-900" : node.type === 'month' ? "bg-cyan-900" : node.type === 'BUY' ? "bg-green-900" : node.type === 'SELL' ? "bg-red-900" : "bg-yellow-600";
 
         return (
             <li key={node.id}>
                 <div 
                     className={`inline-flex flex-col items-center justify-center p-3 rounded-3xl min-w-[210px] min-h-[170px] border-[3px] shadow-2xl cursor-pointer hover:scale-105 transition-transform z-10 relative ${bgClass} border-slate-400 text-white`} 
-                    onClick={(e) => { 
-                        e.stopPropagation(); 
-                        if (isLeaf) { onEditItem(node.itemObj); } 
-                        else if (children.length > 0) { toggleNode(node.id); } 
-                    }}
+                    onClick={(e) => { e.stopPropagation(); if (isLeaf) onEditItem(node.itemObj); else if (children.length > 0) toggleNode(node.id); }}
                 >
                     <strong className="text-[14px] font-black uppercase tracking-widest drop-shadow-md leading-none mb-1">{isLeaf ? node.ticker : node.label}</strong>
                     {isLeaf && <div className="text-[10px] text-slate-100 truncate max-w-[190px] font-bold bg-black/20 px-2 py-0.5 rounded mb-1">{node.extra.name}</div>}
@@ -2892,10 +2900,10 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
                         <div className="relative"><input type="text" placeholder="Buscar..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} className="bg-black/30 border border-slate-700 rounded px-2 py-1 text-[10px] w-24 text-white"/><button onClick={()=>setSearchQuery('')} className="absolute right-1 top-1 text-slate-500">×</button></div>
                         <label className="flex items-center gap-2 cursor-pointer text-[9px] font-bold text-slate-300 uppercase"><input type="checkbox" checked={showActive} onChange={e => setShowActive(e.target.checked)}/> Acciones Activas</label>
                         <label className="flex items-center gap-2 cursor-pointer text-[9px] font-bold text-slate-300 uppercase"><input type="checkbox" checked={showDividends} onChange={e => setShowDividends(e.target.checked)}/> Incluir Dividendos</label>
-                        <button onClick={printExpandedData} className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-[9px] font-black uppercase">IMPRIMIR DATOS DESPLEGADOS</button>
                     </div>
                 </div>
                 <div className="flex gap-2">
+                    <button onClick={printExpandedData} className="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg font-bold text-xs uppercase text-white">IMPRIMIR DATOS DESPLEGADOS</button>
                     <button onClick={()=>setScale(s => Math.min(s+0.1, 2.5))} className="bg-slate-700 px-4 py-2 rounded-lg font-bold">+</button>
                     <button onClick={()=>setScale(s => Math.max(s-0.1, 0.1))} className="bg-slate-700 px-4 py-2 rounded-lg font-bold">-</button>
                     <button onClick={onClose} className="bg-red-600 px-6 py-3 rounded-xl font-black text-sm">CERRAR</button>
