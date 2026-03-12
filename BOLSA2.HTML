@@ -2725,6 +2725,33 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
     const MONTHS = ["ENERO", "FEBRE", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOST", "SEPTIE", "OCTUB", "NOVIEM", "DICIE"];
     const MONTHS_SHORT = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
 
+    const handlePrintExpandedOnly = () => {
+        const expandedItems = portfolio.filter(p => {
+            const buyDate = new Date(p.buyDate);
+            const yId = `Y-${buyDate.getFullYear()}`;
+            const mId = `M-${buyDate.getFullYear()}-${(buyDate.getMonth()+1).toString().padStart(2, '0')}`;
+            return expandedNodes.has(yId) || expandedNodes.has(mId);
+        });
+
+        const printWindow = window.open('', '', 'height=800,width=1200');
+        const emissionTime = new Date().toLocaleString();
+        
+        let html = `<html><head><title>Informe Cartera Desplegada</title><style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:7px;} h1{font-size:14px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th{background:#f1f5f9;text-align:left;padding:3px;border-bottom:1px solid #94a3b8;font-size:6px;text-transform:uppercase;} td{padding:3px;border-bottom:1px solid #e2e8f0;vertical-align:top;font-size:7px;} .num{text-align:right;font-family:monospace;white-space:nowrap;} .center{text-align:center;} .profit{color:#16a34a;font-weight:bold;} .loss{color:#dc2626;font-weight:bold;} .blue{color:#3b82f6;} .orange{color:#f97316;} .total-row td { background: #1e293b; color: white; font-weight: bold; border-top: 2px solid #475569; } .lot-row td { background: #f8fafc; color: #64748b; font-size: 5.5px !important; border-bottom: 1px dashed #cbd5e1; padding-top: 2px; padding-bottom: 2px; }</style></head><body>`; 
+        html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>INFORME TIMELINE (DATOS DESPLEGADOS)</h1><div style="font-size:8px;color:#666;">EMISIÓN: ${emissionTime}</div></div></div>`; 
+        html += `<table><thead><tr><th>Valor</th><th class="center">Fechas / Días</th><th class="num">Títulos</th><th class="num">Precios (I/A)</th><th class="center">FX</th><th class="center">Gtos/Adj</th><th class="num">Coste Total</th><th class="num">Valor Final</th><th class="num">Rendimiento (Pre)</th><th class="num">Dividendos</th><th class="num">Resultado Total</th><th class="num">% Total</th><th class="num">% Anual</th></tr></thead><tbody>`; 
+        
+        expandedItems.forEach(p => { 
+            const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+            const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / p.indexDivisor : p.currentPrice); const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx); 
+            const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+            const ds = (p.dividends || []).reduce((a,b)=>a+b.net,0); 
+            const plPrice = vF - cost; const plTotal = plPrice + ds; const days = calculateDays(p.buyDate, p.sellDate || new Date()); const rs = calcReturns(cost, vF + ds, days); 
+            html += `<tr><td><b class="${plPrice>=0?'profit':'loss'}">${p.name}</b><br/>${p.ticker}</td><td class="center"><span class="blue">${formatDateES(p.buyDate)}</span>${p.sellDate ? `<br/><span class="orange">${formatDateES(p.sellDate)}</span>` : ''}<br/><b>${formatN(days, 0)}d</b></td><td class="num"><b>${formatN(p.shares)}</b></td><td class="num"><b>I:${formatN(p.buyPrice)}</b><br/><b>${isS?'V':'A'}:${formatN(curP)}</b></td><td class="center">${formatN(p.buyFx,4)}<br/>${formatN(curF,4)}</td><td class="center">${formatN(isS?p.sellFees:p.fees)}<br/>${formatN(isS?p.sellAdjustments:p.adjustments)}</td><td class="num"><b>${formatMoney(cost, baseCurrency)}</b></td><td class="num"><b>${formatMoney(vF, baseCurrency)}</b></td><td class="num"><span class="${plPrice>=0?'profit':'loss'}">${formatMoney(plPrice, baseCurrency)}</span></td><td class="num"><span class="blue">${formatMoney(ds, baseCurrency)}</span></td><td class="num"><span class="${plTotal>=0?'profit':'loss'}">${formatMoney(plTotal, baseCurrency)}</span></td><td class="num"><span class="${plTotal>=0?'profit':'loss'}">${formatN(rs.simple)}%</span></td><td class="num">${formatN(rs.annual)}%</td></tr>`; 
+        }); 
+        html += `</tbody></table></body></html>`;
+        printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(() => printWindow.print(), 500); 
+    };
+
     const treeData = useMemo(() => {
         const tree = { id: 'root', type: 'root', label: 'CARTERA', buys: 0, sells: 0, divs: 0, profit: 0, children: {} };
 
@@ -2815,12 +2842,9 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
 
     if (!isOpen) return null;
 
-   
- const renderNode = (node) => {
+    const renderNode = (node) => {
         const isLeaf = ['BUY', 'SELL', 'DIV'].includes(node.type);
         const isExpanded = expandedNodes.has(node.id);
-        
-        // Obtenemos los hijos como array para que los selectores CSS de árbol funcionen
         const children = isLeaf ? [] : Object.values(node.children);
 
         let bgClass = node.type === 'root' ? "bg-blue-900" : 
@@ -2833,33 +2857,16 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
             <li key={node.id}>
                 <div 
                     className={`inline-flex flex-col items-center justify-center p-3 rounded-3xl min-w-[210px] min-h-[170px] border-[3px] shadow-2xl cursor-pointer hover:scale-105 transition-transform z-10 relative ${bgClass} border-slate-400 text-white`} 
-                    onClick={(e) => { 
-                        e.stopPropagation(); 
-                        if (isLeaf) { 
-                            onEditItem(node.itemObj); 
-                        } else if (children.length > 0) { 
-                            toggleNode(node.id); 
-                        } 
-                    }}
+                    onClick={(e) => { e.stopPropagation(); if (isLeaf) onEditItem(node.itemObj); else if (children.length > 0) toggleNode(node.id); }}
                 >
-                    <strong className="text-[14px] font-black uppercase tracking-widest drop-shadow-md leading-none mb-1">
-                        {isLeaf ? node.ticker : node.label}
-                    </strong>
-                    
-                    {isLeaf && (
-                        <div className="text-[10px] text-slate-100 truncate max-w-[190px] font-bold bg-black/20 px-2 py-0.5 rounded mb-1">
-                            {node.extra.name}
-                        </div>
-                    )}
-
+                    <strong className="text-[14px] font-black uppercase tracking-widest drop-shadow-md leading-none mb-1">{isLeaf ? node.ticker : node.label}</strong>
+                    {isLeaf && <div className="text-[10px] text-slate-100 truncate max-w-[190px] font-bold bg-black/20 px-2 py-0.5 rounded mb-1">{node.extra.name}</div>}
                     {!isLeaf ? (
                         <div className="text-[9px] font-mono leading-tight text-center mt-2">
                             <div><span className="opacity-70">C:</span> {formatMoney(node.buys, baseCurrency)}</div>
                             <div><span className="opacity-70">V:</span> {formatMoney(node.sells, baseCurrency)}</div>
                             <div><span className="opacity-70">D:</span> {formatMoney(node.divs, baseCurrency)}</div>
-                            <div className={`mt-1 pt-1 border-t border-white/20 font-bold ${node.profit >= 0 ? 'text-green-300' : 'text-red-300'}`}>
-                                R: {formatMoney(node.profit, baseCurrency)}
-                            </div>
+                            <div className={`mt-1 pt-1 border-t border-white/20 font-bold ${node.profit >= 0 ? 'text-green-300' : 'text-red-300'}`}>R: {formatMoney(node.profit, baseCurrency)}</div>
                         </div>
                     ) : node.type === 'DIV' ? (
                         <div className="text-[8px] font-mono leading-tight text-center w-full px-1">
@@ -2875,45 +2882,27 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
                                 <div className="font-bold text-blue-200 uppercase text-center">Compra {fDate(node.extra.buyDate)}</div>
                                 <div>Accs: {formatN(node.extra.shares)}</div>
                                 <div>Precio: {formatN(node.extra.buyPrice)}</div>
-                                <div>Gtos: {formatN(node.extra.buyFees)}</div>
                                 <div className="font-black border-t border-white/10 mt-1">Total Compra: {formatMoney((node.extra.shares * node.extra.buyPrice) + node.extra.buyFees, baseCurrency)}</div>
                             </div>
                             <div className="bg-black/20 rounded p-1 mb-1">
                                 <div className="font-bold text-orange-200 uppercase text-center">Venta {fDate(node.extra.sellDate)}</div>
                                 <div>Accs: {formatN(node.extra.shares)}</div>
                                 <div>Precio: {formatN(node.extra.sellPrice)}</div>
-                                <div>Gtos: {formatN(node.extra.sellFees)}</div>
                                 <div className="font-black border-t border-white/10 mt-1">Total Venta: {formatMoney(node.amount, baseCurrency)}</div>
                             </div>
-                            <div className={`font-black pt-1 border-t border-white/20 text-center ${node.profit >= 0 ? 'text-green-300' : 'text-red-300'}`}>
-                                Benef: {formatMoney(node.profit, baseCurrency)} ({node.amount > 0 ? formatN((node.profit / (node.amount - node.profit)) * 100) : 0}%)
-                            </div>
+                            <div className={`font-black pt-1 border-t border-white/20 text-center ${node.profit >= 0 ? 'text-green-300' : 'text-red-300'}`}>Benef: {formatMoney(node.profit, baseCurrency)} ({node.amount > 0 ? formatN((node.profit / (node.amount - node.profit)) * 100) : 0}%)</div>
                         </div>
                     ) : (
                         <div className="text-[8px] font-mono w-full px-1 text-center">
                             <div className="font-bold text-blue-200 bg-black/20 rounded py-0.5 mb-1">{fDate(node.extra.date)}</div>
                             <div>{formatN(node.extra.shares)} acc @ {formatN(node.extra.price)}</div>
-                            <div>Gtos: {formatN(node.extra.fees)}</div>
                             <div className="mt-1 pt-1 border-t border-white/20 font-black">Tot: {formatMoney(node.amount, baseCurrency)}</div>
-                            <div className={`font-black mt-0.5 ${node.profit >= 0 ? 'text-green-300' : 'text-red-300'}`}>
-                                {node.extra.isS ? 'Ben: ' : 'Lat: '}{formatMoney(node.profit, baseCurrency)} ({node.extra.cost > 0 ? formatN((node.profit / node.extra.cost) * 100) : 0}%)
-                            </div>
+                            <div className={`font-black mt-0.5 ${node.profit >= 0 ? 'text-green-300' : 'text-red-300'}`}>{node.extra.isS ? 'Ben: ' : 'Lat: '}{formatMoney(node.profit, baseCurrency)} ({node.extra.cost > 0 ? formatN((node.profit / node.extra.cost) * 100) : 0}%)</div>
                         </div>
                     )}
-                    
-                    {children.length > 0 && (
-                        <div className="absolute -bottom-2 bg-slate-900 text-white text-[7px] px-2 py-0.5 rounded-full border border-slate-500 shadow-lg">
-                            {isExpanded ? 'CONTRAER ▲' : 'EXPANDIR ▼'}
-                        </div>
-                    )}
+                    {children.length > 0 && <div className="absolute -bottom-2 bg-slate-900 text-white text-[7px] px-2 py-0.5 rounded-full border border-slate-500 shadow-lg">{isExpanded ? 'CONTRAER ▲' : 'EXPANDIR ▼'}</div>}
                 </div>
-
-                {/* Esta estructura UL/LI es la que interpreta el CSS de árbol */}
-                {isExpanded && children.length > 0 && (
-                    <ul>
-                        {children.map(child => renderNode(child))}
-                    </ul>
-                )}
+                {isExpanded && children.length > 0 && <ul>{children.map(child => renderNode(child))}</ul>}
             </li>
         );
     };
@@ -2929,12 +2918,10 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
                         <label className="flex items-center gap-2 cursor-pointer text-[9px] font-bold text-slate-300 uppercase"><input type="checkbox" checked={showDividends} onChange={e => setShowDividends(e.target.checked)}/> Incluir Dividendos</label>
                     </div>
                 </div>
-
-                
                 <div className="flex gap-2">
+                    <button onClick={handlePrintExpandedOnly} className="bg-blue-600 px-6 py-3 rounded-xl font-black text-sm text-white">IMPRIMIR DATOS DESPLEGADOS</button>
                     <button onClick={()=>setScale(s => Math.min(s+0.1, 2.5))} className="bg-slate-700 px-4 py-2 rounded-lg font-bold">+</button>
                     <button onClick={()=>setScale(s => Math.max(s-0.1, 0.1))} className="bg-slate-700 px-4 py-2 rounded-lg font-bold">-</button>
-                    <button onClick={handlePrintExpandedOnly} className="bg-blue-600 px-6 py-3 rounded-xl font-black text-sm">IMPRIMIR DATOS DESPLEGADOS</button>
                     <button onClick={onClose} className="bg-red-600 px-6 py-3 rounded-xl font-black text-sm">CERRAR</button>
                 </div>
             </div>
@@ -2946,6 +2933,7 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
         </div>
     );
 };
+
 
 
 const generatePrintPortfolioHTML = (visiblePortfolio, baseCurrency, includeLots, historicalStats, filterType, filterDetails) => {
@@ -3933,7 +3921,28 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         html += `<h1>INFORME ESTADO CARTERA</h1><div class="meta"><strong>EMISIÓN:</strong> ${time}<br/><strong>AUDITORIA:</strong> iA Hedge Fund Manager</div><div style="font-size:12px;">${analysisResult}</div></body></html>`; 
         printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(()=>printWindow.print(), 500); 
     };
-   
+
+    const handlePrint = (includeLots) => { 
+    // Creamos la etiqueta de filtros que ya tenías
+    const typeMap = { 'active': 'CARTERA ACTIVA', 'sold': 'HISTÓRICO VENTAS', 'all': 'INFORME GLOBAL' };
+    const filterDetails = [];
+    if(filterText) filterDetails.push(`Texto: "${filterText}"`);
+    if(filterDateStart) filterDetails.push(`Desde: ${formatDateES(filterDateStart)}`);
+    if(filterDateEnd) filterDetails.push(`Hasta: ${formatDateES(filterDateEnd)}`);
+    if(simulationMode !== 'off') filterDetails.push(`Simulador: ${simulationMode}`);
+    
+    // LLAMADA A LA FUNCIÓN GLOBAL
+    const html = generatePrintPortfolioHTML(visiblePortfolio, baseCurrency, includeLots, historicalStats, filterType, filterDetails.join(' | '));
+    
+    const printWindow = window.open('', '', 'height=800,width=1200'); 
+    printWindow.document.write(html); 
+    printWindow.document.close(); 
+    printWindow.focus(); 
+    setTimeout(() => printWindow.print(), 500); 
+};
+
+         
+
    const handlePrint = (includeLots) => { 
         const printWindow = window.open('', '', 'height=800,width=1200'); 
         const typeMap = { 'active': 'CARTERA ACTIVA', 'sold': 'HISTÓRICO VENTAS', 'all': 'INFORME GLOBAL' }; 
@@ -3943,6 +3952,9 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         const printWindow = window.open('', '', 'height=800,width=1200');
             printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(() => printWindow.print(), 500); 
         };
+
+    
+
         if(filterText) filterDetails.push(`Texto: "${filterText}"`);
         if(filterDateStart) filterDetails.push(`Desde: ${formatDateES(filterDateStart)}`);
         if(filterDateEnd) filterDetails.push(`Hasta: ${formatDateES(filterDateEnd)}`);
