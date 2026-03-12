@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     
     <!-- SEO BÁSICO -->
-    <title>BoardingGate - Gestor de Cartera iA y Análisis Financiero</title>
+    <title>BoardingGafte - Gestor de Cartera iA y Análisis Financiero</title>
     <meta name="description" content="BoardingGate: Terminal avanzada de gestión de carteras de inversión con IA. Análisis fundamental, rastreo de mercado (screener), informes macroeconómicos y simulador de riesgos. El entorno definitivo para el inversor profesional." />
     <meta name="keywords" content="gestión de carteras, bolsa, análisis financiero, IA inversiones, dividendos, renta, screener bolsa, terminal financiero, inversión, valores" />
     <meta name="author" content="BoardingGate Systems" />
@@ -2772,13 +2772,13 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
                         const lCost = (l.shares * l.price * l.fx) + (p.feesIncludedInPrice ? 0 : (parseFloat(l.fees)||0)) + (parseFloat(l.adj)||0);
                         let lProfit = 0;
                         if (!isS) { const lVal = (l.shares * curP * curF) - (p.feesIncludedInPrice ? 0 : (parseFloat(p.fees)||0)) - (parseFloat(p.adjustments)||0); lProfit = lVal - lCost; }
-                        addData(l.date || p.buyDate, 'BUY', p, lCost, lProfit, { name: p.name, shares: l.shares, price: l.price, fees: (parseFloat(l.fees)||0)+(parseFloat(l.adj)||0), date: l.date || p.buyDate, isS, cost: lCost, val: !isS ? (l.shares * curP * curF) : 0 });
+                        addData(l.date || p.buyDate, 'BUY', p, lCost, lProfit, { name: p.name, shares: l.shares, price: l.price, fees: (parseFloat(l.fees)||0)+(parseFloat(l.adj)||0), date: l.date || p.buyDate, isS, cost: lCost, val: !isS ? (l.shares * curP * curF) : 0, sellDate: p.sellDate });
                     });
                 } else if (p.buyDate) {
                     const cost = (p.shares * p.buyPrice * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees||0)) + (p.adjustments||0);
                     let profit = 0;
                     if (!isS) { const val = (p.shares * curP * curF) - (p.sellFeesIncludedInPrice ? 0 : (p.sellFees||0)) - (p.sellAdjustments||0); profit = val - cost; }
-                    addData(p.buyDate, 'BUY', p, cost, profit, { name: p.name, shares: p.shares, price: p.buyPrice, fees: (p.fees||0)+(p.adjustments||0), date: p.buyDate, isS, cost: cost, val: !isS ? (p.shares * curP * curF) : 0 });
+                    addData(p.buyDate, 'BUY', p, cost, profit, { name: p.name, shares: p.shares, price: p.buyPrice, fees: (p.fees||0)+(p.adjustments||0), date: p.buyDate, isS, cost: cost, val: !isS ? (p.shares * curP * curF) : 0, sellDate: p.sellDate });
                 }
             }
             if (isS) {
@@ -2789,9 +2789,12 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
                     name: p.name, 
                     shares: p.shares, 
                     buyPrice: p.buyPrice, 
+                    buyFx: p.buyFx,
+                    buyTotalCost: costBase, // CORRECCIÓN: Usamos el coste base ya calculado con FX
                     buyFees: (p.fees||0)+(p.adjustments||0), 
                     buyDate: p.buyDate, 
                     sellPrice: p.sellPrice, 
+                    sellFx: p.sellFx,
                     sellFees: sFees, 
                     sellDate: p.sellDate 
                 });
@@ -2800,8 +2803,6 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
                 p.dividends.forEach(d => {
                     if (d.year && d.month !== undefined) {
                         const o = parseFloat(d.taxOrigin)||0; const dest = parseFloat(d.taxDest)||0; const net = parseFloat(d.net)||0;
-                        
-                        // CORRECCIÓN: Comprobamos que el dividendo tenga importe para evitar nodos vacíos
                         if (net !== 0 || o !== 0 || dest !== 0) {
                             const divDate = `${d.year}-${(d.month + 1).toString().padStart(2, '0')}-15`;
                             addData(divDate, 'DIV', p, net, net, { name: p.name, gross: net + o + dest, origin: o, dest: dest, net: net });
@@ -2919,7 +2920,6 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
         const isLeaf = ['BUY', 'SELL', 'DIV'].includes(node.type);
         const isExpanded = expandedNodes.has(node.id);
         
-        // CORRECCIÓN: Ordenamos los hijos siempre de forma cronológica/alfabética
         let children = [];
         if (!isLeaf) {
             children = Array.isArray(node.children) ? [...node.children] : Object.values(node.children || {});
@@ -2987,7 +2987,8 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
                                 <div>Accs: {formatN(node.extra.shares)}</div>
                                 <div>Precio: {formatN(node.extra.buyPrice)}</div>
                                 <div>Gtos: {formatN(node.extra.buyFees)}</div>
-                                <div className="font-black border-t border-white/10 mt-1">Total Compra: {formatMoney((node.extra.shares * node.extra.buyPrice) + node.extra.buyFees, baseCurrency)}</div>
+                                {/* CORRECCIÓN: Ahora imprime el coste exacto de compra */}
+                                <div className="font-black border-t border-white/10 mt-1">Total Compra: {formatMoney(node.extra.buyTotalCost, baseCurrency)}</div>
                             </div>
                             <div className="bg-black/20 rounded p-1 mb-1">
                                 <div className="font-bold text-orange-200 uppercase text-center">Venta {fDate(node.extra.sellDate)}</div>
@@ -3006,9 +3007,16 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
                             <div>{formatN(node.extra.shares)} acc @ {formatN(node.extra.price)}</div>
                             <div>Gtos: {formatN(node.extra.fees)}</div>
                             <div className="mt-1 pt-1 border-t border-white/20 font-black">Tot: {formatMoney(node.amount, baseCurrency)}</div>
-                            <div className={`font-black mt-0.5 ${node.profit >= 0 ? 'text-green-300' : 'text-red-300'}`}>
-                                {node.extra.isS ? 'Ben: ' : 'Lat: '}{formatMoney(node.profit, baseCurrency)} ({node.extra.cost > 0 ? formatN((node.profit / node.extra.cost) * 100) : 0}%)
-                            </div>
+                            {/* CORRECCIÓN: Si está vendida ya no mostramos rentabilidad, solo la fecha de venta */}
+                            {node.extra.isS ? (
+                                <div className="font-bold mt-1 text-orange-300 bg-orange-900/30 rounded py-0.5 border border-orange-500/30 tracking-widest uppercase">
+                                    VENTA EL: {fDate(node.extra.sellDate)}
+                                </div>
+                            ) : (
+                                <div className={`font-black mt-0.5 ${node.profit >= 0 ? 'text-green-300' : 'text-red-300'}`}>
+                                    Lat: {formatMoney(node.profit, baseCurrency)} ({node.extra.cost > 0 ? formatN((node.profit / node.extra.cost) * 100) : 0}%)
+                                </div>
+                            )}
                         </div>
                     )}
                     
