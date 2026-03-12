@@ -3289,35 +3289,42 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
         setInfoModal({ isOpen: true, title: 'Lote Añadido', msg: 'El nuevo lote ha sido incorporado y los promedios recalculados con éxito.', type: 'success' });
     };
 
+const getMarketStatus = (p) => {
+        if (p.isIndex) return { open: true, status: 'OPEN' };
+        const t = (p.ticker || "").toUpperCase();
+        const euPrefix = ["BME:", "BIT:", "XETRA:", "EPA:", "AMS:", "MIL:", "EBR:", "ELI:", "LSE:", "FRA:"];
+        const euSuffix = [".MC", ".DE", ".PA", ".AS", ".MI", ".BR", ".LS", ".MA", ".L"];
+        const isEurope = euPrefix.some(pre => t.startsWith(pre)) || euSuffix.some(suf => t.endsWith(suf));
 
-    const getMarketStatus = (p) => {
-    if (p.isIndex) return { open: true, status: 'OPEN' };
-    const t = (p.ticker || "").toUpperCase();
-    const euPrefix = ["BME:", "BIT:", "XETRA:", "EPA:", "AMS:", "MIL:", "EBR:", "ELI:", "LSE:", "FRA:"];
-    const euSuffix = [".MC", ".DE", ".PA", ".AS", ".MI", ".BR", ".LS", ".MA", ".L"];
-    const isEurope = euPrefix.some(pre => t.startsWith(pre)) || euSuffix.some(suf => t.endsWith(suf));
+        const now = new Date();
+        const dia = now.getDay();
+        if (dia === 0 || dia === 6) return { open: false, msg: "CERRADO", status: 'CLOSED' };
+        
+        if (isEurope) {
+            // Mercados Europeos (Hora Central Europea / Madrid)
+            const madrid = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', hour: 'numeric', minute: 'numeric', hour12: false }).formatToParts(now);
+            const h = parseInt(madrid.find(x => x.type === 'hour').value);
+            const m = parseInt(madrid.find(x => x.type === 'minute').value);
+            const horaReloj = h * 100 + m;
 
-    const madrid = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', hour: 'numeric', minute: 'numeric', hour12: false }).formatToParts(new Date());
-    const h = parseInt(madrid.find(x => x.type === 'hour').value);
-    const m = parseInt(madrid.find(x => x.type === 'minute').value);
-    const horaReloj = h * 100 + m;
-    const dia = new Date().getDay();
-
-    if (dia === 0 || dia === 6) return { open: false, msg: "CERRADO", status: 'CLOSED' };
-    
-    // Europa: 09:00 a 17:35
-    if (isEurope) {
-        if (horaReloj < 900) return { open: false, msg: "Abre 09:00", status: 'PRE' };
-        if (horaReloj >= 1735) return { open: true, msg: "CERRADO", status: 'CLOSED' }; // Abierto para lectura de datos
-        return { open: true, msg: "ABIERTO", status: 'OPEN' };
-    } 
-    // USA: 15:30 a 22:05
-    else {
-        if (horaReloj < 1530) return { open: false, msg: "Abre 15:30", status: 'PRE' };
-        if (horaReloj >= 2205) return { open: true, msg: "CERRADO", status: 'CLOSED' };
-        return { open: true, msg: "ABIERTO", status: 'OPEN' };
-    }
-};
+            if (horaReloj < 900) return { open: false, msg: "PRE-MARKET", status: 'PRE' };
+            if (horaReloj >= 1735) return { open: true, msg: "CERRADO", status: 'CLOSED' }; // Abierto para lectura de datos
+            return { open: true, msg: "ABIERTO", status: 'OPEN' };
+        } 
+        else {
+            // Mercados Americanos (Hora Wall Street / Nueva York)
+            // Al calcular la hora local de NY, evitamos automáticamente el desfase del cambio de hora
+            const ny = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hour12: false }).formatToParts(now);
+            const h = parseInt(ny.find(x => x.type === 'hour').value);
+            const m = parseInt(ny.find(x => x.type === 'minute').value);
+            const horaRelojNY = h * 100 + m; // Ej: 9:30 AM se convierte en 930
+            
+            if (horaRelojNY < 930) return { open: false, msg: "PRE-MARKET", status: 'PRE' };
+            if (horaRelojNY >= 1605) return { open: true, msg: "CERRADO", status: 'CLOSED' }; // Damos 5 min de cortesía para el cierre
+            return { open: true, msg: "ABIERTO", status: 'OPEN' };
+        }
+    };
+  
 
     const [visibleSections, setVisibleSections] = usePersistentState('bg_visible_sections', { table: true, diverging: true, stats: true, charts: true, chartTV: true });
     const [updating, setUpdating] = useState(false);
