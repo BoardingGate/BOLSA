@@ -2799,9 +2799,13 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
             if (showDividends && p.dividends) {
                 p.dividends.forEach(d => {
                     if (d.year && d.month !== undefined) {
-                        const divDate = `${d.year}-${(d.month + 1).toString().padStart(2, '0')}-15`;
                         const o = parseFloat(d.taxOrigin)||0; const dest = parseFloat(d.taxDest)||0; const net = parseFloat(d.net)||0;
-                        addData(divDate, 'DIV', p, net, net, { name: p.name, gross: net + o + dest, origin: o, dest: dest, net: net });
+                        
+                        // CORRECCIÓN: Comprobamos que el dividendo tenga importe para evitar nodos vacíos
+                        if (net !== 0 || o !== 0 || dest !== 0) {
+                            const divDate = `${d.year}-${(d.month + 1).toString().padStart(2, '0')}-15`;
+                            addData(divDate, 'DIV', p, net, net, { name: p.name, gross: net + o + dest, origin: o, dest: dest, net: net });
+                        }
                     }
                 });
             }
@@ -2814,7 +2818,6 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
     const toggleNode = (id) => { setExpandedNodes(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; }); };
 
     const handlePrintVisible = () => {
-        // Recopilamos los items únicos del portfolio que están actualmente visibles (desplegados)
         const visibleItemsMap = new Map();
         
         const traverse = (node, isParentExpanded) => {
@@ -2916,8 +2919,20 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
         const isLeaf = ['BUY', 'SELL', 'DIV'].includes(node.type);
         const isExpanded = expandedNodes.has(node.id);
         
-        // Obtenemos los hijos como array para que los selectores CSS de árbol funcionen
-        const children = isLeaf ? [] : Object.values(node.children);
+        // CORRECCIÓN: Ordenamos los hijos siempre de forma cronológica/alfabética
+        let children = [];
+        if (!isLeaf) {
+            children = Array.isArray(node.children) ? [...node.children] : Object.values(node.children || {});
+            children.sort((a, b) => {
+                if (a.type === 'year' || a.type === 'month') {
+                    return a.id.localeCompare(b.id);
+                } else {
+                    const dateA = new Date(a.date).getTime() || 0;
+                    const dateB = new Date(b.date).getTime() || 0;
+                    return dateA - dateB;
+                }
+            });
+        }
 
         let bgClass = node.type === 'root' ? "bg-blue-900" : 
                       node.type === 'year' ? "bg-purple-900" : 
@@ -3004,7 +3019,6 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
                     )}
                 </div>
 
-                {/* Esta estructura UL/LI es la que interpreta el CSS de árbol */}
                 {isExpanded && children.length > 0 && (
                     <ul>
                         {children.map(child => renderNode(child))}
@@ -3042,6 +3056,8 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
         </div>
     );
 };
+
+
 
 const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady, _x_lim, _x_trig, globalNotes, setGlobalNotes, onAnalyze, aiModel, gScriptUrl, onGoToDividends }) => { 
 // --- ESTADOS PERSISTENTES PARA FILTROS Y SIMULACIÓN ---
