@@ -2813,10 +2813,106 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
 
     const toggleNode = (id) => { setExpandedNodes(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; }); };
 
+    const handlePrintVisible = () => {
+        // Recopilamos los items únicos del portfolio que están actualmente visibles (desplegados)
+        const visibleItemsMap = new Map();
+        
+        const traverse = (node, isParentExpanded) => {
+            const isLeaf = ['BUY', 'SELL', 'DIV'].includes(node.type);
+            
+            if (isLeaf) {
+                if (isParentExpanded && node.itemObj) {
+                    visibleItemsMap.set(node.itemObj.id, node.itemObj);
+                }
+            } else {
+                const isExpanded = expandedNodes.has(node.id);
+                if (isParentExpanded || node.type === 'root') { 
+                    const children = Object.values(node.children || {});
+                    children.forEach(child => traverse(child, isExpanded));
+                }
+            }
+        };
+        
+        traverse(treeData, true); 
+        const visibleItems = Array.from(visibleItemsMap.values());
+
+        if (visibleItems.length === 0) {
+            alert("No hay datos desplegados para imprimir.");
+            return;
+        }
+
+        const printWindow = window.open('', '', 'height=800,width=1200'); 
+        const emissionTime = new Date().toLocaleString(); 
+        
+        let tCost = 0, tVal = 0, tDivs = 0, tFx = 0, tFeesAdj = 0;
+        let sumBuyPE = 0, countBuyPE = 0, sumCurPE = 0, countCurPE = 0;
+
+        visibleItems.forEach(p => {
+            const isS = !!p.sellDate;
+            const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+            const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
+            const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
+            const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+            const ds = (p.dividends || []).reduce((a,b)=>a+b.net,0);
+            
+            tCost += cost;
+            tVal += vF;
+            tDivs += ds;
+            tFeesAdj += isS ? (parseFloat(p.sellFees)||0)+(parseFloat(p.sellAdjustments)||0) : (parseFloat(p.fees)||0)+(parseFloat(p.adjustments)||0);
+            
+            if (!p.isIndex) tFx += (p.shares * (isS ? p.sellPrice : p.currentPrice) * (curF - p.buyFx));
+            if (p.buyPE > 0) { sumBuyPE += p.buyPE; countBuyPE++; }
+            if (p.currentPE > 0) { sumCurPE += p.currentPE; countCurPE++; }
+        });
+        
+        const tRes = tVal - tCost + tDivs;
+        const tPct = tCost > 0 ? (tRes / tCost) * 100 : 0;
+        const avgBuyPE = countBuyPE > 0 ? sumBuyPE / countBuyPE : 0;
+        const avgCurPE = countCurPE > 0 ? sumCurPE / countCurPE : 0;
+
+        const formatDateES = (d) => { if(!d) return ''; const date = new Date(d); return `${date.getDate().toString().padStart(2,'0')}-${(date.getMonth()+1).toString().padStart(2,'0')}-${date.getFullYear()}`; };
+
+        let html = `<html><head><title>Informe Timeline</title><style>@page{size:landscape;margin:10mm;} body{font-family:sans-serif;font-size:7px;} h1{font-size:14px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th{background:#f1f5f9;text-align:left;padding:3px;border-bottom:1px solid #94a3b8;font-size:6px;text-transform:uppercase;} td{padding:3px;border-bottom:1px solid #e2e8f0;vertical-align:top;font-size:7px;} .num{text-align:right;font-family:monospace;white-space:nowrap;} .center{text-align:center;} .profit{color:#16a34a;font-weight:bold;} .loss{color:#dc2626;font-weight:bold;} .blue{color:#3b82f6;} .orange{color:#f97316;} .total-row td { background: #1e293b; color: white; font-weight: bold; border-top: 2px solid #475569; } .lot-row td { background: #f8fafc; color: #64748b; font-size: 5.5px !important; border-bottom: 1px dashed #cbd5e1; padding-top: 2px; padding-bottom: 2px; }</style></head><body>`; 
+        html += `<div style="display:flex;justify-content:space-between;border-bottom:2px solid #ccc;padding-bottom:5px;"><div><h1>INFORME DE DATOS DESPLEGADOS (TIMELINE)</h1><div style="font-size:8px;color:#666;">Incluye desglose de lotes de los nodos abiertos</div></div><div style="font-size:8px;font-weight:bold;">EMISIÓN: ${emissionTime}</div></div>`; 
+        
+        html += `<table><thead><tr><th>Valor</th><th class="center">Fechas / Días</th><th class="num">Títulos</th><th class="num">Precios (I/A)</th><th class="center">FX</th><th class="center">Gtos/Adj</th><th class="num">Coste Total</th><th class="num">Valor Final</th><th class="num">Rendimiento (Pre)</th><th class="num">Dividendos</th><th class="num">Resultado Total</th><th class="num">% Total</th><th class="num">% Anual</th></tr></thead><tbody>`; 
+        
+        visibleItems.forEach(p => { 
+            const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+            const isS = !!p.sellDate; 
+            const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor||1) : p.currentPrice); 
+            const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx); 
+            const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+            const ds = (p.dividends || []).reduce((a,b)=>a+b.net,0); 
+            const plPrice = vF - cost; 
+            const plTotal = plPrice + ds; 
+            const days = calculateDays(p.buyDate, p.sellDate || new Date()); 
+            const rs = calcReturns(cost, vF + ds, days); 
+
+            html += `<tr><td><b class="${plPrice>=0?'profit':'loss'}">${p.name}</b><br/>${p.ticker}${p.group ? `<br/>[${p.group}]` : ''}</td><td class="center"><span class="blue">${formatDateES(p.buyDate)}</span>${p.sellDate ? `<br/><span class="orange">${formatDateES(p.sellDate)}</span>` : ''}<br/><b>${formatN(days, 0)}d</b></td><td class="num"><b>${formatN(p.shares)}</b></td><td class="num"><b>I:${formatN(p.buyPrice)}</b><br/><b>${isS?'V':'A'}:${formatN(curP)}</b></td><td class="center">${formatN(p.buyFx,4)}<br/>${formatN(curF,4)}</td><td class="center">${formatN(isS?p.sellFees:p.fees)}<br/>${formatN(isS?p.sellAdjustments:p.adjustments)}</td><td class="num"><b>${formatMoney(cost, baseCurrency)}</b></td><td class="num"><b>${formatMoney(vF, baseCurrency)}</b></td><td class="num"><span class="${plPrice>=0?'profit':'loss'}">${formatMoney(plPrice, baseCurrency)}</span></td><td class="num"><span class="blue">${formatMoney(ds, baseCurrency)}</span></td><td class="num"><span class="${plTotal>=0?'profit':'loss'}">${formatMoney(plTotal, baseCurrency)}</span></td><td class="num"><span class="${plTotal>=0?'profit':'loss'}">${formatN(rs.simple)}%</span></td><td class="num">${formatN(rs.annual)}%</td></tr>`; 
+            
+            if (p.lots && p.lots.length > 0) {
+                p.lots.forEach((l, idx) => {
+                    const lShares = parseFloat(l.shares) || 0; if (lShares <= 0) return;
+                    const lPrice = parseFloat(l.price) || 0; const lFx = parseFloat(l.fx) || 1; const lFees = parseFloat(l.fees) || 0; const lAdj = parseFloat(l.adj) || 0;
+                    const lCost = (lShares * lPrice * lFx) + (p.feesIncludedInPrice ? 0 : lFees) + lAdj;
+                    const propRatio = p.shares > 0 ? lShares / p.shares : 0; const lPropSellFees = isS ? ((p.sellFees || 0) * propRatio) : 0; const lPropSellAdj = isS ? ((p.sellAdjustments || 0) * propRatio) : 0;
+                    const lVF = (curP * lShares * curF) - (p.sellFeesIncludedInPrice ? 0 : lPropSellFees) - lPropSellAdj;
+                    const lDs = ds * propRatio; const lPlPrice = lVF - lCost; const lPlTotal = lPlPrice + lDs; const lDays = calculateDays(l.date || p.buyDate, p.sellDate || new Date()); const lRs = calcReturns(lCost, lVF + lDs, lDays);
+                    html += `<tr class="lot-row"><td style="padding-left:15px;">↳ Lote ${idx + 1}</td><td class="center">${formatDateES(l.date)}<br/>${formatN(lDays, 0)}d</td><td class="num">${formatN(lShares)}</td><td class="num">I:${formatN(lPrice)}</td><td class="center">${formatN(lFx,4)}</td><td class="center">${formatN(lFees)}<br/>${formatN(lAdj)}</td><td class="num">${formatMoney(lCost, baseCurrency)}</td><td class="num">${formatMoney(lVF, baseCurrency)}</td><td class="num"><span class="${lPlPrice>=0?'profit':'loss'}">${formatMoney(lPlPrice, baseCurrency)}</span></td><td class="num"><span class="blue">${formatMoney(lDs, baseCurrency)}</span></td><td class="num"><span class="${lPlTotal>=0?'profit':'loss'}">${formatMoney(lPlTotal, baseCurrency)}</span></td><td class="num"><span class="${lPlTotal>=0?'profit':'loss'}">${formatN(lRs.simple)}%</span></td><td class="num">${formatN(lRs.annual)}%</td></tr>`;
+                });
+            }
+        }); 
+        
+        html += `<tr class="total-row"><td colspan="4" style="text-align:right; text-transform:uppercase;">TOTALES ACUMULADOS:</td><td class="center"><b>FX:<br/>${formatMoney(tFx, baseCurrency)}</b></td><td class="center"><b>${formatMoney(tFeesAdj, baseCurrency)}</b></td><td class="num">${formatMoney(tCost, baseCurrency)}</td><td class="num">${formatMoney(tVal, baseCurrency)}</td><td class="num"><span class="${(tVal - tCost)>=0?'profit':'loss'}">${formatMoney(tVal - tCost, baseCurrency)}</span></td><td class="num"><span class="blue">${formatMoney(tDivs, baseCurrency)}</span></td><td class="num"><span class="${tRes>=0?'profit':'loss'}">${formatMoney(tRes, baseCurrency)}</span></td><td class="num"><span class="${tRes>=0?'profit':'loss'}">${formatN(tPct)}%</span></td><td class="center" style="font-size:6px; font-family:monospace;">I: ${formatN(avgBuyPE, 1)}<br/>A: ${formatN(avgCurPE, 1)}</td></tr>`;
+        html += `</tbody></table></body></html>`; 
+        
+        printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(() => printWindow.print(), 500); 
+    };
+
     if (!isOpen) return null;
 
-   
- const renderNode = (node) => {
+    const renderNode = (node) => {
         const isLeaf = ['BUY', 'SELL', 'DIV'].includes(node.type);
         const isExpanded = expandedNodes.has(node.id);
         
@@ -2932,6 +3028,7 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
 
                 
                 <div className="flex gap-2">
+                    <button onClick={handlePrintVisible} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-[10px] uppercase flex items-center gap-2 transition-colors shadow-lg"><Icons.ExternalLink size={14}/> IMPRIMIR DATOS DESPLEGADOS</button>
                     <button onClick={()=>setScale(s => Math.min(s+0.1, 2.5))} className="bg-slate-700 px-4 py-2 rounded-lg font-bold">+</button>
                     <button onClick={()=>setScale(s => Math.max(s-0.1, 0.1))} className="bg-slate-700 px-4 py-2 rounded-lg font-bold">-</button>
                     <button onClick={onClose} className="bg-red-600 px-6 py-3 rounded-xl font-black text-sm">CERRAR</button>
@@ -2945,7 +3042,6 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
         </div>
     );
 };
-
 
 const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady, _x_lim, _x_trig, globalNotes, setGlobalNotes, onAnalyze, aiModel, gScriptUrl }) => {
     // --- ESTADOS PERSISTENTES PARA FILTROS Y SIMULACIÓN ---
