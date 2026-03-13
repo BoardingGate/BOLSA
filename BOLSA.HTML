@@ -3092,6 +3092,8 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     
     // Panel 1.5: Simulación de Venta a Precio Objetivo
     const [targetSim, setTargetSim] = useState({ shares: '', price: '', fx: 1, fees: '', adj: '' });
+    const [viewSoldAsCurrent, setViewSoldAsCurrent] = useState(false);
+    useEffect(() => { setViewSoldAsCurrent(false); }, [isModalOpen, editingId]);
     // Panel 2: IA Estrategia
     const [strategyInputs, setStrategyInputs] = useState({ capital: 1000, risk: 2 });
     const [strategyResult, setStrategyResult] = useState(null);
@@ -4597,12 +4599,49 @@ const getMarketStatus = (p) => {
 
                     </div>
                     )}
-                    
+
                     <div className="bg-slate-950/50 border border-slate-700 p-5 rounded-2xl">
-                        <h4 className="text-[10px] uppercase font-bold text-white tracking-widest border-b border-slate-700 pb-2 mb-3">3. Métricas de Rendimiento</h4>
-                        {(() => { const isSold = editingId && portfolio.find(x=>x.id===editingId)?.sellDate; const cost = (form.shares * form.buyPrice * form.buyFx) + (form.feesIncludedInPrice?0:(form.fees||0)) + (form.adjustments||0); const curP = isSold ? form.sellPrice : (form.isIndex ? form.currentPrice/(form.indexDivisor||1) : form.currentPrice); const curF = isSold ? form.sellFx : (form.isIndex ? form.buyFx : form.currentFx); const val = (curP * form.shares * curF) - (isSold ? (form.sellFeesIncludedInPrice?0:(form.sellFees||0))+(form.sellAdjustments||0) : 0); const days = calculateDays(form.buyDate, form.sellDate || new Date()); const pl = val - cost; const returns = calcReturns(cost, val, days); return (<div className="grid grid-cols-4 gap-4 text-center"><div><div className="text-[8px] text-slate-500 uppercase font-bold">Días</div><div className="text-lg font-bold text-white">{formatN(days, 0)}</div></div><div><div className="text-[8px] text-slate-500 uppercase font-bold">Resultado</div><div className={`text-lg font-bold ${pl>=0?'text-green-400':'text-red-400'}`}>{formatMoney(pl, baseCurrency)}</div></div><div><div className="text-[8px] text-slate-500 uppercase font-bold">% Simple</div><div className={`text-lg font-bold ${returns.simple>=0?'text-green-400':'text-red-400'}`}>{formatN(returns.simple)}%</div></div><div><div className="text-[8px] text-slate-500 uppercase font-bold">% Anual</div><div className={`text-lg font-bold ${returns.annual>=0?'text-green-400':'text-red-400'}`}>{formatN(returns.annual)}%</div></div></div>); })()}
+                        <div className="flex justify-between items-center border-b border-slate-700 pb-2 mb-3">
+                            <h4 className="text-[10px] uppercase font-bold text-white tracking-widest">3. Métricas de Rendimiento</h4>
+                            {editingId && portfolio.find(x=>x.id===editingId)?.sellDate && (
+                                <button 
+                                    onClick={(e) => { e.preventDefault(); setViewSoldAsCurrent(!viewSoldAsCurrent); }} 
+                                    className={`px-3 py-1.5 rounded text-[8px] font-bold transition-colors shadow-lg ${viewSoldAsCurrent ? 'bg-orange-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-500'}`}
+                                >
+                                    {viewSoldAsCurrent ? 'VOLVER A DATOS VENTA' : 'VER A VALOR ACTUAL'}
+                                </button>
+                            )}
+                        </div>
+                        {(() => { 
+                            const isSold = editingId && portfolio.find(x=>x.id===editingId)?.sellDate; 
+                            const useCurrentInsteadOfSold = isSold && viewSoldAsCurrent;
+                            const cost = (form.shares * form.buyPrice * form.buyFx) + (form.feesIncludedInPrice?0:(form.fees||0)) + (form.adjustments||0); 
+                            const curP = (isSold && !useCurrentInsteadOfSold) ? form.sellPrice : (form.isIndex ? form.currentPrice/(form.indexDivisor||1) : form.currentPrice); 
+                            const curF = (isSold && !useCurrentInsteadOfSold) ? form.sellFx : (form.isIndex ? form.buyFx : form.currentFx); 
+                            const val = (curP * form.shares * curF) - ((isSold && !useCurrentInsteadOfSold) ? (form.sellFeesIncludedInPrice?0:(form.sellFees||0))+(form.sellAdjustments||0) : 0); 
+                            const days = calculateDays(form.buyDate, (isSold && !useCurrentInsteadOfSold) ? form.sellDate : new Date()); 
+                            const pl = val - cost; 
+                            const returns = calcReturns(cost, val, days); 
+                            return (
+                                <div>
+                                    <div className="grid grid-cols-4 gap-4 text-center">
+                                        <div><div className="text-[8px] text-slate-500 uppercase font-bold">Días</div><div className="text-lg font-bold text-white">{formatN(days, 0)}</div></div>
+                                        <div><div className="text-[8px] text-slate-500 uppercase font-bold">Resultado</div><div className={`text-lg font-bold ${pl>=0?'text-green-400':'text-red-400'}`}>{formatMoney(pl, baseCurrency)}</div></div>
+                                        <div><div className="text-[8px] text-slate-500 uppercase font-bold">% Simple</div><div className={`text-lg font-bold ${returns.simple>=0?'text-green-400':'text-red-400'}`}>{formatN(returns.simple)}%</div></div>
+                                        <div><div className="text-[8px] text-slate-500 uppercase font-bold">% Anual</div><div className={`text-lg font-bold ${returns.annual>=0?'text-green-400':'text-red-400'}`}>{formatN(returns.annual)}%</div></div>
+                                    </div>
+                                    {useCurrentInsteadOfSold && (
+                                        <div className="mt-3 text-[9px] text-blue-400 text-center bg-blue-900/20 py-1.5 rounded border border-blue-500/30 animate-pulse">
+                                            Simulación temporal a mercado actual: Precio <b>{formatN(curP, 3)}</b> | FX <b>{formatN(curF, 4)}</b> | Sin gastos de venta
+                                        </div>
+                                    )}
+                                </div>
+                            ); 
+                        })()}
                     </div>
-    
+
+
+                  
                         <div className="bg-slate-800/40 border border-slate-700 p-5 rounded-2xl space-y-4">
                             <div className="flex justify-between items-center border-b border-slate-700 pb-2">
                                 <h4 className="text-[10px] uppercase font-bold text-green-400 tracking-widest">4. Dividendos y Retorno</h4>
