@@ -3092,6 +3092,11 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     
     // Panel 1.5: Simulación de Venta a Precio Objetivo
     const [targetSim, setTargetSim] = useState({ shares: '', price: '', fx: 1, fees: '', adj: '' });
+    const [viewSoldAsCurrent, setViewSoldAsCurrent] = useState(false);
+    const [isFetchingCurrent, setIsFetchingCurrent] = useState(false);
+    useEffect(() => { setViewSoldAsCurrent(false); setIsFetchingCurrent(false); }, [isModalOpen, editingId]);
+
+    //  useEffect(() => { setViewSoldAsCurrent(false); }, [isModalOpen, editingId]);
     // Panel 2: IA Estrategia
     const [strategyInputs, setStrategyInputs] = useState({ capital: 1000, risk: 2 });
     const [strategyResult, setStrategyResult] = useState(null);
@@ -4597,12 +4602,105 @@ const getMarketStatus = (p) => {
 
                     </div>
                     )}
-                    
-                    <div className="bg-slate-950/50 border border-slate-700 p-5 rounded-2xl">
-                        <h4 className="text-[10px] uppercase font-bold text-white tracking-widest border-b border-slate-700 pb-2 mb-3">3. Métricas de Rendimiento</h4>
-                        {(() => { const isSold = editingId && portfolio.find(x=>x.id===editingId)?.sellDate; const cost = (form.shares * form.buyPrice * form.buyFx) + (form.feesIncludedInPrice?0:(form.fees||0)) + (form.adjustments||0); const curP = isSold ? form.sellPrice : (form.isIndex ? form.currentPrice/(form.indexDivisor||1) : form.currentPrice); const curF = isSold ? form.sellFx : (form.isIndex ? form.buyFx : form.currentFx); const val = (curP * form.shares * curF) - (isSold ? (form.sellFeesIncludedInPrice?0:(form.sellFees||0))+(form.sellAdjustments||0) : 0); const days = calculateDays(form.buyDate, form.sellDate || new Date()); const pl = val - cost; const returns = calcReturns(cost, val, days); return (<div className="grid grid-cols-4 gap-4 text-center"><div><div className="text-[8px] text-slate-500 uppercase font-bold">Días</div><div className="text-lg font-bold text-white">{formatN(days, 0)}</div></div><div><div className="text-[8px] text-slate-500 uppercase font-bold">Resultado</div><div className={`text-lg font-bold ${pl>=0?'text-green-400':'text-red-400'}`}>{formatMoney(pl, baseCurrency)}</div></div><div><div className="text-[8px] text-slate-500 uppercase font-bold">% Simple</div><div className={`text-lg font-bold ${returns.simple>=0?'text-green-400':'text-red-400'}`}>{formatN(returns.simple)}%</div></div><div><div className="text-[8px] text-slate-500 uppercase font-bold">% Anual</div><div className={`text-lg font-bold ${returns.annual>=0?'text-green-400':'text-red-400'}`}>{formatN(returns.annual)}%</div></div></div>); })()}
+
+
+                   <div className="bg-slate-950/50 border border-slate-700 p-5 rounded-2xl">
+                        <div className="flex justify-between items-center border-b border-slate-700 pb-2 mb-3">
+                            <h4 className="text-[10px] uppercase font-bold text-white tracking-widest">3. Métricas de Rendimiento</h4>
+                            {editingId && portfolio.find(x=>x.id===editingId)?.sellDate && (
+                                <button 
+                                    onClick={async (e) => { 
+                                        e.preventDefault(); 
+                                        if (viewSoldAsCurrent) { setViewSoldAsCurrent(false); return; }
+                                        setIsFetchingCurrent(true);
+                                        try {
+                                            const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
+                                            const isIsinCode = isISIN(form.ticker);
+                                            const inferredCurrency = form.stockCurrency || 'USD';
+                                            const fxPair = inferredCurrency + baseCurrency;
+                                            let fPrice = form.currentPrice; 
+                                            let fFx = form.currentFx;
+                                            
+                                            // 1. Intentar mediante Google Script
+                                            if (!isIsinCode && scriptUrl) {
+                                                const res = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(form.ticker)},${encodeURIComponent(fxPair)}&_t=${Date.now()}`);
+                                                const googleData = await res.json();
+                                                if (googleData[form.ticker]?.success && googleData[form.ticker]?.p) {
+                                                    fPrice = googleData[form.ticker].p;
+                                                    fFx = inferredCurrency === baseCurrency ? 1 : (googleData[fxPair]?.success ? googleData[fxPair].p : form.currentFx);
+                                                }
+                                            }
+                                            
+                                            // 2. Respaldo por iA si falla o si es un ISIN
+                                            if ((!fPrice || fPrice === form.currentPrice || fPrice === 0) && apiKey) {
+                                                const prompt = `Actúa como API. Busca precio actual de ${form.ticker}. Devuelve SOLO JSON: {"p":precio, "fx":cambio_a_${baseCurrency}}`;
+                                                const aiRes = await askGemini(apiKey, prompt, aiModel);
+                                                const json = extractJSON(aiRes);
+                                                if(json && json.p) { 
+                                                    fPrice = json.p; 
+                                                    fFx = inferredCurrency === baseCurrency ? 1 : (json.fx || form.currentFx); 
+                                                }
+                                            }
+                                            setForm(prev => ({ ...prev, currentPrice: fPrice || 0, currentFx: fFx || 1 }));
+                                        } catch(err) { 
+                                            console.error("Error obteniendo precio automático:", err); 
+                                        } finally {
+                                            setViewSoldAsCurrent(true); 
+                                            setIsFetchingCurrent(false);
+                                        }
+                                    }} 
+                                    disabled={isFetchingCurrent}
+                                    className={`px-3 py-1.5 rounded text-[8px] font-bold transition-colors shadow-lg flex items-center gap-2 ${viewSoldAsCurrent ? 'bg-orange-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-500'} ${isFetchingCurrent ? 'opacity-50 cursor-wait' : ''}`}
+                                >
+                                    {isFetchingCurrent ? <><Icons.Loader size={10} className="animate-spin"/> BUSCANDO PRECIOS...</> : (viewSoldAsCurrent ? 'VOLVER A DATOS VENTA' : 'VER A VALOR ACTUAL')}
+                                </button>
+                            )}
+                        </div>
+                        {(() => { 
+                            const isSold = editingId && portfolio.find(x=>x.id===editingId)?.sellDate; 
+                            const useCurrentInsteadOfSold = isSold && viewSoldAsCurrent;
+                            const cost = (form.shares * form.buyPrice * form.buyFx) + (form.feesIncludedInPrice?0:(form.fees||0)) + (form.adjustments||0); 
+                            const curP = (isSold && !useCurrentInsteadOfSold) ? form.sellPrice : (form.isIndex ? form.currentPrice/(form.indexDivisor||1) : form.currentPrice); 
+                            const curF = (isSold && !useCurrentInsteadOfSold) ? form.sellFx : (form.isIndex ? form.buyFx : form.currentFx); 
+                            const val = (curP * form.shares * curF) - ((isSold && !useCurrentInsteadOfSold) ? (form.sellFeesIncludedInPrice?0:(form.sellFees||0))+(form.sellAdjustments||0) : 0); 
+                            const days = calculateDays(form.buyDate, (isSold && !useCurrentInsteadOfSold) ? form.sellDate : new Date()); 
+                            const pl = val - cost; 
+                            const returns = calcReturns(cost, val, days); 
+
+                            return (
+                                <div>
+                                    <div className="grid grid-cols-4 gap-4 text-center">
+                                        <div><div className="text-[8px] text-slate-500 uppercase font-bold">Días</div><div className="text-lg font-bold text-white">{formatN(days, 0)}</div></div>
+                                        <div><div className="text-[8px] text-slate-500 uppercase font-bold">Resultado</div><div className={`text-lg font-bold ${pl>=0?'text-green-400':'text-red-400'}`}>{formatMoney(pl, baseCurrency)}</div></div>
+                                        <div><div className="text-[8px] text-slate-500 uppercase font-bold">% Simple</div><div className={`text-lg font-bold ${returns.simple>=0?'text-green-400':'text-red-400'}`}>{formatN(returns.simple)}%</div></div>
+                                        <div><div className="text-[8px] text-slate-500 uppercase font-bold">% Anual</div><div className={`text-lg font-bold ${returns.annual>=0?'text-green-400':'text-red-400'}`}>{formatN(returns.annual)}%</div></div>
+                                    </div>
+                                    {useCurrentInsteadOfSold && (
+                                        <div className="mt-4 bg-blue-900/20 p-3 rounded-lg border border-blue-500/30 fade-in">
+                                            <div className="flex justify-between items-center mb-2 border-b border-blue-500/20 pb-2">
+                                                <span className="text-[9px] uppercase font-bold tracking-widest text-blue-400">Simulación a Mercado Actual (Datos extraídos)</span>
+                                            </div>
+                                            <div className="flex items-center gap-4">
+                                                <div className="flex-1">
+                                                    <label className="text-[8px] uppercase font-bold text-slate-500 block mb-1">Precio Encontrado</label>
+                                                    <input type="number" step="0.01" value={form.currentPrice === 0 ? '' : form.currentPrice} onChange={e=>setForm({...form, currentPrice: parseFloat(e.target.value) || 0})} className="w-full bg-slate-900 border border-slate-700 text-white font-mono text-center text-sm py-1.5 rounded focus:outline-none focus:border-blue-500 transition-colors" placeholder="0.00" />
+                                                </div>
+                                                <div className="flex-1">
+                                                    <label className="text-[8px] uppercase font-bold text-slate-500 block mb-1">FX Encontrado</label>
+                                                    <input type="number" step="0.0001" value={form.currentFx === 0 ? '' : form.currentFx} onChange={e=>setForm({...form, currentFx: parseFloat(e.target.value) || 1})} disabled={form.stockCurrency === baseCurrency} className={`w-full bg-slate-900 border border-slate-700 text-white font-mono text-center text-sm py-1.5 rounded focus:outline-none focus:border-blue-500 transition-colors ${form.stockCurrency === baseCurrency ? 'opacity-50 cursor-not-allowed' : ''}`} placeholder="1.0000" />
+                                                </div>
+                                            </div>
+                                            <p className="text-[8px] text-slate-500 mt-3 text-center italic leading-tight">* Los cálculos usan estos datos y no aplican gastos de venta. Modifícalos manualmente si el autocompletado es inexacto.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            ); 
+                        })()}
                     </div>
-    
+
+                    
+
+                  
                         <div className="bg-slate-800/40 border border-slate-700 p-5 rounded-2xl space-y-4">
                             <div className="flex justify-between items-center border-b border-slate-700 pb-2">
                                 <h4 className="text-[10px] uppercase font-bold text-green-400 tracking-widest">4. Dividendos y Retorno</h4>
