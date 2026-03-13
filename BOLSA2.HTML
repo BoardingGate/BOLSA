@@ -5865,16 +5865,13 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
     ]);
 
     // ═══════════════════════════════════════════════════════════
-    // NUEVO: PREGUNTAS PERSONALIZADAS DEL USUARIO
-    // Se guardan en localStorage bajo la clave 'bg_custom_questions'
-    // y se sincronizan con la nube al modificarlas
+    // PREGUNTAS PERSONALIZADAS DEL USUARIO
     // ═══════════════════════════════════════════════════════════
     const [customQuestions, setCustomQuestions] = usePersistentState('bg_custom_questions', []);
     const [showCustomQManager, setShowCustomQManager] = useState(false);
     const [newCustomQuestion, setNewCustomQuestion] = useState('');
-    const [editingCustomQ, setEditingCustomQ] = useState(null); // { index, text }
+    const [editingCustomQ, setEditingCustomQ] = useState(null); 
 
-    // Función para añadir una pregunta personalizada
     const handleAddCustomQuestion = () => {
         const trimmed = newCustomQuestion.trim();
         if (!trimmed || trimmed.length < 3) return;
@@ -5882,18 +5879,15 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         const updated = [...customQuestions, trimmed];
         setCustomQuestions(updated);
         setNewCustomQuestion('');
-        // Sincronizar con la nube si hay URL configurada
         syncCustomQuestionsToCloud(updated);
     };
 
-    // Función para eliminar una pregunta personalizada
     const handleDeleteCustomQuestion = (index) => {
         const updated = customQuestions.filter((_, i) => i !== index);
         setCustomQuestions(updated);
         syncCustomQuestionsToCloud(updated);
     };
 
-    // Función para editar una pregunta personalizada
     const handleSaveEditCustomQuestion = () => {
         if (!editingCustomQ) return;
         const trimmed = editingCustomQ.text.trim();
@@ -5904,12 +5898,10 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         syncCustomQuestionsToCloud(updated);
     };
 
-    // Sincronización con Google Drive (parcial, solo custom_questions)
     const syncCustomQuestionsToCloud = async (questions) => {
         try {
             const url = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
             if (!url) return;
-            // Obtenemos primero la versión en nube para no sobreescribir todo
             const cloudRes = await fetch(url);
             const cloudData = await cloudRes.json();
             const payload = {
@@ -6102,7 +6094,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
     };
 
     // ═══════════════════════════════════════════════════════════
-    // PROMPTS ORIGINALES Y RICOS (AHORA CON INSTRUCCIONES ESTRICTAS)
+    // PROMPTS ORIGINALES RESTAURADOS CON INSTRUCCIONES ESTRICTAS
     // ═══════════════════════════════════════════════════════════
     const HTML_TEMPLATES = {
         ITEM_1: `
@@ -6639,6 +6631,138 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
             </div>`
     };
 
+    // --- FUNCIONES DE SOPORTE ---
+    const DEFAULT_AI_MODELS = [
+        "gemini-3.1-pro-preview",
+        "gemini-3-pro-preview",
+        "gemini-3-flash-preview",
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite"
+    ];
+
+    const askGemini = async (apiKey, prompt, model) => {
+        if (!apiKey) throw new Error("Falta API Key");
+        const targetModel = model || "gemini-3-flash-preview";
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+                tools: [{ google_search: {} }] 
+            })
+        });
+        const data = await response.json();
+        if (data.error) throw new Error(data.error.message);
+        return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    };
+
+    const extractJSON = (text) => {
+        if (!text) return null;
+        try {
+            const match = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+            if (match && match[0]) return JSON.parse(match[0]);
+            throw new Error("No se encontró JSON válido.");
+        } catch (e) { return null; }
+    };
+
+    const formatN = (v, dec = 2) => {
+        let n = parseFloat(v) || 0;
+        return n.toFixed(dec).replace('.', ',');
+    };
+
+    // FIX: Ahora previene el error undefined al leer .active de campos como 'price' o 'ticker'
+    const checkCriteria = (paramKey, value) => {
+        const p = params[paramKey];
+        if (!p) return "text-white"; // Si no es un parámetro de filtro (ej: price, name)
+        if (!p.active) return "text-slate-400";
+        
+        const val = parseFloat(value);
+        if (isNaN(val)) return "text-slate-400";
+        
+        if (paramKey === 'roi' || paramKey === 'divYield' || paramKey === 'fcf') {
+            return val >= p.val ? "text-green-400 font-bold" : "text-red-400 font-bold";
+        }
+        return val <= p.val ? "text-green-400 font-bold" : "text-red-400 font-bold";
+    };
+
+    const rotateSuggestions = (currentQ) => {
+        const base = ["Impacto en valoración", "Riesgos asociados", "Comparativa sectorial", "Proyección futura", "Movimientos Insider", "Análisis Técnico Profundo", "Catalizadores próximos"];
+        const filtered = base.filter(q => q !== currentQ);
+        setSuggestedQuestions(filtered.sort(() => 0.5 - Math.random()).slice(0, 4));
+    };
+
+    const cleanAIResponse = (text) => {
+        if (!text) return "";
+        let clean = text.trim().replace(/```html/g, '').replace(/```/g, '');
+        const headerIndex = clean.indexOf('<h');
+        const anyTagIndex = clean.indexOf('<');
+        if (headerIndex !== -1) return clean.substring(headerIndex);
+        else if (anyTagIndex !== -1) return clean.substring(anyTagIndex);
+        return clean;
+    };
+
+    // ═══════════════════════════════════════════════════════════
+    // LA FUNCIÓN ANALYZE (RESTAURADA Y MEJORADA DIDÁCTICAMENTE)
+    // ═══════════════════════════════════════════════════════════
+    const analyze = async () => {
+        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+        if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' });
+        setLoading(true); setSpecificAnswer(null); setData(null);
+        try {
+            if (question.trim()) {
+                const today = new Date().toLocaleString('es-ES');
+                const prompt = `ROL: ANALISTA SENIOR BURSÁTIL DE WALL STREET. IDIOMA: ESPAÑOL. SIN PREÁMBULOS.
+                FECHA: ${today}.
+                
+                ═══════════════════════════════════
+                PROTOCOLO DE FIABILIDAD OBLIGATORIO:
+                ═══════════════════════════════════
+                1. Usa google_search para buscar datos actualizados ANTES de responder.
+                2. Cada dato numérico (precio, ratio, porcentaje) DEBE ir con su fuente y fecha entre corchetes, preferiblemente como enlace HTML clicable: [Fuente: <a href="..." target="_blank">Nombre</a>, Mar 2026].
+                3. Si no encuentras un dato, escribe: ⚠️ No localizado — NO lo estimes.
+                4. Si usas estimaciones de analistas, indica: [Estimación consenso de X analistas].
+                5. Añade SIEMPRE breves explicaciones didácticas de cualquier concepto técnico bursátil que menciones en letra itálica pequeña (<span style="font-size:10px; font-style:italic; color:#666;">explicación</span>).
+                ═══════════════════════════════════
+                
+                PREGUNTA: "${question}" sobre el valor "${ticker}".
+                FORMATO: HTML (<h3>, <ul>, <p>, <a>). Empieza directamente con el tag HTML.`;
+                const res = await askGemini(apiKey, prompt, aiModel);
+                setSpecificAnswer(cleanAIResponse(res));
+                rotateSuggestions(question);
+            } else {
+                const prompt = `ROL: Analista Senior de Wall Street. TAREA: Genera un informe de inversión para "${ticker}" buscando activamente en Internet. IDIOMA: ESPAÑOL.
+                
+                PROTOCOLO: Cada dato numérico debe provenir de búsqueda web activa. Si no encuentras un dato, usa null, no estimes.
+                
+                JSON STRUCTURE:
+                {
+                    "company": "Name", "current_price": number, "intrinsic_value": number, "forecast_1y": number, "forecast_5y": number,
+                    "valuation_status": "Infravalorada/Sobrevalorada/Justa", "investment_verdict": "Veredicto detallado (~60 palabras) con fuentes citadas.",
+                    "data_sources": ["Fuente 1 - Fecha", "Fuente 2 - Fecha"],
+                    "technical_analysis": { "trend_short": "Alcista/Bajista/Lateral", "trend_long": "Alcista/Bajista", "supports": ["Precio 1", "Precio 2"], "resistances": ["Precio 1", "Precio 2"], "commentary": "Breve análisis técnico" },
+                    "dividend_data": { "yield_percent": "x.xx%", "amount": "divisa x.xx", "payout_ratio": "x%", "ex_date": "YYYY-MM-DD", "payment_date": "YYYY-MM-DD", "growth_streak": "x Años", "safety": "Alta/Media/Baja" },
+                    "financial_health": { "revenue_growth_3y": "x%", "net_margin": "x%", "roe": "x%", "debt_to_equity": number, "free_cash_flow": "String" },
+                    "management": {"ceo": "Name", "ownership": "% Held"},
+                    "capital": {"market_cap": "String", "shares_outstanding": "String"},
+                    "competitors": { "per": {"stock": num, "industry": num}, "yield": {"stock": num, "industry": num} },
+                    "fundamentals": {"per": num, "eps": num, "beta": num},
+                    "pros_cons": { "pros": ["txt1", "txt2"], "cons": ["txt1", "txt2"] },
+                    "peers": ["TICKER1", "TICKER2"], "suggested_questions": ["q1","q2","q3"]
+                }
+                Responde SOLO con el JSON.`;
+                const res = await askGemini(apiKey, prompt, aiModel);
+                const json = extractJSON(res);
+                if (!json) throw new Error("La IA no devolvió un JSON válido.");
+                setData(json);
+                if (json.suggested_questions) setSuggestedQuestions(json.suggested_questions);
+            }
+        } catch (e) {
+            setStatusModal({ isOpen: true, title: 'Error iA', msg: e.message, type: 'error' });
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleFixedAnalysis = async (promptId) => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' });
@@ -6650,7 +6774,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
             let anchorContext = "";
             let hardData = null;
 
-            // Anclaje con datos del Google Script (si disponible)
             const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
             if (scriptUrl) {
                 try {
@@ -6717,9 +6840,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
             const cleanBody = cleanAIResponse(res);
             if (!cleanBody || cleanBody.length < 50) throw new Error("Informe insuficiente o vacío.");
 
-            // ═══════════════════════════════════════════════════
-            // BANNER DE FIABILIDAD + ENCABEZADO DEL INFORME
-            // ═══════════════════════════════════════════════════
             const reliabilityBanner = `
                 <div style="background:#fff3cd; border:1px solid #ffc107; padding:10px; border-radius:6px; font-size:10px; margin-bottom:15px; display:flex; align-items:flex-start; gap:8px;">
                     <span style="font-size:16px;">⚠️</span>
@@ -6766,7 +6886,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         }
     };
 
-    // Noticias
     const fetchNews = async (type) => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
         setIsNewsSelectionModalOpen(false);
@@ -7275,7 +7394,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
                 </div>
             ) : (
                 /* ═══════════════════════════════════════════════════
-                   PESTAÑA RASTREO (SCREENER) - ACTUALIZADA
+                   PESTAÑA RASTREO (SCREENER) - ACTUALIZADA CON BUG FIX
                 ═══════════════════════════════════════════════════ */
                 <div className="flex flex-col gap-6 max-w-7xl mx-auto w-full pb-10">
                     <div className="bg-slate-900/50 p-6 rounded-3xl border border-slate-800 space-y-8 shadow-2xl">
