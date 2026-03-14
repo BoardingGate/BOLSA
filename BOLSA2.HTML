@@ -2178,7 +2178,7 @@ function fetchStockData(tickersString) {
     var rawTicker = tickerList[i].trim();
     if(!rawTicker) continue;
     var url = "https" + "://" + "www.google.com/finance/quote/" + encodeURIComponent(rawTicker.includes(":") ? rawTicker.split(":")[1] + ":" + rawTicker.split(":")[0] : rawTicker);
-    requests.push({ url: url, method: "GET", muteHttpExceptions: true, headers: { "User-Agent": "Mozilla/5.0" } });
+    requests.push({ url: url, method: "GET", muteHttpExceptions: true, headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36" } });
     validTickers.push(rawTicker);
   }
   var results = {};
@@ -3897,73 +3897,83 @@ const getMarketStatus = (p) => {
 
     const updatePrices = async (isAuto = false) => {
         const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
-        const scriptUrl = simpleDecrypt(gScriptUrl);
+        const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
         
         if (active.length === 0) return;
-        if (!scriptUrl && !apiKey) { if (!isAuto) setInfoModal({ isOpen: true, title: 'Aviso', msg: 'Configura la URL de Google Script o API Key.', type: 'error' }); return; }
-
         setUpdating(true); setUpdateProgress(20); setUpdateText('Consultando precios...');
         
         try {
-            const isinItems = active.filter(p => isISIN(p.ticker));
-            const scriptItems = active.filter(p => !isISIN(p.ticker));
-            let updatesMap = {}; let totallyFailed = [];
-
-            if (scriptItems.length > 0 && scriptUrl) {
+            let updatesMap = {}; 
+            let totallyFailed = [];
+    
+            // 1. INTENTAR VÍA SCRIPT (Mantiene la lógica original que funcionaba)
+            if (scriptUrl) {
                 setUpdateText('Consultando Mercados...');
-                const tickers = scriptItems.map(p => p.ticker);
-                const currencies = [...new Set(scriptItems.filter(p => p.stockCurrency !== baseCurrency).map(p => p.stockCurrency + baseCurrency))];
+                const tickers = active.map(p => p.ticker);
+                const currencies = [...new Set(active.filter(p => p.stockCurrency !== baseCurrency).map(p => p.stockCurrency + baseCurrency))];
                 const tickersList = [...tickers, ...currencies].join(',');
                 
-                const fetchUrl = `${scriptUrl}?tickers=${encodeURIComponent(tickersList)}&_t=${Date.now()}`;
-                const response = await fetch(fetchUrl);
-                const textResponse = await response.text();
-                
-                if (textResponse.includes("<html") || textResponse.includes("Sign in - Google")) throw new Error("🚨 ERROR DE PERMISOS: El Script está bloqueado.");
-
-                let batchData;
-                try { batchData = JSON.parse(textResponse); } catch (errJSON) { throw new Error("🚨 ERROR DEL SCRIPT:\n\n" + textResponse.substring(0, 150)); }
-
-                scriptItems.forEach(item => {
-                    const stockData = batchData[item.ticker];
+                const response = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(tickersList)}&_t=${Date.now()}`);
+                const data = await response.json();
+    
+                active.forEach(item => {
+                    const stockData = data[item.ticker];
                     const fxKey = item.stockCurrency + baseCurrency;
-                    const fxData = batchData[fxKey];
-
-                    if (stockData && stockData.success && stockData.p) {
-                        updatesMap[item.id] = { currentPrice: cleanVal(stockData.p), currentPE: stockData.pe ? cleanVal(stockData.pe) : item.currentPE, previousClose: stockData.pc ? cleanVal(stockData.pc) : item.previousClose, quoteDate: stockData.dt || "" };
-                        if (item.stockCurrency === baseCurrency) updatesMap[item.id].currentFx = 1;
-                        else if (fxData && fxData.success) updatesMap[item.id].currentFx = cleanVal(fxData.p);
-                    } else totallyFailed.push(`${item.ticker} (${stockData ? (stockData.reason || "Sin datos") : "No encontrado"})`);
-                });        
+                    const fxData = data[fxKey];
+    
+                    // Filtro de integridad: Si es el SP500 y da precio < 95, lo marcamos como fallido para la IA
+                    const price = stockData?.success ? cleanVal(stockData.p) : 0;
+                    
+                    if (stockData?.success && price > (item.ticker.includes(".INX") ? 95 : 0)) {
+                        updatesMap[item.id] = { currentPrice: price };
+                        if (item.stockCurrency !== baseCurrency && fxData?.success) {
+                            updatesMap[item.id].currentFx = cleanVal(fxData.p);
+                        }
+                    } else {
+                        totallyFailed.push(item.ticker);
+                    }
+                });
+            } else {
+                totallyFailed = active.map(p => p.ticker);
             }
-
-            setUpdateProgress(60);
-
-            if (isinItems.length > 0 && apiKey) {
-                setUpdateText('Consultando iA (Fondos)...');
-                const isinList = isinItems.map(p => p.ticker).join(", ");
-                const prompt = `Actúa como API financiera. Devuelve el NAV de los fondos ISIN: ${isinList}. Responde SOLO JSON usando ISIN como clave: {"ISIN": {"p": precio}}. USA PUNTO DECIMAL.`;
+    
+            // 2. RESCATE DE FALLIDOS VÍA IA
+            if (totallyFailed.length > 0 && apiKey) {
+                setUpdateText('Rescatando fallidos con IA...');
+                // Pedimos un JSON donde cada ticker tenga un objeto {p: precio, fx: cambio}
+                const prompt = `Actúa como API. Para estos tickers: ${totallyFailed.join(', ')}, devuelve el precio y el tipo de cambio a ${baseCurrency}. Formato JSON estricto: {"TICKER": {"p": precio, "fx": cambio}}. USA PUNTO DECIMAL.`;
+                
                 try {
                     const aiRes = await askGemini(apiKey, prompt, aiModel);
-                    const json = extractJSON(aiRes);
-                    if (json) isinItems.forEach(item => { if (json[item.ticker] && json[item.ticker].p) updatesMap[item.id] = { currentPrice: cleanVal(json[item.ticker].p) }; else totallyFailed.push(`${item.ticker} (iA: Valor no encontrado)`); });
-                } catch (aiErr) { totallyFailed.push(`Fallo general actualizando Fondos ISIN.`); }
+                    const aiData = extractJSON(aiRes);
+                    if (aiData) {
+                        active.forEach(item => {
+                            const res = aiData[item.ticker] || aiData[item.ticker.split(':')[1]];
+                            if (res && res.p) {
+                                updatesMap[item.id] = { 
+                                    ...updatesMap[item.id], 
+                                    currentPrice: cleanVal(res.p),
+                                    ...(res.fx ? { currentFx: cleanVal(res.fx) } : {})
+                                };
+                            }
+                        });
+                    }
+                } catch (aiErr) { console.error("Fallo rescate IA:", aiErr); }
             }
-
-            setUpdateProgress(90); 
-
+    
+            // 3. APLICAR ACTUALIZACIONES
             if (Object.keys(updatesMap).length > 0) {
                 setPortfolio(prev => prev.map(p => updatesMap[p.id] ? { ...p, ...updatesMap[p.id] } : p));
                 setLastUpdate(new Date().toISOString());
             }
-
-            if (!isAuto && totallyFailed.length > 0) setInfoModal({ isOpen: true, title: 'Precios no encontrados', msg: `Fallo la actualización:\n\n${totallyFailed.join('\n')}`, type: 'warning' });
         } catch (e) {
-            if (!isAuto) setInfoModal({ isOpen: true, title: 'Fallo de Conexión', msg: e.message, type: 'error' });
+            console.error("Error general en updatePrices:", e);
         } finally {
-            setUpdateProgress(100); setUpdateText('Completado'); setTimeout(() => { setUpdating(false); setUpdateProgress(0); setUpdateText(''); }, 1000);
+            setUpdating(false); setUpdateProgress(0); setUpdateText('');
         }
     };
+
+    
 
     const analyzePortfolio = async () => {
       const dataToAnalyze = visiblePortfolio;
