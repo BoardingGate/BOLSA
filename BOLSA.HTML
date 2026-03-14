@@ -6373,6 +6373,45 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         return clean;
     };
 
+    const handleGenerateGraph = async () => {
+        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key para generar el grafo.', type: 'error' });
+        if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker en el buscador superior.', type: 'info' });
+
+        setGeneratingGraph(true);
+        try {
+            const prompt = `
+            Actúa como experto en inteligencia competitiva y cadena de suministro global.
+            Para la empresa con el ticker "${ticker}", identifica su cadena de valor directa e indirecta (NIVEL 2).
+            NIVEL 1:
+            1. Identifica máx. 4 PROVEEDORES principales directos.
+            2. Identifica máx. 4 CLIENTES B2B principales directos.
+            NIVEL 2 (Para cada uno de los anteriores):
+            - Identifica 1 o 2 de SUS propios proveedores clave.
+            - Identifica 1 o 2 de SUS propios clientes clave.
+            Responde ÚNICA Y EXCLUSIVAMENTE con un JSON válido con esta estructura anidada exacta:
+            {
+              "center": {"ticker": "${ticker}", "name": "Nombre Real", "country": "País"},
+              "suppliers": [{"ticker": "TICKER_P1", "name": "Nombre Prov 1", "country": "País", "weight": 90, "suppliers": [{"ticker": "TICKER_P1_P1", "name": "Prov de Prov 1", "country": "País", "weight": 60}], "clients": [{"ticker": "TICKER_P1_C1", "name": "Cliente de Prov 1", "country": "País", "weight": 50}]}],
+              "clients": [{"ticker": "TICKER_C1", "name": "Nombre Cli 1", "country": "País", "weight": 80, "suppliers": [{"ticker": "TICKER_C1_P1", "name": "Prov de Cli 1", "country": "País", "weight": 40}], "clients": [{"ticker": "TICKER_C1_C1", "name": "Cliente de Cli 1", "country": "País", "weight": 50}]}]
+            }
+            Reglas: 'weight' de 10 a 100. Si no cotiza usa "N/A" en ticker. Sin markdown.`;
+
+            const res = await askGemini(apiKey, prompt, aiModel);
+            let cleanRes = res.trim();
+            const start = cleanRes.indexOf('{');
+            const end = cleanRes.lastIndexOf('}');
+            if (start !== -1 && end !== -1) cleanRes = cleanRes.substring(start, end + 1);
+            const json = JSON.parse(cleanRes);
+            if (!json || !json.center) throw new Error("Estructura devuelta por IA no válida.");
+            setGraphData(json);
+            setIsGraphModalOpen(true);
+        } catch (e) {
+            setStatusModal({ isOpen: true, title: 'Error en Grafo', msg: `No se pudo generar la red: ${e.message}`, type: 'error' });
+        } finally {
+            setGeneratingGraph(false);
+        }
+    };
+
     const analyze = async () => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' });
