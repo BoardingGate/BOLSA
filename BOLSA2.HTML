@@ -1976,7 +1976,7 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
                             <span className="bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded text-[10px] uppercase border border-blue-500/30">Opción Ilimitada (Pago por uso)</span>
                             <span className="text-slate-400 text-xs font-normal">Para evitar bloqueos y procesar carteras grandes</span>
                         </h5>
-                        <p className="text-xs text-slate-300 mb-3 leading-relaxed">Asociar una tarjeta elimina el límite de velocidad. El coste es de unos <strong> céntimos por cada millón de palabras (es decir no se cobra una cuota mensual ni nada por el estilo, es cobro por uso, y un millón de tokens es el equivalente al Quijote.</strong> (vamos, que puedes operar al mes por apenas unos céntimos de euro y si no usas la iA, no pagas nada). Recuerda estar logeado en GOOGLE con la misma cuenta que has usado en Google AI Studio. Sigue estos pasos:</p>
+                        <p className="text-xs text-slate-300 mb-3 leading-relaxed">Asociar una tarjeta elimina el límite de velocidad. El coste es de unos <strong> céntimos por cada millón de palabras, es decir, no se cobra una cuota mensual ni nada por el estilo, es cobro por uso, y un millón de tokens da para muchos usos.</strong> (vamos, que puedes operar al mes por apenas unos céntimos de euro y si no usas la iA, no pagas nada). Recuerda estar logeado en GOOGLE con la misma cuenta que has usado en Google AI Studio. Sigue estos pasos:</p>
                         
                         <div className="space-y-4">
                             <div className="bg-slate-900/50 p-3 rounded-lg border border-slate-700">
@@ -5724,6 +5724,22 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
     const [newCustomQuestion, setNewCustomQuestion] = useState('');
     const [editingCustomQ, setEditingCustomQ] = useState(null); 
 
+    const [exchange, setExchange] = useState('USA');
+    const [maxResults, setMaxResults] = useState(10);
+    const [screenerResults, setScreenerResults] = useState([]);
+    const [screenerSort, setScreenerSort] = useState({ key: 'ticker', direction: 'asc' });
+    const [statusModal, setStatusModal] = useState({ isOpen: false, title: '', msg: '', type: 'info' });
+
+    const [isProjModalOpen, setIsProjModalOpen] = useState(false);
+    const [projForm, setProjForm] = useState({ years: 5, shares: 100, buyPrice: 0 });
+
+    const [isNewsSelectionModalOpen, setIsNewsSelectionModalOpen] = useState(false);
+    const [isNewsModalOpen, setIsNewsModalOpen] = useState(false);
+    const [newsResult, setNewsResult] = useState('');
+    const [analyzingNews, setAnalyzingNews] = useState(false);
+    const [customNewsTopic, setCustomNewsTopic] = useState('');
+
+
     const handleAddCustomQuestion = () => {
         const trimmed = newCustomQuestion.trim();
         if (!trimmed || trimmed.length < 3) return;
@@ -5771,20 +5787,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         }
     };
 
-    const [exchange, setExchange] = useState('USA');
-    const [maxResults, setMaxResults] = useState(10);
-    const [screenerResults, setScreenerResults] = useState([]);
-    const [screenerSort, setScreenerSort] = useState({ key: 'ticker', direction: 'asc' });
-    const [statusModal, setStatusModal] = useState({ isOpen: false, title: '', msg: '', type: 'info' });
-
-    const [isProjModalOpen, setIsProjModalOpen] = useState(false);
-    const [projForm, setProjForm] = useState({ years: 5, shares: 100, buyPrice: 0 });
-
-    const [isNewsSelectionModalOpen, setIsNewsSelectionModalOpen] = useState(false);
-    const [isNewsModalOpen, setIsNewsModalOpen] = useState(false);
-    const [newsResult, setNewsResult] = useState('');
-    const [analyzingNews, setAnalyzingNews] = useState(false);
-    const [customNewsTopic, setCustomNewsTopic] = useState('');
+    
 
     const [params, setParams] = useState({
         per: { val: 25, active: true, label: 'PER Máximo', min: 5, max: 100, step: 1, help: 'Veces que el precio cubre el beneficio. <15: Barata, >25: Crecimiento/Cara.' },
@@ -5839,113 +5842,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         setData(null);
     };
 
-    useEffect(() => { if (initialTicker) setTicker(initialTicker); }, [initialTicker]);
 
-    const handleGenerateGraph = async () => {
-        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key para generar el grafo.', type: 'error' });
-        if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker en el buscador superior.', type: 'info' });
-
-        setGeneratingGraph(true);
-        try {
-            const prompt = `
-            Actúa como experto en inteligencia competitiva y cadena de suministro global.
-            Para la empresa con el ticker "${ticker}", identifica su cadena de valor directa e indirecta (NIVEL 2).
-            NIVEL 1:
-            1. Identifica máx. 4 PROVEEDORES principales directos.
-            2. Identifica máx. 4 CLIENTES B2B principales directos.
-            NIVEL 2 (Para cada uno de los anteriores):
-            - Identifica 1 o 2 de SUS propios proveedores clave.
-            - Identifica 1 o 2 de SUS propios clientes clave.
-            Responde ÚNICA Y EXCLUSIVAMENTE con un JSON válido con esta estructura anidada exacta:
-            {
-              "center": {"ticker": "${ticker}", "name": "Nombre Real", "country": "País"},
-              "suppliers": [{"ticker": "TICKER_P1", "name": "Nombre Prov 1", "country": "País", "weight": 90, "suppliers": [{"ticker": "TICKER_P1_P1", "name": "Prov de Prov 1", "country": "País", "weight": 60}], "clients": [{"ticker": "TICKER_P1_C1", "name": "Cliente de Prov 1", "country": "País", "weight": 50}]}],
-              "clients": [{"ticker": "TICKER_C1", "name": "Nombre Cli 1", "country": "País", "weight": 80, "suppliers": [{"ticker": "TICKER_C1_P1", "name": "Prov de Cli 1", "country": "País", "weight": 40}], "clients": [{"ticker": "TICKER_C1_C1", "name": "Cliente de Cli 1", "country": "País", "weight": 50}]}]
-            }
-            Reglas: 'weight' de 10 a 100. Si no cotiza usa "N/A" en ticker. Sin markdown.`;
-
-            const res = await askGemini(apiKey, prompt, aiModel);
-            let cleanRes = res.trim();
-            const start = cleanRes.indexOf('{');
-            const end = cleanRes.lastIndexOf('}');
-            if (start !== -1 && end !== -1) cleanRes = cleanRes.substring(start, end + 1);
-            const json = JSON.parse(cleanRes);
-            if (!json || !json.center) throw new Error("Estructura devuelta por IA no válida.");
-            setGraphData(json);
-            setIsGraphModalOpen(true);
-        } catch (e) {
-            setStatusModal({ isOpen: true, title: 'Error en Grafo', msg: `No se pudo generar la red: ${e.message}`, type: 'error' });
-        } finally {
-            setGeneratingGraph(false);
-        }
-    };
-
-    const handleRunProjection = async () => {
-        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
-        if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker primero', type: 'info' });
-        if (projForm.buyPrice <= 0 || projForm.shares <= 0) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Revisa el precio y nº de acciones', type: 'warning' });
-
-        setLoading(true);
-        setIsProjModalOpen(false);
-        setSpecificAnswer(null);
-        setData(null);
-
-        try {
-            const today = new Date().toLocaleString('es-ES');
-            const prompt = `
-            ROL: ANALISTA FINANCIERO SENIOR (CFA).
-            TAREA: Realizar una PROYECCIÓN FINANCIERA DETALLADA a ${projForm.years} AÑOS para la empresa "${ticker}".
-            FECHA ACTUAL: ${today}
-            
-            ═══════════════════════════════════════════════════════
-            PROTOCOLO DE FIABILIDAD OBLIGATORIO (LEE ANTES DE EMPEZAR):
-            ═══════════════════════════════════════════════════════
-            1. BÚSQUEDA ACTIVA: Usa google_search para obtener datos reales actualizados ANTES de redactar.
-            2. CITA OBLIGATORIA Y CLICABLE: Cada dato numérico (precio, EPS, PER, CAGR...) debe ir seguido de su fuente. DEBES generar enlaces HTML clicables (<a href="..." target="_blank">Nombre Fuente</a>).
-            3. DATO NO ENCONTRADO: Si no encuentras un dato tras buscar, escribe literalmente "⚠️ No localizado" en rojo. NUNCA inventes ni estimes sin indicarlo.
-            4. DATO ESTIMADO: Si usas una estimación del mercado (consenso analistas), indícalo como [Estimación consenso: X analistas].
-            5. EXPLICACIÓN DIDÁCTICA: Añade breves notas explicativas en cursiva y letra pequeña (<span style="font-size:10px; font-style:italic; color:#666;">) sobre qué es el CAGR, el PER, etc. debajo de donde se usan.
-            ═══════════════════════════════════════════════════════
-            
-            DATOS DE ENTRADA USUARIO:
-            - Inversión Inicial: ${projForm.shares} acciones compradas a ${projForm.buyPrice} (Divisa Local).
-            - Horizonte Temporal: ${projForm.years} años.
-            
-            CÁLCULOS A REALIZAR (Muestra la lógica):
-            Genera 3 Escenarios (PESIMISTA, PROBABLE, OPTIMISTA) variando el Crecimiento de Beneficios y el Múltiplo PER futuro.
-            Para cada escenario calcula Precio Futuro, Valor Final, Dividendos acumulados, Beneficio Neto, y % CAGR.
-
-            FORMATO DE SALIDA HTML ESPERADO:
-            <div style="background:#fff; color:#000; padding:10px;">
-                <h2 style="color:#0ea5e9; border-bottom:2px solid #ccc;">PROYECCIÓN DE RETORNO: ${ticker.toUpperCase()} (${projForm.years} AÑOS)</h2>
-                <div style="background:#fff3cd; border:1px solid #ffc107; padding:8px; border-radius:6px; font-size:10px; margin-bottom:15px;">
-                    ⚠️ <strong>AVISO DE FIABILIDAD:</strong> Las proyecciones se basan en datos obtenidos mediante búsqueda web activa. Verifica siempre en fuentes oficiales.
-                </div>
-                <p><strong>Datos de Partida verificados:</strong> Cotización encontrada: [Precio Actual con fuente clicable]. Inversión Base: [Importe].</p>
-                <h3 style="color:#0ea5e9; border-bottom:1px solid #ccc; margin-top:20px;">1. ESCENARIOS DE RENTABILIDAD</h3>
-                [TABLA COMPARATIVA DE LOS 3 ESCENARIOS con columnas: Escenario, EPS base, CAGR usado, PER futuro, Precio Obj., Valor Final, Divs. Totales, Beneficio Neto, % Total, % CAGR]
-                <h3 style="color:#0ea5e9; border-bottom:1px solid #ccc; margin-top:20px;">2. FUNDAMENTOS Y SUPUESTOS UTILIZADOS (con fuentes)</h3>
-                [Explicación de EPS base, tasas y PER, incluyendo las notas didácticas y links clicables]
-                <div style="background:#f0f9ff; border:1px solid #0ea5e9; padding:10px; margin-top:20px; border-radius:8px;">
-                    <strong>CONCLUSIÓN DEL ANALISTA:</strong> [Opinión sobre el margen de seguridad a ${projForm.buyPrice}]
-                </div>
-            </div>`;
-
-            const res = await askGemini(apiKey, prompt, aiModel);
-            let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
-            const startIdx = cleanHtml.indexOf('<');
-            if (startIdx !== -1) cleanHtml = cleanHtml.substring(startIdx);
-            setSpecificAnswer(cleanHtml);
-        } catch (e) {
-            setStatusModal({ isOpen: true, title: 'Error Proyección', msg: e.message, type: 'error' });
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    // ═══════════════════════════════════════════════════════════
-    // PROMPTS ORIGINALES RESTAURADOS CON INSTRUCCIONES ESTRICTAS
-    // ═══════════════════════════════════════════════════════════
     const HTML_TEMPLATES = {
         ITEM_1: `
             <div style="color: #000000;">
@@ -6124,7 +6021,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
                 <p><strong>Motores de Crecimiento 3-5 años:</strong> [Detalle Real] (Fuente: [Enlace clicable HTML])</p>
             </div>`,
 
-            ITEM_7: `
+        ITEM_7: `
             <div style="color: #000000; font-family: sans-serif;">
                 <div style="border-bottom: 3px solid #059669; padding-bottom: 10px; margin-bottom: 20px;">
                     <h2 style="color: #059669; font-size: 20px; text-transform: uppercase; margin: 0;">CORPORATE IDENTITY & MARKET RANKING</h2>
@@ -6183,7 +6080,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
                 </div>
             </div>`,
 
-            ITEM_8: `
+        ITEM_8: `
             <div style="color: #000000; font-family: 'Times New Roman', serif;">
                 <div style="border-bottom: 4px solid #1e3a8a; padding-bottom: 10px; margin-bottom: 20px;">
                     <h1 style="color: #1e3a8a; font-size: 24px; text-transform: uppercase; margin: 0;">Equity Research: Coverage Initiation</h1>
@@ -6296,7 +6193,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
                 </div>
             </div>`,
 
-            ITEM_9: `
+        ITEM_9: `
             <div style="color: #000000; font-family: sans-serif;">
                 <div style="display: none;">
                     SYSTEM INSTRUCTION:
@@ -6362,7 +6259,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
                 </div>
             </div>`,
 
-            ITEM_10: `
+        ITEM_10: `
             <div style="color: #000000; font-family: sans-serif;">
                 <div style="display: none;">
                     SYSTEM INSTRUCTION PARA LA IA:
@@ -6425,7 +6322,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
                 </div>
             </div>`,
 
-            ITEM_11: `
+        ITEM_11: `
             <div style="color: #000000; font-family: sans-serif;">
                 <div style="display: none;">
                     SYSTEM INSTRUCTION PARA LA IA:
@@ -6481,16 +6378,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
             </div>`
     };
 
-    // --- FUNCIONES DE SOPORTE ---
-    const DEFAULT_AI_MODELS = [
-        "gemini-3.1-pro-preview",
-        "gemini-3-pro-preview",
-        "gemini-3-flash-preview",
-        "gemini-2.5-pro",
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite"
-    ];
-
     const askGemini = async (apiKey, prompt, model) => {
         if (!apiKey) throw new Error("Falta API Key");
         const targetModel = model || "gemini-3-flash-preview";
@@ -6520,10 +6407,9 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         return n.toFixed(dec).replace('.', ',');
     };
 
-    // FIX: Ahora previene el error undefined al leer .active de campos como 'price' o 'ticker'
     const checkCriteria = (paramKey, value) => {
         const p = params[paramKey];
-        if (!p) return "text-white"; // Si no es un parámetro de filtro (ej: price, name)
+        if (!p) return "text-white"; 
         if (!p.active) return "text-slate-400";
         
         const val = parseFloat(value);
@@ -6551,9 +6437,108 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         return clean;
     };
 
-    // ═══════════════════════════════════════════════════════════
-    // LA FUNCIÓN ANALYZE (RESTAURADA Y MEJORADA DIDÁCTICAMENTE)
-    // ═══════════════════════════════════════════════════════════
+    const handleGenerateGraph = async () => {
+        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key para generar el grafo.', type: 'error' });
+        if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker en el buscador superior.', type: 'info' });
+
+        setGeneratingGraph(true);
+        try {
+            const prompt = `
+            Actúa como experto en inteligencia competitiva y cadena de suministro global.
+            Para la empresa con el ticker "${ticker}", identifica su cadena de valor directa e indirecta (NIVEL 2).
+            NIVEL 1:
+            1. Identifica máx. 4 PROVEEDORES principales directos.
+            2. Identifica máx. 4 CLIENTES B2B principales directos.
+            NIVEL 2 (Para cada uno de los anteriores):
+            - Identifica 1 o 2 de SUS propios proveedores clave.
+            - Identifica 1 o 2 de SUS propios clientes clave.
+            Responde ÚNICA Y EXCLUSIVAMENTE con un JSON válido con esta estructura anidada exacta:
+            {
+              "center": {"ticker": "${ticker}", "name": "Nombre Real", "country": "País"},
+              "suppliers": [{"ticker": "TICKER_P1", "name": "Nombre Prov 1", "country": "País", "weight": 90, "suppliers": [{"ticker": "TICKER_P1_P1", "name": "Prov de Prov 1", "country": "País", "weight": 60}], "clients": [{"ticker": "TICKER_P1_C1", "name": "Cliente de Prov 1", "country": "País", "weight": 50}]}],
+              "clients": [{"ticker": "TICKER_C1", "name": "Nombre Cli 1", "country": "País", "weight": 80, "suppliers": [{"ticker": "TICKER_C1_P1", "name": "Prov de Cli 1", "country": "País", "weight": 40}], "clients": [{"ticker": "TICKER_C1_C1", "name": "Cliente de Cli 1", "country": "País", "weight": 50}]}]
+            }
+            Reglas: 'weight' de 10 a 100. Si no cotiza usa "N/A" en ticker. Sin markdown.`;
+
+            const res = await askGemini(apiKey, prompt, aiModel);
+            let cleanRes = res.trim();
+            const start = cleanRes.indexOf('{');
+            const end = cleanRes.lastIndexOf('}');
+            if (start !== -1 && end !== -1) cleanRes = cleanRes.substring(start, end + 1);
+            const json = JSON.parse(cleanRes);
+            if (!json || !json.center) throw new Error("Estructura devuelta por IA no válida.");
+            setGraphData(json);
+            setIsGraphModalOpen(true);
+        } catch (e) {
+            setStatusModal({ isOpen: true, title: 'Error en Grafo', msg: `No se pudo generar la red: ${e.message}`, type: 'error' });
+        } finally {
+            setGeneratingGraph(false);
+        }
+    };
+
+     const handleRunProjection = async () => {
+        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+        if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker primero', type: 'info' });
+        if (projForm.buyPrice <= 0 || projForm.shares <= 0) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Revisa el precio y nº de acciones', type: 'warning' });
+
+        setLoading(true);
+        setIsProjModalOpen(false);
+        setSpecificAnswer(null);
+        setData(null);
+
+        try {
+            const today = new Date().toLocaleString('es-ES');
+            const prompt = `
+            ROL: ANALISTA FINANCIERO SENIOR (CFA).
+            TAREA: Realizar una PROYECCIÓN FINANCIERA DETALLADA a ${projForm.years} AÑOS para la empresa "${ticker}".
+            FECHA ACTUAL: ${today}
+            
+            ═══════════════════════════════════════════════════════
+            PROTOCOLO DE FIABILIDAD OBLIGATORIO (LEE ANTES DE EMPEZAR):
+            ═══════════════════════════════════════════════════════
+            1. BÚSQUEDA ACTIVA: Usa google_search para obtener datos reales actualizados ANTES de redactar.
+            2. CITA OBLIGATORIA Y CLICABLE: Cada dato numérico (precio, EPS, PER, CAGR...) debe ir seguido de su fuente. DEBES generar enlaces HTML clicables (<a href="..." target="_blank">Nombre Fuente</a>).
+            3. DATO NO ENCONTRADO: Si no encuentras un dato tras buscar, escribe literalmente "⚠️ No localizado" en rojo. NUNCA inventes ni estimes sin indicarlo.
+            4. DATO ESTIMADO: Si usas una estimación del mercado (consenso analistas), indícalo como [Estimación consenso: X analistas].
+            5. EXPLICACIÓN DIDÁCTICA: Añade breves notas explicativas en cursiva y letra pequeña (<span style="font-size:10px; font-style:italic; color:#666;">) sobre qué es el CAGR, el PER, etc. debajo de donde se usan.
+            ═══════════════════════════════════════════════════════
+            
+            DATOS DE ENTRADA USUARIO:
+            - Inversión Inicial: ${projForm.shares} acciones compradas a ${projForm.buyPrice} (Divisa Local).
+            - Horizonte Temporal: ${projForm.years} años.
+            
+            CÁLCULOS A REALIZAR (Muestra la lógica):
+            Genera 3 Escenarios (PESIMISTA, PROBABLE, OPTIMISTA) variando el Crecimiento de Beneficios y el Múltiplo PER futuro.
+            Para cada escenario calcula Precio Futuro, Valor Final, Dividendos acumulados, Beneficio Neto, y % CAGR.
+
+            FORMATO DE SALIDA HTML ESPERADO:
+            <div style="background:#fff; color:#000; padding:10px;">
+                <h2 style="color:#0ea5e9; border-bottom:2px solid #ccc;">PROYECCIÓN DE RETORNO: ${ticker.toUpperCase()} (${projForm.years} AÑOS)</h2>
+                <div style="background:#fff3cd; border:1px solid #ffc107; padding:8px; border-radius:6px; font-size:10px; margin-bottom:15px;">
+                    ⚠️ <strong>AVISO DE FIABILIDAD:</strong> Las proyecciones se basan en datos obtenidos mediante búsqueda web activa. Verifica siempre en fuentes oficiales.
+                </div>
+                <p><strong>Datos de Partida verificados:</strong> Cotización encontrada: [Precio Actual con fuente clicable]. Inversión Base: [Importe].</p>
+                <h3 style="color:#0ea5e9; border-bottom:1px solid #ccc; margin-top:20px;">1. ESCENARIOS DE RENTABILIDAD</h3>
+                [TABLA COMPARATIVA DE LOS 3 ESCENARIOS con columnas: Escenario, EPS base, CAGR usado, PER futuro, Precio Obj., Valor Final, Divs. Totales, Beneficio Neto, % Total, % CAGR]
+                <h3 style="color:#0ea5e9; border-bottom:1px solid #ccc; margin-top:20px;">2. FUNDAMENTOS Y SUPUESTOS UTILIZADOS (con fuentes)</h3>
+                [Explicación de EPS base, tasas y PER, incluyendo las notas didácticas y links clicables]
+                <div style="background:#f0f9ff; border:1px solid #0ea5e9; padding:10px; margin-top:20px; border-radius:8px;">
+                    <strong>CONCLUSIÓN DEL ANALISTA:</strong> [Opinión sobre el margen de seguridad a ${projForm.buyPrice}]
+                </div>
+            </div>`;
+
+            const res = await askGemini(apiKey, prompt, aiModel);
+            let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
+            const startIdx = cleanHtml.indexOf('<');
+            if (startIdx !== -1) cleanHtml = cleanHtml.substring(startIdx);
+            setSpecificAnswer(cleanHtml);
+        } catch (e) {
+            setStatusModal({ isOpen: true, title: 'Error Proyección', msg: e.message, type: 'error' });
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const analyze = async () => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' });
@@ -6613,6 +6598,51 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         }
     };
 
+    const MULTI_ENTITY_REPORTS = ['ITEM_4', 'ITEM_7', 'ITEM_9'];
+
+    const prefetchMultiEntityData = async (promptId, tickerRef) => {
+        const jsonExampleCompany = '{"ticker":"SYM1","name":"Nombre Empresa","country":"País","exchange":"Bolsa"}';
+        const jsonExampleFull = '{"sector":"Nombre del Sector","companies":[' + jsonExampleCompany + ']}';
+        const instruccionJSON = 'Responde UNICAMENTE con un JSON valido. Sin texto adicional. Sin markdown. Formato exacto: ' + jsonExampleFull;
+        const phaseOnePrompts = {
+            ITEM_4: `Actua como analista financiero senior. Para la empresa con ticker ${tickerRef}, identifica sus 6 competidores mas directos y relevantes del mismo sector. Usa google_search para obtener la lista actualizada. ${instruccionJSON} Incluye al propio ${tickerRef} como primer elemento de la lista. Total: 7 empresas.`,
+            ITEM_7: `Actua como analista financiero senior. Para la empresa con ticker ${tickerRef}, identifica las 4 empresas mas importantes de su mismo sector por capitalizacion bursatil. Usa google_search. ${instruccionJSON} Incluye al propio ${tickerRef} como primer elemento. Total: 5 empresas.`,
+            ITEM_9: `Actua como analista financiero senior. Para la empresa con ticker ${tickerRef}, identifica sus 9 competidores mas directos por capitalizacion de mercado del mismo sector. Usa google_search para obtener los competidores reales actualizados. ${instruccionJSON} Incluye al propio ${tickerRef} como primer elemento. Total: 10 empresas.`
+        };
+
+        if (!phaseOnePrompts[promptId]) return null;
+
+        try {
+            const res1 = await askGemini(apiKey, phaseOnePrompts[promptId], aiModel);
+            let cleanRes = res1.trim().replace(/```json/g,'').replace(/```/g,'');
+            const start = cleanRes.indexOf('{');
+            const end = cleanRes.lastIndexOf('}');
+            if (start === -1 || end === -1) throw new Error("Fase 0: No se obtuvo JSON de empresas.");
+            const entityData = JSON.parse(cleanRes.substring(start, end + 1));
+            if (!entityData.companies || !Array.isArray(entityData.companies) || entityData.companies.length === 0) throw new Error("Fase 0: Lista de empresas vacía.");
+
+            const tickersList = entityData.companies.map(c => `${c.ticker} (${c.name})`).join(', ');
+            const jsonResultExample = '[{"ticker":"SYM1","name":"Nombre","price":0,"market_cap":"0B","per":0,"peg":0,"roi":0,"de":0,"yield":0,"eps":0,"net_margin":0,"source_date":"Mar 2026"}]';
+            const phaseTwoPrompt = 'Actua como API financiera. Usa google_search para buscar datos financieros REALES y ACTUALIZADOS de las siguientes empresas: ' + tickersList + '. Para CADA empresa busca: precio actual, capitalizacion bursatil, PER, PEG, ROI/ROIC, Deuda/Equity, Dividend Yield, BPA/EPS, margen neto. Responde UNICAMENTE con un JSON valido, sin texto adicional. Si un dato no esta disponible usa null. Formato exacto de salida: {"results":' + jsonResultExample + '}';
+
+            const res2 = await askGemini(apiKey, phaseTwoPrompt, aiModel);
+            let cleanRes2 = res2.trim().replace(/```json/g,'').replace(/```/g,'');
+            const s2 = cleanRes2.indexOf('{');
+            const e2 = cleanRes2.lastIndexOf('}');
+            if (s2 === -1 || e2 === -1) return { sector: entityData.sector, companies: entityData.companies, financials: null };
+            const financialData = JSON.parse(cleanRes2.substring(s2, e2 + 1));
+
+            return {
+                sector: entityData.sector,
+                companies: entityData.companies,
+                financials: financialData.results || []
+            };
+        } catch (e) {
+            console.warn("Prefetch multi-entidad falló:", e.message);
+            return null;
+        }
+    };
+
     const handleFixedAnalysis = async (promptId) => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' });
@@ -6623,6 +6653,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
             const today = new Date().toLocaleString('es-ES');
             let anchorContext = "";
             let hardData = null;
+            let multiEntityContext = "";
 
             const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
             if (scriptUrl) {
@@ -6649,6 +6680,28 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
                 } catch (e) { console.warn("Script no disponible."); }
             }
 
+            if (MULTI_ENTITY_REPORTS.includes(promptId)) {
+                try {
+                    const prefetchResult = await prefetchMultiEntityData(promptId, ticker);
+                    if (prefetchResult) {
+                        let financialsBlock = "";
+                        if (prefetchResult.financials && prefetchResult.financials.length > 0) {
+                            financialsBlock = prefetchResult.financials.map(function(f) {
+                                return '  - ' + (f.ticker||'?') + ' (' + (f.name||'?') + '): Precio=' + (f.price||'N/A') + ', Cap=' + (f.market_cap||'N/A') + ', PER=' + (f.per||'N/A') + ', PEG=' + (f.peg||'N/A') + ', ROI=' + (f.roi||'N/A') + '%, D/E=' + (f.de||'N/A') + ', Yield=' + (f.yield||'N/A') + '%, EPS=' + (f.eps||'N/A') + ', Margen=' + (f.net_margin||'N/A') + '% [Datos: ' + (f.source_date||'reciente') + ']';
+                            }).join('\n');
+                        }
+                        const empresasList = prefetchResult.companies.map(function(c, i) { return (i+1) + '. ' + c.ticker + ' - ' + c.name + ' (' + c.country + ', ' + c.exchange + ')'; }).join('\n');
+                        multiEntityContext = '\n[DATOS PRE-BUSCADOS - FASE 0]\n' +
+                            'SECTOR: ' + prefetchResult.sector + '\n\n' +
+                            'EMPRESAS DEL SECTOR (lista verificada con busqueda web):\n' + empresasList + '\n\n' +
+                            'DATOS FINANCIEROS PRE-RECABADOS (busqueda web activa):\n' + (financialsBlock || '(No se pudieron obtener datos en Fase 0 - busca con google_search)') + '\n\n' +
+                            'INSTRUCCION CRITICA: Usa los datos de arriba como base. Si algun campo es N/A, búscalo con google_search. NO inventes datos. NO uses empresas distintas a las listadas.\n';
+                    }
+                } catch (e) {
+                    console.warn("Fase 0 multi-entidad no completada:", e.message);
+                }
+            }
+
             const prompt = `
             SISTEMA: ANALISTA SENIOR DE BOLSA — WALL STREET PROTOCOL.
             TICKER: ${ticker}
@@ -6656,6 +6709,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
             MODELO IA: ${aiModel || 'N/D'}
             
             ${anchorContext}
+            ${multiEntityContext}
 
             ╔═══════════════════════════════════════════════════╗
             ║        PROTOCOLO DE FIABILIDAD — OBLIGATORIO      ║
@@ -6765,7 +6819,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         w.document.close(); w.print();
     };
 
-    // Screener
     const runScreener = async () => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
         const marketObj = EXCHANGES.find(e => e.id === exchange);
@@ -6870,7 +6923,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
 
     return (
         <div className="h-full flex flex-col p-4 md:p-6 overflow-y-auto custom-scrollbar relative bg-[#0a0a0a]">
-            {loading && <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md flex flex-col items-center justify-center"><Icons.Loader size={60} className="text-blue-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando con Búsqueda Web Activa...</div><div className="text-xs text-slate-400 mt-2">Buscando datos verificados en tiempo real</div></div>}
+            {loading && <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md flex flex-col items-center justify-center"><Icons.Loader size={60} className="text-blue-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando con Búsqueda Web Activa...</div><div className="text-xs text-slate-400 mt-2 text-center max-w-xs">Para informes multi-empresa: Fase 1 identifica las compañías del sector · Fase 2 recaba sus datos financieros reales · Fase 3 elabora el informe final</div></div>}
 
             {statusModal.isOpen && (
                 <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 fade-in">
@@ -6929,7 +6982,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
                                 </button>
                             </div>
 
-                            {/* Botones de preguntas guardadas */}
                             {customQuestions.length > 0 ? (
                                 <div className="flex flex-wrap gap-2 mb-3">
                                     {customQuestions.map((q, i) => (
@@ -7222,9 +7274,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
 
                 </div>
             ) : (
-                /* ═══════════════════════════════════════════════════
-                   PESTAÑA RASTREO (SCREENER) - ACTUALIZADA CON BUG FIX
-                ═══════════════════════════════════════════════════ */
                 <div className="flex flex-col gap-6 max-w-7xl mx-auto w-full pb-10">
                     <div className="bg-slate-900/50 p-6 rounded-3xl border border-slate-800 space-y-8 shadow-2xl">
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
