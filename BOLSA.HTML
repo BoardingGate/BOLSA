@@ -3895,102 +3895,67 @@ const getMarketStatus = (p) => {
         printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(() => printWindow.print(), 500); 
     };   
 
-
     const updatePrices = async (isAuto = false) => {
         const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
         const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
         
         if (active.length === 0) return;
-        if (!scriptUrl && !apiKey) { 
-            if (!isAuto) setInfoModal({ isOpen: true, title: 'Aviso', msg: 'Configura la URL de Google Script o API Key.', type: 'error' }); 
-            return; 
-        }
-    
         setUpdating(true); setUpdateProgress(20); setUpdateText('Consultando precios...');
         
         try {
-            const isinItems = active.filter(p => isISIN(p.ticker));
-            const scriptItems = active.filter(p => !isISIN(p.ticker));
             let updatesMap = {}; 
-            let totallyFailed = []; // Aquí guardaremos los que el script no pudo leer bien
+            let totallyFailed = [];
     
-            if (scriptItems.length > 0 && scriptUrl) {
-                setUpdateText('Consultando Mercados...');
-                const tickers = scriptItems.map(p => p.ticker);
-                const currencies = [...new Set(scriptItems.filter(p => p.stockCurrency !== baseCurrency).map(p => p.stockCurrency + baseCurrency))];
-                const tickersList = [...tickers, ...currencies].join(',');
+            if (scriptUrl) {
+                const tickers = active.map(p => p.ticker);
+                const res = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(tickers.join(','))}&_t=${Date.now()}`);
+                const data = await res.json();
                 
-                const fetchUrl = `${scriptUrl}?tickers=${encodeURIComponent(tickersList)}&_t=${Date.now()}`;
-                const response = await fetch(fetchUrl);
-                const textResponse = await response.text();
-                
-                if (textResponse.includes("<html") || textResponse.includes("Sign in - Google")) throw new Error("🚨 ERROR DE PERMISOS: El Script está bloqueado.");
-    
-                let batchData;
-                try { batchData = JSON.parse(textResponse); } catch (errJSON) { throw new Error("🚨 ERROR DEL SCRIPT."); }
-    
-                scriptItems.forEach(item => {
-                    const stockData = batchData[item.ticker];
-                    const fxKey = item.stockCurrency + baseCurrency;
-                    const fxData = batchData[fxKey];
-    
-                    if (stockData && stockData.success && stockData.p) {
-                        const rawPrice = cleanVal(stockData.p);
-                        
-                        if ((item.ticker === "INDEXSP:.INX" || item.ticker === "INDEXSP:SPX") && rawPrice < 95) {
-                            totallyFailed.push(item.ticker);
-                        } else {
-                            updatesMap[item.id] = { currentPrice: rawPrice, currentPE: stockData.pe ? cleanVal(stockData.pe) : item.currentPE, previousClose: stockData.pc ? cleanVal(stockData.pc) : item.previousClose, quoteDate: stockData.dt || "" };
-                            if (item.stockCurrency === baseCurrency) updatesMap[item.id].currentFx = 1;
-                            else if (fxData && fxData.success) updatesMap[item.id].currentFx = cleanVal(fxData.p);
-                        }
+                active.forEach(item => {
+                    if (data[item.ticker] && data[item.ticker].success && data[item.ticker].p > 0) {
+                        updatesMap[item.id] = { currentPrice: cleanVal(data[item.ticker].p) };
                     } else {
                         totallyFailed.push(item.ticker);
                     }
-                });        
+                });
+            } else {
+                totallyFailed = active.map(p => p.ticker);
             }
     
-            setUpdateProgress(60);
-    
-            if ((totallyFailed.length > 0 || isinItems.length > 0) && apiKey) {
+            if (totallyFailed.length > 0 && apiKey) {
                 setUpdateText('Rescatando fallidos con IA...');
-                const tickersToResc = [...new Set([...totallyFailed, ...isinItems.map(p => p.ticker)])];
-                
-                const prompt = `Actúa como API financiera. Para los siguientes tickers, devuelve el precio actual en formato JSON estricto: {"TICKER": precio}. Si es un índice, da su valor de puntos. Usa punto decimal. Tickers: ${tickersToResc.join(', ')}`;
+                // Obligamos a la IA a devolver un formato de objeto plano muy simple
+                const prompt = `Devuelve el precio actual de estos tickers. Formato estrictamente JSON: {"TICKER": precio}. Ejemplo: {"INDEXSP:.INX": 5800.5}. Tickers: ${totallyFailed.join(', ')}`;
                 
                 try {
                     const aiRes = await askGemini(apiKey, prompt, aiModel);
-                    const aiData = extractJSON(aiRes);
-                    if (aiData) {
+                    const jsonMatch = aiRes.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) {
+                        const aiData = JSON.parse(jsonMatch[0]);
+                        
                         active.forEach(item => {
-                            if (aiData[item.ticker] && aiData[item.ticker].p) {
-                                updatesMap[item.id] = { ...updatesMap[item.id], currentPrice: cleanVal(aiData[item.ticker].p) };
+                            const price = aiData[item.ticker] || aiData[item.ticker.split(':')[1]];
+                            if (price) {
+                                updatesMap[item.id] = { ...updatesMap[item.id], currentPrice: cleanVal(price) };
                                 totallyFailed = totallyFailed.filter(t => t !== item.ticker);
                             }
                         });
                     }
-                } catch (aiErr) { console.error("Fallo rescate IA:", aiErr); }
+                } catch (aiErr) { console.error("Fallo IA:", aiErr); }
             }
-    
-            setUpdateProgress(90); 
     
             if (Object.keys(updatesMap).length > 0) {
                 setPortfolio(prev => prev.map(p => updatesMap[p.id] ? { ...p, ...updatesMap[p.id] } : p));
                 setLastUpdate(new Date().toISOString());
             }
-    
-            if (!isAuto && totallyFailed.length > 0) {
-                setInfoModal({ isOpen: true, title: 'Precios no encontrados', msg: `No se pudo obtener el precio de:\n\n${totallyFailed.join('\n')}`, type: 'warning' });
-            }
-    
         } catch (e) {
-            if (!isAuto) setInfoModal({ isOpen: true, title: 'Fallo de Conexión', msg: e.message, type: 'error' });
+            console.error(e);
         } finally {
-            setUpdateProgress(100); setUpdateText('Completado'); 
-            setTimeout(() => { setUpdating(false); setUpdateProgress(0); setUpdateText(''); }, 1000);
+            setUpdating(false); setUpdateProgress(0);
         }
     };
 
+    
 
     const analyzePortfolio = async () => {
       const dataToAnalyze = visiblePortfolio;
