@@ -7419,6 +7419,7 @@ const App = () => {
     const [syncMessage, setSyncMessage] = useState('');
     const [conflictModal, setConflictModal] = useState({ isOpen: false, cloudData: null });
     const [isAppReady, setIsAppReady] = useState(false);
+    const [delayedSync, setDelayedSync] = useState(false);
     const [appPin, setAppPin] = usePersistentState('bg_app_pin', '');
     const [isPinLocked, setIsPinLocked] = useState(!!appPin);
     const [enteredPin, setEnteredPin] = useState('');
@@ -7516,8 +7517,37 @@ const App = () => {
     };
 
 
-    const checkForCloudUpdates = async () => { const url = simpleDecrypt(gScriptUrl); if (!url) { setIsAppReady(true); return; } setSyncStatus('checking'); try { const response = await fetch(url); const cloudData = await response.json(); const cloudTS = cloudData.timestamp || 0; const localTS = localTimestamp || 0; if (cloudTS > (localTS + 10000)) { setConflictModal({ isOpen: true, cloudData }); setSyncStatus('idle'); } else { setSyncStatus(localTS > cloudTS ? 'unsaved' : 'synced'); setIsAppReady(true); } } catch (e) { console.error("Error comprobando nube:", e); setSyncStatus('error'); setIsAppReady(true); } };
-
+    const checkForCloudUpdates = async () => { 
+        const url = simpleDecrypt(gScriptUrl); 
+        if (!url) { setIsAppReady(true); return; } 
+        
+        setSyncStatus('checking'); 
+        setSyncMessage('Sincronizando con gDrive...'); // Muestra el cartel azul
+        
+        try { 
+            const response = await fetch(url); 
+            const cloudData = await response.json(); 
+            const cloudTS = cloudData.timestamp || 0; 
+            const localTS = localTimestamp || 0; 
+            
+            if (cloudTS > (localTS + 10000)) { 
+                setConflictModal({ isOpen: true, cloudData }); 
+                setSyncStatus('idle'); 
+                setSyncMessage(''); 
+            } else { 
+                setSyncStatus(localTS > cloudTS ? 'unsaved' : 'synced'); 
+                setSyncMessage(localTS > cloudTS ? '⚠️ Cambios sin guardar' : '✅ Nube Sincronizada');
+                setIsAppReady(true); 
+                setTimeout(() => setSyncMessage(''), 3000); // Oculta el mensaje a los 3 seg
+            } 
+        } catch (e) { 
+            console.error("Error comprobando nube:", e); 
+            setSyncStatus('error'); 
+            setSyncMessage('❌ Error al conectar con Nube');
+            setIsAppReady(true); 
+            setTimeout(() => setSyncMessage(''), 3000);
+        } 
+    };
    
       const handleApplyCloudData = () => { 
         const data = conflictModal.cloudData; 
@@ -7545,15 +7575,19 @@ const App = () => {
         setConflictModal({ isOpen: false, cloudData: null }); 
         uploadToCloud(true); 
     }; 
-    useEffect(() => { 
-    setIsAppReady(true); 
-    if (gScriptUrl) { 
-        const timer = setTimeout(() => {
-            checkForCloudUpdates(); 
-        }, 7000);
+
+    useEffect(() => {
+        setIsAppReady(true); 
+        const timer = setTimeout(() => setDelayedSync(true), 7000); 
         return () => clearTimeout(timer);
-    } 
     }, []);
+
+    useEffect(() => {
+        if (delayedSync && gScriptUrl) {
+            checkForCloudUpdates();
+        }
+    }, [delayedSync]);
+
     useEffect(() => { if (!gScriptUrl || refreshInterval < 1 || !isAppReady) return; const intervalMs = (refreshInterval + 1) * 60 * 1000; const timer = setInterval(() => { if (syncStatus === 'unsaved') { uploadToCloud(); } }, intervalMs); return () => clearInterval(timer); }, [refreshInterval, gScriptUrl, syncStatus, isAppReady]);
     useEffect(() => { if(appPin && appPin.length === 4) setIsPinLocked(true); else setIsPinLocked(false); }, []);
 
