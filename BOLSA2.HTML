@@ -1720,6 +1720,43 @@ const handlePrint = () => {
     );
 };
 
+const handleRestoreBak = async () => { 
+        if (!gScriptUrl) return alert("Configura la URL de Google Script primero para poder restaurar desde la Nube."); 
+        if (!confirm("⚠️ IMPORTANTE:\n\nEsta acción descargará la COPIA DE SEGURIDAD ANTERIOR (.bak) de Google Drive y reemplazará toda tu cartera y configuración actual.\n\n¿Estás seguro de continuar?")) return; 
+        
+        setIoStatus('processing'); 
+        try { 
+            const url = simpleDecrypt(gScriptUrl); 
+            const response = await fetch(`${url}?restoreBak=true&_t=${Date.now()}`); 
+            const textData = await response.text(); 
+            
+            if (textData.includes("<html") || textData.includes("Sign in - Google")) throw new Error("Error de permisos. El script está bloqueado."); 
+            
+            const data = JSON.parse(textData); 
+            if (!data || data.timestamp === 0 || !data.portfolio) { 
+                throw new Error("No se encontró una copia de seguridad válida (.bak) en tu Google Drive."); 
+            } 
+            
+            if (data.portfolio) setPortfolio(data.portfolio); 
+            if (data.resultsData) setResultsData(data.resultsData);
+            if (data.apiKey !== undefined) setApiKey(data.apiKey); 
+            if (data.baseCurrency) setBaseCurrency(data.baseCurrency); 
+            if (data.gScriptUrl !== undefined) setGScriptUrl(data.gScriptUrl);
+            if (data.refreshInterval) setRefreshInterval(data.refreshInterval); 
+            if (data.appPin !== undefined) setAppPin(data.appPin); 
+            if (data.aiModel) setAiModel(data.aiModel); 
+            if (data.availableModels) setAvailableModels(data.availableModels);
+            if (data.globalNotes !== undefined) setGlobalNotes(data.globalNotes); 
+            
+            setIoStatus('success'); 
+            alert("✅ Copia anterior (.bak) restaurada correctamente."); 
+            setTimeout(() => window.location.reload(), 500); 
+        } catch (e) { 
+            alert("Error al restaurar: " + e.message); 
+            setIoStatus('error'); 
+        } 
+    };
+
 
 const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio, onForceBackup, gScriptUrl, setGScriptUrl, resultsData, setResultsData, appPin, setAppPin, _x_lim, _x_trig, aiModel, setAiModel, availableModels, setAvailableModels, globalNotes, setGlobalNotes }) => {
     const [localLic, setLocalLic] = useState(''); 
@@ -2021,6 +2058,11 @@ const SettingsTab = ({ apiKey, setApiKey, _x_stat, _x_act, baseCurrency, setBase
                 <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4"><div className="p-3 bg-cyan-500/20 rounded-xl text-cyan-400"><Icons.Upload size={32} className="rotate-180" /></div><div><h2 className="text-2xl font-bold text-white">Copia de Seguridad y Cloud</h2><p className="text-slate-400 text-sm">Exporta tu configuración y conecta Google Drive</p></div></div>
                 <div className="bg-yellow-900/20 border border-yellow-600/30 rounded-xl p-4 mb-6"><h4 className="text-yellow-500 font-bold text-sm mb-2 flex items-center gap-2"><Icons.AlertCircle size={16}/> Información Importante</h4><p className="text-sm text-slate-300 leading-relaxed">El archivo de exportación contiene <strong>toda tu configuración, claves, y cartera de inversiones</strong>. Guárdalo en un lugar seguro. Esta copia es útil para traspasar los datos a otro equipo y luego ya sincronizarlos via gDrive, o simplemente para tener una copia local además de en gDrive</p></div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4"><button onClick={handleRunExport} disabled={ioStatus === 'processing'} className={`flex items-center justify-center gap-2 py-4 px-6 rounded-xl border transition-all font-bold ${ioStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : 'bg-slate-800 border-slate-600 hover:bg-slate-700 text-white'}`}>{ioStatus === 'processing' ? <Icons.Loader size={20}/> : <Icons.Upload size={20} className="rotate-180" />} EXPORTAR (LOCAL)</button><label className={`cursor-pointer flex items-center justify-center gap-2 py-4 px-6 rounded-xl border transition-all font-bold ${ioStatus === 'processing' ? 'bg-slate-800 opacity-50 cursor-not-allowed' : 'bg-blue-600 border-blue-500 hover:bg-blue-500 text-white'}`}><input type="file" accept=".json" className="hidden" onChange={handleRunImport} disabled={ioStatus === 'processing'} /><Icons.Upload size={20} /> RESTAURAR (LOCAL)</label></div>
+                <div className="mt-4">
+                    <button onClick={handleRestoreBak} disabled={ioStatus === 'processing'} className={`w-full flex items-center justify-center gap-2 py-4 px-6 rounded-xl border transition-all font-bold uppercase tracking-widest ${ioStatus === 'processing' ? 'bg-slate-800 opacity-50 cursor-not-allowed' : 'bg-indigo-600 border-indigo-500 hover:bg-indigo-500 text-white shadow-lg'}`}>
+                        {ioStatus === 'processing' ? <Icons.Loader size={20} className="animate-spin" /> : <Icons.Refresh size={20} />} RESTAURAR LA ANTERIOR COPIA DE SEGURIDAD (.bak) DE GDRIVE
+                    </button>
+                </div>
                 
                 <div className="mt-8 border-t border-slate-700 pt-6">
                     <h4 className="text-sm font-bold text-blue-400 mb-4 uppercase tracking-widest flex items-center gap-2"><Icons.Globe size={16}/>Copia Automática en GDRIVE (si no lo configura los datos solo se guardan en local y no se sincronizarán con otros equipos ni se salvaguardarán en gDrive (se guardan en la caché del navegador))</h4>
@@ -2046,9 +2088,19 @@ function doPost(e) {
   try {
     var data = JSON.parse(e.postData.contents);
     var fileName = "BOARDINGGATE_DB.json";
+    var backupName = "BOARDINGGATE_DB.json.bak";
     var files = DriveApp.getFilesByName(fileName);
-    var file = files.hasNext() ? files.next() : DriveApp.createFile(fileName, "", MimeType.PLAIN_TEXT);
-    file.setContent(JSON.stringify(data));
+    
+    if (files.hasNext()) {
+      var file = files.next();
+      var backupFiles = DriveApp.getFilesByName(backupName);
+      var backupFile = backupFiles.hasNext() ? backupFiles.next() : DriveApp.createFile(backupName, "", MimeType.PLAIN_TEXT);
+      backupFile.setContent(file.getBlob().getDataAsString());
+      
+      file.setContent(JSON.stringify(data));
+    } else {
+      DriveApp.createFile(fileName, JSON.stringify(data), MimeType.PLAIN_TEXT);
+    }
     return ContentService.createTextOutput(JSON.stringify({ status: "success", timestamp: data.timestamp })).setMimeType(ContentService.MimeType.JSON);
   } catch(e) { 
     return ContentService.createTextOutput(JSON.stringify({status: "error", error: e.toString()})).setMimeType(ContentService.MimeType.JSON); 
@@ -2058,7 +2110,8 @@ function doPost(e) {
 function doGet(e) {
   if (e.parameter.tickers) { return fetchStockData(e.parameter.tickers); }
   try {
-    var files = DriveApp.getFilesByName("BOARDINGGATE_DB.json");
+    var fileName = e.parameter.restoreBak === "true" ? "BOARDINGGATE_DB.json.bak" : "BOARDINGGATE_DB.json";
+    var files = DriveApp.getFilesByName(fileName);
     if (files.hasNext()) { return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON); }
     return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
   } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
