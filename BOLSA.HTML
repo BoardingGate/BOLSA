@@ -6412,6 +6412,69 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         }
     };
 
+     const handleRunProjection = async () => {
+        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+        if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker primero', type: 'info' });
+        if (projForm.buyPrice <= 0 || projForm.shares <= 0) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Revisa el precio y nº de acciones', type: 'warning' });
+
+        setLoading(true);
+        setIsProjModalOpen(false);
+        setSpecificAnswer(null);
+        setData(null);
+
+        try {
+            const today = new Date().toLocaleString('es-ES');
+            const prompt = `
+            ROL: ANALISTA FINANCIERO SENIOR (CFA).
+            TAREA: Realizar una PROYECCIÓN FINANCIERA DETALLADA a ${projForm.years} AÑOS para la empresa "${ticker}".
+            FECHA ACTUAL: ${today}
+            
+            ═══════════════════════════════════════════════════════
+            PROTOCOLO DE FIABILIDAD OBLIGATORIO (LEE ANTES DE EMPEZAR):
+            ═══════════════════════════════════════════════════════
+            1. BÚSQUEDA ACTIVA: Usa google_search para obtener datos reales actualizados ANTES de redactar.
+            2. CITA OBLIGATORIA Y CLICABLE: Cada dato numérico (precio, EPS, PER, CAGR...) debe ir seguido de su fuente. DEBES generar enlaces HTML clicables (<a href="..." target="_blank">Nombre Fuente</a>).
+            3. DATO NO ENCONTRADO: Si no encuentras un dato tras buscar, escribe literalmente "⚠️ No localizado" en rojo. NUNCA inventes ni estimes sin indicarlo.
+            4. DATO ESTIMADO: Si usas una estimación del mercado (consenso analistas), indícalo como [Estimación consenso: X analistas].
+            5. EXPLICACIÓN DIDÁCTICA: Añade breves notas explicativas en cursiva y letra pequeña (<span style="font-size:10px; font-style:italic; color:#666;">) sobre qué es el CAGR, el PER, etc. debajo de donde se usan.
+            ═══════════════════════════════════════════════════════
+            
+            DATOS DE ENTRADA USUARIO:
+            - Inversión Inicial: ${projForm.shares} acciones compradas a ${projForm.buyPrice} (Divisa Local).
+            - Horizonte Temporal: ${projForm.years} años.
+            
+            CÁLCULOS A REALIZAR (Muestra la lógica):
+            Genera 3 Escenarios (PESIMISTA, PROBABLE, OPTIMISTA) variando el Crecimiento de Beneficios y el Múltiplo PER futuro.
+            Para cada escenario calcula Precio Futuro, Valor Final, Dividendos acumulados, Beneficio Neto, y % CAGR.
+
+            FORMATO DE SALIDA HTML ESPERADO:
+            <div style="background:#fff; color:#000; padding:10px;">
+                <h2 style="color:#0ea5e9; border-bottom:2px solid #ccc;">PROYECCIÓN DE RETORNO: ${ticker.toUpperCase()} (${projForm.years} AÑOS)</h2>
+                <div style="background:#fff3cd; border:1px solid #ffc107; padding:8px; border-radius:6px; font-size:10px; margin-bottom:15px;">
+                    ⚠️ <strong>AVISO DE FIABILIDAD:</strong> Las proyecciones se basan en datos obtenidos mediante búsqueda web activa. Verifica siempre en fuentes oficiales.
+                </div>
+                <p><strong>Datos de Partida verificados:</strong> Cotización encontrada: [Precio Actual con fuente clicable]. Inversión Base: [Importe].</p>
+                <h3 style="color:#0ea5e9; border-bottom:1px solid #ccc; margin-top:20px;">1. ESCENARIOS DE RENTABILIDAD</h3>
+                [TABLA COMPARATIVA DE LOS 3 ESCENARIOS con columnas: Escenario, EPS base, CAGR usado, PER futuro, Precio Obj., Valor Final, Divs. Totales, Beneficio Neto, % Total, % CAGR]
+                <h3 style="color:#0ea5e9; border-bottom:1px solid #ccc; margin-top:20px;">2. FUNDAMENTOS Y SUPUESTOS UTILIZADOS (con fuentes)</h3>
+                [Explicación de EPS base, tasas y PER, incluyendo las notas didácticas y links clicables]
+                <div style="background:#f0f9ff; border:1px solid #0ea5e9; padding:10px; margin-top:20px; border-radius:8px;">
+                    <strong>CONCLUSIÓN DEL ANALISTA:</strong> [Opinión sobre el margen de seguridad a ${projForm.buyPrice}]
+                </div>
+            </div>`;
+
+            const res = await askGemini(apiKey, prompt, aiModel);
+            let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
+            const startIdx = cleanHtml.indexOf('<');
+            if (startIdx !== -1) cleanHtml = cleanHtml.substring(startIdx);
+            setSpecificAnswer(cleanHtml);
+        } catch (e) {
+            setStatusModal({ isOpen: true, title: 'Error Proyección', msg: e.message, type: 'error' });
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const analyze = async () => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' });
