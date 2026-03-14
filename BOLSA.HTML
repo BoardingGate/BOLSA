@@ -3906,14 +3906,29 @@ const getMarketStatus = (p) => {
             let updatesMap = {}; 
             let totallyFailed = [];
     
+            // 1. INTENTAR VÍA SCRIPT (Mantiene la lógica original que funcionaba)
             if (scriptUrl) {
+                setUpdateText('Consultando Mercados...');
                 const tickers = active.map(p => p.ticker);
-                const res = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(tickers.join(','))}&_t=${Date.now()}`);
-                const data = await res.json();
+                const currencies = [...new Set(active.filter(p => p.stockCurrency !== baseCurrency).map(p => p.stockCurrency + baseCurrency))];
+                const tickersList = [...tickers, ...currencies].join(',');
                 
+                const response = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(tickersList)}&_t=${Date.now()}`);
+                const data = await response.json();
+    
                 active.forEach(item => {
-                    if (data[item.ticker] && data[item.ticker].success && data[item.ticker].p > 0) {
-                        updatesMap[item.id] = { currentPrice: cleanVal(data[item.ticker].p) };
+                    const stockData = data[item.ticker];
+                    const fxKey = item.stockCurrency + baseCurrency;
+                    const fxData = data[fxKey];
+    
+                    // Filtro de integridad: Si es el SP500 y da precio < 95, lo marcamos como fallido para la IA
+                    const price = stockData?.success ? cleanVal(stockData.p) : 0;
+                    
+                    if (stockData?.success && price > (item.ticker.includes(".INX") ? 95 : 0)) {
+                        updatesMap[item.id] = { currentPrice: price };
+                        if (item.stockCurrency !== baseCurrency && fxData?.success) {
+                            updatesMap[item.id].currentFx = cleanVal(fxData.p);
+                        }
                     } else {
                         totallyFailed.push(item.ticker);
                     }
@@ -3922,36 +3937,39 @@ const getMarketStatus = (p) => {
                 totallyFailed = active.map(p => p.ticker);
             }
     
+            // 2. RESCATE DE FALLIDOS VÍA IA
             if (totallyFailed.length > 0 && apiKey) {
                 setUpdateText('Rescatando fallidos con IA...');
-                // Obligamos a la IA a devolver un formato de objeto plano muy simple
-                const prompt = `Devuelve el precio actual de estos tickers. Formato estrictamente JSON: {"TICKER": precio}. Ejemplo: {"INDEXSP:.INX": 5800.5}. Tickers: ${totallyFailed.join(', ')}`;
+                // Pedimos un JSON donde cada ticker tenga un objeto {p: precio, fx: cambio}
+                const prompt = `Actúa como API. Para estos tickers: ${totallyFailed.join(', ')}, devuelve el precio y el tipo de cambio a ${baseCurrency}. Formato JSON estricto: {"TICKER": {"p": precio, "fx": cambio}}. USA PUNTO DECIMAL.`;
                 
                 try {
                     const aiRes = await askGemini(apiKey, prompt, aiModel);
-                    const jsonMatch = aiRes.match(/\{[\s\S]*\}/);
-                    if (jsonMatch) {
-                        const aiData = JSON.parse(jsonMatch[0]);
-                        
+                    const aiData = extractJSON(aiRes);
+                    if (aiData) {
                         active.forEach(item => {
-                            const price = aiData[item.ticker] || aiData[item.ticker.split(':')[1]];
-                            if (price) {
-                                updatesMap[item.id] = { ...updatesMap[item.id], currentPrice: cleanVal(price) };
-                                totallyFailed = totallyFailed.filter(t => t !== item.ticker);
+                            const res = aiData[item.ticker] || aiData[item.ticker.split(':')[1]];
+                            if (res && res.p) {
+                                updatesMap[item.id] = { 
+                                    ...updatesMap[item.id], 
+                                    currentPrice: cleanVal(res.p),
+                                    ...(res.fx ? { currentFx: cleanVal(res.fx) } : {})
+                                };
                             }
                         });
                     }
-                } catch (aiErr) { console.error("Fallo IA:", aiErr); }
+                } catch (aiErr) { console.error("Fallo rescate IA:", aiErr); }
             }
     
+            // 3. APLICAR ACTUALIZACIONES
             if (Object.keys(updatesMap).length > 0) {
                 setPortfolio(prev => prev.map(p => updatesMap[p.id] ? { ...p, ...updatesMap[p.id] } : p));
                 setLastUpdate(new Date().toISOString());
             }
         } catch (e) {
-            console.error(e);
+            console.error("Error general en updatePrices:", e);
         } finally {
-            setUpdating(false); setUpdateProgress(0);
+            setUpdating(false); setUpdateProgress(0); setUpdateText('');
         }
     };
 
