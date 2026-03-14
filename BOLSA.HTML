@@ -5701,7 +5701,6 @@ const DependencyGraph = ({ data, onClose }) => {
 // ============================================================
 // PESTAÑA ESTUDIO - VERSIÓN MEJORADA
 // ============================================================
-
 const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiModel, gScriptUrl }) => {
     const [activeSubTab, setActiveSubTab] = useState('estudio');
 
@@ -5739,6 +5738,56 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
     const [newsResult, setNewsResult] = useState('');
     const [analyzingNews, setAnalyzingNews] = useState(false);
     const [customNewsTopic, setCustomNewsTopic] = useState('');
+
+
+    const handleAddCustomQuestion = () => {
+        const trimmed = newCustomQuestion.trim();
+        if (!trimmed || trimmed.length < 3) return;
+        if (customQuestions.includes(trimmed)) return;
+        const updated = [...customQuestions, trimmed];
+        setCustomQuestions(updated);
+        setNewCustomQuestion('');
+        syncCustomQuestionsToCloud(updated);
+    };
+
+    const handleDeleteCustomQuestion = (index) => {
+        const updated = customQuestions.filter((_, i) => i !== index);
+        setCustomQuestions(updated);
+        syncCustomQuestionsToCloud(updated);
+    };
+
+    const handleSaveEditCustomQuestion = () => {
+        if (!editingCustomQ) return;
+        const trimmed = editingCustomQ.text.trim();
+        if (!trimmed || trimmed.length < 3) return;
+        const updated = customQuestions.map((q, i) => i === editingCustomQ.index ? trimmed : q);
+        setCustomQuestions(updated);
+        setEditingCustomQ(null);
+        syncCustomQuestionsToCloud(updated);
+    };
+
+    const syncCustomQuestionsToCloud = async (questions) => {
+        try {
+            const url = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
+            if (!url) return;
+            const cloudRes = await fetch(url);
+            const cloudData = await cloudRes.json();
+            const payload = {
+                ...cloudData,
+                customQuestions: questions,
+                timestamp: Date.now()
+            };
+            await fetch(url, {
+                method: 'POST', mode: 'no-cors',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        } catch (e) {
+            console.warn("No se pudo sincronizar preguntas personalizadas con la nube:", e);
+        }
+    };
+
+    
 
     const [params, setParams] = useState({
         per: { val: 25, active: true, label: 'PER Máximo', min: 5, max: 100, step: 1, help: 'Veces que el precio cubre el beneficio. <15: Barata, >25: Crecimiento/Cara.' },
@@ -5778,6 +5827,21 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         ITEM_10: "RASTREO 'MANOS FUERTES' y CORTOS (INSIDERS E INSTITUCIONALES)",
         ITEM_11: "TEST DE ESTRÉS MACRO Y SIMULADOR DE CRISIS (BLACK SWAN)"
     };
+
+    const handleScreenerClick = (rowTicker) => {
+        const prefixMap = {
+            'USA': 'NYSE:', 'SPAIN': 'BME:', 'UK': 'LSE:', 'GERMANY': 'XETRA:',
+            'FRANCE': 'EPA:', 'JAPAN': 'TYO:', 'CHINA_HK': 'HKG:', 'CANADA': 'TSE:',
+            'AUSTRALIA': 'ASX:', 'ITALY': 'BIT:', 'SWITZERLAND': 'SWX:', 'NETHERLANDS': 'AMS:'
+        };
+        const prefix = prefixMap[exchange] || '';
+        const cleanTicker = rowTicker.includes(':') ? rowTicker : `${prefix}${rowTicker}`;
+        setTicker(cleanTicker);
+        setActiveSubTab('estudio');
+        setSpecificAnswer(null);
+        setData(null);
+    };
+
 
     const HTML_TEMPLATES = {
         ITEM_1: `
