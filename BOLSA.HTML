@@ -3895,20 +3895,25 @@ const getMarketStatus = (p) => {
         printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(() => printWindow.print(), 500); 
     };   
 
+
     const updatePrices = async (isAuto = false) => {
         const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
-        const scriptUrl = simpleDecrypt(gScriptUrl);
+        const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
         
         if (active.length === 0) return;
-        if (!scriptUrl && !apiKey) { if (!isAuto) setInfoModal({ isOpen: true, title: 'Aviso', msg: 'Configura la URL de Google Script o API Key.', type: 'error' }); return; }
-
+        if (!scriptUrl && !apiKey) { 
+            if (!isAuto) setInfoModal({ isOpen: true, title: 'Aviso', msg: 'Configura la URL de Google Script o API Key.', type: 'error' }); 
+            return; 
+        }
+    
         setUpdating(true); setUpdateProgress(20); setUpdateText('Consultando precios...');
         
         try {
             const isinItems = active.filter(p => isISIN(p.ticker));
             const scriptItems = active.filter(p => !isISIN(p.ticker));
-            let updatesMap = {}; let totallyFailed = [];
-
+            let updatesMap = {}; 
+            let totallyFailed = []; // Aquí guardaremos los que el script no pudo leer bien
+    
             if (scriptItems.length > 0 && scriptUrl) {
                 setUpdateText('Consultando Mercados...');
                 const tickers = scriptItems.map(p => p.ticker);
@@ -3920,62 +3925,72 @@ const getMarketStatus = (p) => {
                 const textResponse = await response.text();
                 
                 if (textResponse.includes("<html") || textResponse.includes("Sign in - Google")) throw new Error("🚨 ERROR DE PERMISOS: El Script está bloqueado.");
-
+    
                 let batchData;
-                try { batchData = JSON.parse(textResponse); } catch (errJSON) { throw new Error("🚨 ERROR DEL SCRIPT:\n\n" + textResponse.substring(0, 150)); }
-
-                
+                try { batchData = JSON.parse(textResponse); } catch (errJSON) { throw new Error("🚨 ERROR DEL SCRIPT."); }
+    
                 scriptItems.forEach(item => {
                     const stockData = batchData[item.ticker];
                     const fxKey = item.stockCurrency + baseCurrency;
                     const fxData = batchData[fxKey];
-                
+    
                     if (stockData && stockData.success && stockData.p) {
                         const rawPrice = cleanVal(stockData.p);
                         
-                        if (item.ticker === "INDEXSP:.INX" && rawPrice < 95) {
-                            totallyFailed.push(`${item.ticker} (Precio sospechoso: ${rawPrice}, forzando IA)`);
+                        if ((item.ticker === "INDEXSP:.INX" || item.ticker === "INDEXSP:SPX") && rawPrice < 95) {
+                            totallyFailed.push(item.ticker);
                         } else {
                             updatesMap[item.id] = { currentPrice: rawPrice, currentPE: stockData.pe ? cleanVal(stockData.pe) : item.currentPE, previousClose: stockData.pc ? cleanVal(stockData.pc) : item.previousClose, quoteDate: stockData.dt || "" };
                             if (item.stockCurrency === baseCurrency) updatesMap[item.id].currentFx = 1;
                             else if (fxData && fxData.success) updatesMap[item.id].currentFx = cleanVal(fxData.p);
                         }
                     } else {
-                        totallyFailed.push(`${item.ticker} (${stockData ? (stockData.reason || "Sin datos") : "No encontrado"})`);
+                        totallyFailed.push(item.ticker);
                     }
-                });
-
-
-
+                });        
             }
-
+    
             setUpdateProgress(60);
-
-            if (isinItems.length > 0 && apiKey) {
-                setUpdateText('Consultando iA (Fondos)...');
-                const isinList = isinItems.map(p => p.ticker).join(", ");
-                const prompt = `Actúa como API financiera. Devuelve el NAV de los fondos ISIN: ${isinList}. Responde SOLO JSON usando ISIN como clave: {"ISIN": {"p": precio}}. USA PUNTO DECIMAL.`;
+    
+            if ((totallyFailed.length > 0 || isinItems.length > 0) && apiKey) {
+                setUpdateText('Rescatando fallidos con IA...');
+                const tickersToResc = [...new Set([...totallyFailed, ...isinItems.map(p => p.ticker)])];
+                
+                const prompt = `Actúa como API financiera. Para los siguientes tickers, devuelve el precio actual en formato JSON estricto: {"TICKER": precio}. Si es un índice, da su valor de puntos. Usa punto decimal. Tickers: ${tickersToResc.join(', ')}`;
+                
                 try {
                     const aiRes = await askGemini(apiKey, prompt, aiModel);
-                    const json = extractJSON(aiRes);
-                    if (json) isinItems.forEach(item => { if (json[item.ticker] && json[item.ticker].p) updatesMap[item.id] = { currentPrice: cleanVal(json[item.ticker].p) }; else totallyFailed.push(`${item.ticker} (iA: Valor no encontrado)`); });
-                } catch (aiErr) { totallyFailed.push(`Fallo general actualizando Fondos ISIN.`); }
+                    const aiData = extractJSON(aiRes);
+                    if (aiData) {
+                        active.forEach(item => {
+                            if (aiData[item.ticker] && aiData[item.ticker].p) {
+                                updatesMap[item.id] = { ...updatesMap[item.id], currentPrice: cleanVal(aiData[item.ticker].p) };
+                                totallyFailed = totallyFailed.filter(t => t !== item.ticker);
+                            }
+                        });
+                    }
+                } catch (aiErr) { console.error("Fallo rescate IA:", aiErr); }
             }
-
+    
             setUpdateProgress(90); 
-
+    
             if (Object.keys(updatesMap).length > 0) {
                 setPortfolio(prev => prev.map(p => updatesMap[p.id] ? { ...p, ...updatesMap[p.id] } : p));
                 setLastUpdate(new Date().toISOString());
             }
-
-            if (!isAuto && totallyFailed.length > 0) setInfoModal({ isOpen: true, title: 'Precios no encontrados', msg: `Fallo la actualización:\n\n${totallyFailed.join('\n')}`, type: 'warning' });
+    
+            if (!isAuto && totallyFailed.length > 0) {
+                setInfoModal({ isOpen: true, title: 'Precios no encontrados', msg: `No se pudo obtener el precio de:\n\n${totallyFailed.join('\n')}`, type: 'warning' });
+            }
+    
         } catch (e) {
             if (!isAuto) setInfoModal({ isOpen: true, title: 'Fallo de Conexión', msg: e.message, type: 'error' });
         } finally {
-            setUpdateProgress(100); setUpdateText('Completado'); setTimeout(() => { setUpdating(false); setUpdateProgress(0); setUpdateText(''); }, 1000);
+            setUpdateProgress(100); setUpdateText('Completado'); 
+            setTimeout(() => { setUpdating(false); setUpdateProgress(0); setUpdateText(''); }, 1000);
         }
     };
+
 
     const analyzePortfolio = async () => {
       const dataToAnalyze = visiblePortfolio;
