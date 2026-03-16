@@ -5,7 +5,6 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     
-    <!-- SEO BÁSICO -->
     <title>BoardingGate - Gestor de Cartera iA y Análisis Financiero</title>
     <meta name="description" content="BoardingGate: Terminal avanzada de gestión de carteras de inversión con IA. Análisis fundamental, rastreo de mercado (screener), informes macroeconómicos y simulador de riesgos. El entorno definitivo para el inversor profesional." />
     <meta name="keywords" content="gestión de carteras, bolsa, análisis financiero, IA inversiones, dividendos, renta, screener bolsa, terminal financiero, inversión, valores" />
@@ -36,39 +35,44 @@
     <script src="//cdn.jsdelivr.net/npm/eruda"></script>
     <script>
     (function() {
-        window.onerror = function(message, source, lineno, colno, error) {
-            showEruda();
-        };
-
-        window.onunhandledrejection = function(event) {
-            showEruda();
-        };
-
-        function showEruda() {
+        function showErudaAndLog(errObj) {
             if (!window.eruda._isInit) {
                 eruda.init();
                 eruda.show();
                 console.warn("⚠️ BoardingGate: Se ha detectado un error. Eruda activado.");
             }
+            if (errObj) {
+                console.error("Detalle del error:", errObj);
+            }
         }
+
+        window.onerror = function(message, source, lineno, colno, error) {
+            showErudaAndLog(error || message);
+            return false; 
+        };
+
+        window.onunhandledrejection = function(event) {
+            showErudaAndLog(event.reason || "Promesa rechazada sin motivo detallado");
+        };
     })();
     </script>
-
     
     <meta name="robots" content="index, follow" />
 
      <style>
+        label.block {
+            margin-top: 14px !important;
+        }
+
         html, body { 
             margin: 0; 
             padding: 0; 
             width: 100%; 
             height: 100dvh; 
-            /* Cambiamos a 'auto' para permitir navegación natural */
             overflow: auto; 
             background-color: #0a0a0a; 
             font-family: 'Inter', sans-serif; 
             color: #e5e5e5; 
-            /* ELIMINAMOS overscroll-behavior-y: none; que bloqueaba el scroll en móviles */
         }
         
         #root { 
@@ -144,6 +148,23 @@
     .print-only, .print-only * { visibility: visible; } /* Mostramos solo el grafo */
     .print-only { position: absolute; left: 0; top: 0; }
     .no-print { display: none !important; }
+    }
+
+  
+    .section-number {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        background-color: #2563eb; /* Azul BoardingGate */
+        color: white;
+        border-radius: 50%;
+        font-size: 11px;
+        font-weight: 900;
+        margin-right: 8px;
+        flex-shrink: 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }
 
     .force-gpu {
@@ -4252,6 +4273,8 @@ const getMarketStatus = (p) => {
 
     const toggleAllActive = () => { const allActive = filteredPortfolio.every(p => p.isActive !== false); setPortfolio(prev => prev.map(p => { const isVisible = filteredPortfolio.some(fp => fp.id === p.id); return isVisible ? { ...p, isActive: !allActive } : p; })); };
     const yieldOnCost = form.buyPrice > 0 ? (form.annualDividend / form.buyPrice) * 100 : 0;
+    const curPriceForYield = form.isIndex ? (form.currentPrice / (form.indexDivisor || 1)) : form.currentPrice;
+    const yieldOnCurrent = curPriceForYield > 0 ? (form.annualDividend / curPriceForYield) * 100 : 0;
 
     const RenderHistoryCard = () => {
         const h = historicalStats; const [isRotating, setIsRotating] = useState(false);
@@ -4703,8 +4726,11 @@ const getMarketStatus = (p) => {
 
             <Modal isOpen={isModalOpen} title={editingId ? `Ficha de Inversión: ${form.ticker}` : "Apertura de Posición"} onClose={()=>setIsModalOpen(false)} size="850px">
                 <div className="space-y-6">
-                    <div className="bg-slate-800/40 border border-slate-700 p-5 rounded-2xl space-y-4">
-                        <h4 className="text-[10px] uppercase font-bold text-blue-400 tracking-widest border-b border-slate-700 pb-2">1. Detalles de Entrada (Compra)</h4>
+                    <div className="bg-yellow-900/20 border border-yellow-500/30 p-5 rounded-2xl shadow-inner">
+                      
+                        <h4 className="text-[12px] uppercase font-bold text-blue-400 tracking-widest border-b border-slate-700 pb-2 flex items-center">
+                            <span className="section-number">1</span> Detalles de Entrada (Compra)
+                        </h4>
                         <div className="grid grid-cols-2 gap-4">
                           <div>  <label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Ticker: NYSE:AAPL, BTCUSD o ISIN</label>
                             <div className="flex gap-2">
@@ -4726,23 +4752,44 @@ const getMarketStatus = (p) => {
                                     )}
                                 </button>
                             </div>
-                        </div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Divisa</label><select value={form.stockCurrency || 'USD'} onChange={e => { const newCurr = e.target.value; const isBase = newCurr === baseCurrency; setForm({...form, stockCurrency: newCurr, buyFx: isBase ? 1 : form.buyFx, currentFx: isBase ? 1 : form.currentFx }); }} className="w-full bg-slate-900 border border-slate-700 text-xs font-bold text-white h-[38px]">{CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.code}</option>)}</select></div></div><div className="grid grid-cols-2 gap-4"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Empresa</label><input type="text" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="w-full text-slate-300 font-bold text-sm bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Fecha Compra Inicial</label><input type="date" value={form.buyDate} onChange={e=>setForm({...form, buyDate: e.target.value})} disabled={form.lots?.length > 0} className={`w-full text-sm font-bold bg-slate-900 border-slate-700 text-right ${form.lots?.length > 0 ? 'opacity-50 cursor-not-allowed text-slate-500' : ''}`} /></div></div><div className="flex items-center gap-2 bg-slate-900/50 p-2 rounded border border-slate-700 justify-end"><input type="checkbox" id="mIdx" checked={form.isIndex} onChange={e=>setForm({...form, isIndex:e.target.checked})} className="custom-checkbox" /><label htmlFor="mIdx" className="text-[10px] uppercase font-bold text-slate-400">Es Índice / Fondo</label>{form.isIndex && <input type="number" step="0.01" value={form.indexDivisor} onChange={e=>setForm({...form, indexDivisor:parseFloat(e.target.value)})} className="w-16 h-6 py-0 px-1 ml-auto text-xs font-mono text-right" placeholder="Divisor" />}</div><div className="grid grid-cols-3 gap-3"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Títulos</label><input type="number" value={form.shares === 0 ? '' : (form.lots?.length > 0 ? Number(form.shares).toFixed(2) : form.shares)} placeholder="0" onChange={e=>setForm({...form, shares: parseFloat(e.target.value) || 0})} disabled={form.lots?.length > 0} className={`w-full font-mono font-bold text-white text-sm bg-slate-900 border-slate-700 text-right ${form.lots?.length > 0 ? 'opacity-50 cursor-not-allowed' : ''}`} /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Precio Medio</label><input type="number" step="0.01" value={form.buyPrice === 0 ? '' : (form.lots?.length > 0 ? Number(form.buyPrice).toFixed(2) : form.buyPrice)} placeholder="0.00" onChange={e=>setForm({...form, buyPrice: parseFloat(e.target.value) || 0})} disabled={form.lots?.length > 0} className={`w-full font-mono font-bold text-white text-sm bg-slate-900 border-slate-700 text-right ${form.lots?.length > 0 ? 'opacity-50 cursor-not-allowed' : ''}`} /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">PER Ponderado</label><input type="number" step="0.1" value={form.buyPE === 0 ? '' : form.buyPE} placeholder="0.0" onChange={e=>setForm({...form, buyPE: parseFloat(e.target.value) || 0})} disabled={form.lots?.length > 0} className={`w-full font-mono font-bold text-yellow-500 text-sm bg-slate-900 border-slate-700 text-right ${form.lots?.length > 0 ? 'opacity-50 cursor-not-allowed' : ''}`} /></div></div><div className="grid grid-cols-3 gap-3"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">FX (divisa VS €)</label><input type="number" step="0.0001" value={form.lots?.length > 0 ? Number(form.buyFx).toFixed(4) : form.buyFx} onChange={e=>setForm({...form, buyFx: parseFloat(e.target.value)})} disabled={form.stockCurrency === baseCurrency || form.lots?.length > 0} className={`w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right ${form.stockCurrency === baseCurrency || form.lots?.length > 0 ? 'opacity-50 cursor-not-allowed' : ''}`} /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Gastos Totales</label><input type="number" step="0.01" value={form.fees === 0 ? '' : form.fees} placeholder="0.00" onChange={e=>setForm({...form, fees: parseFloat(e.target.value) || 0})} disabled={form.lots?.length > 0} className={`w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right ${form.lots?.length > 0 ? 'opacity-50 cursor-not-allowed' : ''}`} /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Ajustes</label><input type="number" step="0.01" value={form.adjustments === 0 ? '' : form.adjustments} placeholder="0.00" onChange={e=>setForm({...form, adjustments: parseFloat(e.target.value) || 0})} disabled={form.lots?.length > 0} className={`w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right ${form.lots?.length > 0 ? 'opacity-50 cursor-not-allowed' : ''}`} /></div></div><div className="flex items-center justify-end gap-2 bg-slate-900/30 p-2 rounded-lg border border-slate-700/50"><input type="checkbox" id="feesIncBuy" checked={form.feesIncludedInPrice} onChange={e=>setForm({...form, feesIncludedInPrice: e.target.checked})} className="custom-checkbox" /><label htmlFor="feesIncBuy" className="text-[10px] font-bold text-slate-400 uppercase">Gastos Broker incluidos en el precio</label></div><div className="bg-blue-600/10 border border-blue-500/50 p-4 rounded-xl flex justify-between items-center shadow-lg"><div className="text-[10px] uppercase font-bold text-blue-400 italic font-mono">{form.lots?.length > 0 ? '∑ Suma Total Exacta de Lotes' : `(${formatN(form.shares)} x ${formatN(form.buyPrice)} x ${formatN(form.buyFx, 4)}) + ${formatN((form.feesIncludedInPrice ? 0 : (form.fees||0)) + (form.adjustments||0))}`}</div><div className="text-right"><div className="text-[8px] text-blue-400 font-black uppercase mb-1">Costo Adquisición</div><div className="text-lg font-black text-white leading-none font-mono">{formatMoney(form.lots?.length > 0 ? form.lots.reduce((acc, lot) => acc + ((parseFloat(lot.shares||0) * parseFloat(lot.price||0) * parseFloat(lot.fx||1)) + (form.feesIncludedInPrice ? 0 : parseFloat(lot.fees||0)) + parseFloat(lot.adj||0)), 0) : ((form.shares * form.buyPrice * form.buyFx) + (form.feesIncludedInPrice ? 0 : (form.fees||0)) + (form.adjustments||0)), baseCurrency)}</div></div></div>
+                        </div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Divisa</label><select value={form.stockCurrency || 'USD'} onChange={e => { const newCurr = e.target.value; const isBase = newCurr === baseCurrency; setForm({...form, stockCurrency: newCurr, buyFx: isBase ? 1 : form.buyFx, currentFx: isBase ? 1 : form.currentFx }); }} className="w-full bg-slate-900 border border-slate-700 text-xs font-bold text-white h-[38px]">{CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.code}</option>)}</select></div></div><div className="grid grid-cols-2 gap-4"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Empresa</label><input type="text" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="w-full text-slate-300 font-bold text-sm bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Fecha Compra Inicial</label><input type="date" value={form.buyDate} onChange={e=>setForm({...form, buyDate: e.target.value})} disabled={form.lots?.length > 0} className={`w-full text-sm font-bold bg-slate-900 border-slate-700 text-right ${form.lots?.length > 0 ? 'opacity-50 cursor-not-allowed text-slate-500' : ''}`} /></div></div><div className="flex items-center gap-2 bg-slate-900/50 p-2 rounded border border-slate-700 justify-end"><input type="checkbox" id="mIdx" checked={form.isIndex} onChange={e=>setForm({...form, isIndex:e.target.checked})} className="custom-checkbox" /><label htmlFor="mIdx" className="text-[10px] uppercase font-bold text-slate-400">Es Índice / Fondo</label>{form.isIndex && <input type="number" step="0.01" value={form.indexDivisor} onChange={e=>setForm({...form, indexDivisor:parseFloat(e.target.value)})} className="w-16 h-6 py-0 px-1 ml-auto text-xs font-mono text-right" placeholder="Divisor" />}</div><div className="grid grid-cols-3 gap-3"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Títulos</label><input type="number" value={form.shares === 0 ? '' : (form.lots?.length > 0 ? Number(form.shares).toFixed(2) : form.shares)} placeholder="0" onChange={e=>setForm({...form, shares: parseFloat(e.target.value) || 0})} disabled={form.lots?.length > 0} className={`w-full font-mono font-bold text-white text-sm bg-slate-900 border-slate-700 text-right ${form.lots?.length > 0 ? 'opacity-50 cursor-not-allowed' : ''}`} /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Precio Medio</label><input type="number" step="0.01" value={form.buyPrice === 0 ? '' : (form.lots?.length > 0 ? Number(form.buyPrice).toFixed(2) : form.buyPrice)} placeholder="0.00" onChange={e=>setForm({...form, buyPrice: parseFloat(e.target.value) || 0})} disabled={form.lots?.length > 0} className={`w-full font-mono font-bold text-white text-sm bg-slate-900 border-slate-700 text-right ${form.lots?.length > 0 ? 'opacity-50 cursor-not-allowed' : ''}`} /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">PER Ponderado</label><input type="number" step="0.1" value={form.buyPE === 0 ? '' : form.buyPE} placeholder="0.0" onChange={e=>setForm({...form, buyPE: parseFloat(e.target.value) || 0})} disabled={form.lots?.length > 0} className={`w-full font-mono font-bold text-yellow-500 text-sm bg-slate-900 border-slate-700 text-right ${form.lots?.length > 0 ? 'opacity-50 cursor-not-allowed' : ''}`} /></div></div><div className="grid grid-cols-3 gap-3"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">FX (divisa VS €)</label><input type="number" step="0.0001" value={form.lots?.length > 0 ? Number(form.buyFx).toFixed(4) : form.buyFx} onChange={e=>setForm({...form, buyFx: parseFloat(e.target.value)})} disabled={form.stockCurrency === baseCurrency || form.lots?.length > 0} className={`w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right ${form.stockCurrency === baseCurrency || form.lots?.length > 0 ? 'opacity-50 cursor-not-allowed' : ''}`} /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Gastos Totales</label><input type="number" step="0.01" value={form.fees === 0 ? '' : form.fees} placeholder="0.00" onChange={e=>setForm({...form, fees: parseFloat(e.target.value) || 0})} disabled={form.lots?.length > 0} className={`w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right ${form.lots?.length > 0 ? 'opacity-50 cursor-not-allowed' : ''}`} /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Ajustes</label><input type="number" step="0.01" value={form.adjustments === 0 ? '' : form.adjustments} placeholder="0.00" onChange={e=>setForm({...form, adjustments: parseFloat(e.target.value) || 0})} disabled={form.lots?.length > 0} className={`w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right ${form.lots?.length > 0 ? 'opacity-50 cursor-not-allowed' : ''}`} /></div></div><div className="flex items-center justify-end gap-2 bg-slate-900/30 p-2 rounded-lg border border-slate-700/50"><input type="checkbox" id="feesIncBuy" checked={form.feesIncludedInPrice} onChange={e=>setForm({...form, feesIncludedInPrice: e.target.checked})} className="custom-checkbox" /><label htmlFor="feesIncBuy" className="text-[10px] font-bold text-slate-400 uppercase">Gastos Broker incluidos en el precio</label></div><div className="bg-blue-600/10 border border-blue-500/50 p-4 rounded-xl flex justify-between items-center shadow-lg mt-5">
+                        <div className="text-[10px] uppercase font-bold text-blue-400 italic font-mono">
+                            ({formatN(form.shares)} x {formatN(form.buyPrice)} x {formatN(form.buyFx, 4)}) + {formatN((form.feesIncludedInPrice ? 0 : (form.fees||0)) + (form.adjustments||0))}
+                            {form.lots?.length > 0 ? ' (Ponderado)' : ''}
+                        </div>
+                        <div className="text-right">
+                            <div className="text-[8px] text-blue-400 font-black uppercase mb-1">Costo Adquisición</div>
+                            <div className="text-lg font-black text-white leading-none font-mono">
+                                {formatMoney(form.lots?.length > 0 ? form.lots.reduce((acc, lot) => acc + ((parseFloat(lot.shares||0) * parseFloat(lot.price||0) * parseFloat(lot.fx||1)) + (form.feesIncludedInPrice ? 0 : parseFloat(lot.fees||0)) + parseFloat(lot.adj||0)), 0) : ((form.shares * form.buyPrice * form.buyFx) + (form.feesIncludedInPrice ? 0 : (form.fees||0)) + (form.adjustments||0)), baseCurrency)}
+                            </div>
+                        </div>
+                    </div>
                     </div>
                     
                     {editingId && portfolio.find(x=>x.id===editingId)?.sellDate ? (
-                        <div className="bg-orange-900/10 border border-orange-500/30 p-5 rounded-2xl space-y-4 shadow-xl"><h4 className="text-[10px] uppercase font-bold text-orange-400 tracking-widest border-b border-orange-500/20 pb-2">2. Detalles de Liquidación (Venta)</h4><div className="grid grid-cols-2 gap-4"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Fecha Venta</label><input type="date" value={form.sellDate} onChange={e=>setForm({...form, sellDate: e.target.value})} className="w-full font-bold text-sm bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Precio Venta</label><input type="number" step="0.001" value={form.sellPrice} onChange={e=>setForm({...form, sellPrice: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-white text-sm bg-slate-900 border-slate-700 text-right" /></div></div><div className="grid grid-cols-3 gap-3"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">FX Venta</label><input type="number" step="0.0001" value={form.sellFx} onChange={e=>setForm({...form, sellFx: parseFloat(e.target.value)})} disabled={form.stockCurrency === baseCurrency} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Gtos Venta</label><input type="number" step="0.01" value={form.sellFees} onChange={e=>setForm({...form, sellFees: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Adj. Venta</label><input type="number" step="0.01" value={form.sellAdjustments} onChange={e=>setForm({...form, sellAdjustments: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div></div><div className="flex items-center justify-end gap-2 bg-slate-900/30 p-2 rounded-lg border border-slate-700/50"><input type="checkbox" id="feesIncSell" checked={form.sellFeesIncludedInPrice} onChange={e=>setForm({...form, sellFeesIncludedInPrice: e.target.checked})} className="custom-checkbox" /><label htmlFor="feesIncSell" className="text-[10px] font-bold text-slate-400 uppercase">Gastos Broker incluidos en el precio</label></div><div className="bg-orange-600/20 border-2 border-orange-500 p-4 rounded-xl flex justify-between items-center shadow-lg"><div className="text-[10px] uppercase font-bold text-orange-400 italic font-mono">({formatN(form.shares)} x {formatN(form.sellPrice, 3)} x {formatN(form.sellFx, 4)}) - {formatN((form.sellFeesIncludedInPrice ? 0 : (form.sellFees||0)) + (form.sellAdjustments||0))}</div><div className="text-right"><div className="text-[8px] text-orange-400 font-black uppercase mb-1">Monto Liquidación</div><div className="text-lg font-black text-white leading-none font-mono">{formatMoney((form.shares * form.sellPrice * form.sellFx) - (form.sellFeesIncludedInPrice ? 0 : (form.sellFees || 0)) - (form.sellAdjustments || 0), baseCurrency)}</div></div></div></div>
+                        <div className="bg-orange-900/10 border border-orange-500/30 p-5 rounded-2xl space-y-4 shadow-xl"><h4 className="text-[12px] uppercase font-bold text-orange-400 tracking-widest border-b border-orange-500/20 pb-2">2. Detalles de Liquidación (Venta)</h4><div className="grid grid-cols-2 gap-4"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Fecha Venta</label><input type="date" value={form.sellDate} onChange={e=>setForm({...form, sellDate: e.target.value})} className="w-full font-bold text-sm bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Precio Venta</label><input type="number" step="0.001" value={form.sellPrice} onChange={e=>setForm({...form, sellPrice: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-white text-sm bg-slate-900 border-slate-700 text-right" /></div></div><div className="grid grid-cols-3 gap-3"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">FX Venta</label><input type="number" step="0.0001" value={form.sellFx} onChange={e=>setForm({...form, sellFx: parseFloat(e.target.value)})} disabled={form.stockCurrency === baseCurrency} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Gtos Venta</label><input type="number" step="0.01" value={form.sellFees} onChange={e=>setForm({...form, sellFees: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Adj. Venta</label><input type="number" step="0.01" value={form.sellAdjustments} onChange={e=>setForm({...form, sellAdjustments: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div></div><div className="flex items-center justify-end gap-2 bg-slate-900/30 p-2 rounded-lg border border-slate-700/50"><input type="checkbox" id="feesIncSell" checked={form.sellFeesIncludedInPrice} onChange={e=>setForm({...form, sellFeesIncludedInPrice: e.target.checked})} className="custom-checkbox" /><label htmlFor="feesIncSell" className="text-[10px] font-bold text-slate-400 uppercase">Gastos Broker incluidos en el precio</label></div><div className="bg-orange-600/20 border-2 border-orange-500 p-4 rounded-xl flex justify-between items-center shadow-lg mt-5">
+                        <div className="text-[10px] uppercase font-bold text-orange-400 italic font-mono">
+                            ({formatN(form.shares)} x {formatN(form.sellPrice, 3)} x {formatN(form.sellFx, 4)}) - {formatN((form.sellFeesIncludedInPrice ? 0 : (form.sellFees||0)) + (form.sellAdjustments||0))}
+                        </div>
+                        <div className="text-right">
+                            <div className="text-[8px] text-orange-400 font-black uppercase mb-1">Monto Liquidación</div>
+                            <div className="text-lg font-black text-white leading-none font-mono">
+                                {formatMoney((form.shares * form.sellPrice * form.sellFx) - (form.sellFeesIncludedInPrice ? 0 : (form.sellFees || 0)) - (form.sellAdjustments || 0), baseCurrency)}
+                            </div>
+                        </div>
+                    </div>
+                    </div>
                     ) : (
-                        <div className="bg-slate-800/40 border border-slate-700 p-5 rounded-2xl space-y-4"><h4 className="text-[10px] uppercase font-bold text-purple-400 tracking-widest border-b border-slate-700 pb-2">2. Situación Actual (Mercado)</h4><div className="grid grid-cols-3 gap-3"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Precio Actual</label><input type="number" step="0.01" value={form.currentPrice} onChange={e=>setForm({...form, currentPrice: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-white text-sm bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">FX Actual</label><input type="number" step="0.0001" value={form.currentFx} onChange={e=>setForm({...form, currentFx: parseFloat(e.target.value)})} disabled={form.stockCurrency === baseCurrency} className={`w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right ${form.stockCurrency === baseCurrency ? 'opacity-50' : ''}`} /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">PER Actual</label><input type="number" step="0.1" value={form.currentPE} onChange={e=>setForm({...form, currentPE: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-yellow-500 text-sm bg-slate-900 border-slate-700 text-right" /></div></div>
+                   <div className="bg-yellow-900/20 border border-yellow-500/30 p-5 rounded-2xl shadow-inner"><h4 className="text-[12px] uppercase font-bold text-orange-400 tracking-widest border-b border-orange-500/20 pb-2 flex items-center">
+                        <span className="section-number" style={{backgroundColor: '#ea580c'}}>2</span> Detalles de Liquidación (Venta)
+                    </h4><div className="grid grid-cols-3 gap-3"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Precio Actual</label><input type="number" step="0.01" value={form.currentPrice} onChange={e=>setForm({...form, currentPrice: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-white text-sm bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">FX Actual</label><input type="number" step="0.0001" value={form.currentFx} onChange={e=>setForm({...form, currentFx: parseFloat(e.target.value)})} disabled={form.stockCurrency === baseCurrency} className={`w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right ${form.stockCurrency === baseCurrency ? 'opacity-50' : ''}`} /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">PER Actual</label><input type="number" step="0.1" value={form.currentPE} onChange={e=>setForm({...form, currentPE: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-yellow-500 text-sm bg-slate-900 border-slate-700 text-right" /></div></div>
 
-
-
-                    <div className="bg-purple-600/10 border border-purple-500/50 p-4 rounded-xl flex justify-between items-center shadow-lg">
-                        <div className="text-[10px] uppercase font-bold text-purple-400 italic font-mono">
-                            {/* Cálculo corregido: Si es índice, aplicamos el divisor al precio */}
+                    <div className="bg-purple-600/10 border border-purple-500/50 p-4 rounded-xl flex justify-between items-center shadow-lg mt-5">
+                        <div className="text-[11px] uppercase font-bold text-purple-400 italic font-mono">
                             {form.isIndex ? (
                                 <>({formatN(form.shares)} x {formatN(form.currentPrice / (form.indexDivisor || 1))} x {formatN(form.currentFx, 4)})</>
                             ) : (
-                                <>{formatN(form.shares)} x {formatN(form.currentPrice)} x {formatN(form.currentFx, 4)}</>
+                                <>({formatN(form.shares)} x {formatN(form.currentPrice)} x {formatN(form.currentFx, 4)})</>
                             )}
                         </div>
                         <div className="text-right">
@@ -4758,13 +4805,15 @@ const getMarketStatus = (p) => {
                     </div>
 
 
+
                     </div>
                     )}
 
-
-                   <div className="bg-slate-950/50 border border-slate-700 p-5 rounded-2xl">
-                        <div className="flex justify-between items-center border-b border-slate-700 pb-2 mb-3">
-                            <h4 className="text-[10px] uppercase font-bold text-white tracking-widest">3. Métricas de Rendimiento</h4>
+                   <div className="bg-yellow-900/50 border border-yellow-500/50 p-5 rounded-2xl shadow-inner"> 
+                        <div className="flex justify-between items-center border-b border-yellow-500/30 pb-2 mb-3">
+                            <h4 className="text-[12px] uppercase font-bold text-green-400 tracking-widest border-b border-slate-700 pb-2 flex items-center">
+                                <span className="section-number" style={{backgroundColor: '#16a34a'}}>3</span> Métricas de Rendimiento
+                            </h4>
                             {editingId && portfolio.find(x=>x.id===editingId)?.sellDate && (
                                 <button 
                                     onClick={async (e) => { 
@@ -4826,7 +4875,15 @@ const getMarketStatus = (p) => {
                             return (
                                 <div>
                                     <div className="grid grid-cols-4 gap-4 text-center">
-                                        <div><div className="text-[8px] text-slate-500 uppercase font-bold">Días</div><div className="text-lg font-bold text-white">{formatN(days, 0)}</div></div>
+                                        <div>
+                                            <div className="text-[8px] text-slate-500 uppercase font-bold">Días</div>
+                                            <div className="text-lg font-bold text-white leading-tight">
+                                                {formatN(days, 0)}
+                                                <span className="text-[9px] text-slate-400 font-normal ml-1">
+                                                    ({formatN(days / 365.25, 1)} años)
+                                                </span>
+                                            </div>
+                                        </div>
                                         <div><div className="text-[8px] text-slate-500 uppercase font-bold">Resultado</div><div className={`text-lg font-bold ${pl>=0?'text-green-400':'text-red-400'}`}>{formatMoney(pl, baseCurrency)}</div></div>
                                         <div><div className="text-[8px] text-slate-500 uppercase font-bold">% Simple</div><div className={`text-lg font-bold ${returns.simple>=0?'text-green-400':'text-red-400'}`}>{formatN(returns.simple)}%</div></div>
                                         <div><div className="text-[8px] text-slate-500 uppercase font-bold">% Anual</div><div className={`text-lg font-bold ${returns.annual>=0?'text-green-400':'text-red-400'}`}>{formatN(returns.annual)}%</div></div>
@@ -4856,26 +4913,33 @@ const getMarketStatus = (p) => {
 
                     
 
-                  
-                        <div className="bg-slate-800/40 border border-slate-700 p-5 rounded-2xl space-y-4">
-                            <div className="flex justify-between items-center border-b border-slate-700 pb-2">
-                                <h4 className="text-[10px] uppercase font-bold text-green-400 tracking-widest">4. Dividendos y Retorno</h4>
+                        <div className="bg-yellow-900/20 border border-yellow-500/30 p-5 rounded-2xl shadow-inner">  
+                            <div className="flex justify-between items-center border-slate-700 pb-2">
+                                <h4 className="text-[12px] uppercase font-bold text-yellow-400 tracking-widest border-slate-700 pb-2 flex items-center">
+                                    <span className="section-number" style={{backgroundColor: '#ca8a04'}}>4</span> Dividendos y Retorno
+                                </h4>
+
                                 <button onClick={() => { handleSave(); if(onGoToDividends) onGoToDividends(); }} className="bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded text-[9px] font-bold flex items-center gap-1 transition-colors shadow">
                                     <Icons.Plus size={12}/> AÑADIR DIVIDENDO
                                 </button>
                             </div>
                             
-                            <div className="flex items-center gap-4">
+                            
+                            <div className="flex items-center gap-3">
                                 <div className="flex-1">
                                     <label className="text-[10px] uppercase font-bold text-green-400 mb-1 block">Dividendo Anual (Est.)</label>
                                     <input type="number" step="0.01" value={form.annualDividend} onChange={e=>setForm({...form, annualDividend: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-green-600/50 text-right text-green-400" />
                                 </div>
-                                <div className="bg-green-900/30 px-3 py-2 rounded border border-green-600/30 text-center">
-                                    <div className="text-[8px] text-green-300 uppercase font-bold">Rent. s/ Coste</div>
+                                <div className="bg-green-900/30 px-3 py-2 rounded border border-green-600/30 text-center min-w-[90px]">
+                                    <div className="text-[8px] text-green-300 uppercase font-bold">% s/ Precio Coste</div>
                                     <div className="text-sm font-bold text-white">{formatN(yieldOnCost)}%</div>
                                 </div>
+                                <div className="bg-blue-900/30 px-3 py-2 rounded border border-blue-600/30 text-center min-w-[90px]">
+                                    <div className="text-[8px] text-blue-300 uppercase font-bold">% s/Precio Actual</div>
+                                    <div className="text-sm font-bold text-white">{formatN(yieldOnCurrent)}%</div>
+                                </div>
                             </div>
-                            
+
                             {form.dividends && form.dividends.length > 0 && (() => { 
                                 const totalDivs = form.dividends.reduce((acc, d) => ({ net: acc.net + (d.net||0), org: acc.org + (d.taxOrigin||0), dst: acc.dst + (d.taxDest||0) }), {net:0, org:0, dst:0}); 
                                 return (
@@ -4885,10 +4949,11 @@ const getMarketStatus = (p) => {
                                             <div className="border-l border-slate-800"><div className="text-[8px] text-red-400 uppercase font-bold">Ret. Origen</div><div className="text-xs font-mono font-bold text-slate-300">{formatMoney(totalDivs.org, baseCurrency)}</div></div>
                                             <div className="border-l border-slate-800"><div className="text-[8px] text-red-400 uppercase font-bold">Ret. Destino</div><div className="text-xs font-mono font-bold text-slate-300">{formatMoney(totalDivs.dst, baseCurrency)}</div></div>
                                         </div>
-                                        
-                                        <button onClick={() => setShowDivBreakdown(!showDivBreakdown)} className="text-[9px] text-slate-400 hover:text-white uppercase font-bold text-right flex items-center justify-end gap-1 mt-1 transition-colors">
+
+                                        <button onClick={() => setShowDivBreakdown(!showDivBreakdown)} className="w-full bg-purple-900/40 hover:bg-purple-800/60 text-purple-200 border border-purple-500/40 px-4 py-2 rounded-lg text-xs uppercase font-bold transition-colors flex items-center justify-center gap-2 mt-3 shadow-sm">
                                             {showDivBreakdown ? 'Ocultar Desglose ▲' : 'Desplegar Dividendos ▼'}
                                         </button>
+
                                         
                                         {showDivBreakdown && (
                                             <div className="overflow-x-auto custom-scrollbar mt-2 bg-slate-900/50 rounded-lg border border-slate-700">
@@ -4931,10 +4996,9 @@ const getMarketStatus = (p) => {
                         </div>
                     
                    
-
-                    <div className="bg-slate-800/40 border border-slate-700 p-5 rounded-2xl space-y-4">
-                        <h4 className="text-[10px] uppercase font-bold text-yellow-400 tracking-widest border-b border-slate-700 pb-2">
-                            5. Objetivo Esperado de Venta / Riesgo Máximo {form.isIndex ? `(Divisor: ${form.indexDivisor})` : ''}
+                    <div className="bg-yellow-900/20 border border-yellow-500/30 p-5 rounded-2xl shadow-inner">
+                        <h4 className="text-[12px] uppercase font-bold text-yellow-400 tracking-widest border-b border-slate-700 pb-2 flex items-center">
+                            <span className="section-number" style={{backgroundColor: '#ca8a04'}}>5</span> Objetivo Esperado de Venta / Riesgo Máximo
                         </h4>
                         <div className="grid grid-cols-2 gap-4">
                             <div>
@@ -4990,11 +5054,12 @@ const getMarketStatus = (p) => {
                         })()}
                     </div>
 
-
-                    <div className="bg-slate-800/40 border border-slate-700 p-5 rounded-2xl space-y-4">                         
+                    <div className="bg-yellow-900/20 border border-yellow-500/30 p-5 rounded-2xl shadow-inner">
                         <div className="flex justify-between items-center border-b border-slate-700 pb-2">                             
-                            <h4 className="text-[10px] uppercase font-bold text-cyan-400 tracking-widest">6. Lotes de Compra / Venta</h4>                             
-                            <button onClick={addLot} className="bg-cyan-600 hover:bg-cyan-500 text-white px-3 py-1.5 rounded text-[9px] font-bold flex items-center gap-1 transition-colors shadow"><Icons.Plus size={12}/> AÑADIR LOTE</button>                         
+                        <h4 className="text-[12px] uppercase font-bold text-cyan-400 tracking-widest border-b border-slate-700 pb-2 flex items-center">
+                            <span className="section-number" style={{backgroundColor: '#0891b2'}}>6</span> Lotes de Compra / Venta
+                        </h4>  
+                        <button onClick={addLot} className="bg-cyan-600 hover:bg-cyan-500 text-white px-3 py-1.5 rounded text-[9px] font-bold flex items-center gap-1 transition-colors shadow"><Icons.Plus size={12}/> AÑADIR LOTE</button>                         
                         </div>                                                  
                         {(!form.lots || form.lots.length === 0) ? (                             
                             <div className="text-center p-4 bg-slate-900/50 rounded-xl border border-slate-700">                                 
@@ -5032,8 +5097,10 @@ const getMarketStatus = (p) => {
                         )}                     
                     </div>                      
                     
-                    <div className="bg-slate-800/40 border border-slate-700 p-5 rounded-2xl space-y-4">                         
-                        <h4 className="text-[10px] uppercase font-bold text-slate-400 tracking-widest border-b border-slate-700 pb-2">7. Clasificación y Notas</h4>                         
+                    <div className="bg-yellow-900/20 border border-yellow-500/30 p-5 rounded-2xl shadow-inner">
+                        <h4 className="text-[12px] uppercase font-bold text-slate-400 tracking-widest border-b border-slate-700 pb-2 flex items-center">
+                            <span className="section-number" style={{backgroundColor: '#475569'}}>7</span> Clasificación y Notas
+                        </h4>
                         <div className="grid grid-cols-2 gap-4">                             
                             <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Nº Ordenamiento</label><input type="text" value={form.customOrder || ''} onChange={e=>setForm({...form, customOrder: e.target.value})} placeholder="Ej: 01, A, 10..." className="w-full text-sm bg-slate-900 border-slate-700" /></div>                             
                             <div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Grupo / Estrategia</label><input type="text" value={form.group} onChange={e=>setForm({...form, group: e.target.value})} placeholder="Ej: Tecnológicas, Dividendos..." className="w-full text-sm bg-slate-900 border-slate-700" /></div>                         
