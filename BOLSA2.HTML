@@ -2194,6 +2194,16 @@ function fetchStockData(tickersString) {
            var start = html.indexOf('>', priceIdx) + 1;
            var end = html.indexOf('<' + '/div>', start);
            res.p = cleanNumGAS(html.substring(start, end));
+           
+           var prevCloseIdx = html.indexOf('data-attrid="Previous close"');
+           if (prevCloseIdx > -1) {
+               var pcClassIdx = html.indexOf('class="P6K39c"', prevCloseIdx);
+               if (pcClassIdx > -1) {
+                   var pcStart = html.indexOf('>', pcClassIdx) + 1;
+                   var pcEnd = html.indexOf('<', pcStart);
+                   res.pc = cleanNumGAS(html.substring(pcStart, pcEnd));
+               }
+           }
            res.success = true;
         }
         results[rawTicker] = res;
@@ -3527,8 +3537,8 @@ const getMarketStatus = (p) => {
           if (sortConfig.key === 'percent') { const getPct = (p) => { const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0); const isS = !!p.sellDate; const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor||1) : p.currentPrice); const curF = isS ? p.sellFx : p.currentFx; const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0); const ds = (p.dividends || []).reduce((acc,d)=>acc+d.net,0); const days = calculateDays(p.buyDate, p.sellDate || new Date()); return calcReturns(cost, vF + ds, days).simple; }; return (getPct(a) - getPct(b)) * dir; } 
           if (sortConfig.key === 'intraday') { 
               const getIntra = (p) => {
-                  const mStatus = getMarketStatus(p);
-                  if (p.sellDate || !p.previousClose || !mStatus.open) return 0;
+                  if (p.sellDate || !p.previousClose) return 0;  
+
                   const curP = p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice;
                   const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                   const curF = p.isIndex ? p.buyFx : p.currentFx;
@@ -3661,8 +3671,7 @@ const getMarketStatus = (p) => {
                 
                 totalFeesAdj += isS ? (parseFloat(p.sellFees)||0)+(parseFloat(p.sellAdjustments)||0) : (parseFloat(p.fees)||0)+(parseFloat(p.adjustments)||0);
 
-                const mStatus = getMarketStatus(p); 
-                if (!isS && p.previousClose && mStatus.open) {
+                if (!isS && p.previousClose) {
                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                     intra += (eP - prevP) * p.shares * eF;
                     prevValTotal += (prevP * p.shares * eF);
@@ -4011,7 +4020,6 @@ const getMarketStatus = (p) => {
             let updatesMap = {}; 
             let totallyFailed = [];
     
-            // 1. INTENTAR VÍA SCRIPT (Mantiene la lógica original que funcionaba)
             if (scriptUrl) {
                 setUpdateText('Consultando Mercados...');
                 const tickers = active.map(p => p.ticker);
@@ -4026,11 +4034,12 @@ const getMarketStatus = (p) => {
                     const fxKey = item.stockCurrency + baseCurrency;
                     const fxData = data[fxKey];
     
-                    // Filtro de integridad: Si es el SP500 y da precio < 95, lo marcamos como fallido para la IA
                     const price = stockData?.success ? cleanVal(stockData.p) : 0;
-                    
                     if (stockData?.success && price > (item.ticker.includes(".INX") ? 95 : 0)) {
                         updatesMap[item.id] = { currentPrice: price };
+                        if (stockData.pc !== undefined) {
+                            updatesMap[item.id].previousClose = cleanVal(stockData.pc);
+                        }
                         if (item.stockCurrency !== baseCurrency && fxData?.success) {
                             updatesMap[item.id].currentFx = cleanVal(fxData.p);
                         }
@@ -4042,11 +4051,9 @@ const getMarketStatus = (p) => {
                 totallyFailed = active.map(p => p.ticker);
             }
     
-            // 2. RESCATE DE FALLIDOS VÍA IA
             if (totallyFailed.length > 0 && apiKey) {
                 setUpdateText('Rescatando fallidos con IA...');
-                // Pedimos un JSON donde cada ticker tenga un objeto {p: precio, fx: cambio}
-                const prompt = `Actúa como API. Para estos tickers: ${totallyFailed.join(', ')}, devuelve el precio y el tipo de cambio a ${baseCurrency}. Formato JSON estricto: {"TICKER": {"p": precio, "fx": cambio}}. USA PUNTO DECIMAL.`;
+                const prompt = `Actúa como API. Para estos tickers: ${totallyFailed.join(', ')}, devuelve el precio actual, el cierre anterior (pc) y el tipo de cambio a ${baseCurrency}. Formato JSON estricto: {"TICKER": {"p": precio, "pc": cierre_anterior, "fx": cambio}}. USA PUNTO DECIMAL.`;
                 
                 try {
                     const aiRes = await askGemini(apiKey, prompt, aiModel);
@@ -4058,15 +4065,17 @@ const getMarketStatus = (p) => {
                                 updatesMap[item.id] = { 
                                     ...updatesMap[item.id], 
                                     currentPrice: cleanVal(res.p),
+                                    ...(res.pc !== undefined ? { previousClose: cleanVal(res.pc) } : {}),
                                     ...(res.fx ? { currentFx: cleanVal(res.fx) } : {})
                                 };
                             }
                         });
                     }
+
+
                 } catch (aiErr) { console.error("Fallo rescate IA:", aiErr); }
             }
     
-            // 3. APLICAR ACTUALIZACIONES
             if (Object.keys(updatesMap).length > 0) {
                 setPortfolio(prev => prev.map(p => updatesMap[p.id] ? { ...p, ...updatesMap[p.id] } : p));
                 setLastUpdate(new Date().toISOString());
@@ -4487,10 +4496,9 @@ const getMarketStatus = (p) => {
                                 const days = calculateDays(p.buyDate, p.sellDate || new Date()); 
                                 const rs = calcReturns(cost, vF + ds, days); 
 
-
-                               let intraVal = 0, intraPct = 0, intraUnit = 0, hasIntra = false;
+                                let intraVal = 0, intraPct = 0, intraUnit = 0, hasIntra = false;
                                 const mStatus = getMarketStatus(p); 
-                                if (!isS && p.previousClose && (mStatus.status === 'OPEN' || mStatus.status === 'CLOSED')) {
+                                if (!isS && p.previousClose) {
                                     const rawCurP = p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice;
                                     const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
                                     const curF = p.isIndex ? p.buyFx : p.currentFx;
@@ -4501,16 +4509,15 @@ const getMarketStatus = (p) => {
                                 } 
 
                                 const totalAbsIntra = visiblePortfolio.reduce((sum, item) => {
-                                    const mSt = getMarketStatus(item);
-                                    if (!item.sellDate && item.previousClose && mSt.open) {
+                                    if (!item.sellDate && item.previousClose) {
                                         const cP = item.isIndex ? item.currentPrice / (item.indexDivisor || 1) : item.currentPrice;
                                         const pP = item.isIndex ? item.previousClose / (item.indexDivisor || 1) : item.previousClose;
                                         const f = item.isIndex ? item.buyFx : item.currentFx;
                                         return sum + Math.abs((cP - pP) * item.shares * f);
                                     }
                                     return sum;
-                                }, 0);
-                                
+                                }, 0);    
+    
                                 const wIntra = totalAbsIntra > 0 ? (Math.abs(intraVal) / totalAbsIntra) * 100 : 0;
                                 
                                 
