@@ -3212,6 +3212,64 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const [isFetchingStrategyNews, setIsFetchingStrategyNews] = useState(false);
     const [strategyNewsData, setStrategyNewsData] = useState(null);
 
+    const [isInferring, setIsInferring] = useState(false);
+
+    const handleInferPrice = async (e) => {
+        e.preventDefault();
+        if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' });
+        if (!form.ticker || !form.shares || !form.currentPrice) {
+            return setInfoModal({ isOpen: true, title: 'Faltan Datos', msg: 'Para inferir la compra necesitas indicar el Ticker, el Nº de Acciones y haber rescatado el Precio Actual (botón lupa del bloque 1).', type: 'warning' });
+        }
+
+        const profitInput = window.prompt(`Introduce la PLUSVALÍA o MINUSVALÍA total de tu posición actual en ${baseCurrency} (Usa el signo '-' para pérdidas):\n\nActivo: ${form.ticker}\nAcciones: ${form.shares}\nPrecio Actual Mercado: ${form.currentPrice}`);
+        if (profitInput === null || profitInput === "") return;
+
+        const profit = parseFloat(profitInput.replace(',', '.'));
+        if (isNaN(profit)) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Cantidad de plusvalía no válida.', type: 'error' });
+
+        const curP = form.isIndex ? (form.currentPrice / (form.indexDivisor || 1)) : form.currentPrice;
+        const curF = form.currentFx || 1;
+        const currentValueBase = form.shares * curP * curF;
+        const targetCostBase = currentValueBase - profit;
+
+        if (targetCostBase <= 0) {
+            return setInfoModal({ isOpen: true, title: 'Error Matemático', msg: 'Los datos introducidos dan un coste de compra negativo o cero, lo cual es imposible. Revisa la plusvalía introducida.', type: 'error' });
+        }
+
+        const targetCostPerShareBase = targetCostBase / form.shares;
+        setIsInferring(true);
+
+        try {
+            const prompt = `Actúa como un experto financiero e historiador de mercados. 
+            El usuario tiene ${form.shares} acciones de "${form.ticker}" (Divisa cotización: ${form.stockCurrency}). 
+            Sabemos matemáticamente que su COSTE POR ACCIÓN original equivalente en ${baseCurrency} fue exactamente de ${targetCostPerShareBase.toFixed(4)}.
+            Busca en el historial de cotizaciones de ${form.ticker} y en el historial del tipo de cambio ${form.stockCurrency}/${baseCurrency} una fecha en el pasado donde:
+            (Precio de la acción en ${form.stockCurrency}) * (Tipo de cambio a ${baseCurrency}) sea aproximadamente ${targetCostPerShareBase.toFixed(4)}.
+            Devuelve ÚNICAMENTE un JSON estricto con:
+            {"date": "YYYY-MM-DD", "price": precio_en_divisa_local, "fx": tipo_de_cambio_a_base}
+            Si la divisa de la acción es la misma que la base (${baseCurrency}), fx debe ser 1.`;
+
+            const res = await askGemini(apiKey, prompt, aiModel);
+            const json = extractJSON(res);
+
+            if (json && json.date && json.price) {
+                setForm(prev => ({
+                    ...prev,
+                    buyDate: json.date,
+                    buyPrice: parseFloat(json.price),
+                    buyFx: parseFloat(json.fx) || 1
+                }));
+                setInfoModal({ isOpen: true, title: 'Inferencia Completada', msg: `Cálculo cruzado exitoso:\n\nSe ha estimado la compra el ${json.date.split('-').reverse().join('/')} a un precio local de ${parseFloat(json.price).toFixed(2)} ${form.stockCurrency} (FX estimado: ${json.fx || 1}).\n\nEl panel de Resultados (3) ya refleja tu plusvalía exacta.`, type: 'success' });
+            } else {
+                throw new Error("No se pudo inferir la fecha exacta en el registro histórico. Revisa los datos o introduce la fecha manualmente.");
+            }
+        } catch (e) {
+            setInfoModal({ isOpen: true, title: 'Error Inferencia', msg: e.message, type: 'error' });
+        } finally {
+            setIsInferring(false);
+        }
+    };
+
     const openStrategyModal = (p) => {
         setStrategyItem(p);
         
@@ -3873,31 +3931,30 @@ const getMarketStatus = (p) => {
             const stock = googleData ? googleData[form.ticker] : null;
             const fx = googleData ? googleData[fxPair] : null;
 
-            if (stock && stock.success) {
+         if (stock && stock.success) {
                 const isBase = inferredCurrency === baseCurrency;
                 setForm(prev => ({
                     ...prev, 
                     name: stock.n || prev.name || form.ticker, 
                     buyPrice: prev.buyPrice || stock.p,
-                    currentPrice: stock.p, // <-- Aseguramos carga en Panel 2
+                    currentPrice: stock.p, 
                     stockCurrency: inferredCurrency,
                     buyFx: isBase ? 1 : (prev.buyFx !== 1 ? prev.buyFx : (fx?.success ? fx.p : 1)), 
-                    currentFx: isBase ? 1 : (fx?.success ? fx.p : prev.currentFx), // <-- Aseguramos carga en Panel 2
+                    currentFx: isBase ? 1 : (fx?.success ? fx.p : prev.currentFx), 
                     buyPE: prev.buyPE || stock.pe, 
-                    currentPE: stock.pe || prev.currentPE, // <-- Aseguramos carga en Panel 2
+                    currentPE: stock.pe || prev.currentPE, 
                     annualDividend: stock.div || prev.annualDividend
                 }));
                 if (stock.p > 0) { setFetchingSingle(false); return; }
             }
 
-            
             let prompt = isIsinCode 
                 ? `Actúa como API financiera. Busca el fondo con ISIN "${form.ticker}". Identifica su divisa base. Responde SOLO JSON: {"n":"nombre completo","p":valor_actual,"currency":"Divisa_ISO_3_letras","fx":cambio_a_${baseCurrency}}. USA PUNTO DECIMAL.` 
                 : `Actúa como API financiera. Busca la acción "${form.ticker}". Identifica su divisa de cotización en el mercado real. Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"currency":"Divisa_ISO_3_letras","fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_numero}. USA PUNTO DECIMAL.`;
 
             const aiRes = await askGemini(apiKey, prompt, aiModel);
             const json = extractJSON(aiRes);
-
+            
             if (json) {
                 setForm(prev => {
                     const newCurrency = json.currency || inferredCurrency;
@@ -3906,18 +3963,17 @@ const getMarketStatus = (p) => {
                         ...prev, 
                         name: json.n || prev.name, 
                         buyPrice: prev.buyPrice || json.p, 
-                        currentPrice: json.p, // <-- Aseguramos carga en Panel 2
+                        currentPrice: json.p,
                         stockCurrency: newCurrency,
                         buyFx: isBase ? 1 : (prev.buyFx !== 1 ? prev.buyFx : json.fx), 
-                        currentFx: isBase ? 1 : (json.fx || (prev.currentFx || 1)), // <-- Aseguramos carga en Panel 2
+                        currentFx: isBase ? 1 : (json.fx || (prev.currentFx || 1)), 
                         buyPE: isIsinCode ? 0 : (prev.buyPE || json.pe), 
-                        currentPE: isIsinCode ? 0 : (json.pe || prev.currentPE), // <-- Aseguramos carga en Panel 2
+                        currentPE: isIsinCode ? 0 : (json.pe || prev.currentPE), 
                         annualDividend: isIsinCode ? 0 : (json.div || prev.annualDividend), 
                         isIndex: isIsinCode ? true : prev.isIndex 
                     };
                 });
             }
-            
         } catch (e) {
             setInfoModal({ isOpen: true, title: 'Fallo', msg: `No se pudieron rescatar datos completos para ${form.ticker}. Rellena manualmente.`, type: 'error' });
         } finally { setFetchingSingle(false); }
@@ -4890,6 +4946,7 @@ const getMarketStatus = (p) => {
                             </div>
                         </div>
                     </div>
+
                     
                     {editingId && portfolio.find(x=>x.id===editingId)?.sellDate ? (
                         <div className="bg-orange-900/10 border border-orange-500/30 p-5 rounded-2xl space-y-4 shadow-xl"><h4 className="text-[12px] uppercase font-bold text-orange-400 tracking-widest border-b border-orange-500/20 pb-2">2. Detalles de Liquidación (Venta)</h4><div className="grid grid-cols-2 gap-4"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Fecha Venta</label><input type="date" value={form.sellDate} onChange={e=>setForm({...form, sellDate: e.target.value})} className="w-full font-bold text-sm bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Precio Venta</label><input type="number" step="0.001" value={form.sellPrice} onChange={e=>setForm({...form, sellPrice: parseFloat(e.target.value)})} className="w-full font-mono font-bold text-white text-sm bg-slate-900 border-slate-700 text-right" /></div></div><div className="grid grid-cols-3 gap-3"><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">FX Venta</label><input type="number" step="0.0001" value={form.sellFx} onChange={e=>setForm({...form, sellFx: parseFloat(e.target.value)})} disabled={form.stockCurrency === baseCurrency} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Gtos Venta</label><input type="number" step="0.01" value={form.sellFees} onChange={e=>setForm({...form, sellFees: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div><div><label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Adj. Venta</label><input type="number" step="0.01" value={form.sellAdjustments} onChange={e=>setForm({...form, sellAdjustments: parseFloat(e.target.value)})} className="w-full font-mono text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div></div><div className="flex items-center justify-end gap-2 bg-slate-900/30 p-2 rounded-lg border border-slate-700/50"><input type="checkbox" id="feesIncSell" checked={form.sellFeesIncludedInPrice} onChange={e=>setForm({...form, sellFeesIncludedInPrice: e.target.checked})} className="custom-checkbox" /><label htmlFor="feesIncSell" className="text-[10px] font-bold text-slate-400 uppercase">Gastos Broker incluidos en el precio</label></div><div className="bg-orange-600/20 border-2 border-orange-500 p-4 rounded-xl flex justify-between items-center shadow-lg mt-5">
@@ -6166,64 +6223,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
     const [newsResult, setNewsResult] = useState('');
     const [analyzingNews, setAnalyzingNews] = useState(false);
     const [customNewsTopic, setCustomNewsTopic] = useState('');
-
-
-     const [isInferring, setIsInferring] = useState(false);
-
-    const handleInferPrice = async () => {
-        if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' });
-        if (!form.ticker || !form.shares || !form.currentPrice) {
-            return setInfoModal({ isOpen: true, title: 'Faltan Datos', msg: 'Para inferir la compra necesitas indicar el Ticker, el Nº de Acciones y haber rescatado el Precio Actual (botón lupa).', type: 'warning' });
-        }
-
-        const profitInput = window.prompt(`Introduce la PLUSVALÍA o MINUSVALÍA total de tu posición actual en ${baseCurrency} (Usa el signo '-' para pérdidas):\n\nActivo: ${form.ticker}\nAcciones: ${form.shares}\nPrecio Actual Mercado: ${form.currentPrice}`);
-        if (profitInput === null || profitInput === "") return;
-
-        const profit = parseFloat(profitInput.replace(',', '.'));
-        if (isNaN(profit)) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Cantidad no válida.', type: 'error' });
-
-        const curP = form.isIndex ? (form.currentPrice / (form.indexDivisor || 1)) : form.currentPrice;
-        const curF = form.currentFx || 1;
-        const currentValueBase = form.shares * curP * curF;
-        const targetCostBase = currentValueBase - profit;
-
-        if (targetCostBase <= 0) {
-            return setInfoModal({ isOpen: true, title: 'Error Matemático', msg: 'Los datos introducidos dan un coste de compra negativo o cero, lo cual es imposible. Revisa la plusvalía introducida.', type: 'error' });
-        }
-
-        const targetCostPerShareBase = targetCostBase / form.shares;
-        setIsInferring(true);
-
-        try {
-            const prompt = `Actúa como un experto financiero e historiador de mercados. 
-            El usuario tiene ${form.shares} acciones de "${form.ticker}" (Divisa cotización: ${form.stockCurrency}). 
-            Sabemos matemáticamente que su COSTE POR ACCIÓN original equivalente en ${baseCurrency} fue exactamente de ${targetCostPerShareBase.toFixed(4)}.
-            Busca en el historial de cotizaciones de ${form.ticker} y en el historial del tipo de cambio ${form.stockCurrency}/${baseCurrency} una fecha en el pasado donde:
-            (Precio de la acción en ${form.stockCurrency}) * (Tipo de cambio a ${baseCurrency}) sea aproximadamente ${targetCostPerShareBase.toFixed(4)}.
-            Devuelve ÚNICAMENTE un JSON estricto con:
-            {"date": "YYYY-MM-DD", "price": precio_en_divisa_local, "fx": tipo_de_cambio_a_base}
-            Si la divisa de la acción es la misma que la base (${baseCurrency}), fx debe ser 1.`;
-
-            const res = await askGemini(apiKey, prompt, aiModel);
-            const json = extractJSON(res);
-
-            if (json && json.date && json.price) {
-                setForm(prev => ({
-                    ...prev,
-                    buyDate: json.date,
-                    buyPrice: parseFloat(json.price),
-                    buyFx: parseFloat(json.fx) || 1
-                }));
-                setInfoModal({ isOpen: true, title: 'Inferencia Completada', msg: `Cálculo cruzado exitoso:\n\nSe ha estimado la compra el ${json.date.split('-').reverse().join('/')} a un precio local de ${parseFloat(json.price).toFixed(2)} ${form.stockCurrency} (FX estimado: ${json.fx || 1}).\n\nEl panel de Resultados (3) ya refleja tu plusvalía exacta.`, type: 'success' });
-            } else {
-                throw new Error("No se pudo inferir la fecha exacta en el registro histórico. Revisa los datos o introduce la fecha manualmente.");
-            }
-        } catch (e) {
-            setInfoModal({ isOpen: true, title: 'Error Inferencia', msg: e.message, type: 'error' });
-        } finally {
-            setIsInferring(false);
-        }
-    };
 
 
     const handleAddCustomQuestion = () => {
