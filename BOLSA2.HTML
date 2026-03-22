@@ -3212,7 +3212,6 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const [isFetchingStrategyNews, setIsFetchingStrategyNews] = useState(false);
     const [strategyNewsData, setStrategyNewsData] = useState(null);
 
-
 const [isInferring, setIsInferring] = useState(false);
     const [isInferModalOpen, setIsInferModalOpen] = useState(false);
     const [inferProfitInput, setInferProfitInput] = useState('');
@@ -3236,9 +3235,9 @@ const [isInferring, setIsInferring] = useState(false);
         if (isNaN(profit)) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Cantidad de plusvalía no válida.', type: 'error' });
 
         setIsInferring(true);
-        setInferResults([]); 
-        let tempResults = []; // Guardará los resultados progresivamente
-        let excludeDates = []; // Historial de fechas para evitar que la IA repita
+        
+        let tempResults = []; 
+        let excludeDates = []; 
 
         const curP = form.isIndex ? (form.currentPrice / (form.indexDivisor || 1)) : form.currentPrice;
         const curF = form.currentFx || 1;
@@ -3253,10 +3252,10 @@ const [isInferring, setIsInferring] = useState(false);
         const targetCostPerShareBase = targetCostBase / form.shares;
         const yearContext = inferYearInput.trim() ? `Busca a partir del año ${inferYearInput}.` : `Busca en el historial de los últimos 8 años.`;
 
-        try {
-            for (let i = 0; i < 3; i++) {
+        for (let i = 0; i < 3; i++) {
+            try {
                 const exclusionContext = excludeDates.length > 0 
-                    ? `OBLIGATORIO: Ya encontraste estas fechas: ${excludeDates.join(', ')}. EXCLÚYELAS y busca una fecha distinta (separada al menos por un par de meses).` 
+                    ? `OBLIGATORIO: Ya encontraste estas fechas: ${excludeDates.join(', ')}. EXCLÚYELAS y busca una fecha distinta (separada al menos por un par de meses de las anteriores).` 
                     : ``;
 
                 const prompt = `Actúa como un experto financiero e historiador de mercados.
@@ -3278,25 +3277,26 @@ const [isInferring, setIsInferring] = useState(false);
                 const res = await askGemini(apiKey, prompt, aiModel);
                 const json = extractJSON(res);
 
-                // Verificamos si la IA encontró una fecha válida o si tiró la toalla
                 if (json && !json.error && json.date && json.price) {
                     tempResults.push(json);
-                    excludeDates.push(json.date); // Añadimos a la lista negra para el siguiente ciclo
+                    excludeDates.push(json.date); // Añadimos a la lista negra local
                 } else {
-                    break; // Cortamos el bucle, no hay más coincidencias
+                    // Si responde con "not_found" o no encuentra JSON, cortamos el bucle.
+                    break;
                 }
+            } catch (e) {
+                console.warn(`Fallo en la iteración de inferencia ${i + 1}:`, e.message);
+                break;
             }
-
-            if (tempResults.length > 0) {
-                setInferResults(tempResults); // Volcamos al estado para mostrarlos en el Modal
-            } else {
-                throw new Error("No se pudo inferir la fecha en el registro histórico. Verifica la plusvalía o el año.");
-            }
-        } catch (e) {
-            setInfoModal({ isOpen: true, title: 'Error Inferencia', msg: e.message, type: 'error' });
-        } finally {
-            setIsInferring(false);
         }
+
+        if (tempResults.length > 0) {
+            setInferResults(tempResults); // Esto cambia la pantalla a la vista de selección
+        } else {
+            setInfoModal({ isOpen: true, title: 'No encontrado', msg: 'No se pudo inferir la fecha en el registro histórico. Verifica la plusvalía o el año.', type: 'warning' });
+        }
+        
+        setIsInferring(false); // Apagamos el spinner pase lo que pase
     };
 
     const applyInference = (selectedItem) => {
@@ -3309,6 +3309,8 @@ const [isInferring, setIsInferring] = useState(false);
         setIsInferModalOpen(false);
         setInfoModal({ isOpen: true, title: 'Datos Aplicados', msg: `Se ha establecido la compra el ${selectedItem.date.split('-').reverse().join('/')} a ${parseFloat(selectedItem.price).toFixed(2)} ${form.stockCurrency}.\n\nEl panel de Resultados refleja tu plusvalía exacta.`, type: 'success' });
     };
+
+
 
     const openStrategyModal = (p) => {
         setStrategyItem(p);
