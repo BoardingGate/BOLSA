@@ -3212,10 +3212,23 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const [isFetchingStrategyNews, setIsFetchingStrategyNews] = useState(false);
     const [strategyNewsData, setStrategyNewsData] = useState(null);
 
-const [inferStep, setInferStep] = useState('input'); // 'input', 'fail-options', 'manual-date', 'result-check'
+const [isInferring, setIsInferring] = useState(false);
+const [isInferModalOpen, setIsInferModalOpen] = useState(false);
+const [inferProfitInput, setInferProfitInput] = useState('');
+const [inferYearStart, setInferYearStart] = useState(new Date().getFullYear() - 4);
+const [inferStep, setInferStep] = useState('input'); // Controla los pasos: 'input', 'fail-options', 'manual-date', 'result-check'
 const [manualDateInput, setManualDateInput] = useState('');
-const [inferBackupData, setInferBackupData] = useState(null);
 const [diffWarning, setDiffWarning] = useState(null);
+
+const applyInferData = (date, price, fx) => {
+    setForm(prev => ({ 
+        ...prev, 
+        buyDate: date, 
+        buyPrice: parseFloat(price) || 0, 
+        buyFx: parseFloat(fx) || 1 
+    }));
+};
+
 
 
     // Función 1: Solo abre el Modal si están los datos correctos
@@ -3230,10 +3243,14 @@ const handleOpenInferModal = (e) => {
     };
 
     // Función 2: Ejecuta la matemática y la IA
-    const executeInference = async () => {
+const executeInference = async () => {
     const profit = parseFloat(inferProfitInput.replace(',', '.'));
     const startYear = parseInt(inferYearStart);
     
+    if (!form.shares || form.shares <= 0) {
+        return setStatusModal({ isOpen: true, title: 'Atención', msg: 'Debes indicar el número de acciones primero.', type: 'warning' });
+    }
+
     // Cálculos matemáticos base
     const curP = form.isIndex ? (form.currentPrice / (form.indexDivisor || 1)) : form.currentPrice;
     const curF = form.currentFx || 1;
@@ -3241,14 +3258,16 @@ const handleOpenInferModal = (e) => {
     const targetCostBase = currentValueBase - profit;
     const targetCostPerShareBase = targetCostBase / form.shares;
 
-    if (targetCostBase <= 0) return setInfoModal({ isOpen: true, title: 'Error', msg: 'La plusvalía indicada es superior al valor actual.', type: 'error' });
+    if (targetCostBase <= 0) {
+        return setStatusModal({ isOpen: true, title: 'Error', msg: 'La plusvalía indicada es superior al valor actual de la posición.', type: 'error' });
+    }
 
     setIsInferring(true);
     try {
-        const prompt = `Actúa como historiador financiero. Ticker: ${form.ticker} (${form.stockCurrency}). 
-        Coste objetivo por acción en ${baseCurrency}: ${targetCostPerShareBase.toFixed(4)}.
-        Busca desde el año ${startYear} la fecha donde (Precio local * FX a ${baseCurrency}) coincida.
-        Responde SOLO JSON: {"date": "YYYY-MM-DD", "price": precio_local, "fx": cambio_a_base}`;
+        const prompt = `Actúa como experto financiero. Ticker: ${form.ticker} (${form.stockCurrency}). 
+        Coste objetivo por acción expresado en ${baseCurrency}: ${targetCostPerShareBase.toFixed(4)}.
+        Busca desde el año ${startYear} en adelante la fecha exacta en la que (Precio local de la acción * FX de ese día a ${baseCurrency}) sea aproximadamente ${targetCostPerShareBase.toFixed(4)}.
+        Responde exclusivamente con un JSON estricto: {"date": "YYYY-MM-DD", "price": precio_en_divisa_local, "fx": cambio_a_base}`;
 
         const res = await askGemini(apiKey, prompt, aiModel);
         const json = extractJSON(res);
@@ -3256,8 +3275,8 @@ const handleOpenInferModal = (e) => {
         if (json && json.date) {
             applyInferData(json.date, json.price, json.fx);
             setIsInferModalOpen(false);
+            setInfoModal({ isOpen: true, title: 'Éxito', msg: `Se ha encontrado una coincidencia el ${json.date.split('-').reverse().join('/')}.`, type: 'success' });
         } else {
-            // Si falla la búsqueda, pasamos al paso de opciones
             setInferStep('fail-options');
         }
     } catch (e) {
@@ -3267,12 +3286,13 @@ const handleOpenInferModal = (e) => {
     }
 };
 
-// --- OPCIÓN A: CÁLCULO SIMPLE ---
+// 3. Opción A: Cálculo matemático inverso con FX actual
 const handleOptionA = () => {
     const profit = parseFloat(inferProfitInput.replace(',', '.'));
     const curF = form.currentFx || 1;
     const curP = form.isIndex ? (form.currentPrice / (form.indexDivisor || 1)) : form.currentPrice;
     
+    // Despejamos el precio de compra necesario para que con el FX actual de la plusvalía indicada
     const targetCostBase = (form.shares * curP * curF) - profit;
     const targetPriceLocal = targetCostBase / form.shares / curF;
     
@@ -3280,17 +3300,18 @@ const handleOptionA = () => {
     oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
     
     applyInferData(oneYearAgo.toISOString().split('T')[0], targetPriceLocal, curF);
-    setInfoModal({ isOpen: true, title: 'Aplicado (Opción A)', msg: 'Se ha aplicado el precio calculado al cambio actual. Por favor, ajusta la fecha manualmente para corregir el efecto del FX histórico.', type: 'warning' });
+    setInfoModal({ isOpen: true, title: 'Aplicado', msg: 'Se ha calculado el precio necesario al cambio actual. AJUSTA LA FECHA manualmente para que el programa rescate el FX histórico real.', type: 'warning' });
     setIsInferModalOpen(false);
+    setInferStep('input');
 };
 
-// --- OPCIÓN B: BUSCAR POR FECHA EXACTA ---
+// 4. Opción B: Búsqueda de datos por fecha exacta
 const handleOptionB = async () => {
     if (!manualDateInput) return;
     setIsInferring(true);
     try {
-        const prompt = `Busca el precio de cierre y el tipo de cambio ${form.stockCurrency}/${baseCurrency} para el ticker ${form.ticker} el día ${manualDateInput}. 
-        Responde SOLO JSON: {"price": valor, "fx": cambio}`;
+        const prompt = `Busca el precio de cierre y el tipo de cambio ${form.stockCurrency}/${baseCurrency} para el ticker ${form.ticker} el día exacto ${manualDateInput}. 
+        Responde exclusivamente con un JSON: {"price": valor, "fx": cambio_a_base}`;
         
         const res = await askGemini(apiKey, prompt, aiModel);
         const json = extractJSON(res);
@@ -3310,17 +3331,15 @@ const handleOptionB = async () => {
                 profitSim: profitSimulado
             });
             setInferStep('result-check');
+        } else {
+            throw new Error();
         }
     } catch (e) {
-        alert("No se pudieron obtener datos para esa fecha.");
+        alert("No se pudieron rescatar datos financieros para esa fecha. Intenta con otro día hábil.");
     } finally {
         setIsInferring(false);
     }
 };
-
-const applyInferData = (date, price, fx) => {
-    setForm(prev => ({ ...prev, buyDate: date, buyPrice: parseFloat(price), buyFx: parseFloat(fx) || 1 }));
-};  
 
     
     const openStrategyModal = (p) => {
