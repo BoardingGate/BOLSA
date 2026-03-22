@@ -3329,6 +3329,7 @@ const handleOptionA = () => {
     setInferStep('input');
 };
 
+
 // 4. Opción B: Búsqueda de datos por fecha exacta
 const handleOptionB = async () => {
     if (!manualDateInput) return;
@@ -4966,9 +4967,32 @@ const getMarketStatus = (p) => {
                             </div>
                             <div>
                                 <label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Fecha Compra Inicial</label>
-                                <input type="date" value={form.buyDate} onChange={e=>setForm({...form, buyDate: e.target.value})} disabled={form.lots?.length > 0} className={`w-full text-sm font-bold bg-slate-900 border-slate-700 text-right ${form.lots?.length > 0 ? 'opacity-50 cursor-not-allowed text-slate-500' : ''}`} />
+                                <div className="flex gap-2">
+                                    <input 
+                                        type="date" 
+                                        value={form.buyDate} 
+                                        onChange={e=>setForm({...form, buyDate: e.target.value})} 
+                                        disabled={form.lots?.length > 0} 
+                                        className={`w-full text-sm font-bold bg-slate-900 border-slate-700 text-right ${form.lots?.length > 0 ? 'opacity-50 cursor-not-allowed text-slate-500' : ''}`} 
+                                    />
+                                    <button 
+                                        onClick={(e) => {
+                                            e.preventDefault();
+                                            if (!form.ticker) return setInfoModal({ isOpen: true, title: 'Atención', msg: 'Introduce un Ticker primero.', type: 'warning' });
+                                            setManualDateInput(form.buyDate || new Date().toISOString().slice(0,10));
+                                            setInferStep('manual-date'); // Saltamos directo a la fecha
+                                            setIsInferModalOpen(true);
+                                        }}
+                                        disabled={form.lots?.length > 0}
+                                        title="Rescatar Precio y FX de una fecha específica"
+                                        className={`px-3 rounded font-black transition-all border ${form.lots?.length > 0 ? 'bg-slate-800 border-slate-700 text-slate-600 cursor-not-allowed' : 'bg-blue-600 border-blue-500 text-white hover:bg-blue-500 shadow-lg'}`}
+                                    >
+                                        🪄
+                                    </button>
+                                </div>
                             </div>
-                        </div>
+
+                           </div>
 
                         <div className="flex items-center gap-2 bg-slate-900/50 p-2 rounded border border-slate-700 justify-end mt-4">
                             <input type="checkbox" id="mIdx" checked={form.isIndex} onChange={e=>setForm({...form, isIndex:e.target.checked})} className="custom-checkbox" />
@@ -5600,24 +5624,56 @@ const getMarketStatus = (p) => {
         {inferStep === 'result-check' && diffWarning && (
             <div className="fade-in space-y-4">
                 <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-[11px] font-mono space-y-2">
-                    <div className="flex justify-between"><span>Precio el {diffWarning.date}:</span> <span className="text-white">{formatN(diffWarning.price)}</span></div>
-                    <div className="flex justify-between"><span>FX el {diffWarning.date}:</span> <span className="text-white">{formatN(diffWarning.fx, 4)}</span></div>
-                    <div className="border-t border-slate-800 pt-2 flex justify-between">
-                        <span>Beneficio resultante:</span> 
-                        <span className="text-blue-400 font-bold">{formatMoney(diffWarning.profitSim, baseCurrency)}</span>
+                    <div className="flex justify-between">
+                        <span className="text-slate-500 uppercase">Día:</span> 
+                        <span className="text-white font-bold">{diffWarning.date.split('-').reverse().join('/')}</span>
                     </div>
+                    <div className="flex justify-between">
+                        <span>Precio sesión:</span> 
+                        <span className="text-white">{formatN(diffWarning.price)} {form.stockCurrency}</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span>Cambio FX:</span> 
+                        <span className="text-white">{formatN(diffWarning.fx, 4)}</span>
+                    </div>
+                    
+                    {/* Solo mostramos la plusvalía si el usuario venía del flujo de "Plusvalía" (paso 1) */}
+                    {inferProfitInput && (
+                        <div className="border-t border-slate-800 pt-2 flex justify-between">
+                            <span>Plusvalía resultante:</span> 
+                            <span className="text-blue-400 font-bold">{formatMoney(diffWarning.profitSim, baseCurrency)}</span>
+                        </div>
+                    )}
                 </div>
-                {Math.abs(diffWarning.diff) > 1 && (
+        
+                {/* Alerta de discrepancia: solo si hay un input de plusvalía previo */}
+                {inferProfitInput && Math.abs(diffWarning.diff) > 2 && (
                     <div className="p-3 bg-red-900/20 border border-red-500/30 rounded-lg text-[10px] text-red-300">
-                        ⚠️ Hay una diferencia de <b>{formatMoney(diffWarning.diff, baseCurrency)}</b> respecto a la plusvalía que indicaste inicialmente.
+                        ⚠️ El precio hallado genera una diferencia de <b>{formatMoney(diffWarning.diff, baseCurrency)}</b> respecto a tu cálculo.
                     </div>
                 )}
-                <button onClick={() => { applyInferData(diffWarning.date, diffWarning.price, diffWarning.fx); setIsInferModalOpen(false); setInferStep('input'); }} className="w-full bg-blue-600 py-3 rounded-xl font-black uppercase text-[11px]">
-                    Aplicar estos datos igualmente
+        
+                <button 
+                    onClick={() => { 
+                        applyInferData(diffWarning.date, diffWarning.price, diffWarning.fx); 
+                        setIsInferModalOpen(false); 
+                        setInferStep('input'); 
+                        setInferProfitInput(''); // Limpiamos para la próxima
+                    }} 
+                    className="w-full bg-blue-600 py-3 rounded-xl font-black uppercase text-[11px] shadow-lg"
+                >
+                    Aplicar a la ficha
                 </button>
-                <button onClick={() => setInferStep('fail-options')} className="w-full text-[10px] text-slate-500 hover:text-white uppercase font-bold">Volver atrás</button>
+                
+                <button 
+                    onClick={() => setInferStep(inferProfitInput ? 'fail-options' : 'manual-date')} 
+                    className="w-full text-[10px] text-slate-500 uppercase font-bold hover:text-white transition-colors"
+                >
+                    Volver atrás
+                </button>
             </div>
         )}
+
 
     </div>
 </Modal>
