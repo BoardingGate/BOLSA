@@ -3213,30 +3213,30 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const [strategyNewsData, setStrategyNewsData] = useState(null);
 
 
-const [isInferring, setIsInferring] = useState(false);
-    const [isInferModalOpen, setIsInferModalOpen] = useState(false);
-    const [inferProfitInput, setInferProfitInput] = useState('');
-    const [inferYearInput, setInferYearInput] = useState('');
-    const [inferResults, setInferResults] = useState([]);
-
-    const handleOpenInferModal = (e) => {
+ const handleOpenInferModal = (e) => {
         e.preventDefault();
         if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' });
         if (!form.ticker || !form.shares || !form.currentPrice) {
             return setInfoModal({ isOpen: true, title: 'Faltan Datos', msg: 'Para inferir la compra necesitas el Ticker, Acciones y Precio Actual.', type: 'warning' });
         }
-        setInferProfitInput(''); setInferYearInput(''); setInferResults([]); 
+        setInferProfitInput(''); 
+        setInferYearInput('');
+        setInferResults([]); 
+        inferModalOpenRef.current = true; // Sincronizamos ref
         setIsInferModalOpen(true);
     };
 
-    const executeInference = async () => {
-        const profit = parseFloat(inferProfitInput.replace(',', '.'));
-        if (isNaN(profit)) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Cantidad no válida.', type: 'error' });
-
-        setIsInferring(true); // Esto ahora activará una pantalla de carga real
+    const executeInference = async (e) => {
+        if(e) e.preventDefault(); // Evitamos duplicidad de eventos
         
-        let tempResults = []; 
-        let excludeDates = []; 
+        const profit = parseFloat(inferProfitInput.replace(',', '.'));
+        if (isNaN(profit)) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Plusvalía no válida.', type: 'error' });
+
+        setIsInferring(true);
+        setInferResults([]);
+        
+        let tempResults = [];
+        let excludeDates = [];
 
         const curP = form.isIndex ? (form.currentPrice / (form.indexDivisor || 1)) : form.currentPrice;
         const curF = form.currentFx || 1;
@@ -3244,22 +3244,23 @@ const [isInferring, setIsInferring] = useState(false);
 
         if (targetCostPerShareBase <= 0) {
             setIsInferring(false);
-            return setInfoModal({ isOpen: true, title: 'Error Matemático', msg: 'Los datos dan un coste negativo. Revisa la plusvalía.', type: 'error' });
+            return setInfoModal({ isOpen: true, title: 'Error', msg: 'Coste de compra imposible (negativo).', type: 'error' });
         }
 
-        const yearContext = inferYearInput.trim() ? `Busca a partir del año ${inferYearInput}.` : `Busca en los últimos 8 años.`;
+        const yearContext = inferYearInput.trim() ? `Busca estrictamente desde el año ${inferYearInput} hasta hoy.` : `Busca en los últimos 8 años.`;
 
         for (let i = 0; i < 3; i++) {
-            try {
-                
-                const exclusionContext = excludeDates.length > 0 
-                    ? `OBLIGATORIO: Ya encontraste estas fechas: ${excludeDates.join(', ')}. EXCLÚYELAS y busca una fecha distinta.` : ``;
+            // Si el usuario cerró el modal mientras la iA buscaba, abortamos el bucle
+            if (!inferModalOpenRef.current) break;
 
-                const prompt = `Actúa como un experto financiero. Ticker: ${form.ticker}. Divisa: ${form.stockCurrency}.
-                Coste por acción equivalente en ${baseCurrency}: ${targetCostPerShareBase.toFixed(4)}.
-                ${yearContext} ${exclusionContext}
-                Encuentra UNA SOLA FECHA en el pasado donde: (Precio acción local) * (FX a ${baseCurrency}) ≈ ${targetCostPerShareBase.toFixed(4)}.
-                Devuelve SOLO un JSON: {"date": "YYYY-MM-DD", "price": num, "fx": num} o {"error": "not_found"}.`;
+            try {
+                const prompt = `Actúa como historiador financiero. Ticker: ${form.ticker}. Divisa: ${form.stockCurrency}.
+                Buscamos una fecha donde: (Precio acción en ${form.stockCurrency}) * (Cambio a ${baseCurrency}) ≈ ${targetCostPerShareBase.toFixed(4)}.
+                REGLAS:
+                1. ${yearContext}
+                2. ${excludeDates.length > 0 ? `Excluye estas fechas ya encontradas: ${excludeDates.join(', ')}.` : ''}
+                3. Responde SOLO un JSON: {"date": "YYYY-MM-DD", "price": num, "fx": num}. 
+                4. Si no hay más fechas que coincidan tras buscar mucho, responde: {"error": "not_found"}.`;
 
                 const res = await askGemini(apiKey, prompt, aiModel);
                 const json = extractJSON(res);
@@ -3267,18 +3268,24 @@ const [isInferring, setIsInferring] = useState(false);
                 if (json && !json.error && json.date) {
                     tempResults.push(json);
                     excludeDates.push(json.date);
-                } else { break; }
-            } catch (e) { break; }
+                } else {
+                    break; 
+                }
+            } catch (err) { break; }
         }
 
-        // IMPORTANTE: Antes de mostrar resultados o errores, verificamos que el proceso no sea un "fantasma"
-        setIsInferring(false); 
-        if (tempResults.length > 0) {
-            setInferResults(tempResults);
-        } else {
-            setInfoModal({ isOpen: true, title: 'Sin coincidencias', msg: 'No se encontraron fechas que cuadren con ese precio en el historial.', type: 'warning' });
+        // SOLO si el modal sigue abierto al terminar el proceso largo:
+        if (inferModalOpenRef.current) {
+            if (tempResults.length > 0) {
+                setInferResults(tempResults);
+            } else {
+                setInfoModal({ isOpen: true, title: 'Sin resultados', msg: 'No se han localizado fechas que encajen con esa plusvalía en el registro histórico.', type: 'warning' });
+            }
         }
+        setIsInferring(false);
     };
+
+
 
 
 
@@ -5454,74 +5461,63 @@ const getMarketStatus = (p) => {
             </div>
         </Modal>
 
-
-<Modal isOpen={isInferModalOpen} title="Máquina del Tiempo: Inferir Compra" onClose={() => { setIsInferring(false); setIsInferModalOpen(false); }} size="sm">
-                <div className="min-h-[300px] flex flex-col justify-center">
+<Modal isOpen={isInferModalOpen} title="Inferencia de Precio iA" onClose={() => { inferModalOpenRef.current = false; setIsInferring(false); setIsInferModalOpen(false); }} size="sm">
+                <div className="min-h-[320px] flex flex-col">
                     
                     {isInferring ? (
-                        /* PANTALLA 2: BUSCANDO (OCULTA EL FORMULARIO) */
-                        <div className="text-center space-y-6 fade-in">
-                            <div className="relative mx-auto w-24 h-24">
+                        /* ESTADO 2: CARGANDO */
+                        <div className="flex-1 flex flex-col items-center justify-center space-y-6 fade-in">
+                            <div className="relative w-20 h-20">
                                 <div className="absolute inset-0 border-4 border-purple-500/20 rounded-full"></div>
                                 <div className="absolute inset-0 border-4 border-t-purple-500 rounded-full animate-spin"></div>
-                                <div className="absolute inset-0 flex items-center justify-center">
-                                    <Icons.Wand size={32} className="text-purple-400 animate-pulse" />
-                                </div>
+                                <Icons.Wand size={30} className="absolute inset-0 m-auto text-purple-400 animate-pulse" />
                             </div>
-                            <div>
+                            <div className="text-center">
                                 <h3 className="text-white font-bold text-lg">Rastreando Historial...</h3>
-                                <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-2">Consultando cotizaciones y tipos de cambio</p>
-                                <div className="flex justify-center gap-1 mt-4">
-                                    <span className="w-2 h-2 bg-purple-500 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
-                                    <span className="w-2 h-2 bg-purple-500 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
-                                    <span className="w-2 h-2 bg-purple-500 rounded-full animate-bounce"></span>
-                                </div>
+                                <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">Búsqueda recursiva en curso</p>
                             </div>
-                            <p className="text-[9px] text-slate-500 italic bg-slate-900 p-2 rounded">
-                                "La IA está comparando tu precio de compra con miles de registros históricos para encontrar hasta 3 fechas posibles."
-                            </p>
                         </div>
 
                     ) : inferResults.length > 0 ? (
-                        /* PANTALLA 3: SELECCIÓN */
+                        /* ESTADO 3: RESULTADOS */
                         <div className="fade-in space-y-4">
                             <div className="bg-green-900/20 border border-green-500/30 p-3 rounded-xl text-[11px] text-green-300 font-bold text-center">
-                                Éxito. Selecciona la fecha en la que compraste:
+                                Selecciona la fecha de compra que desees aplicar:
                             </div>
-                            <div className="space-y-2 max-h-[350px] overflow-y-auto custom-scrollbar pr-1">
+                            <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-1">
                                 {inferResults.map((item, idx) => (
                                     <button 
                                         key={idx} 
                                         onClick={() => applyInference(item)}
-                                        className="w-full flex items-center justify-between p-4 bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-purple-500 rounded-xl transition-all group text-left"
+                                        className="w-full flex items-center justify-between p-4 bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-purple-500 rounded-xl transition-all group"
                                     >
-                                        <div>
-                                            <div className="text-white font-black text-base mb-0.5">{item.date.split('-').reverse().join('/')}</div>
-                                            <div className="text-[10px] text-slate-400 font-mono">
+                                        <div className="text-left">
+                                            <div className="text-white font-black text-base">{item.date.split('-').reverse().join('/')}</div>
+                                            <div className="text-[10px] text-slate-400 font-mono mt-0.5">
                                                 Precio: <span className="text-blue-300">{parseFloat(item.price).toFixed(2)}</span> | FX: {parseFloat(item.fx).toFixed(4)}
                                             </div>
                                         </div>
-                                        <div className="bg-purple-600 text-white px-4 py-2 rounded-lg text-[10px] font-bold uppercase shadow-lg">Elegir</div>
+                                        <div className="bg-purple-600 text-white px-3 py-1.5 rounded text-[9px] font-bold uppercase">Elegir</div>
                                     </button>
                                 ))}
                             </div>
-                            <button onClick={() => setInferResults([])} className="w-full text-slate-500 text-[10px] font-bold uppercase hover:text-white pt-2">Buscar de nuevo</button>
+                            <button onClick={() => setInferResults([])} className="w-full text-slate-500 text-[10px] font-bold uppercase py-2 hover:text-slate-300">Volver a intentar</button>
                         </div>
 
                     ) : (
-                        /* PANTALLA 1: ENTRADA DE DATOS */
-                        <div className="space-y-4 fade-in">
-                            <div className="bg-purple-900/20 border border-purple-500/30 p-3 rounded-xl text-[10px] text-purple-200 leading-relaxed text-justify">
-                                Introduce la plusvalía total. La IA rastreará momentos exactos en los que el precio encajó matemáticamente.
+                        /* ESTADO 1: FORMULARIO */
+                        <div className="space-y-5 fade-in">
+                            <div className="bg-purple-900/20 border border-purple-500/30 p-3 rounded-xl text-[10px] text-purple-200 leading-relaxed">
+                                Indica tu plusvalía total acumulada en <b>{baseCurrency}</b> para que la iA busque la fecha de compra original.
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Año Compra</label>
-                                    <input type="number" value={inferYearInput} onChange={e => setInferYearInput(e.target.value)} placeholder="Ej: 2021" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm text-white font-bold text-center focus:border-purple-500 outline-none shadow-inner" />
+                                    <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">Año Aprox.</label>
+                                    <input type="number" value={inferYearInput} onChange={e => setInferYearInput(e.target.value)} placeholder="Ej: 2021" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm text-white font-bold text-center focus:border-purple-500 outline-none" />
                                 </div>
                                 <div>
-                                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Plusvalía ({baseCurrency})</label>
-                                    <input type="number" step="0.01" value={inferProfitInput} onChange={e => setInferProfitInput(e.target.value)} placeholder="0.00" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm text-white font-bold text-right focus:border-purple-500 outline-none shadow-inner" autoFocus />
+                                    <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">Plusvalía ({baseCurrency})</label>
+                                    <input type="number" step="0.01" value={inferProfitInput} onChange={e => setInferProfitInput(e.target.value)} placeholder="0.00" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm text-white font-bold text-right focus:border-purple-500 outline-none" autoFocus />
                                 </div>
                             </div>
                             <button onClick={executeInference} disabled={!inferProfitInput} className="w-full bg-purple-600 hover:bg-purple-500 text-white py-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-purple-900/40 transition-all flex items-center justify-center gap-2">
@@ -5530,7 +5526,7 @@ const getMarketStatus = (p) => {
                         </div>
                     )}
                 </div>
-            </Modal>
+ </Modal>
 
 
 
