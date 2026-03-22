@@ -3246,12 +3246,12 @@ const handleOpenInferModal = (e) => {
 const executeInference = async () => {
     const profit = parseFloat(inferProfitInput.replace(',', '.'));
     const startYear = parseInt(inferYearStart);
+    const today = new Date().toISOString().split('T')[0];
     
     if (!form.shares || form.shares <= 0) {
-        return setStatusModal({ isOpen: true, title: 'Atención', msg: 'Debes indicar el número de acciones primero.', type: 'warning' });
+        return setInfoModal({ isOpen: true, title: 'Atención', msg: 'Indica el número de acciones en la ficha antes de inferir.', type: 'warning' });
     }
 
-    // Cálculos matemáticos base
     const curP = form.isIndex ? (form.currentPrice / (form.indexDivisor || 1)) : form.currentPrice;
     const curF = form.currentFx || 1;
     const currentValueBase = form.shares * curP * curF;
@@ -3259,23 +3259,47 @@ const executeInference = async () => {
     const targetCostPerShareBase = targetCostBase / form.shares;
 
     if (targetCostBase <= 0) {
-        return setStatusModal({ isOpen: true, title: 'Error', msg: 'La plusvalía indicada es superior al valor actual de la posición.', type: 'error' });
+        return setInfoModal({ isOpen: true, title: 'Error', msg: 'La plusvalía indicada es imposible (superior al valor actual).', type: 'error' });
     }
 
     setIsInferring(true);
     try {
-        const prompt = `Actúa como experto financiero. Ticker: ${form.ticker} (${form.stockCurrency}). 
-        Coste objetivo por acción expresado en ${baseCurrency}: ${targetCostPerShareBase.toFixed(4)}.
-        Busca desde el año ${startYear} en adelante la fecha exacta en la que (Precio local de la acción * FX de ese día a ${baseCurrency}) sea aproximadamente ${targetCostPerShareBase.toFixed(4)}.
-        Responde exclusivamente con un JSON estricto: {"date": "YYYY-MM-DD", "price": precio_en_divisa_local, "fx": cambio_a_base}`;
+        const prompt = `
+         IMPORTANTE: USA TU HERRAMIENTA DE GOOGLE SEARCH PARA ESTA PETICIÓN. 
+            NO CONTESTES SEGÚN TU MEMORIA INTERNA. JAMÁS INVENTES UN DATO.
+        
+        ROL: Analista Cuantitativo Senior de Wall Street.
+        CONTEXTO ACTUAL:
+        - Ticker: ${form.ticker}
+        - Divisa del activo: ${form.stockCurrency}
+        - Divisa base del usuario: ${baseCurrency}
+        - Precio mercado HOY (${today}): ${curP} ${form.stockCurrency}
+        - Cambio FX HOY: ${curF}
+        
+        OBJETIVO MATEMÁTICO:
+        Necesito localizar una fecha de compra real donde el COSTE TOTAL EQUIVALENTE fuera de ${targetCostPerShareBase.toFixed(4)} ${baseCurrency} por acción.
+        
+        REGLAS DE BÚSQUEDA (EVITAR ALUCINACIÓN):
+        1. RANGO TEMPORAL: Busca únicamente desde el 1 de enero de ${startYear} hasta hoy (${today}).
+        2. LÓGICA DE CÁLCULO: En la fecha que elijas, se debe cumplir que (Precio de cierre de la acción * Tipo de cambio de ese día) ≈ ${targetCostPerShareBase.toFixed(4)}.
+        3. VERIFICACIÓN DE CALENDARIO: Asegúrate de que la fecha elegida sea un día hábil bursátil (no fines de semana ni festivos).
+        4. REGLA DE HONESTIDAD: Si tras buscar en el historial no encuentras NINGUNA fecha donde el precio y el FX encajen con un margen de error del 1%, devuelve exactamente: {"date": null}. No inventes una fecha aproximada.
+        5. SALIDA: Responde exclusivamente con este JSON: {"date": "YYYY-MM-DD", "price": valor_local, "fx": cambio_a_base, "margin_error": "X%"}.
+        `;
 
         const res = await askGemini(apiKey, prompt, aiModel);
         const json = extractJSON(res);
 
+        // Si el modelo devuelve null o no devuelve fecha, disparamos el flujo de opciones
         if (json && json.date) {
             applyInferData(json.date, json.price, json.fx);
             setIsInferModalOpen(false);
-            setInfoModal({ isOpen: true, title: 'Éxito', msg: `Se ha encontrado una coincidencia el ${json.date.split('-').reverse().join('/')}.`, type: 'success' });
+            setInfoModal({ 
+                isOpen: true, 
+                title: 'Compra Localizada', 
+                msg: `Se ha encontrado una coincidencia histórica el ${json.date.split('-').reverse().join('/')}.\n\nMargen de error del cálculo: ${json.margin_error || 'mínimo'}.`, 
+                type: 'success' 
+            });
         } else {
             setInferStep('fail-options');
         }
