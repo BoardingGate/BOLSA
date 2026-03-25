@@ -3212,6 +3212,9 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const [isFetchingStrategyNews, setIsFetchingStrategyNews] = useState(false);
     const [strategyNewsData, setStrategyNewsData] = useState(null);
 
+    const [showEvolution, setShowEvolution] = useState(false);
+    const [dailyHistory, setDailyHistory] = usePersistentState('bg_daily_history', []);
+
 const [isInferring, setIsInferring] = useState(false);
 const [isInferModalOpen, setIsInferModalOpen] = useState(false);
 const [inferProfitInput, setInferProfitInput] = useState('');
@@ -3230,6 +3233,30 @@ const applyInferData = (date, price, fx) => {
     }));
     setInferProfitInput(''); 
 };
+
+
+useEffect(() => {
+        if (!stats || !stats.active) return;
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const currentValuation = stats.active.cur; // Valor total actual
+
+        if (currentValuation > 0) {
+            setDailyHistory(prev => {
+                const newHistory = [...prev];
+                const existingIndex = newHistory.findIndex(h => h.date === todayStr);
+                
+                if (existingIndex >= 0) {
+                    newHistory[existingIndex].val = currentValuation; // Actualiza si ya hay dato hoy
+                } else {
+                    newHistory.push({ date: todayStr, val: currentValuation }); // Nuevo día
+                }
+                
+                // Mantener estricamente el registro de los últimos 30 días
+                if (newHistory.length > 30) return newHistory.slice(newHistory.length - 30);
+                return newHistory;
+            });
+        }
+    }, [stats?.active?.cur]);
 
 
 
@@ -4554,6 +4581,7 @@ const getMarketStatus = (p) => {
                         <button onClick={analyzePortfolio} className="bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 transition-colors flex items-center gap-2"><Icons.Wand/> INFORME iA</button>
                         <button onClick={() => setIsNewsSelectionModalOpen(true)} className="bg-blue-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-blue-500/50 hover:bg-blue-600 transition-colors flex items-center gap-2"><Icons.Globe size={14}/> NOTICIAS</button>  
                         <button onClick={() => setIsTimelineModalOpen(true)} className="bg-emerald-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-emerald-500/50 hover:bg-emerald-600 transition-colors flex items-center gap-2"><Icons.Network size={14}/> TIMELINE</button>
+                        <button onClick={() => setShowEvolution(!showEvolution)} className={`px-3 h-9 rounded-lg text-[10px] font-bold border transition-colors flex items-center gap-2 ${showEvolution ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-indigo-900/80 border-indigo-500/50 hover:bg-indigo-800 text-white'}`}><Icons.ChartBar size={14}/> EVOLUCIÓN</button>
                         <button onClick={() => setIsPrintModalOpen(true)} className="bg-slate-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14}/> IMPRIMIR</button>
                     </div>
                 </div>
@@ -4637,6 +4665,118 @@ const getMarketStatus = (p) => {
             </div>
 
             {visibleSections.chartTV && <TopAnalysisSection selectedTicker={selectedTicker} onClearTicker={() => setSelectedTicker(null)} />}
+
+
+            {showEvolution && (
+                <div className="w-full overflow-x-auto custom-scrollbar bg-slate-900 border border-slate-700 rounded-xl p-4 mb-6 fade-in shadow-2xl">
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-sm font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-2">
+                            <Icons.TrendingUp size={16}/> Evolución Capital Cartera (30 Días)
+                        </h3>
+                        <div className="text-xs font-mono text-slate-400 bg-slate-950 px-3 py-1 rounded-lg border border-slate-800">
+                            Valoración Día 30: <span className="text-white font-bold text-sm ml-1">{formatMoney(stats.active.cur, baseCurrency)}</span>
+                        </div>
+                    </div>
+                    <div className="min-w-[700px] h-[250px]">
+                        {(() => {
+                            let data = [...dailyHistory];
+                            const needed = 30 - data.length;
+                            
+                            // Rellenar días anteriores si el usuario acaba de instalar la app
+                            if (needed > 0) {
+                                const padVal = data.length > 0 ? data[0].val : stats.active.cur;
+                                const pad = Array(needed).fill({ date: '---', val: padVal });
+                                data = [...pad, ...data];
+                            } else if (data.length > 30) {
+                                data = data.slice(data.length - 30);
+                            }
+
+                            const values = data.map(d => d.val);
+                            const minVal = Math.max(0, Math.min(...values) * 0.95); 
+                            const maxVal = Math.max(...values) * 1.05; 
+                            const range = maxVal - minVal || 1;
+
+                            const W = 1000;
+                            const H = 250;
+                            const pad = { t: 20, b: 25, l: 65, r: 20 };
+                            const innerW = W - pad.l - pad.r;
+                            const innerH = H - pad.t - pad.b;
+                            const barW = innerW / 30;
+
+                            const gridLines = [0, 0.25, 0.5, 0.75, 1].map(pct => {
+                                const v = minVal + range * pct;
+                                const y = pad.t + innerH - (pct * innerH);
+                                return { v, y };
+                            });
+
+                            return (
+                                <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full" preserveAspectRatio="none">
+                                    {/* Reticulado Horizontal y Eje Y */}
+                                    {gridLines.map((g, i) => (
+                                        <g key={i}>
+                                            <line x1={pad.l} y1={g.y} x2={W - pad.r} y2={g.y} stroke="#334155" strokeWidth="1" strokeDasharray="4" opacity="0.6" />
+                                            <text x={pad.l - 8} y={g.y + 4} fill="#94a3b8" fontSize="10" fontFamily="monospace" textAnchor="end">
+                                                {formatN(g.v, 0)}
+                                            </text>
+                                        </g>
+                                    ))}
+                                    
+                                    {/* Línea base */}
+                                    <line x1={pad.l} y1={pad.t + innerH} x2={W - pad.r} y2={pad.t + innerH} stroke="#475569" strokeWidth="2" />
+                                    
+                                    {/* Barras y Eje X */}
+                                    {data.map((d, i) => {
+                                        const x = pad.l + (i * barW) + (barW * 0.15);
+                                        const bw = barW * 0.7;
+                                        const hPct = Math.max(0, (d.val - minVal) / range);
+                                        const barH = Math.max(2, hPct * innerH);
+                                        const y = pad.t + innerH - barH;
+                                        const isLast = i === data.length - 1;
+                                        
+                                        return (
+                                            <g key={i} className="group">
+                                                <rect 
+                                                    x={x} y={y} width={bw} height={barH} 
+                                                    fill={isLast ? "#4f46e5" : "#334155"} 
+                                                    rx="2"
+                                                    className="transition-all hover:fill-indigo-400 cursor-pointer"
+                                                >
+                                                    <title>{d.date !== '---' ? d.date : 'Sin datos'}: {formatMoney(d.val, baseCurrency)}</title>
+                                                </rect>
+                                                <text 
+                                                    x={x + bw/2} y={H - 5} 
+                                                    fill={isLast ? "#fff" : "#64748b"} 
+                                                    fontSize="10" 
+                                                    textAnchor="middle"
+                                                    fontWeight={isLast ? "bold" : "normal"}
+                                                >
+                                                    {i + 1}
+                                                </text>
+                                                {/* Valor encima de la barra final */}
+                                                {isLast && (
+                                                    <text 
+                                                        x={x + bw/2} y={y - 8} 
+                                                        fill="#818cf8" 
+                                                        fontSize="10" 
+                                                        fontWeight="bold"
+                                                        textAnchor="middle"
+                                                    >
+                                                        {formatN(d.val, 0)}
+                                                    </text>
+                                                )}
+                                            </g>
+                                        );
+                                    })}
+                                </svg>
+                            );
+                        })()}
+                    </div>
+                    <p className="text-[9px] text-slate-500 italic mt-3 text-center">
+                        * El gráfico captura el capital total al cierre de cada día. Los días iniciales sin datos se rellenan automáticamente hasta conformar la tendencia.
+                    </p>
+                </div>
+            )}
+
 
             {visibleSections.table && (
                 <div className="w-full max-h-[75vh] overflow-auto custom-scrollbar bg-slate-900/50 border border-slate-800 rounded-xl fade-in">
