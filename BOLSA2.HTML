@@ -1,4 +1,4 @@
-<!DOCTYPE html> 
+<!DOCTYPE html>  
 <html lang="es"> 
 
 <head> 
@@ -3212,6 +3212,11 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const [isFetchingStrategyNews, setIsFetchingStrategyNews] = useState(false);
     const [strategyNewsData, setStrategyNewsData] = useState(null);
 
+    const [showEvolution, setShowEvolution] = useState(false);
+    const [dailyHistory, setDailyHistory] = usePersistentState('bg_daily_history', []);
+    const [isRebuildingHistory, setIsRebuildingHistory] = useState(false);
+    const [selectedBarIndex, setSelectedBarIndex] = useState(null);
+
 const [isInferring, setIsInferring] = useState(false);
 const [isInferModalOpen, setIsInferModalOpen] = useState(false);
 const [inferProfitInput, setInferProfitInput] = useState('');
@@ -3219,7 +3224,6 @@ const [inferYearStart, setInferYearStart] = useState(new Date().getFullYear() - 
 const [inferStep, setInferStep] = useState('input'); // Controla los pasos: 'input', 'fail-options', 'manual-date', 'result-check'
 const [manualDateInput, setManualDateInput] = useState('');
 const [diffWarning, setDiffWarning] = useState(null);
-
 
 const applyInferData = (date, price, fx) => {
     setForm(prev => ({ 
@@ -3230,6 +3234,92 @@ const applyInferData = (date, price, fx) => {
     }));
     setInferProfitInput(''); 
 };
+
+
+const handleRebuildHistory = async () => {
+        if (!apiKey) return alert("⚠️ Falta API Key. Configúrala en Ajustes.");
+        
+        const activeItems = portfolio.filter(p => !p.sellDate && p.isActive !== false);
+        if (activeItems.length === 0) return;
+
+        setIsRebuildingHistory(true);
+        try {
+            const tickersList = activeItems.map(p => p.ticker).join(', ');
+            const currenciesNeeded = [...new Set(activeItems.filter(p => p.stockCurrency !== baseCurrency).map(p => p.stockCurrency))];
+            
+            const prompt = `
+            OBLIGATORIO: USA GOOGLE SEARCH PARA CADA DATO.
+            TAREA: Extraer precios de cierre históricos reales de los ÚLTIMOS 15 DÍAS para: ${tickersList}.
+            DIVISAS: Tipo de cambio histórico diario a ${baseCurrency} para: ${currenciesNeeded.join(', ')}.
+            
+            REGLAS:
+            1. No inventes. Si el mercado cerró, repite el último precio.
+            2. Devuelve un JSON con exactamente 15 días ordenados por fecha.
+            
+            FORMATO SOLO JSON (No markdown):
+            [{"d": "YYYY-MM-DD", "p": {"TICKER": valor}, "f": {"USD": valor}}]
+            
+            Responde SOLO el JSON puro.`;
+
+            const res = await askGemini(apiKey, prompt, aiModel);
+            const json = extractJSON(res);
+            
+            if (json && Array.isArray(json)) {
+                const calculatedHistory = json.map(dayData => {
+                    let dailyTotal = 0;
+                    activeItems.forEach(item => {
+                        let rawPrice = (dayData.p && dayData.p[item.ticker] !== undefined) 
+                                        ? parseFloat(String(dayData.p[item.ticker]).replace(',','.')) 
+                                        : (item.currentPrice || item.buyPrice);
+                        if (item.isIndex) rawPrice = rawPrice / (item.indexDivisor || 1);
+                        let dayFx = 1;
+                        if (item.stockCurrency !== baseCurrency) {
+                            dayFx = (dayData.f && dayData.f[item.stockCurrency] !== undefined) 
+                                    ? parseFloat(String(dayData.f[item.stockCurrency]).replace(',','.')) 
+                                    : (item.currentFx || item.buyFx || 1);
+                        }
+                        dailyTotal += (item.shares * rawPrice * dayFx);
+                    });
+                    return { date: dayData.d || '---', val: dailyTotal };
+                }).sort((a,b) => new Date(a.date) - new Date(b.date)).slice(-15);
+
+                // Forzamos el último día a la valoración actual real de la app
+                if (calculatedHistory.length > 0) {
+                    calculatedHistory[calculatedHistory.length - 1].val = stats.active.cur;
+                    calculatedHistory[calculatedHistory.length - 1].date = new Date().toISOString().slice(0, 10);
+                }
+                setDailyHistory(calculatedHistory); 
+            }
+        } catch (e) { 
+            console.error("Error en reconstrucción:", e);
+            alert("Error al obtener datos históricos. Reinténtalo.");
+        } finally { setIsRebuildingHistory(false); }
+    };
+
+
+
+useEffect(() => {
+        if (!stats || !stats.active) return;
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const currentValuation = stats.active.cur; // Valor total actual
+
+        if (currentValuation > 0) {
+            setDailyHistory(prev => {
+                const newHistory = [...prev];
+                const existingIndex = newHistory.findIndex(h => h.date === todayStr);
+                
+                if (existingIndex >= 0) {
+                    newHistory[existingIndex].val = currentValuation; // Actualiza si ya hay dato hoy
+                } else {
+                    newHistory.push({ date: todayStr, val: currentValuation }); // Nuevo día
+                }
+                
+                // Mantener estricamente el registro de los últimos 30 días
+                if (newHistory.length > 30) return newHistory.slice(newHistory.length - 30);
+                return newHistory;
+            });
+        }
+    }, [stats?.active?.cur]);
 
 
 
@@ -4518,6 +4608,17 @@ const getMarketStatus = (p) => {
         );
     };
 
+
+    useEffect(() => {
+        const isDataMissing = dailyHistory.length < 30 || dailyHistory.some(d => d.date === '---');
+        
+        if (showEvolution && isDataMissing && !isRebuildingHistory && apiKey) {
+            handleRebuildHistory();
+        }
+    }, [showEvolution]); // Escucha cuando pulsas el botón Evolución
+
+    
+
     return (
         <div className="w-full p-4 md:p-6 flex flex-col gap-6">
             {analyzing && <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center fade-in"><Icons.Wand size={60} className="text-purple-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando Cartera Global...</div></div>}
@@ -4554,6 +4655,7 @@ const getMarketStatus = (p) => {
                         <button onClick={analyzePortfolio} className="bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 transition-colors flex items-center gap-2"><Icons.Wand/> INFORME iA</button>
                         <button onClick={() => setIsNewsSelectionModalOpen(true)} className="bg-blue-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-blue-500/50 hover:bg-blue-600 transition-colors flex items-center gap-2"><Icons.Globe size={14}/> NOTICIAS</button>  
                         <button onClick={() => setIsTimelineModalOpen(true)} className="bg-emerald-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-emerald-500/50 hover:bg-emerald-600 transition-colors flex items-center gap-2"><Icons.Network size={14}/> TIMELINE</button>
+                        <button onClick={() => setShowEvolution(!showEvolution)} className={`px-3 h-9 rounded-lg text-[10px] font-bold border transition-colors flex items-center gap-2 ${showEvolution ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-indigo-900/80 border-indigo-500/50 hover:bg-indigo-800 text-white'}`}><Icons.ChartBar size={14}/> EVOLUCIÓN</button>
                         <button onClick={() => setIsPrintModalOpen(true)} className="bg-slate-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-600 hover:bg-slate-600 transition-colors flex items-center gap-2 text-white"><Icons.ExternalLink size={14}/> IMPRIMIR</button>
                     </div>
                 </div>
@@ -4637,6 +4739,125 @@ const getMarketStatus = (p) => {
             </div>
 
             {visibleSections.chartTV && <TopAnalysisSection selectedTicker={selectedTicker} onClearTicker={() => setSelectedTicker(null)} />}
+
+          {showEvolution && (
+                <div className="w-full overflow-x-auto custom-scrollbar bg-slate-900 border border-slate-700 rounded-xl p-4 mb-6 fade-in shadow-2xl relative">
+                    
+                    {isRebuildingHistory && (
+                        <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center rounded-xl">
+                            <Icons.Wand size={40} className="text-purple-500 mb-4 animate-spin" />
+                            <div className="text-sm font-bold text-white animate-pulse">Obteniendo históricos reales (15 días)...</div>
+                        </div>
+                    )}
+
+                    <div className="flex justify-between items-center mb-6">
+                        <div className="flex items-center gap-4">
+                            <h3 className="text-sm font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-2">
+                                <Icons.TrendingUp size={16}/> Evolución Capital (15 Días)
+                            </h3>
+                            {/* BOTÓN MANUAL DE IA */}
+                            <button 
+                                onClick={handleRebuildHistory} 
+                                disabled={isRebuildingHistory}
+                                className="bg-purple-600 hover:bg-purple-500 disabled:bg-slate-800 text-white px-4 py-1.5 rounded-lg text-[10px] font-black uppercase flex items-center gap-2 transition-all shadow-lg border border-purple-400/30"
+                            >
+                                <Icons.Wand size={14}/> {isRebuildingHistory ? 'Procesando...' : 'Reconstruir con iA'}
+                            </button>
+                        </div>
+                        
+                        <div className="text-xs font-mono text-slate-400 bg-slate-950 px-3 py-1 rounded-lg border border-slate-800">
+                            Valoración Hoy: <span className="text-white font-bold">{formatMoney(stats.active.cur, baseCurrency)}</span>
+                        </div>
+                    </div>
+
+                    <div className="min-w-[600px] h-[350px]">
+                        {(() => {
+                            let data = [...dailyHistory];
+                            if (data.length > 15) data = data.slice(-15);
+                            const needed = 15 - data.length;
+                            
+                            // Padding inicial si no hay datos
+                            if (needed > 0) {
+                                const pad = Array(needed).fill({ date: '---', val: stats.active.cur });
+                                data = [...pad, ...data];
+                            }
+
+                            const values = data.map(d => parseFloat(d.val) || 0);
+                            const minVal = Math.max(0, Math.min(...values) * 0.98); 
+                            const maxVal = Math.max(...values) * 1.02; 
+                            const range = maxVal - minVal || 1;
+
+                            const W = 1000, H = 350, pad = { t: 30, b: 40, l: 80, r: 40 };
+                            const innerH = H - pad.t - pad.b;
+                            const barW = (W - pad.l - pad.r) / 15;
+
+                            return (
+                                <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full" preserveAspectRatio="none">
+                                    {/* Eje Y y líneas horizontales */}
+                                    {[0, 0.25, 0.5, 0.75, 1].map(pct => {
+                                        const v = minVal + range * pct;
+                                        const y = pad.t + innerH * (1 - pct);
+                                        return (
+                                            <g key={pct}>
+                                                <line x1={pad.l} y1={y} x2={W - pad.r} y2={y} stroke="#334155" strokeWidth="1" strokeDasharray="4" opacity="0.5" />
+                                                <text x={pad.l - 12} y={y + 4} fill="#94a3b8" fontSize="11" textAnchor="end" fontFamily="monospace">{formatN(v, 0)}</text>
+                                            </g>
+                                        );
+                                    })}
+                                    
+                                    {/* Barras */}
+                                    {data.map((d, i) => {
+                                        const val = parseFloat(d.val) || 0;
+                                        const x = pad.l + (i * barW) + (barW * 0.15);
+                                        const bw = barW * 0.7;
+                                        const barH = ((val - minVal) / range) * innerH;
+                                        const y = H - pad.b - barH;
+                                        
+                                        const isLast = i === data.length - 1;
+                                        const isSel = selectedBarIndex === i;
+                                        
+                                        // Calcular día del mes
+                                        const dateObj = new Date();
+                                        dateObj.setDate(dateObj.getDate() - (14 - i));
+                                        const dayOfMonth = dateObj.getDate();
+
+                                        return (
+                                            <g key={i}>
+                                                <rect 
+                                                    x={x} y={y} width={bw} height={Math.max(2, barH)} 
+                                                    fill={isLast ? "#4f46e5" : (isSel ? "#818cf8" : (d.date === '---' ? "#1e293b" : "#334155"))} 
+                                                    opacity={d.date === '---' && !isSel ? 0.2 : 1}
+                                                    rx="3" 
+                                                    className="cursor-pointer transition-all hover:fill-indigo-400" 
+                                                    onClick={() => setSelectedBarIndex(isSel ? null : i)} 
+                                                />
+                                                {/* Eje X con número de día */}
+                                                <text 
+                                                    x={x + bw/2} y={H - 12} 
+                                                    fill={isLast || isSel ? "#fff" : "#64748b"} 
+                                                    fontSize="12" 
+                                                    textAnchor="middle" 
+                                                    fontWeight={isLast || isSel ? "bold" : "normal"}
+                                                >
+                                                    {dayOfMonth}
+                                                </text>
+                                                {/* Valor sobre barra */}
+                                                {(isLast || isSel) && (
+                                                    <text x={x + bw/2} y={y - 12} fill="#818cf8" fontSize="12" fontWeight="bold" textAnchor="middle" className="drop-shadow-md">
+                                                        {formatN(val, 0)}
+                                                    </text>
+                                                )}
+                                            </g>
+                                        );
+                                    })}
+                                </svg>
+                            );
+                        })()}
+                    </div>
+                </div>
+            )}
+       
+
 
             {visibleSections.table && (
                 <div className="w-full max-h-[75vh] overflow-auto custom-scrollbar bg-slate-900/50 border border-slate-800 rounded-xl fade-in">
