@@ -4719,15 +4719,14 @@ const getMarketStatus = (p) => {
 
             {visibleSections.chartTV && <TopAnalysisSection selectedTicker={selectedTicker} onClearTicker={() => setSelectedTicker(null)} />}
 
-        {showEvolution && (
+           {showEvolution && (
                 <div className="w-full overflow-x-auto custom-scrollbar bg-slate-900 border border-slate-700 rounded-xl p-4 mb-6 fade-in shadow-2xl relative">
                     
-                    {/* Pantalla de carga de la IA */}
                     {isRebuildingHistory && (
                         <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center rounded-xl fade-in">
                             <Icons.Wand size={40} className="text-purple-500 mb-4 animate-spin" />
-                            <div className="text-sm font-bold text-white animate-pulse">La IA está calculando 30 días de historia...</div>
-                            <div className="text-[10px] text-slate-400 mt-2 max-w-xs text-center">Buscando cierres y divisas para todas tus acciones. Puede tardar hasta 30 segundos.</div>
+                            <div className="text-sm font-bold text-white animate-pulse">La IA está calculando la curva histórica...</div>
+                            <div className="text-[10px] text-slate-400 mt-2 max-w-xs text-center">Tardará unos 15-20 segundos en estimar 30 días de mercado.</div>
                         </div>
                     )}
 
@@ -4741,7 +4740,7 @@ const getMarketStatus = (p) => {
                                 disabled={isRebuildingHistory}
                                 className="bg-purple-900/40 hover:bg-purple-600 border border-purple-500/50 text-purple-300 hover:text-white px-3 py-1 rounded-lg text-[9px] font-bold flex items-center gap-1 transition-colors shadow-lg"
                             >
-                                <Icons.Wand size={12}/> Reconstruir pasado con iA
+                                <Icons.Wand size={12}/> Reconstruir curva con iA
                             </button>
                         </div>
                         
@@ -4755,15 +4754,21 @@ const getMarketStatus = (p) => {
                             let data = [...dailyHistory];
                             const needed = 30 - data.length;
                             
+                            // Aseguramos que el último dato SIEMPRE sea la valoración actual
+                            if (data.length > 0) {
+                                data[data.length - 1].val = stats.active.cur;
+                            }
+
                             if (needed > 0) {
-                                const padVal = data.length > 0 ? data[0].val : stats.active.cur;
+                                const padVal = data.length > 0 ? parseFloat(data[0].val) : stats.active.cur;
                                 const pad = Array(needed).fill({ date: '---', val: padVal });
                                 data = [...pad, ...data];
                             } else if (data.length > 30) {
                                 data = data.slice(data.length - 30);
                             }
 
-                            const values = data.map(d => d.val);
+                            // Filtro de seguridad: forzar todo a número real
+                            const values = data.map(d => parseFloat(d.val) || 0);
                             const minVal = Math.max(0, Math.min(...values) * 0.95); 
                             const maxVal = Math.max(...values) * 1.05; 
                             const range = maxVal - minVal || 1;
@@ -4783,9 +4788,8 @@ const getMarketStatus = (p) => {
 
                             return (
                                 <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full" preserveAspectRatio="none">
-                                    {/* Reticulado Horizontal y Eje Y */}
                                     {gridLines.map((g, i) => (
-                                        <g key={i}>
+                                        <g key={`grid-${i}`}>
                                             <line x1={pad.l} y1={g.y} x2={W - pad.r} y2={g.y} stroke="#334155" strokeWidth="1" strokeDasharray="4" opacity="0.6" />
                                             <text x={pad.l - 8} y={g.y + 4} fill="#94a3b8" fontSize="10" fontFamily="monospace" textAnchor="end">
                                                 {formatN(g.v, 0)}
@@ -4793,14 +4797,13 @@ const getMarketStatus = (p) => {
                                         </g>
                                     ))}
                                     
-                                    {/* Línea base */}
                                     <line x1={pad.l} y1={pad.t + innerH} x2={W - pad.r} y2={pad.t + innerH} stroke="#475569" strokeWidth="2" />
                                     
-                                    {/* Barras y Eje X */}
                                     {data.map((d, i) => {
+                                        const numVal = parseFloat(d.val) || 0;
                                         const x = pad.l + (i * barW) + (barW * 0.15);
                                         const bw = barW * 0.7;
-                                        const hPct = Math.max(0, (d.val - minVal) / range);
+                                        const hPct = Math.max(0, (numVal - minVal) / range);
                                         const barH = Math.max(2, hPct * innerH);
                                         const y = pad.t + innerH - barH;
                                         
@@ -4808,30 +4811,31 @@ const getMarketStatus = (p) => {
                                         const isPadded = d.date === '---';
                                         const isSelected = selectedBarIndex === i;
                                         
-                                        // Cálculo dinámico del día del calendario
                                         const dateObj = new Date();
                                         dateObj.setDate(dateObj.getDate() - (29 - i));
                                         const dayNum = dateObj.getDate();
-                                        const dateStr = dateObj.toLocaleDateString();
+                                        
+                                        const fillCol = isLast ? "#4f46e5" : (isSelected ? "#818cf8" : (isPadded ? "#1e293b" : "#334155"));
+                                        const opac = isPadded && !isSelected ? "0.2" : "1";
+                                        const txtColor = isLast || isSelected ? "#fff" : (isPadded ? "#334155" : "#64748b");
+                                        const valColor = isSelected && !isLast ? "#c7d2fe" : "#818cf8";
                                         
                                         return (
-                                            <g key={i} className="group">
-                                                {/* Rectángulo (Barra) */}
+                                            <g key={`bar-${i}`} className="group">
                                                 <rect 
                                                     x={x} y={y} width={bw} height={barH} 
-                                                    fill={isLast ? "#4f46e5" : (isSelected ? "#818cf8" : (isPadded ? "#1e293b" : "#334155"))} 
+                                                    fill={fillCol} 
                                                     rx="2"
-                                                    opacity={isPadded && !isSelected ? "0.2" : "1"}
+                                                    opacity={opac}
                                                     className="transition-all hover:fill-indigo-400 cursor-pointer"
                                                     onClick={() => setSelectedBarIndex(isSelected ? null : i)}
                                                 >
-                                                    <title>{isPadded ? 'Día sin datos previos registrados' : `${dateStr}: ${formatMoney(d.val, baseCurrency)}`}</title>
+                                                    <title>{isPadded ? 'Sin datos previos' : d.date + ' : ' + formatN(numVal, 2)}</title>
                                                 </rect>
                                                 
-                                                {/* Etiqueta del Eje X (Día) */}
                                                 <text 
                                                     x={x + bw/2} y={H - 5} 
-                                                    fill={isLast || isSelected ? "#fff" : (isPadded ? "#334155" : "#64748b")} 
+                                                    fill={txtColor} 
                                                     fontSize="10" 
                                                     textAnchor="middle"
                                                     fontWeight={isLast || isSelected ? "bold" : "normal"}
@@ -4841,17 +4845,15 @@ const getMarketStatus = (p) => {
                                                     {dayNum}
                                                 </text>
                                                 
-                                                {/* Valor encima de la barra (Solo en el último día o en el seleccionado) */}
                                                 {(isLast || isSelected) && (
                                                     <text 
                                                         x={x + bw/2} y={y - 8} 
-                                                        fill={isSelected && !isLast ? "#c7d2fe" : "#818cf8"} 
+                                                        fill={valColor} 
                                                         fontSize="10" 
                                                         fontWeight="bold"
                                                         textAnchor="middle"
-                                                        className="drop-shadow-md"
                                                     >
-                                                        {formatN(d.val, 0)}
+                                                        {formatN(numVal, 0)}
                                                     </text>
                                                 )}
                                             </g>
@@ -4861,13 +4863,9 @@ const getMarketStatus = (p) => {
                             );
                         })()}
                     </div>
-                    <p className="text-[9px] text-slate-500 italic mt-3 text-center">
-                        * Pulsa o haz clic en cualquier barra para visualizar el importe de ese día en concreto.
-                    </p>
                 </div>
             )}
 
-         
 
 
 
