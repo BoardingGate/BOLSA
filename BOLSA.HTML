@@ -3214,6 +3214,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
 
     const [showEvolution, setShowEvolution] = useState(false);
     const [dailyHistory, setDailyHistory] = usePersistentState('bg_daily_history', []);
+    const [isRebuildingHistory, setIsRebuildingHistory] = useState(false);
 
 const [isInferring, setIsInferring] = useState(false);
 const [isInferModalOpen, setIsInferModalOpen] = useState(false);
@@ -3233,6 +3234,57 @@ const applyInferData = (date, price, fx) => {
     }));
     setInferProfitInput(''); 
 };
+
+const handleRebuildHistory = async () => {
+        if (!apiKey) return alert("⚠️ Falta API Key. Configúrala en Ajustes.");
+        
+        const activeItems = portfolio.filter(p => !p.sellDate && p.isActive !== false);
+        if (activeItems.length === 0) return alert("No hay acciones activas para calcular.");
+
+        setIsRebuildingHistory(true);
+        try {
+            const portfolioStr = activeItems.map(p => `Ticker: ${p.ticker} (${p.shares} acciones) - Divisa cotización: ${p.stockCurrency}`).join(' | ');
+
+            const prompt = `
+            ROL: Analista Cuantitativo y Algoritmo de Cálculo.
+            TAREA: Reconstruir el valor total de una cartera de acciones día a día durante los últimos 30 días naturales.
+            DIVISA BASE (Resultado final de la cartera): ${baseCurrency}
+            
+            CARTERA ACTUAL: 
+            ${portfolioStr}
+            
+            REGLA ESTRICTA DE CÁLCULO (CRUCE DÍA POR DÍA):
+            Para CADA DÍA de los últimos 30 días, debes hacer esto rigurosamente:
+            1. Buscar el precio de cierre histórico de cada ticker en ese día exacto.
+            2. Buscar el tipo de cambio histórico (FX) de la divisa de la acción hacia la divisa ${baseCurrency} EXACTAMENTE en ese mismo día. ¡PROHIBIDO usar el FX actual para días pasados!
+            3. Multiplicar para cada acción: (Nº Acciones * Precio histórico del día * FX histórico de ese mismo día).
+            4. Sumar el resultado final de todas las acciones en ${baseCurrency} para obtener el valor total de la cartera de ese día.
+            
+            Si un día es fin de semana o festivo en bolsa, arrastra y copia el valor exacto del cierre del día hábil anterior.
+            
+            INSTRUCCIÓN CRÍTICA: Devuelve ÚNICA Y EXCLUSIVAMENTE un JSON Array con exactamente 30 elementos. Ordenado cronológicamente (del día más antiguo a hoy).
+            FORMATO EXACTO Y OBLIGATORIO:
+            [
+              {"date": "2024-03-01", "val": 15420.50},
+              {"date": "2024-03-02", "val": 15420.50}
+            ]
+            SIN TEXTO EXTRA. SIN EXPLICACIONES. SOLO EL JSON.`;
+
+            const res = await askGemini(apiKey, prompt, aiModel);
+            const json = extractJSON(res);
+            
+            if (json && Array.isArray(json) && json.length > 0) {
+                setDailyHistory(json.slice(-30)); 
+            } else {
+                throw new Error("El modelo no devolvió los datos en el formato correcto.");
+            }
+        } catch (e) {
+            alert("❌ Error al reconstruir con IA: " + e.message + "\n\n(A veces la IA sufre exceso de carga matemática si hay muchas acciones. Vuelve a intentarlo).");
+        } finally {
+            setIsRebuildingHistory(false);
+        }
+    };
+
 
 
 useEffect(() => {
@@ -4667,22 +4719,42 @@ const getMarketStatus = (p) => {
             {visibleSections.chartTV && <TopAnalysisSection selectedTicker={selectedTicker} onClearTicker={() => setSelectedTicker(null)} />}
 
 
-            {showEvolution && (
-                <div className="w-full overflow-x-auto custom-scrollbar bg-slate-900 border border-slate-700 rounded-xl p-4 mb-6 fade-in shadow-2xl">
+           {showEvolution && (
+                <div className="w-full overflow-x-auto custom-scrollbar bg-slate-900 border border-slate-700 rounded-xl p-4 mb-6 fade-in shadow-2xl relative">
+                    
+                    {/* Pantalla de carga de la IA */}
+                    {isRebuildingHistory && (
+                        <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center rounded-xl fade-in">
+                            <Icons.Wand size={40} className="text-purple-500 mb-4 animate-spin" />
+                            <div className="text-sm font-bold text-white animate-pulse">La IA está calculando 30 días de historia...</div>
+                            <div className="text-[10px] text-slate-400 mt-2 max-w-xs text-center">Buscando cierres y divisas para todas tus acciones. Puede tardar hasta 30 segundos.</div>
+                        </div>
+                    )}
+
                     <div className="flex justify-between items-center mb-4">
-                        <h3 className="text-sm font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-2">
-                            <Icons.TrendingUp size={16}/> Evolución Capital Cartera (30 Días)
-                        </h3>
+                        <div className="flex items-center gap-4">
+                            <h3 className="text-sm font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-2">
+                                <Icons.TrendingUp size={16}/> Evolución Capital Cartera (30 Días)
+                            </h3>
+                            <button 
+                                onClick={handleRebuildHistory} 
+                                disabled={isRebuildingHistory}
+                                className="bg-purple-900/40 hover:bg-purple-600 border border-purple-500/50 text-purple-300 hover:text-white px-3 py-1 rounded-lg text-[9px] font-bold flex items-center gap-1 transition-colors shadow-lg"
+                            >
+                                <Icons.Wand size={12}/> Reconstruir pasado con iA
+                            </button>
+                        </div>
+                        
                         <div className="text-xs font-mono text-slate-400 bg-slate-950 px-3 py-1 rounded-lg border border-slate-800">
                             Valoración Día 30: <span className="text-white font-bold text-sm ml-1">{formatMoney(stats.active.cur, baseCurrency)}</span>
                         </div>
                     </div>
+                    
                     <div className="min-w-[700px] h-[250px]">
                         {(() => {
                             let data = [...dailyHistory];
                             const needed = 30 - data.length;
                             
-                            // Rellenar días anteriores si el usuario acaba de instalar la app
                             if (needed > 0) {
                                 const padVal = data.length > 0 ? data[0].val : stats.active.cur;
                                 const pad = Array(needed).fill({ date: '---', val: padVal });
@@ -4731,21 +4803,24 @@ const getMarketStatus = (p) => {
                                         const hPct = Math.max(0, (d.val - minVal) / range);
                                         const barH = Math.max(2, hPct * innerH);
                                         const y = pad.t + innerH - barH;
+                                        
                                         const isLast = i === data.length - 1;
+                                        const isPadded = d.date === '---';
                                         
                                         return (
                                             <g key={i} className="group">
                                                 <rect 
                                                     x={x} y={y} width={bw} height={barH} 
-                                                    fill={isLast ? "#4f46e5" : "#334155"} 
+                                                    fill={isLast ? "#4f46e5" : (isPadded ? "#1e293b" : "#334155")} 
                                                     rx="2"
-                                                    className="transition-all hover:fill-indigo-400 cursor-pointer"
+                                                    opacity={isPadded ? "0.2" : "1"}
+                                                    className={`transition-all ${isPadded ? '' : 'hover:fill-indigo-400 cursor-pointer'}`}
                                                 >
-                                                    <title>{d.date !== '---' ? d.date : 'Sin datos'}: {formatMoney(d.val, baseCurrency)}</title>
+                                                    <title>{isPadded ? 'Día sin datos previos registrados' : `${d.date}: ${formatMoney(d.val, baseCurrency)}`}</title>
                                                 </rect>
                                                 <text 
                                                     x={x + bw/2} y={H - 5} 
-                                                    fill={isLast ? "#fff" : "#64748b"} 
+                                                    fill={isLast ? "#fff" : (isPadded ? "#334155" : "#64748b")} 
                                                     fontSize="10" 
                                                     textAnchor="middle"
                                                     fontWeight={isLast ? "bold" : "normal"}
@@ -4772,10 +4847,11 @@ const getMarketStatus = (p) => {
                         })()}
                     </div>
                     <p className="text-[9px] text-slate-500 italic mt-3 text-center">
-                        * El gráfico captura el capital total al cierre de cada día. Los días iniciales sin datos se rellenan automáticamente hasta conformar la tendencia.
+                        * Puedes usar el botón <b>"Reconstruir con iA"</b> para que la inteligencia artificial busque el cierre histórico de todas tus acciones en los últimos 30 días y genere la gráfica al instante.
                     </p>
                 </div>
             )}
+
 
 
             {visibleSections.table && (
