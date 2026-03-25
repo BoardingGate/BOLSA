@@ -3225,15 +3225,21 @@ const [inferStep, setInferStep] = useState('input'); // Controla los pasos: 'inp
 const [manualDateInput, setManualDateInput] = useState('');
 const [diffWarning, setDiffWarning] = useState(null);
 
-
 useEffect(() => {
-        if (showEvolution && apiKey && portfolio.length > 0) {
-            const hasMissingData = dailyHistory.length < 30 || dailyHistory.some(d => d.date === '---');
-            if (hasMissingData && !isRebuildingHistory) {
-                handleRebuildHistory();
+        // Solo actuamos si el panel está abierto y no estamos ya procesando
+        if (showEvolution && !isRebuildingHistory) {
+            // Comprobamos si los datos están vacíos o son de relleno ('---')
+            const isDataMissing = dailyHistory.length < 30 || dailyHistory.some(d => d.date === '---');
+            
+            if (isDataMissing && apiKey && portfolio.length > 0) {
+                // Pequeño retardo de medio segundo para asegurar que la UI se ha pintado
+                const timer = setTimeout(() => {
+                    handleRebuildHistory();
+                }, 500);
+                return () => clearTimeout(timer);
             }
         }
-    }, [showEvolution]); // Se dispara cada vez que abres el panel
+    }, [showEvolution, apiKey]); // El "gatillo" es el botón de Evolución
 
 
 const applyInferData = (date, price, fx) => {
@@ -3258,88 +3264,70 @@ const handleRebuildHistory = async () => {
             const tickersList = activeItems.map(p => p.ticker).join(', ');
             const currenciesNeeded = [...new Set(activeItems.filter(p => p.stockCurrency !== baseCurrency).map(p => p.stockCurrency))];
             
-            let fxInstruction = "No necesitas buscar tipos de cambio, todo cotiza en la divisa base.";
-            if (currenciesNeeded.length > 0) {
-                fxInstruction = `Busca el tipo de cambio de estas divisas a ${baseCurrency} para cada día: ${currenciesNeeded.join(', ')}. El valor debe ser el MULTIPLICADOR para convertir a ${baseCurrency} (Ej: de USD a EUR es aprox 0.92).`;
-            }
-
             const prompt = `
-            ROL: Extractor de Datos Financieros.
-            TAREA: Obtener los precios de cierre diarios históricos de los últimos 30 días naturales.
+            OBLIGATORIO: USA TU HERRAMIENTA DE GOOGLE SEARCH PARA CADA TICKER.
             
-            TICKERS A BUSCAR: ${tickersList}
-            DIVISAS: ${fxInstruction}
+            TAREA: Necesito los precios de cierre REALES de los últimos 30 días naturales para: ${tickersList}.
+            DIVISAS: Necesito el cambio histórico diario a ${baseCurrency} para: ${currenciesNeeded.join(', ')}.
             
-            INSTRUCCIÓN CRÍTICA:
-            ¡NO HAGAS NINGUNA OPERACIÓN MATEMÁTICA! Solo devuelve los datos crudos día por día.
-            Si un día es fin de semana o festivo, repite el precio del día hábil anterior.
+            PROTOCOLO DE VERACIDAD:
+            1. No inventes datos. Si no encuentras el precio de un día concreto, usa el del día anterior, pero NO simules tendencias.
+            2. Busca tablas históricas en Yahoo Finance, Google Finance o MarketWatch antes de responder.
+            3. Si detecto que los datos son inventados (líneas rectas o valores aleatorios), el informe será rechazado.
             
-            Devuelve ÚNICA Y EXCLUSIVAMENTE un JSON Array con 30 elementos (desde hace 30 días hasta hoy).
-            FORMATO EXACTO ESPERADO:
+            RESPONDE ÚNICAMENTE CON UN JSON ARRAY (30 ELEMENTOS):
             [
               {
                 "date": "YYYY-MM-DD",
-                "prices": {"TICKER1": 150.50, "TICKER2": 4.20},
-                "fx": {"USD": 0.92} 
+                "prices": {"TICKER1": valor, "TICKER2": valor},
+                "fx": {"USD": valor}
               }
             ]
-            SIN TEXTO EXTRA. SOLO EL JSON.`;
+            
+            ¡ADVERTENCIA!: No escribas texto introductorio, ni conclusiones, ni markdown. Solo el JSON puro para ser procesado por mi código.`;
 
             const res = await askGemini(apiKey, prompt, aiModel);
             const json = extractJSON(res);
             
             if (json && Array.isArray(json) && json.length > 0) {
-                
                 const calculatedHistory = json.map(dayData => {
                     let dailyTotal = 0;
-                    
                     activeItems.forEach(item => {
-                        // 1. Obtener precio bruto de la IA (o usar el actual si la IA falló ese día)
+                        // Buscamos el precio en el JSON de la IA. 
+                        // Si la IA no lo da, usamos el actual como último recurso.
                         let rawPrice = (dayData.prices && dayData.prices[item.ticker] !== undefined) 
-                                        ? parseFloat(dayData.prices[item.ticker]) 
+                                        ? parseFloat(String(dayData.prices[item.ticker]).replace(',','.')) 
                                         : (item.currentPrice || item.buyPrice);
                         
-                        // 2. CORRECCIÓN VITAL: Si es un fondo/índice, dividir por su divisor
-                        if (item.isIndex) {
-                            rawPrice = rawPrice / (item.indexDivisor || 1);
-                        }
+                        if (item.isIndex) rawPrice = rawPrice / (item.indexDivisor || 1);
                         
-                        // 3. Obtener FX de la IA (o usar el actual como salvavidas)
                         let dayFx = 1;
                         if (item.stockCurrency !== baseCurrency) {
                             dayFx = (dayData.fx && dayData.fx[item.stockCurrency] !== undefined) 
-                                    ? parseFloat(dayData.fx[item.stockCurrency]) 
+                                    ? parseFloat(String(dayData.fx[item.stockCurrency]).replace(',','.')) 
                                     : (item.currentFx || item.buyFx || 1);
                         }
                         
-                        // 4. Suma matemática de JavaScript (Precisión absoluta)
                         dailyTotal += (item.shares * rawPrice * dayFx);
                     });
 
-                    return {
-                        date: dayData.date || '---',
-                        val: dailyTotal
-                    };
+                    return { date: dayData.date || '---', val: dailyTotal };
                 }).slice(-30); 
                 
-                // Anclamos el último día a la realidad exacta de la app
-                const currentTotal = stats.active.cur;
-                if (calculatedHistory.length > 0) {
-                    calculatedHistory[calculatedHistory.length - 1].val = currentTotal;
-                    calculatedHistory[calculatedHistory.length - 1].date = new Date().toISOString().slice(0, 10);
-                }
+                // Forzar el último día a la valoración real de la app para evitar el salto visual
+                calculatedHistory[calculatedHistory.length - 1].val = stats.active.cur;
+                calculatedHistory[calculatedHistory.length - 1].date = new Date().toISOString().slice(0, 10);
 
                 setDailyHistory(calculatedHistory); 
-            } else {
-                throw new Error("El modelo no encontró los datos.");
             }
         } catch (e) {
             console.error("Error IA:", e);
-            // Mostramos el error en consola pero evitamos la alerta para que no sea molesto si la IA tropieza
         } finally {
             setIsRebuildingHistory(false);
         }
     };
+
+
 
 
 useEffect(() => {
