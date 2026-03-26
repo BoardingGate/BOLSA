@@ -2598,63 +2598,75 @@ const WorldSentimentMap = ({ apiKey, aiModel }) => {
 
         const initChart = async () => {
             try {
-                // 1. Obtener datos de sentimiento vía IA
-                const prompt = `Actúa como API financiera. Busca la variación porcentual de HOY de los índices principales de: United States (S&P500), Spain (IBEX35), Germany (DAX), France (CAC40), UK (FTSE100), Italy (FTSE MIB), Japan (Nikkei), China (Shanghai Composite), Brazil (IBOVESPA), India (Nifty 50), Australia (ASX 200), Canada (TSX). 
-                Responde EXCLUSIVAMENTE un JSON con el nombre del país en inglés y el valor numérico: {"Spain": 0.5, "United States": -1.2, ...}`;
+                // 1. Lista exhaustiva de índices mundiales
+                const indicesPrompt = [
+                    "USA (S&P 500)", "Canada (TSX)", "Mexico (IPC)", "Brazil (IBOVESPA)", "Argentina (MERVAL)",
+                    "Spain (IBEX 35)", "Germany (DAX)", "France (CAC 40)", "UK (FTSE 100)", "Italy (FTSE MIB)", 
+                    "Switzerland (SMI)", "Netherlands (AEX)", "Portugal (PSI)", "Russia (MOEX)",
+                    "Japan (Nikkei 225)", "China (Shanghai Composite)", "Hong Kong (Hang Seng)", 
+                    "South Korea (KOSPI)", "India (Nifty 50)", "Singapore (Straits Times)", "Australia (ASX 200)",
+                    "Saudi Arabia (TASI)", "Turkey (BIST 100)", "South Africa (JSE Top 40)"
+                ].join(", ");
+        
+                const prompt = `Actúa como terminal de datos financieros. Busca la variación porcentual de la ÚLTIMA SESIÓN (u hoy si está abierto) de los índices: ${indicesPrompt}. 
+                Responde ÚNICAMENTE un JSON con el nombre del país en inglés (clave) y el porcentaje numérico (valor). 
+                Usa estos nombres exactos para las claves: 
+                {"United States": 0, "Canada": 0, "Mexico": 0, "Brazil": 0, "Argentina": 0, "Spain": 0, "Germany": 0, "France": 0, "United Kingdom": 0, "Italy": 0, "Switzerland": 0, "Netherlands": 0, "Portugal": 0, "Russia": 0, "Japan": 0, "China": 0, "South Korea": 0, "India": 0, "Singapore": 0, "Australia": 0, "Saudi Arabia": 0, "Turkey": 0, "South Africa": 0}`;
                 
                 const res = await askGemini(apiKey, prompt, aiModel);
                 const sentimentData = extractJSON(res) || {};
-
-                // 2. Cargar geometría del mapa
+        
                 const mapRes = await fetch('https://raw.githubusercontent.com/apache/echarts/master/test/data/map/json/world.json');
                 const worldJson = await mapRes.json();
                 
                 echarts.registerMap('world', worldJson);
                 const myChart = echarts.init(chartRef.current);
-
+        
                 const option = {
                     backgroundColor: 'transparent',
                     tooltip: {
                         trigger: 'item',
-                        formatter: (params) => `${params.name}: ${params.value ? params.value + '%' : 'Sin datos'}`,
-                        backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                        formatter: (p) => `<b>${p.name}</b><br/>Variación: <span style="color:${p.value >= 0 ? '#4ade80' : '#f87171'}">${p.value ? (p.value > 0 ? '+' : '') + p.value + '%' : 'S/D'}</span>`,
+                        backgroundColor: 'rgba(15, 23, 42, 0.95)',
                         borderColor: '#334155',
+                        borderWidth: 1,
                         textStyle: { color: '#fff', fontSize: 12 }
                     },
                     visualMap: {
-                        min: -2,
-                        max: 2,
+                        min: -2.5,
+                        max: 2.5,
                         calculable: true,
                         orient: 'horizontal',
                         left: 'center',
-                        bottom: '5%',
-                        text: ['Alcista', 'Bajista'],
+                        bottom: '8%',
+                        text: ['+2.5%', '-2.5%'],
+                        itemWidth: 15,
                         inRange: {
-                            color: ['#ef4444', '#1e293b', '#22c55e'] // Rojo -> Gris Fondo -> Verde
+                            color: ['#991b1b', '#450a0a', '#1e293b', '#064e3b', '#16a34a'] // Rojo Intenso -> Rojo Oscuro -> Fondo -> Verde Oscuro -> Verde Brillante
                         },
-                        textStyle: { color: '#94a3b8', fontSize: 10 }
+                        textStyle: { color: '#64748b', fontSize: 10, fontWeight: 'bold' }
                     },
                     series: [{
                         name: 'Sentimiento',
                         type: 'map',
                         map: 'world',
                         roam: true,
+                        zoom: 1.2, // Un poco de zoom inicial para centrar
                         emphasis: {
                             label: { show: false },
-                            itemStyle: { areaColor: '#3b82f6' }
+                            itemStyle: { areaColor: '#3b82f6', borderWidth: 2 }
                         },
                         itemStyle: {
-                            areaColor: '#0f172a',
-                            borderColor: '#334155'
+                            areaColor: '#1e293b',
+                            borderColor: '#334155',
+                            borderWidth: 0.5
                         },
                         data: Object.entries(sentimentData).map(([name, value]) => ({ name, value }))
                     }]
                 };
-
+        
                 myChart.setOption(option);
                 setLoading(false);
-
-                // Hacerlo responsivo
                 window.addEventListener('resize', () => myChart.resize());
             } catch (e) {
                 console.error("Error en mapa:", e);
@@ -2662,6 +2674,7 @@ const WorldSentimentMap = ({ apiKey, aiModel }) => {
             }
         };
 
+        
         initChart();
     }, [apiKey]);
 
