@@ -2591,23 +2591,41 @@ const TradingViewChart = ({ ticker, onClear }) => {
 
 const WorldSentimentMap = ({ apiKey, aiModel }) => {
     const chartRef = useRef(null);
+    const chartInstance = useRef(null); // Para guardar la instancia de ECharts
     const [loading, setLoading] = useState(true);
+    const [zoomLevel, setZoomLevel] = useState(1.2); // Zoom inicial
+
+    // Función para manejar el zoom manualmente
+    const handleManualZoom = (type) => {
+        if (!chartInstance.current) return;
+        
+        let newZoom = zoomLevel;
+        if (type === 'in') newZoom = zoomLevel * 1.3;
+        if (type === 'out') newZoom = zoomLevel / 1.3;
+        if (type === 'reset') newZoom = 1.2;
+
+        setZoomLevel(newZoom);
+        
+        // Aplicamos el nuevo zoom al gráfico sin recargar los datos
+        chartInstance.current.setOption({
+            series: [{ zoom: newZoom }]
+        });
+    };
 
     useEffect(() => {
         if (!apiKey || !chartRef.current) return;
 
         const initChart = async () => {
             try {
-                // 1. Lista exhaustiva de índices mundiales
                 const indicesPrompt = [
-                    "USA (S&P 500)", "Canada (TSX)", "Mexico (IPC)", "Brazil (IBOVESPA)", "Argentina (MERVAL)",
+                    "United States (S&P 500)", "Canada (TSX)", "Mexico (IPC)", "Brazil (IBOVESPA)", "Argentina (MERVAL)",
                     "Spain (IBEX 35)", "Germany (DAX)", "France (CAC 40)", "UK (FTSE 100)", "Italy (FTSE MIB)", 
                     "Switzerland (SMI)", "Netherlands (AEX)", "Portugal (PSI)", "Russia (MOEX)",
                     "Japan (Nikkei 225)", "China (Shanghai Composite)", "Hong Kong (Hang Seng)", 
                     "South Korea (KOSPI)", "India (Nifty 50)", "Singapore (Straits Times)", "Australia (ASX 200)",
                     "Saudi Arabia (TASI)", "Turkey (BIST 100)", "South Africa (JSE Top 40)"
                 ].join(", ");
-        
+
                 const prompt = `Actúa como terminal de datos financieros. Busca la variación porcentual de la ÚLTIMA SESIÓN (u hoy si está abierto) de los índices: ${indicesPrompt}. 
                 Responde ÚNICAMENTE un JSON con el nombre del país en inglés (clave) y el porcentaje numérico (valor). 
                 Usa estos nombres exactos para las claves: 
@@ -2615,13 +2633,14 @@ const WorldSentimentMap = ({ apiKey, aiModel }) => {
                 
                 const res = await askGemini(apiKey, prompt, aiModel);
                 const sentimentData = extractJSON(res) || {};
-        
+
                 const mapRes = await fetch('https://raw.githubusercontent.com/apache/echarts/master/test/data/map/json/world.json');
                 const worldJson = await mapRes.json();
                 
                 echarts.registerMap('world', worldJson);
                 const myChart = echarts.init(chartRef.current);
-        
+                chartInstance.current = myChart; // Guardamos la instancia
+
                 const option = {
                     backgroundColor: 'transparent',
                     tooltip: {
@@ -2629,7 +2648,6 @@ const WorldSentimentMap = ({ apiKey, aiModel }) => {
                         formatter: (p) => `<b>${p.name}</b><br/>Variación: <span style="color:${p.value >= 0 ? '#4ade80' : '#f87171'}">${p.value ? (p.value > 0 ? '+' : '') + p.value + '%' : 'S/D'}</span>`,
                         backgroundColor: 'rgba(15, 23, 42, 0.95)',
                         borderColor: '#334155',
-                        borderWidth: 1,
                         textStyle: { color: '#fff', fontSize: 12 }
                     },
                     visualMap: {
@@ -2642,7 +2660,7 @@ const WorldSentimentMap = ({ apiKey, aiModel }) => {
                         text: ['+2.5%', '-2.5%'],
                         itemWidth: 15,
                         inRange: {
-                            color: ['#991b1b', '#450a0a', '#1e293b', '#064e3b', '#16a34a'] // Rojo Intenso -> Rojo Oscuro -> Fondo -> Verde Oscuro -> Verde Brillante
+                            color: ['#991b1b', '#450a0a', '#1e293b', '#064e3b', '#16a34a']
                         },
                         textStyle: { color: '#64748b', fontSize: 10, fontWeight: 'bold' }
                     },
@@ -2650,9 +2668,10 @@ const WorldSentimentMap = ({ apiKey, aiModel }) => {
                         name: 'Sentimiento',
                         type: 'map',
                         map: 'world',
-                        roam: true, 
-                        layoutCenter: ['50%', '50%'], 
-                        layoutSize: '140%',           
+                        roam: true,
+                        zoom: zoomLevel,
+                        layoutCenter: ['50%', '50%'],
+                        layoutSize: '140%',
                         emphasis: {
                             label: { show: false },
                             itemStyle: { areaColor: '#3b82f6', borderWidth: 2 }
@@ -2665,7 +2684,7 @@ const WorldSentimentMap = ({ apiKey, aiModel }) => {
                         data: Object.entries(sentimentData).map(([name, value]) => ({ name, value }))
                     }]
                 };
-        
+
                 myChart.setOption(option);
                 setLoading(false);
                 window.addEventListener('resize', () => myChart.resize());
@@ -2675,7 +2694,6 @@ const WorldSentimentMap = ({ apiKey, aiModel }) => {
             }
         };
 
-        
         initChart();
     }, [apiKey]);
 
@@ -2686,13 +2704,28 @@ const WorldSentimentMap = ({ apiKey, aiModel }) => {
                     <Icons.Globe size={18} className="text-blue-400"/>
                     <span className="text-[10px] font-black text-white uppercase tracking-widest">Sentimiento Global iA</span>
                 </div>
-                <div className="text-[9px] text-slate-400 font-bold uppercase">Datos en tiempo real via Búsqueda Web</div>
+                <div className="text-[9px] text-slate-400 font-bold uppercase">Análisis Geopolítico de Índices</div>
             </div>
+
+            {/* --- CONTROLES DE ZOOM FLOTANTES --- */}
+            <div className="absolute right-4 top-16 z-30 flex flex-col gap-2">
+                <button onClick={() => handleManualZoom('in')} className="w-10 h-10 bg-slate-800/80 hover:bg-blue-600 text-white border border-slate-700 rounded-lg flex items-center justify-center shadow-xl transition-all active:scale-90" title="Acercar">
+                    <Icons.Plus size={20}/>
+                </button>
+                <button onClick={() => handleManualZoom('out')} className="w-10 h-10 bg-slate-800/80 hover:bg-blue-600 text-white border border-slate-700 rounded-lg flex items-center justify-center shadow-xl transition-all active:scale-90" title="Alejar">
+                    <span className="text-2xl font-bold leading-none">-</span>
+                </button>
+                <button onClick={() => handleManualZoom('reset')} className="w-10 h-10 bg-slate-800/80 hover:bg-orange-600 text-white border border-slate-700 rounded-lg flex items-center justify-center shadow-xl transition-all active:scale-90" title="Resetear Vista">
+                    <Icons.Refresh size={18}/>
+                </button>
+            </div>
+
             <div ref={chartRef} className="flex-1 w-full"></div>
+            
             {loading && (
                 <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm flex flex-col items-center justify-center z-20">
                     <Icons.Loader size={40} className="text-blue-500 animate-spin mb-2" />
-                    <span className="text-[10px] font-bold text-white uppercase animate-pulse">Mapeando mercados mundiales...</span>
+                    <span className="text-[10px] font-bold text-white uppercase animate-pulse">Sincronizando Bolsas Mundiales...</span>
                 </div>
             )}
         </div>
