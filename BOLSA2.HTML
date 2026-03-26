@@ -2592,8 +2592,44 @@ const TradingViewChart = ({ ticker, onClear }) => {
 const WorldSentimentMap = ({ apiKey, aiModel }) => {
     const chartRef = useRef(null);
     const chartInstance = useRef(null);
-    const [loading, setLoading] = useState(true);
+    const [fetching, setFetching] = useState(false);
+    const [hasData, setHasData] = useState(false);
     const [zoomLevel, setZoomLevel] = useState(1.2);
+
+    // Función para obtener los datos de la IA
+    const updateSentiment = async () => {
+        if (!apiKey || fetching) return;
+        setFetching(true);
+        try {
+            const indicesPrompt = [
+                "United States (S&P 500)", "Canada (TSX)", "Mexico (IPC)", "Brazil (IBOVESPA)", "Argentina (MERVAL)",
+                "Spain (IBEX 35)", "Germany (DAX)", "France (CAC 40)", "UK (FTSE 100)", "Italy (FTSE MIB)", 
+                "Switzerland (SMI)", "Netherlands (AEX)", "Portugal (PSI)", "Russia (MOEX)",
+                "Japan (Nikkei 225)", "China (Shanghai Composite)", "Hong Kong (Hang Seng)", 
+                "South Korea (KOSPI)", "India (Nifty 50)", "Singapore (Straits Times)", "Australia (ASX 200)",
+                "Saudi Arabia (TASI)", "Turkey (BIST 100)", "South Africa (JSE Top 40)"
+            ].join(", ");
+
+            const prompt = `Actúa como terminal de datos financieros. Busca la variación porcentual de la ÚLTIMA SESIÓN de los índices: ${indicesPrompt}. 
+            Responde ÚNICAMENTE un JSON con el nombre del país en inglés (clave) y el porcentaje numérico (valor). 
+            Usa estos nombres: {"United States":0,"Canada":0,"Mexico":0,"Brazil":0,"Argentina":0,"Spain":0,"Germany":0,"France":0,"United Kingdom":0,"Italy":0,"Switzerland":0,"Netherlands":0,"Portugal":0,"Russia":0,"Japan":0,"China":0,"South Korea":0,"India":0,"Singapore":0,"Australia":0,"Saudi Arabia":0,"Turkey":0,"South Africa":0}`;
+            
+            const res = await askGemini(apiKey, prompt, aiModel);
+            const sentimentData = extractJSON(res) || {};
+
+            // Actualizamos solo los datos del gráfico
+            chartInstance.current.setOption({
+                series: [{
+                    data: Object.entries(sentimentData).map(([name, value]) => ({ name, value }))
+                }]
+            });
+            setHasData(true);
+        } catch (e) {
+            console.error("Error al actualizar sentimiento:", e);
+        } finally {
+            setFetching(false);
+        }
+    };
 
     const handleManualZoom = (type) => {
         if (!chartInstance.current) return;
@@ -2605,93 +2641,77 @@ const WorldSentimentMap = ({ apiKey, aiModel }) => {
         chartInstance.current.setOption({ series: [{ zoom: newZoom }] });
     };
 
+    // Inicialización del mapa base (Gris)
     useEffect(() => {
-        if (!apiKey || !chartRef.current) return;
+        if (!chartRef.current) return;
 
-        const initChart = async () => {
-            try {
-                const indicesPrompt = [
-                    "United States (S&P 500)", "Canada (TSX)", "Mexico (IPC)", "Brazil (IBOVESPA)", "Argentina (MERVAL)",
-                    "Spain (IBEX 35)", "Germany (DAX)", "France (CAC 40)", "UK (FTSE 100)", "Italy (FTSE MIB)", 
-                    "Switzerland (SMI)", "Netherlands (AEX)", "Portugal (PSI)", "Russia (MOEX)",
-                    "Japan (Nikkei 225)", "China (Shanghai Composite)", "Hong Kong (Hang Seng)", 
-                    "South Korea (KOSPI)", "India (Nifty 50)", "Singapore (Straits Times)", "Australia (ASX 200)",
-                    "Saudi Arabia (TASI)", "Turkey (BIST 100)", "South Africa (JSE Top 40)"
-                ].join(", ");
+        const initBaseMap = async () => {
+            const mapRes = await fetch('https://raw.githubusercontent.com/apache/echarts/master/test/data/map/json/world.json');
+            const worldJson = await mapRes.json();
+            
+            echarts.registerMap('world', worldJson);
+            const myChart = echarts.init(chartRef.current);
+            chartInstance.current = myChart;
 
-                const prompt = `Actúa como terminal de datos financieros. Busca la variación porcentual de la ÚLTIMA SESIÓN (u hoy si está abierto) de los índices: ${indicesPrompt}. 
-                Responde ÚNICAMENTE un JSON con el nombre del país en inglés (clave) y el porcentaje numérico (valor). 
-                Usa estos nombres exactos para las claves: 
-                {"United States": 0, "Canada": 0, "Mexico": 0, "Brazil": 0, "Argentina": 0, "Spain": 0, "Germany": 0, "France": 0, "United Kingdom": 0, "Italy": 0, "Switzerland": 0, "Netherlands": 0, "Portugal": 0, "Russia": 0, "Japan": 0, "China": 0, "South Korea": 0, "India": 0, "Singapore": 0, "Australia": 0, "Saudi Arabia": 0, "Turkey": 0, "South Africa": 0}`;
-                
-                const res = await askGemini(apiKey, prompt, aiModel);
-                const sentimentData = extractJSON(res) || {};
-
-                const mapRes = await fetch('https://raw.githubusercontent.com/apache/echarts/master/test/data/map/json/world.json');
-                const worldJson = await mapRes.json();
-                
-                echarts.registerMap('world', worldJson);
-                const myChart = echarts.init(chartRef.current);
-                chartInstance.current = myChart;
-
-                const option = {
-                    backgroundColor: 'transparent',
-                    tooltip: {
-                        trigger: 'item',
-                        formatter: (p) => `<b>${p.name}</b><br/>Variación: <span style="color:${p.value >= 0 ? '#4ade80' : '#f87171'}">${p.value ? (p.value > 0 ? '+' : '') + p.value + '%' : 'Sin datos'}</span>`,
-                        backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                        borderColor: '#334155',
-                        textStyle: { color: '#fff', fontSize: 12 }
+            const option = {
+                backgroundColor: 'transparent',
+                tooltip: {
+                    trigger: 'item',
+                    formatter: (p) => `<b>${p.name}</b><br/>${p.value ? 'Variación: ' + (p.value > 0 ? '+' : '') + p.value + '%' : 'Pulsa Actualizar para ver datos'}`,
+                    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                    borderColor: '#334155',
+                    textStyle: { color: '#fff' }
+                },
+                visualMap: {
+                    min: -2.5,
+                    max: 2.5,
+                    show: false, // Oculto hasta que haya datos
+                    inRange: { color: ['#ef4444', '#fca5a5', '#64748b', '#86efac', '#22c55e'] }
+                },
+                series: [{
+                    name: 'Sentimiento',
+                    type: 'map',
+                    map: 'world',
+                    roam: true,
+                    zoom: zoomLevel,
+                    layoutCenter: ['50%', '50%'],
+                    layoutSize: '140%',
+                    itemStyle: {
+                        areaColor: '#334155', 
+                        borderColor: '#475569',
+                        borderWidth: 0.5
                     },
-                    visualMap: {
-                        min: -2.5,
-                        max: 2.5,
-                        calculable: true,
-                        orient: 'horizontal',
-                        left: 'center',
-                        bottom: '8%',
-                        text: ['+2.5%', '-2.5%'],
-                        itemWidth: 15,
-                        inRange: {
-                            // --- GRADIENTE MÁS CLARO Y VISIBLE ---
-                            // Rojo -> Rojo suave -> Gris Medio (Neutral) -> Verde suave -> Verde intenso
-                            color: ['#ef4444', '#fca5a5', '#64748b', '#86efac', '#22c55e']
-                        },
-                        textStyle: { color: '#94a3b8', fontSize: 10, fontWeight: 'bold' }
+                    emphasis: {
+                        itemStyle: { areaColor: '#3b82f6' },
+                        label: { show: false }
                     },
-                    series: [{
-                        name: 'Sentimiento',
-                        type: 'map',
-                        map: 'world',
-                        roam: true,
-                        zoom: zoomLevel,
-                        layoutCenter: ['50%', '50%'],
-                        layoutSize: '140%',
-                        emphasis: {
-                            label: { show: false },
-                            itemStyle: { areaColor: '#3b82f6', borderWidth: 2 }
-                        },
-                        itemStyle: {
-                            // --- COLOR BASE DE PAÍSES SIN DATOS (MÁS CLARO) ---
-                            areaColor: '#334155', 
-                            borderColor: '#475569',
-                            borderWidth: 0.5
-                        },
-                        data: Object.entries(sentimentData).map(([name, value]) => ({ name, value }))
-                    }]
-                };
+                    data: [] // Inicialmente vacío
+                }]
+            };
 
-                myChart.setOption(option);
-                setLoading(false);
-                window.addEventListener('resize', () => myChart.resize());
-            } catch (e) {
-                console.error("Error en mapa:", e);
-                setLoading(false);
-            }
+            myChart.setOption(option);
+            window.addEventListener('resize', () => myChart.resize());
         };
 
-        initChart();
-    }, [apiKey]);
+        initBaseMap();
+    }, []);
+
+    // Mostrar el VisualMap cuando ya tenemos datos
+    useEffect(() => {
+        if (hasData && chartInstance.current) {
+            chartInstance.current.setOption({
+                visualMap: {
+                    show: true,
+                    calculable: true,
+                    orient: 'horizontal',
+                    left: 'center',
+                    bottom: '8%',
+                    text: ['+2.5%', '-2.5%'],
+                    textStyle: { color: '#94a3b8', fontSize: 10, fontWeight: 'bold' }
+                }
+            });
+        }
+    }, [hasData]);
 
     return (
         <div className="w-full h-full bg-slate-900 border border-slate-800 rounded-xl overflow-hidden relative flex flex-col">
@@ -2700,34 +2720,36 @@ const WorldSentimentMap = ({ apiKey, aiModel }) => {
                     <Icons.Globe size={18} className="text-blue-400"/>
                     <span className="text-[10px] font-black text-white uppercase tracking-widest">Sentimiento Global iA</span>
                 </div>
-                <div className="text-[9px] text-slate-400 font-bold uppercase">Pulsa en un país para ver detalle</div>
+                
+                <button 
+                    onClick={updateSentiment}
+                    disabled={fetching}
+                    className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase flex items-center gap-2 transition-all shadow-lg border ${fetching ? 'bg-slate-700 text-slate-500 border-slate-600' : 'bg-blue-600 hover:bg-blue-500 text-white border-blue-400'}`}
+                >
+                    {fetching ? <Icons.Loader size={12} className="animate-spin" /> : <Icons.Refresh size={12}/>}
+                    {fetching ? 'Consultando...' : (hasData ? 'ACTUALIZAR DATOS' : 'CARGAR SENTIMIENTO')}
+                </button>
             </div>
 
+            {/* Controles de Zoom */}
             <div className="absolute right-4 top-16 z-30 flex flex-col gap-2">
-                <button onClick={() => handleManualZoom('in')} className="w-10 h-10 bg-slate-800/90 hover:bg-blue-600 text-white border border-slate-600 rounded-lg flex items-center justify-center shadow-2xl transition-all" title="Acercar">
-                    <Icons.Plus size={20}/>
-                </button>
-                <button onClick={() => handleManualZoom('out')} className="w-10 h-10 bg-slate-800/90 hover:bg-blue-600 text-white border border-slate-600 rounded-lg flex items-center justify-center shadow-2xl transition-all" title="Alejar">
-                    <span className="text-2xl font-bold leading-none">-</span>
-                </button>
-                <button onClick={() => handleManualZoom('reset')} className="w-10 h-10 bg-slate-800/90 hover:bg-orange-600 text-white border border-slate-600 rounded-lg flex items-center justify-center shadow-2xl transition-all" title="Resetear Vista">
-                    <Icons.Refresh size={18}/>
-                </button>
+                <button onClick={() => handleManualZoom('in')} className="w-10 h-10 bg-slate-800/90 hover:bg-blue-600 text-white border border-slate-600 rounded-lg flex items-center justify-center shadow-2xl transition-all"><Icons.Plus size={20}/></button>
+                <button onClick={() => handleManualZoom('out')} className="w-10 h-10 bg-slate-800/90 hover:bg-blue-600 text-white border border-slate-600 rounded-lg flex items-center justify-center shadow-2xl transition-all"><span className="text-2xl font-bold leading-none">-</span></button>
+                <button onClick={() => handleManualZoom('reset')} className="w-10 h-10 bg-slate-800/90 hover:bg-orange-600 text-white border border-slate-600 rounded-lg flex items-center justify-center shadow-2xl transition-all"><Icons.Refresh size={18}/></button>
             </div>
 
             <div ref={chartRef} className="flex-1 w-full"></div>
             
-            {loading && (
-                <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm flex flex-col items-center justify-center z-20">
-                    <Icons.Loader size={40} className="text-blue-500 animate-spin mb-2" />
-                    <span className="text-[10px] font-bold text-white uppercase animate-pulse">Sincronizando Bolsas Mundiales...</span>
+            {!hasData && !fetching && (
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <div className="bg-slate-900/80 px-4 py-2 rounded-full border border-slate-700 text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                        Mapa en espera · Pulsa el botón azul para analizar
+                    </div>
                 </div>
             )}
         </div>
     );
 };
-
-
 
 
 const TopAnalysisSection = ({ selectedTicker, onClearTicker, apiKey, aiModel }) => {
