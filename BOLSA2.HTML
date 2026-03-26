@@ -32,6 +32,8 @@
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     </script>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
+
     <script src="//cdn.jsdelivr.net/npm/eruda"></script>
     <script>
     (function() {
@@ -2587,19 +2589,112 @@ const TradingViewChart = ({ ticker, onClear }) => {
 };
 
 
-const TopAnalysisSection = ({ selectedTicker, onClearTicker }) => {
+const WorldSentimentMap = ({ apiKey, aiModel }) => {
+    const chartRef = useRef(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        if (!apiKey || !chartRef.current) return;
+
+        const initChart = async () => {
+            try {
+                // 1. Obtener datos de sentimiento vía IA
+                const prompt = `Actúa como API financiera. Busca la variación porcentual de HOY de los índices principales de: United States (S&P500), Spain (IBEX35), Germany (DAX), France (CAC40), UK (FTSE100), Italy (FTSE MIB), Japan (Nikkei), China (Shanghai Composite), Brazil (IBOVESPA), India (Nifty 50), Australia (ASX 200), Canada (TSX). 
+                Responde EXCLUSIVAMENTE un JSON con el nombre del país en inglés y el valor numérico: {"Spain": 0.5, "United States": -1.2, ...}`;
+                
+                const res = await askGemini(apiKey, prompt, aiModel);
+                const sentimentData = extractJSON(res) || {};
+
+                // 2. Cargar geometría del mapa
+                const mapRes = await fetch('https://raw.githubusercontent.com/apache/echarts/master/test/data/map/json/world.json');
+                const worldJson = await mapRes.json();
+                
+                echarts.registerMap('world', worldJson);
+                const myChart = echarts.init(chartRef.current);
+
+                const option = {
+                    backgroundColor: 'transparent',
+                    tooltip: {
+                        trigger: 'item',
+                        formatter: (params) => `${params.name}: ${params.value ? params.value + '%' : 'Sin datos'}`,
+                        backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                        borderColor: '#334155',
+                        textStyle: { color: '#fff', fontSize: 12 }
+                    },
+                    visualMap: {
+                        min: -2,
+                        max: 2,
+                        calculable: true,
+                        orient: 'horizontal',
+                        left: 'center',
+                        bottom: '5%',
+                        text: ['Alcista', 'Bajista'],
+                        inRange: {
+                            color: ['#ef4444', '#1e293b', '#22c55e'] // Rojo -> Gris Fondo -> Verde
+                        },
+                        textStyle: { color: '#94a3b8', fontSize: 10 }
+                    },
+                    series: [{
+                        name: 'Sentimiento',
+                        type: 'map',
+                        map: 'world',
+                        roam: true,
+                        emphasis: {
+                            label: { show: false },
+                            itemStyle: { areaColor: '#3b82f6' }
+                        },
+                        itemStyle: {
+                            areaColor: '#0f172a',
+                            borderColor: '#334155'
+                        },
+                        data: Object.entries(sentimentData).map(([name, value]) => ({ name, value }))
+                    }]
+                };
+
+                myChart.setOption(option);
+                setLoading(false);
+
+                // Hacerlo responsivo
+                window.addEventListener('resize', () => myChart.resize());
+            } catch (e) {
+                console.error("Error en mapa:", e);
+                setLoading(false);
+            }
+        };
+
+        initChart();
+    }, [apiKey]);
+
+    return (
+        <div className="w-full h-full bg-slate-900 border border-slate-800 rounded-xl overflow-hidden relative flex flex-col">
+            <div className="bg-slate-800 p-2 flex justify-between items-center px-4 shrink-0">
+                <div className="flex items-center gap-2">
+                    <Icons.Globe size={18} className="text-blue-400"/>
+                    <span className="text-[10px] font-black text-white uppercase tracking-widest">Sentimiento Global iA</span>
+                </div>
+                <div className="text-[9px] text-slate-400 font-bold uppercase">Datos en tiempo real via Búsqueda Web</div>
+            </div>
+            <div ref={chartRef} className="flex-1 w-full"></div>
+            {loading && (
+                <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm flex flex-col items-center justify-center z-20">
+                    <Icons.Loader size={40} className="text-blue-500 animate-spin mb-2" />
+                    <span className="text-[10px] font-bold text-white uppercase animate-pulse">Mapeando mercados mundiales...</span>
+                </div>
+            )}
+        </div>
+    );
+};
+
+
+
+
+const TopAnalysisSection = ({ selectedTicker, onClearTicker, apiKey, aiModel }) => {
     const carouselRef = useRef(null);
 
-    const scrollToPanel = (targetId) => {
+    const scrollToPanel = (index) => {
         if (!carouselRef.current) return;
         const container = carouselRef.current;
         const panels = container.children;
-        
-        let index = 0;
-        if (targetId === 'technical') index = 0;
-        else if (targetId === 'heatmap') index = 1;
-        else if (targetId === 'markets') index = 2;
-
         if (panels[index]) {
             panels[index].scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
         }
@@ -2607,35 +2702,24 @@ const TopAnalysisSection = ({ selectedTicker, onClearTicker }) => {
 
     return (
         <div className="w-full mb-8 fade-in">
-            
             <div className="flex justify-between items-center bg-slate-900/80 border border-slate-700 rounded-t-xl px-4 py-2 mb-1">
                 <div className="flex items-center gap-2 text-[10px] font-bold text-blue-400 uppercase tracking-widest animate-pulse">
-                    <span>↔ EN LA REJILLA INFERIOR SELECCIONA EL VALOR A VER AQUÍ O DESLIZA O HAZ CLIC EN EL TÍTULO DEL PANEL</span>
+                    <span>↔ DESLIZA O SELECCIONA VISTA</span>
                 </div>
                 <div className="flex gap-4 text-[9px] font-bold text-slate-500 uppercase tracking-wider">
-                    <button 
-                        onClick={() => scrollToPanel('technical')}
-                        className="text-blue-400 hover:text-blue-200 cursor-pointer transition-colors"
-                    >
-                        1. Gráfico Técnico
-                    </button>
-                    <button 
-                        onClick={() => scrollToPanel('heatmap')}
-                        className="text-purple-400 hover:text-purple-200 cursor-pointer transition-colors"
-                    >
-                        2. Mapa de Calor
-                    </button>
-                    <button 
-                        onClick={() => scrollToPanel('markets')}
-                        className="text-green-400 hover:text-green-200 cursor-pointer transition-colors"
-                    >
-                        3. Índices Globales
-                    </button>
+                    <button onClick={() => scrollToPanel(0)} className="text-emerald-400 hover:text-emerald-200 transition-colors">1. Sentimiento Mundial</button>
+                    <button onClick={() => scrollToPanel(1)} className="text-blue-400 hover:text-blue-200 transition-colors">2. Análisis Técnico</button>
+                    <button onClick={() => scrollToPanel(2)} className="text-purple-400 hover:text-purple-200 transition-colors">3. Mapa de Calor</button>
+                    <button onClick={() => scrollToPanel(3)} className="text-orange-400 hover:text-orange-200 transition-colors">4. Índices Globales</button>
                 </div>
             </div>
 
             <div ref={carouselRef} className="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-4 custom-scrollbar rounded-b-xl scroll-smooth">
-                
+                {/* PANEL NUEVO: MAPA MUNDIAL */}
+                <div className="snap-center min-w-full lg:min-w-[90%] h-[750px] shadow-2xl relative">
+                    <WorldSentimentMap apiKey={apiKey} aiModel={aiModel} />
+                </div>
+
                 <div className="snap-center min-w-full lg:min-w-[90%] h-[750px] shadow-2xl relative">
                     <TradingViewChart ticker={selectedTicker} onClear={onClearTicker} />
                 </div>
@@ -2647,7 +2731,6 @@ const TopAnalysisSection = ({ selectedTicker, onClearTicker }) => {
                 <div className="snap-center min-w-full lg:min-w-[90%] h-[750px] shadow-2xl relative">
                     <TradingViewMarketWidget />
                 </div>
-
             </div>
         </div>
     );
@@ -4859,7 +4942,16 @@ const handleSellSubmit = () => {
                 </div>
             </div>
 
-            {visibleSections.chartTV && <TopAnalysisSection selectedTicker={selectedTicker} onClearTicker={() => setSelectedTicker(null)} />}
+         
+            {visibleSections.chartTV && (
+                <TopAnalysisSection 
+                    selectedTicker={selectedTicker} 
+                    onClearTicker={() => setSelectedTicker(null)} 
+                    apiKey={apiKey} 
+                    aiModel={aiModel} 
+                />
+            )}
+
 
           {showEvolution && (
                 <div className="w-full overflow-x-auto custom-scrollbar bg-slate-900 border border-slate-700 rounded-xl p-4 mb-6 fade-in shadow-2xl relative">
