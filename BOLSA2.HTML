@@ -694,21 +694,106 @@ const StackedWeightsChart = ({ data, baseCurrency }) => {
       };
 
 
+const GeoDistributionMap = ({ data, baseCurrency }) => {
+    const chartRef = useRef(null);
+    const chartInstance = useRef(null);
+
+    useEffect(() => {
+        if (!chartRef.current) return;
+
+        const initMap = async () => {
+            try {
+                if (!echarts.getMap('world')) {
+                    const mapRes = await fetch('https://raw.githubusercontent.com/apache/echarts/master/test/data/map/json/world.json');
+                    const worldJson = await mapRes.json();
+                    echarts.registerMap('world', worldJson);
+                }
+                
+                const myChart = echarts.getInstanceByDom(chartRef.current) || echarts.init(chartRef.current);
+                chartInstance.current = myChart;
+
+                const maxVal = Math.max(...data.map(d => d.value), 1);
+
+                const option = {
+                    backgroundColor: 'transparent',
+                    tooltip: {
+                        trigger: 'item',
+                        formatter: (p) => {
+                            if(!p.data || !p.data.value) return `<b>${p.name}</b><br/>Sin Exposición`;
+                            return `<b>${p.name}</b><br/>Invertido: ${formatMoney(p.data.value, baseCurrency)}<br/>Peso: ${formatN(p.data.pct)}%`;
+                        },
+                        backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                        borderColor: '#334155',
+                        textStyle: { color: '#fff', fontSize: 10 }
+                    },
+                    visualMap: {
+                        min: 0,
+                        max: maxVal,
+                        show: false,
+                        inRange: { color: ['#1e293b', '#3b82f6', '#8b5cf6', '#a855f7'] }
+                    },
+                    series: [{
+                        name: 'Exposición',
+                        type: 'map',
+                        map: 'world',
+                        roam: true,
+                        zoom: 1.2,
+                        itemStyle: {
+                            areaColor: '#1e293b', 
+                            borderColor: '#475569',
+                            borderWidth: 0.5
+                        },
+                        emphasis: {
+                            itemStyle: { areaColor: '#60a5fa' },
+                            label: { show: false }
+                        },
+                        data: data
+                    }]
+                };
+
+                myChart.setOption(option);
+                window.addEventListener('resize', () => {
+                    if (chartInstance.current) chartInstance.current.resize();
+                });
+            } catch(e) { console.error("Error cargando mapa:", e); }
+        };
+
+        initMap();
+        
+        return () => {
+            if (chartInstance.current) chartInstance.current.dispose();
+        };
+    }, [data, baseCurrency]);
+
+    return (
+        <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 flex flex-col h-full overflow-hidden relative">
+            <h4 className="text-[10px] uppercase font-bold text-slate-400 mb-2 shrink-0">Exposición País (Peso Total)</h4>
+            <div ref={chartRef} className="flex-1 w-full relative"></div>
+        </div>
+    );
+};
+
+
 const CarouselCharts = ({ chartsData, baseCurrency }) => {
-          return (
-             <div className="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-4 custom-scrollbar items-start">
-                <div className="snap-center min-w-full lg:min-w-[90%] h-[650px]">
-                    <SimpleChart type="line" data={chartsData.evolution} title="Evolución Rendimiento Acumulado (con dividendos)" height={650} color="#10b981" />
-                </div>
-                <div className="snap-center min-w-full lg:min-w-[90%] h-[650px]">
-                    <StackedWeightsChart data={chartsData.weightsData} baseCurrency={baseCurrency} />
-                </div>
-                <div className="snap-center min-w-full lg:min-w-[90%] h-[650px]">
-                    <SimpleChart type="pie" data={chartsData.geoDiversification} title="Diversificación Geográfica (Bolsa)" height={650} />
-                </div>
-             </div>
-          );
-      };
+    return (
+       <div className="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-4 custom-scrollbar items-start">
+          <div className="snap-center min-w-full lg:min-w-[90%] h-[650px]">
+              <SimpleChart type="line" data={chartsData.evolution} title="Evolución Rendimiento Acumulado (con dividendos)" height={650} color="#10b981" />
+          </div>
+          <div className="snap-center min-w-full lg:min-w-[90%] h-[650px]">
+              <StackedWeightsChart data={chartsData.weightsData} baseCurrency={baseCurrency} />
+          </div>
+          <div className="snap-center min-w-full lg:min-w-[90%] h-[800px] md:h-[650px] flex flex-col md:flex-row gap-4">
+              <div className="flex-1 w-full h-full">
+                  <SimpleChart type="pie" data={chartsData.geoDiversification} title="Diversificación por Bolsa / Región" height={650} />
+              </div>
+              <div className="flex-1 w-full h-full">
+                  <GeoDistributionMap data={chartsData.geoMapEcharts} baseCurrency={baseCurrency} />
+              </div>
+          </div>
+       </div>
+    );
+};
 
 
 const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, syncStatus, onManualSync, apiKey, aiModel }) => {
@@ -4292,8 +4377,37 @@ const getMarketStatus = (p) => {
 
         const geoMap = {}; 
         activeFilteredPortfolio.filter(p => !p.sellDate).forEach(p => { const region = getRegion(p.ticker); const val = ((p.currentPrice / (p.isIndex ? p.indexDivisor||1 : 1)) * p.shares * (p.isIndex ? p.buyFx : p.currentFx)); geoMap[region] = (geoMap[region] || 0) + val; }); 
+       
         const geoDiversification = Object.keys(geoMap).map(k => ({ label: k, value: geoMap[k] })).sort((a,b) => b.value - a.value); 
         
+       const countryMap = {};
+        activeFilteredPortfolio.filter(p => !p.sellDate).forEach(p => { 
+            const tUpper = p.ticker.toUpperCase();
+            let country = 'United States'; // Por defecto asume mercado americano
+            if(tUpper.includes('.MC') || tUpper.startsWith('BME:')) country = 'Spain';
+            else if(tUpper.includes('.DE') || tUpper.startsWith('XETRA:') || tUpper.startsWith('FRA:')) country = 'Germany';
+            else if(tUpper.includes('.PA') || tUpper.startsWith('EPA:')) country = 'France';
+            else if(tUpper.includes('.L') || tUpper.startsWith('LSE:') || tUpper.startsWith('LON:')) country = 'United Kingdom';
+            else if(tUpper.startsWith('AMS:')) country = 'Netherlands';
+            else if(tUpper.startsWith('BIT:') || tUpper.startsWith('MIL:')) country = 'Italy';
+            else if(tUpper.startsWith('TSE:') || tUpper.startsWith('TYO:')) country = 'Japan';
+            else if(tUpper.startsWith('TSX:')) country = 'Canada';
+            else if(tUpper.startsWith('ASX:')) country = 'Australia';
+            else if(tUpper.startsWith('SWX:') || tUpper.startsWith('VTX:')) country = 'Switzerland';
+            else if(tUpper.startsWith('HKG:')) country = 'China';
+
+            const val = ((p.currentPrice / (p.isIndex ? p.indexDivisor||1 : 1)) * p.shares * (p.isIndex ? p.buyFx : p.currentFx)); 
+            countryMap[country] = (countryMap[country] || 0) + val;
+        });
+        
+        const totalGeoVal = Object.values(countryMap).reduce((a,b) => a+b, 0) || 1;
+        const geoMapEcharts = Object.keys(countryMap).map(k => ({ 
+            name: k, 
+            value: countryMap[k],
+            pct: (countryMap[k] / totalGeoVal) * 100
+        }));
+        // ---------------------------------------------
+
         const events = activeFilteredPortfolio.map(p => { 
             const isSold = !!p.sellDate; 
             const date = isSold ? p.sellDate : p.buyDate; 
@@ -4312,8 +4426,9 @@ const getMarketStatus = (p) => {
         let accVal = 0; let accCost = 0; 
         const evolution = events.map(e => { accVal += e.value; accCost += e.cost; const roi = accCost !== 0 ? ((accVal) / accCost) * 100 : 0; return { label: e.date, value: accVal, extraPct: r2(roi) }; }); 
         
-        return { weightsData, geoDiversification, evolution }; 
-    }, [activeFilteredPortfolio]);
+        return { weightsData, geoDiversification, evolution, geoMapEcharts }; // Añadimos geoMapEcharts al return
+    }, [activeFilteredPortfolio]);  
+     
 
     const divergingData = useMemo(() => { 
         return activeFilteredPortfolio.map(p => { 
