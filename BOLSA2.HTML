@@ -8262,16 +8262,17 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         w.document.close(); w.print();
     };
 
-    const runScreener = async () => {
+
+const runScreener = async () => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
         const marketObj = EXCHANGES.find(e => e.id === exchange);
         const marketDesc = marketObj ? marketObj.name : exchange;
         
         let trendFilterStr = '';
         if (screenerTrend === 'ath') {
-            trendFilterStr = "Debe estar cotizando en sus máximos históricos (ATH) o en sus máximos de 52 semanas.";
+            trendFilterStr = "Cotizando actualmente (hoy) a menos de un 2% de su máximo histórico o máximo de 52 semanas.";
         } else if (screenerTrend === 'drop') {
-            trendFilterStr = `Debe haber caído al menos un ${screenerDropConfig.pct}% desde su pico máximo en los últimos ${screenerDropConfig.months} meses.`;
+            trendFilterStr = `Haber sufrido una caída (drawdown) de al menos un ${screenerDropConfig.pct}% desde su precio máximo alcanzado en los últimos ${screenerDropConfig.months} meses, y mantenerse cotizando a esos niveles bajos en la actualidad.`;
         }
 
         const activeFiltersArr = Object.entries(params).filter(([_, p]) => p.active)
@@ -8286,34 +8287,78 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
                 return '';
             }).filter(Boolean);
             
-        if (trendFilterStr) activeFiltersArr.unshift(trendFilterStr);
         const activeFilters = activeFiltersArr.join(' AND ');
 
-        if (!activeFilters) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Activa al menos un parámetro.', type: 'info' });
+        if (!activeFilters && !trendFilterStr) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Activa al menos un parámetro fundamental o de tendencia.', type: 'info' });
+        
         setLoading(true);
         try {
-            const today = new Date().toLocaleString('es-ES'); // Fecha de referencia
+            const today = new Date().toLocaleString('es-ES'); 
+            let finalResults = [];
+
+            if (screenerTrend !== 'none') {
+                // FASE 1: Búsqueda exclusiva de tendencia de precios
+                setStatusModal({ isOpen: true, title: 'Rastreo Fase 1/2', msg: 'Buscando valores que cumplan la condición técnica de precio en el mercado...', type: 'info' });
+                
+                const promptPhase1 = `ROL: Experto en Mercados Financieros. FECHA ACTUAL: ${today}.
+                TAREA: Identificar empresas en el mercado "${marketDesc}" que cumplan ESTRICTAMENTE esta condición técnica de precio hoy:
+                ${trendFilterStr}
+                ACCION: Usa tu herramienta de búsqueda web para verificar cotizaciones recientes y picos máximos históricos de las empresas.
+                SALIDA: Devuelve ÚNICAMENTE un array JSON plano con los Tickers de hasta ${maxResults * 2} empresas que cumplan la condición. Ejemplo exacto: ["TICKER1", "TICKER2"]. SIN TEXTO EXTRA.`;
+
+                const res1 = await askGemini(apiKey, promptPhase1, aiModel);
+                const tickers = extractJSON(res1);
+
+                if (!tickers || !Array.isArray(tickers) || tickers.length === 0) {
+                    throw new Error("No se encontraron valores que cumplan la condición técnica de precio (Máximos o Caída) en este mercado.");
+                }
+
+                // FASE 2: Filtrado fundamental de la lista rescatada
+                setStatusModal({ isOpen: true, title: 'Rastreo Fase 2/2', msg: `Analizando fundamentales de los ${tickers.length} valores encontrados...`, type: 'info' });
+
+                const promptPhase2 = `ROL: Analista Cuantitativo. FECHA ACTUAL: ${today}.
+                TAREA: Analizar detalladamente la siguiente lista de empresas: ${tickers.join(', ')}.
+                INSTRUCCIONES:
+                1. Para cada ticker, obtén su Precio de cotización ACTUAL REAL (HOY) mediante búsqueda web y sus ratios fundamentales actuales (PER, PEG, ROI, etc.).
+                2. ${activeFilters ? 'APLICA LOS SIGUIENTES FILTROS ESTRICTOS y descarta las que no cumplan: ' + activeFilters : 'Obtén sus datos fundamentales sin aplicar filtros.'}
+                3. Para las que pasen el filtro (máximo ${maxResults}), devuelve los datos en el siguiente formato JSON exacto:
+                [{"ticker":"SYM","name":"Nombre Corto","price":1.0,"trendStatus":"${screenerTrend === 'ath' ? 'En Máximos (ATH)' : 'Desplomada desde pico'}","per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0,"fcf":1.0}]
+                REGLA CRÍTICA: La propiedad "price" DEBE ser obligatoriamente el precio REAL de cotización actual (el de HOY en bolsa), NUNCA el precio de los picos históricos.
+                RESPONDE SOLO EL JSON. SIN EXPLICACIONES.`;
+
+                const res2 = await askGemini(apiKey, promptPhase2, aiModel);
+                finalResults = extractJSON(res2);
+
+            } else {
+                // RASTREO NORMAL (SIN TENDENCIA - FASE ÚNICA)
+                const prompt = `YOU ARE A JSON GENERATOR MACHINE. YOU DO NOT SPEAK. YOU ONLY OUTPUT DATA.
+                TODAY'S DATE IS: ${today}. Use this as reference for current prices.
+                TASK: Generate a JSON Array of ${maxResults} stocks in "${marketDesc}" matching ALL these fundamental conditions: ${activeFilters}.
+                STRICT RULES:
+                1. Use google_search to verify REAL CURRENT data.
+                2. "price" MUST be the CURRENT market price of the stock TODAY.
+                3. "trendStatus" MUST be a short dash "-".
+                4. OUTPUT MUST START WITH '[' AND END WITH ']'.
+                OUTPUT FORMAT:
+                [{"ticker":"SYM","name":"Nombre Corto","price":1.0,"trendStatus":"-","per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0,"fcf":1.0}]`;
+                
+                const res = await askGemini(apiKey, prompt, aiModel);
+                finalResults = extractJSON(res);
+            }
+
+            if (!finalResults || !Array.isArray(finalResults) || finalResults.length === 0) {
+                throw new Error("No hay resultados que cumplan todos los filtros combinados.");
+            }
             
-            const prompt = `YOU ARE A JSON GENERATOR MACHINE. YOU DO NOT SPEAK. YOU ONLY OUTPUT DATA.
-            TODAY'S DATE IS: ${today}. Use this as the absolute reference for calculating recent highs or drops.
-            TASK: Generate a JSON Array of ${maxResults} stocks in "${marketDesc}" matching ALL these conditions: ${activeFilters}.
-            STRICT RULES:
-            1. Use your knowledge to estimate CURRENT data.
-            2. "price" MUST be the CURRENT market price of the stock, NOT the historical peak price.
-            3. "trendStatus" MUST be a short description in SPANISH of its current status regarding the peak (e.g., "-30% desde máximo en Enero", "En máximos históricos").
-            4. OUTPUT MUST START WITH '[' AND END WITH ']'.
-            5. NO PREAMBLE. NO EXPLANATIONS.
-            OUTPUT FORMAT:
-            [{"ticker":"SYM","name":"Name","price":1.0,"trendStatus":"Descripción corta en español","per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0,"fcf":1.0}]`;
-            
-            const res = await askGemini(apiKey, prompt, aiModel);
-            const results = extractJSON(res);
-            if (!results || !Array.isArray(results) || results.length === 0) throw new Error("Error leyendo datos del screener.");
-            setScreenerResults(results);
+            setStatusModal({ isOpen: false, title: '', msg: '', type: 'info' }); // Cierra el modal de espera
+            setScreenerResults(finalResults);
         } catch (e) {
             setStatusModal({ isOpen: true, title: 'Error de Rastreo', msg: e.message, type: 'error' });
-        } finally { setLoading(false); }
+        } finally { 
+            setLoading(false); 
+        }
     };
+
    
     const sortedScreenerResults = useMemo(() => {
         return [...screenerResults].sort((a, b) => {
