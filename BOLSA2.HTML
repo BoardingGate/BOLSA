@@ -7156,6 +7156,9 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
     const [data, setData] = useState(null);
     const [specificAnswer, setSpecificAnswer] = useState(null);
 
+    const [screenerTrend, setScreenerTrend] = useState('none'); // 'none', 'ath', 'drop'
+    const [screenerDropConfig, setScreenerDropConfig] = useState({ pct: 20, months: 6 });
+
     const [suggestedQuestions, setSuggestedQuestions] = useState([
         "Competencia directa", "Historial de dividendos", "Nivel de deuda",
         "Directivos y Salarios", "Escándalos recientes", "Previsión próximos resultados"
@@ -8263,7 +8266,15 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
         const marketObj = EXCHANGES.find(e => e.id === exchange);
         const marketDesc = marketObj ? marketObj.name : exchange;
-        const activeFilters = Object.entries(params).filter(([_, p]) => p.active)
+        
+        let trendFilterStr = '';
+        if (screenerTrend === 'ath') {
+            trendFilterStr = "Must be trading at or very close to its All-Time High (ATH) or 52-week high";
+        } else if (screenerTrend === 'drop') {
+            trendFilterStr = `Must have dropped at least ${screenerDropConfig.pct}% from its peak within the last ${screenerDropConfig.months} months`;
+        }
+
+        const activeFiltersArr = Object.entries(params).filter(([_, p]) => p.active)
             .map(([k, p]) => {
                 if (k === 'roi') return `ROI > ${p.val}%`;
                 if (k === 'divYield') return `Dividend Yield > ${p.val}%`;
@@ -8273,19 +8284,24 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
                 if (k === 'debtEquity') return `Debt/Equity < ${p.val}`;
                 if (k === 'fcf') return `FCF Yield > ${p.val}%`;
                 return '';
-            }).join(', ');
+            }).filter(Boolean);
+            
+        if (trendFilterStr) activeFiltersArr.unshift(trendFilterStr);
+        const activeFilters = activeFiltersArr.join(' AND ');
+   
         if (!activeFilters) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Activa al menos un parámetro.', type: 'info' });
         setLoading(true);
         try {
             const prompt = `YOU ARE A JSON GENERATOR MACHINE. YOU DO NOT SPEAK. YOU ONLY OUTPUT DATA.
-            TASK: Generate a JSON Array of ${maxResults} stocks in "${marketDesc}" matching: ${activeFilters}.
+            TASK: Generate a JSON Array of ${maxResults} stocks in "${marketDesc}" matching ALL these conditions: ${activeFilters}.
             STRICT RULES:
             1. Use your knowledge to estimate current data.
             2. If exact matches are rare, include closest matches.
             3. OUTPUT MUST START WITH '[' AND END WITH ']'.
             4. NO PREAMBLE. NO EXPLANATIONS.
             OUTPUT FORMAT:
-            [{"ticker":"SYM","name":"Name","price":1.0,"per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0,"fcf":1.0}]`;
+            [{"ticker":"SYM","name":"Name","price":1.0,"trendStatus":"Short desc of ATH or Drop","per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0,"fcf":1.0}]`;
+            
             const res = await askGemini(apiKey, prompt, aiModel);
             const results = extractJSON(res);
             if (!results || !Array.isArray(results) || results.length === 0) throw new Error("Error leyendo datos del screener.");
@@ -8295,6 +8311,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         } finally { setLoading(false); }
     };
 
+   
     const sortedScreenerResults = useMemo(() => {
         return [...screenerResults].sort((a, b) => {
             const dir = screenerSort.direction === 'asc' ? 1 : -1;
@@ -8331,9 +8348,9 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
     const handlePrintScreener = () => {
         const w = window.open('', '', 'height=800,width=1100');
         let html = `<html><head><title>Rastreo iA</title><style>body{font-family:sans-serif;padding:20px;font-size:10px;} h1{border-bottom:2px solid #333;} table{width:100%;border-collapse:collapse;margin-top:10px;} th,td{border:1px solid #ddd;padding:6px;text-align:right;} th{background:#f1f5f9;text-align:center;text-transform:uppercase;font-size:8px;} .left{text-align:left;}</style></head><body>`;
-        html += `<h1>RASTREO: ${EXCHANGES.find(e => e.id === exchange)?.name || exchange}</h1><p><b>Filtros:</b> ${Object.entries(params).filter(([_, p]) => p.active).map(([_, p]) => `${p.label}(${p.val})`).join(' | ')}</p><p>Fecha: ${new Date().toLocaleString()}</p>`;
-        html += `<table><thead><tr><th>Ticker</th><th class="left">Nombre</th><th>Precio</th><th>PER</th><th>PEG</th><th>ROI</th><th>Yield</th><th>P/B</th><th>D/E</th><th>FCF%</th></tr></thead><tbody>`;
-        sortedScreenerResults.forEach(r => { html += `<tr><td><b>${r.ticker}</b></td><td class="left">${r.name}</td><td>${formatN(r.price)}</td><td>${r.per}</td><td>${r.peg}</td><td>${r.roi}%</td><td>${r.divYield}%</td><td>${r.pb}</td><td>${r.debtEquity}</td><td>${r.fcf}%</td></tr>`; });
+        html += `<h1>RASTREO: ${EXCHANGES.find(e => e.id === exchange)?.name || exchange}</h1><p><b>Filtros activos:</b> Revisar en la app.</p><p>Fecha: ${new Date().toLocaleString()}</p>`;
+        html += `<table><thead><tr><th>Ticker</th><th class="left">Nombre</th><th>Precio</th><th>Trend</th><th>PER</th><th>PEG</th><th>ROI</th><th>Yield</th><th>P/B</th><th>D/E</th><th>FCF%</th></tr></thead><tbody>`;
+        sortedScreenerResults.forEach(r => { html += `<tr><td><b>${r.ticker}</b></td><td class="left">${r.name}</td><td>${formatN(r.price)}</td><td>${r.trendStatus || '-'}</td><td>${r.per}</td><td>${r.peg}</td><td>${r.roi}%</td><td>${r.divYield}%</td><td>${r.pb}</td><td>${r.debtEquity}</td><td>${r.fcf}%</td></tr>`; });
         html += `</tbody></table></body></html>`;
         w.document.write(html); w.document.close(); w.print();
     };
@@ -8731,6 +8748,44 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
                             </div>
                             <div className="flex items-end pb-1"><button onClick={runScreener} className="w-full h-12 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-2xl shadow-blue-900/40 border border-blue-400/20">Iniciar Rastreo Inteligente</button></div>
                         </div>
+
+                        {/* --- NUEVO BLOQUE UI: Filtros de Acción del Precio --- */}
+                        <div className="bg-slate-950 p-4 rounded-xl border border-slate-700 mt-2 mb-6 flex flex-col gap-4">
+                            <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Filtros de Acción del Precio (Excluyentes)</h4>
+                            <div className="flex flex-col md:flex-row gap-4">
+                                {/* Opción 1: ATH */}
+                                <label className={`flex flex-1 items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${screenerTrend === 'ath' ? 'bg-green-900/20 border-green-500/50' : 'bg-slate-900 border-slate-800'}`}>
+                                    <input type="checkbox" checked={screenerTrend === 'ath'} onChange={() => setScreenerTrend(screenerTrend === 'ath' ? 'none' : 'ath')} className="custom-checkbox w-4 h-4 accent-green-500" />
+                                    <div className="flex flex-col">
+                                        <span className={`text-xs font-bold uppercase ${screenerTrend === 'ath' ? 'text-green-400' : 'text-slate-400'}`}>En Máximos (ATH)</span>
+                                        <span className="text-[9px] text-slate-500 mt-0.5">Cotizando en sus máximos históricos o de 52 semanas.</span>
+                                    </div>
+                                </label>
+
+                                {/* Opción 2: Desplome */}
+                                <div className={`flex-[2] flex flex-col md:flex-row items-center gap-3 p-3 rounded-lg border transition-all ${screenerTrend === 'drop' ? 'bg-red-900/20 border-red-500/50' : 'bg-slate-900 border-slate-800'}`}>
+                                    <label className="flex items-center gap-3 cursor-pointer min-w-max">
+                                        <input type="checkbox" checked={screenerTrend === 'drop'} onChange={() => setScreenerTrend(screenerTrend === 'drop' ? 'none' : 'drop')} className="custom-checkbox w-4 h-4 accent-red-500" />
+                                        <div className="flex flex-col">
+                                            <span className={`text-xs font-bold uppercase ${screenerTrend === 'drop' ? 'text-red-400' : 'text-slate-400'}`}>Desplome desde Máximo</span>
+                                        </div>
+                                    </label>
+                                    
+                                    <div className={`flex items-center gap-4 w-full transition-opacity ${screenerTrend === 'drop' ? 'opacity-100' : 'opacity-30 pointer-events-none'}`}>
+                                        <div className="flex flex-col gap-1 w-1/2">
+                                            <span className="text-[9px] text-slate-500 font-bold uppercase">Caída Mínima (%)</span>
+                                            <input type="number" min="5" max="95" step="5" value={screenerDropConfig.pct} onChange={(e) => setScreenerDropConfig({...screenerDropConfig, pct: e.target.value})} className="w-full bg-black/50 border border-slate-700 rounded p-1.5 text-xs text-white font-mono text-center focus:border-red-500 outline-none" />
+                                        </div>
+                                        <div className="flex flex-col gap-1 w-1/2">
+                                            <span className="text-[9px] text-slate-500 font-bold uppercase">En los últimos (Meses)</span>
+                                            <input type="number" min="1" max="60" step="1" value={screenerDropConfig.months} onChange={(e) => setScreenerDropConfig({...screenerDropConfig, months: e.target.value})} className="w-full bg-black/50 border border-slate-700 rounded p-1.5 text-xs text-white font-mono text-center focus:border-red-500 outline-none" />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
                             {Object.entries(params).map(([id, config]) => <ParamCard key={id} id={id} config={config} />)}
                         </div>
@@ -8750,9 +8805,12 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
 
                                    <thead className="bg-slate-950/80 text-slate-500 uppercase text-[9px] font-black sticky top-0">
                                         <tr>
-                                            {['ticker', 'name', 'price', 'per', 'peg', 'roi', 'divYield', 'pb', 'debtEquity', 'fcf'].map(k => (
+                                            {['ticker', 'name', 'price', 'trendStatus', 'per', 'peg', 'roi', 'divYield', 'pb', 'debtEquity', 'fcf'].map(k => (
                                                 <th key={k} className="p-5 cursor-pointer hover:text-white transition-colors border-b border-slate-800" onClick={()=>setScreenerSort({key:k, direction: screenerSort.direction==='asc'?'desc':'asc'})}>
-                                                    <div className="flex items-center gap-1">{k === 'divYield' ? 'Yield' : k === 'debtEquity' ? 'D/E' : k === 'fcf' ? 'FCF%' : k} {screenerSort.key === k && (screenerSort.direction==='asc'?'▲':'▼')}</div>
+                                                    <div className="flex items-center gap-1">
+                                                         {k === 'divYield' ? 'Yield' : k === 'debtEquity' ? 'D/E' : k === 'fcf' ? 'FCF%' : k === 'trendStatus' ? 'Trend' : k} 
+                                                         {screenerSort.key === k && (screenerSort.direction==='asc'?'▲':'▼')}
+                                                     </div>
                                                 </th>
                                             ))}
                                         </tr>
@@ -8771,6 +8829,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
                                                 </td>
                                                 <td className="p-5 text-slate-300 font-sans font-bold">{r.name}</td>
                                                 <td className="p-5 text-white font-bold">{formatN(r.price)}</td>
+                                                <td className="p-5 text-slate-400 font-mono text-[10px] whitespace-nowrap">{r.trendStatus || '-'}</td>
                                                 <td className={`p-5 ${checkCriteria('per', r.per)}`}>{r.per}</td>
                                                 <td className={`p-5 ${checkCriteria('peg', r.peg)}`}>{r.peg}</td>
                                                 <td className={`p-5 ${checkCriteria('roi', r.roi)}`}>{r.roi}%</td>
