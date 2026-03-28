@@ -8262,7 +8262,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         w.document.close(); w.print();
     };
 
-
 const runScreener = async () => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
         const marketObj = EXCHANGES.find(e => e.id === exchange);
@@ -8297,40 +8296,42 @@ const runScreener = async () => {
             let finalResults = [];
 
             if (screenerTrend !== 'none') {
-                // FASE 1: Búsqueda exclusiva de tendencia de precios
-                setStatusModal({ isOpen: true, title: 'Rastreo Fase 1/2', msg: 'Buscando valores que cumplan la condición técnica de precio en el mercado...', type: 'info' });
+                // FASE 1: Búsqueda exclusiva de tendencia
+                setStatusModal({ isOpen: true, title: 'Rastreo Fase 1/3', msg: 'Buscando valores que cumplan la condición técnica de precio en el mercado...', type: 'info', isProgress: true });
                 
                 const promptPhase1 = `ROL: Experto en Mercados Financieros. FECHA ACTUAL: ${today}.
-                TAREA: Identificar empresas en el mercado "${marketDesc}" que cumplan ESTRICTAMENTE esta condición técnica de precio hoy:
+                TAREA: Identificar empresas en el mercado "${marketDesc}" que cumplan ESTRICTAMENTE esta condición técnica de precio HOY:
                 ${trendFilterStr}
-                ACCION: Usa tu herramienta de búsqueda web para verificar cotizaciones recientes y picos máximos históricos de las empresas.
+                ACCION: Usa tu herramienta de búsqueda web para verificar cotizaciones recientes y picos máximos.
                 SALIDA: Devuelve ÚNICAMENTE un array JSON plano con los Tickers de hasta ${maxResults * 2} empresas que cumplan la condición. Ejemplo exacto: ["TICKER1", "TICKER2"]. SIN TEXTO EXTRA.`;
 
                 const res1 = await askGemini(apiKey, promptPhase1, aiModel);
                 const tickers = extractJSON(res1);
 
                 if (!tickers || !Array.isArray(tickers) || tickers.length === 0) {
-                    throw new Error("No se encontraron valores que cumplan la condición técnica de precio (Máximos o Caída) en este mercado.");
+                    throw new Error("No se encontraron valores que cumplan la condición técnica de precio en este mercado.");
                 }
 
-                // FASE 2: Filtrado fundamental de la lista rescatada
-                setStatusModal({ isOpen: true, title: 'Rastreo Fase 2/2', msg: `Analizando fundamentales de los ${tickers.length} valores encontrados...`, type: 'info' });
+                // FASE 2: Filtrado fundamental
+                setStatusModal({ isOpen: true, title: 'Rastreo Fase 2/3', msg: `Analizando fundamentales de los ${tickers.length} valores pre-seleccionados...`, type: 'info', isProgress: true });
 
                 const promptPhase2 = `ROL: Analista Cuantitativo. FECHA ACTUAL: ${today}.
                 TAREA: Analizar detalladamente la siguiente lista de empresas: ${tickers.join(', ')}.
                 INSTRUCCIONES:
-                1. Para cada ticker, obtén su Precio de cotización ACTUAL REAL (HOY) mediante búsqueda web y sus ratios fundamentales actuales (PER, PEG, ROI, etc.).
+                1. Obtén su Precio de cotización ACTUAL REAL (HOY) mediante búsqueda web y sus ratios fundamentales actuales (PER, PEG, ROI, etc.).
                 2. ${activeFilters ? 'APLICA LOS SIGUIENTES FILTROS ESTRICTOS y descarta las que no cumplan: ' + activeFilters : 'Obtén sus datos fundamentales sin aplicar filtros.'}
                 3. Para las que pasen el filtro (máximo ${maxResults}), devuelve los datos en el siguiente formato JSON exacto:
                 [{"ticker":"SYM","name":"Nombre Corto","price":1.0,"trendStatus":"${screenerTrend === 'ath' ? 'En Máximos (ATH)' : 'Desplomada desde pico'}","per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0,"fcf":1.0}]
-                REGLA CRÍTICA: La propiedad "price" DEBE ser obligatoriamente el precio REAL de cotización actual (el de HOY en bolsa), NUNCA el precio de los picos históricos.
+                REGLA CRÍTICA: La propiedad "price" DEBE ser el precio REAL de cotización actual (el de HOY), NUNCA el precio del pico histórico.
                 RESPONDE SOLO EL JSON. SIN EXPLICACIONES.`;
 
                 const res2 = await askGemini(apiKey, promptPhase2, aiModel);
                 finalResults = extractJSON(res2);
 
             } else {
-                // RASTREO NORMAL (SIN TENDENCIA - FASE ÚNICA)
+                // RASTREO NORMAL (Sín tendencia - Directamente Fase 1 y luego Verificación)
+                setStatusModal({ isOpen: true, title: 'Rastreo Fase 1/2', msg: 'Analizando mercado y filtrando fundamentales...', type: 'info', isProgress: true });
+                
                 const prompt = `YOU ARE A JSON GENERATOR MACHINE. YOU DO NOT SPEAK. YOU ONLY OUTPUT DATA.
                 TODAY'S DATE IS: ${today}. Use this as reference for current prices.
                 TASK: Generate a JSON Array of ${maxResults} stocks in "${marketDesc}" matching ALL these fundamental conditions: ${activeFilters}.
@@ -8347,13 +8348,45 @@ const runScreener = async () => {
             }
 
             if (!finalResults || !Array.isArray(finalResults) || finalResults.length === 0) {
-                throw new Error("No hay resultados que cumplan todos los filtros combinados.");
+                throw new Error("Ningún valor ha superado la criba fundamental.");
+            }
+
+            // FASE 3 (O Fase 2 si es rastreo normal): VERIFICACIÓN ESTRICTA DE PRECIO
+            const stepNum = screenerTrend !== 'none' ? '3/3' : '2/2';
+            setStatusModal({ isOpen: true, title: `Rastreo Fase ${stepNum}`, msg: 'Verificando precisión de los precios obtenidos para descartar falsos positivos...', type: 'info', isProgress: true });
+            
+            const tickersToVerify = finalResults.map(r => r.ticker);
+            const promptPhase3 = `ROL: API de Cotizaciones. FECHA ACTUAL: ${today}.
+            TAREA: Obtén el PRECIO EXACTO DE COTIZACIÓN HOY de estos tickers: ${tickersToVerify.join(', ')}.
+            Usa tu herramienta google_search obligatoriamente para ver cotizaciones reales de hoy.
+            RESPONDE ÚNICAMENTE un JSON con el ticker como clave y el precio numérico como valor. Ejemplo exacto: {"AAPL": 150.50, "SAN.MC": 3.20}`;
+            
+            const res3 = await askGemini(apiKey, promptPhase3, aiModel);
+            const realPrices = extractJSON(res3) || {};
+
+            // Limpieza y filtrado final por discrepancia de precio
+            finalResults = finalResults.filter(r => {
+                const verifiedPrice = realPrices[r.ticker] || realPrices[r.ticker.split(':')[1]];
+                if (!verifiedPrice) return false; // Si no logra verificarlo, se descarta por seguridad
+                
+                const diff = Math.abs(r.price - verifiedPrice) / verifiedPrice;
+                if (diff > 0.05) {
+                    console.warn(`Descartado ${r.ticker}: Falso precio reportado en Fase previa (${r.price}) vs Real Verificado (${verifiedPrice})`);
+                    return false; // Descartamos si hay más de un 5% de diferencia
+                }
+                
+                r.price = verifiedPrice; // Sobrescribimos con el precio verificado más exacto
+                return true;
+            });
+
+            if (finalResults.length === 0) {
+                throw new Error("Los valores fueron descartados en la fase final de verificación por discrepancia en sus precios. Inténtalo de nuevo.");
             }
             
-            setStatusModal({ isOpen: false, title: '', msg: '', type: 'info' }); // Cierra el modal de espera
+            setStatusModal({ isOpen: false, title: '', msg: '', type: 'info' }); 
             setScreenerResults(finalResults);
         } catch (e) {
-            setStatusModal({ isOpen: true, title: 'Error de Rastreo', msg: e.message, type: 'error' });
+            setStatusModal({ isOpen: true, title: 'Rastreo Finalizado', msg: e.message, type: 'error', buttonText: 'CERRAR' });
         } finally { 
             setLoading(false); 
         }
@@ -8433,18 +8466,24 @@ const runScreener = async () => {
         <div className="h-full flex flex-col p-4 md:p-6 overflow-y-auto custom-scrollbar relative bg-[#0a0a0a]">
             {loading && <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md flex flex-col items-center justify-center"><Icons.Loader size={60} className="text-blue-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando con Búsqueda Web Activa...</div><div className="text-xs text-slate-400 mt-2 text-center max-w-xs">Para informes multi-empresa: Fase 1 identifica las compañías del sector · Fase 2 recaba sus datos financieros reales · Fase 3 elabora el informe final</div></div>}
 
+
             {statusModal.isOpen && (
                 <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 fade-in">
                     <div className="bg-slate-900 border border-slate-700 p-6 rounded-2xl max-w-sm w-full shadow-2xl relative">
                         <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 mx-auto ${statusModal.type === 'error' ? 'bg-red-500/20 text-red-500' : statusModal.type === 'warning' ? 'bg-yellow-500/20 text-yellow-500' : 'bg-blue-500/20 text-blue-400'}`}>
-                            {statusModal.type === 'error' ? <Icons.AlertCircle size={28} /> : <Icons.CheckCircle size={28} />}
+                            {statusModal.type === 'error' ? <Icons.AlertCircle size={28} /> : statusModal.isProgress ? <Icons.Loader size={28} className="animate-spin" /> : <Icons.CheckCircle size={28} />}
                         </div>
                         <h3 className="text-lg font-bold text-center text-white mb-2">{statusModal.title}</h3>
                         <p className="text-sm text-slate-400 text-center mb-6 leading-relaxed whitespace-pre-wrap">{statusModal.msg}</p>
-                        <button onClick={() => setStatusModal({ isOpen: false })} className="w-full bg-slate-800 hover:bg-slate-700 py-3 rounded-xl font-bold uppercase text-xs text-white transition-colors border border-slate-600">Cerrar</button>
+                        {!statusModal.isProgress && (
+                            <button onClick={() => setStatusModal({ isOpen: false })} className="w-full bg-slate-800 hover:bg-slate-700 py-3 rounded-xl font-bold uppercase text-xs text-white transition-colors border border-slate-600">
+                                {statusModal.buttonText || 'CERRAR'}
+                            </button>
+                        )}
                     </div>
                 </div>
             )}
+
 
             <div className="flex gap-2 mb-6 bg-slate-900 p-1 rounded-xl border border-slate-800 w-fit shrink-0 shadow-lg">
                 <button onClick={() => setActiveSubTab('estudio')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'estudio' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Estudio Individual</button>
