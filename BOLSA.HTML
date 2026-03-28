@@ -7156,6 +7156,9 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
     const [data, setData] = useState(null);
     const [specificAnswer, setSpecificAnswer] = useState(null);
 
+    const [screenerTrend, setScreenerTrend] = useState('none'); // 'none', 'ath', 'drop'
+    const [screenerDropConfig, setScreenerDropConfig] = useState({ pct: 20, months: 6 });
+
     const [suggestedQuestions, setSuggestedQuestions] = useState([
         "Competencia directa", "Historial de dividendos", "Nivel de deuda",
         "Directivos y Salarios", "Escándalos recientes", "Previsión próximos resultados"
@@ -8259,11 +8262,19 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         w.document.close(); w.print();
     };
 
-    const runScreener = async () => {
+const runScreener = async () => {
         if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
         const marketObj = EXCHANGES.find(e => e.id === exchange);
         const marketDesc = marketObj ? marketObj.name : exchange;
-        const activeFilters = Object.entries(params).filter(([_, p]) => p.active)
+        
+        let trendFilterStr = '';
+        if (screenerTrend === 'ath') {
+            trendFilterStr = "Cotizando actualmente (hoy) a menos de un 2% de su máximo histórico o máximo de 52 semanas.";
+        } else if (screenerTrend === 'drop') {
+            trendFilterStr = `Haber sufrido una caída (drawdown) de al menos un ${screenerDropConfig.pct}% desde su precio máximo alcanzado en los últimos ${screenerDropConfig.months} meses, y mantenerse cotizando a esos niveles bajos en la actualidad.`;
+        }
+
+        const activeFiltersArr = Object.entries(params).filter(([_, p]) => p.active)
             .map(([k, p]) => {
                 if (k === 'roi') return `ROI > ${p.val}%`;
                 if (k === 'divYield') return `Dividend Yield > ${p.val}%`;
@@ -8273,28 +8284,115 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
                 if (k === 'debtEquity') return `Debt/Equity < ${p.val}`;
                 if (k === 'fcf') return `FCF Yield > ${p.val}%`;
                 return '';
-            }).join(', ');
-        if (!activeFilters) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Activa al menos un parámetro.', type: 'info' });
+            }).filter(Boolean);
+            
+        const activeFilters = activeFiltersArr.join(' AND ');
+
+        if (!activeFilters && !trendFilterStr) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Activa al menos un parámetro fundamental o de tendencia.', type: 'info' });
+        
         setLoading(true);
         try {
-            const prompt = `YOU ARE A JSON GENERATOR MACHINE. YOU DO NOT SPEAK. YOU ONLY OUTPUT DATA.
-            TASK: Generate a JSON Array of ${maxResults} stocks in "${marketDesc}" matching: ${activeFilters}.
-            STRICT RULES:
-            1. Use your knowledge to estimate current data.
-            2. If exact matches are rare, include closest matches.
-            3. OUTPUT MUST START WITH '[' AND END WITH ']'.
-            4. NO PREAMBLE. NO EXPLANATIONS.
-            OUTPUT FORMAT:
-            [{"ticker":"SYM","name":"Name","price":1.0,"per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0,"fcf":1.0}]`;
-            const res = await askGemini(apiKey, prompt, aiModel);
-            const results = extractJSON(res);
-            if (!results || !Array.isArray(results) || results.length === 0) throw new Error("Error leyendo datos del screener.");
-            setScreenerResults(results);
+            const today = new Date().toLocaleString('es-ES'); 
+            let finalResults = [];
+
+            if (screenerTrend !== 'none') {
+                // FASE 1: Búsqueda exclusiva de tendencia
+                setStatusModal({ isOpen: true, title: 'Rastreo Fase 1/3', msg: 'Buscando valores que cumplan la condición técnica de precio en el mercado...', type: 'info', isProgress: true });
+                
+                const promptPhase1 = `ROL: Experto en Mercados Financieros. FECHA ACTUAL: ${today}.
+                TAREA: Identificar empresas en el mercado "${marketDesc}" que cumplan ESTRICTAMENTE esta condición técnica de precio HOY:
+                ${trendFilterStr}
+                ACCION: Usa tu herramienta de búsqueda web para verificar cotizaciones recientes y picos máximos.
+                SALIDA: Devuelve ÚNICAMENTE un array JSON plano con los Tickers de hasta ${maxResults * 2} empresas que cumplan la condición. Ejemplo exacto: ["TICKER1", "TICKER2"]. SIN TEXTO EXTRA.`;
+
+                const res1 = await askGemini(apiKey, promptPhase1, aiModel);
+                const tickers = extractJSON(res1);
+
+                if (!tickers || !Array.isArray(tickers) || tickers.length === 0) {
+                    throw new Error("No se encontraron valores que cumplan la condición técnica de precio en este mercado.");
+                }
+
+                // FASE 2: Filtrado fundamental
+                setStatusModal({ isOpen: true, title: 'Rastreo Fase 2/3', msg: `Analizando fundamentales de los ${tickers.length} valores pre-seleccionados...`, type: 'info', isProgress: true });
+
+                const promptPhase2 = `ROL: Analista Cuantitativo. FECHA ACTUAL: ${today}.
+                TAREA: Analizar detalladamente la siguiente lista de empresas: ${tickers.join(', ')}.
+                INSTRUCCIONES:
+                1. Obtén su Precio de cotización ACTUAL REAL (HOY) mediante búsqueda web y sus ratios fundamentales actuales (PER, PEG, ROI, etc.).
+                2. ${activeFilters ? 'APLICA LOS SIGUIENTES FILTROS ESTRICTOS y descarta las que no cumplan: ' + activeFilters : 'Obtén sus datos fundamentales sin aplicar filtros.'}
+                3. Para las que pasen el filtro (máximo ${maxResults}), devuelve los datos en el siguiente formato JSON exacto:
+                [{"ticker":"SYM","name":"Nombre Corto","price":1.0,"trendStatus":"${screenerTrend === 'ath' ? 'En Máximos (ATH)' : 'Desplomada desde pico'}","per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0,"fcf":1.0}]
+                REGLA CRÍTICA: La propiedad "price" DEBE ser el precio REAL de cotización actual (el de HOY), NUNCA el precio del pico histórico.
+                RESPONDE SOLO EL JSON. SIN EXPLICACIONES.`;
+
+                const res2 = await askGemini(apiKey, promptPhase2, aiModel);
+                finalResults = extractJSON(res2);
+
+            } else {
+                // RASTREO NORMAL (Sín tendencia - Directamente Fase 1 y luego Verificación)
+                setStatusModal({ isOpen: true, title: 'Rastreo Fase 1/2', msg: 'Analizando mercado y filtrando fundamentales...', type: 'info', isProgress: true });
+                
+                const prompt = `YOU ARE A JSON GENERATOR MACHINE. YOU DO NOT SPEAK. YOU ONLY OUTPUT DATA.
+                TODAY'S DATE IS: ${today}. Use this as reference for current prices.
+                TASK: Generate a JSON Array of ${maxResults} stocks in "${marketDesc}" matching ALL these fundamental conditions: ${activeFilters}.
+                STRICT RULES:
+                1. Use google_search to verify REAL CURRENT data.
+                2. "price" MUST be the CURRENT market price of the stock TODAY.
+                3. "trendStatus" MUST be a short dash "-".
+                4. OUTPUT MUST START WITH '[' AND END WITH ']'.
+                OUTPUT FORMAT:
+                [{"ticker":"SYM","name":"Nombre Corto","price":1.0,"trendStatus":"-","per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0,"fcf":1.0}]`;
+                
+                const res = await askGemini(apiKey, prompt, aiModel);
+                finalResults = extractJSON(res);
+            }
+
+            if (!finalResults || !Array.isArray(finalResults) || finalResults.length === 0) {
+                throw new Error("Ningún valor ha superado la criba fundamental.");
+            }
+
+            // FASE 3 (O Fase 2 si es rastreo normal): VERIFICACIÓN ESTRICTA DE PRECIO
+            const stepNum = screenerTrend !== 'none' ? '3/3' : '2/2';
+            setStatusModal({ isOpen: true, title: `Rastreo Fase ${stepNum}`, msg: 'Verificando precisión de los precios obtenidos para descartar falsos positivos...', type: 'info', isProgress: true });
+            
+            const tickersToVerify = finalResults.map(r => r.ticker);
+            const promptPhase3 = `ROL: API de Cotizaciones. FECHA ACTUAL: ${today}.
+            TAREA: Obtén el PRECIO EXACTO DE COTIZACIÓN HOY de estos tickers: ${tickersToVerify.join(', ')}.
+            Usa tu herramienta google_search obligatoriamente para ver cotizaciones reales de hoy.
+            RESPONDE ÚNICAMENTE un JSON con el ticker como clave y el precio numérico como valor. Ejemplo exacto: {"AAPL": 150.50, "SAN.MC": 3.20}`;
+            
+            const res3 = await askGemini(apiKey, promptPhase3, aiModel);
+            const realPrices = extractJSON(res3) || {};
+
+            // Limpieza y filtrado final por discrepancia de precio
+            finalResults = finalResults.filter(r => {
+                const verifiedPrice = realPrices[r.ticker] || realPrices[r.ticker.split(':')[1]];
+                if (!verifiedPrice) return false; // Si no logra verificarlo, se descarta por seguridad
+                
+                const diff = Math.abs(r.price - verifiedPrice) / verifiedPrice;
+                if (diff > 0.05) {
+                    console.warn(`Descartado ${r.ticker}: Falso precio reportado en Fase previa (${r.price}) vs Real Verificado (${verifiedPrice})`);
+                    return false; // Descartamos si hay más de un 5% de diferencia
+                }
+                
+                r.price = verifiedPrice; // Sobrescribimos con el precio verificado más exacto
+                return true;
+            });
+
+            if (finalResults.length === 0) {
+                throw new Error("Los valores fueron descartados en la fase final de verificación por discrepancia en sus precios. Inténtalo de nuevo.");
+            }
+            
+            setStatusModal({ isOpen: false, title: '', msg: '', type: 'info' }); 
+            setScreenerResults(finalResults);
         } catch (e) {
-            setStatusModal({ isOpen: true, title: 'Error de Rastreo', msg: e.message, type: 'error' });
-        } finally { setLoading(false); }
+            setStatusModal({ isOpen: true, title: 'Rastreo Finalizado', msg: e.message, type: 'error', buttonText: 'CERRAR' });
+        } finally { 
+            setLoading(false); 
+        }
     };
 
+   
     const sortedScreenerResults = useMemo(() => {
         return [...screenerResults].sort((a, b) => {
             const dir = screenerSort.direction === 'asc' ? 1 : -1;
@@ -8328,12 +8426,15 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         w.document.write(html); w.document.close(); setTimeout(() => w.print(), 500);
     };
 
-    const handlePrintScreener = () => {
+   const handlePrintScreener = () => {
         const w = window.open('', '', 'height=800,width=1100');
         let html = `<html><head><title>Rastreo iA</title><style>body{font-family:sans-serif;padding:20px;font-size:10px;} h1{border-bottom:2px solid #333;} table{width:100%;border-collapse:collapse;margin-top:10px;} th,td{border:1px solid #ddd;padding:6px;text-align:right;} th{background:#f1f5f9;text-align:center;text-transform:uppercase;font-size:8px;} .left{text-align:left;}</style></head><body>`;
-        html += `<h1>RASTREO: ${EXCHANGES.find(e => e.id === exchange)?.name || exchange}</h1><p><b>Filtros:</b> ${Object.entries(params).filter(([_, p]) => p.active).map(([_, p]) => `${p.label}(${p.val})`).join(' | ')}</p><p>Fecha: ${new Date().toLocaleString()}</p>`;
-        html += `<table><thead><tr><th>Ticker</th><th class="left">Nombre</th><th>Precio</th><th>PER</th><th>PEG</th><th>ROI</th><th>Yield</th><th>P/B</th><th>D/E</th><th>FCF%</th></tr></thead><tbody>`;
-        sortedScreenerResults.forEach(r => { html += `<tr><td><b>${r.ticker}</b></td><td class="left">${r.name}</td><td>${formatN(r.price)}</td><td>${r.per}</td><td>${r.peg}</td><td>${r.roi}%</td><td>${r.divYield}%</td><td>${r.pb}</td><td>${r.debtEquity}</td><td>${r.fcf}%</td></tr>`; });
+        html += `<h1>RASTREO: ${EXCHANGES.find(e => e.id === exchange)?.name || exchange}</h1><p><b>Filtros activos:</b> Revisar en la app.</p><p>Fecha: ${new Date().toLocaleString()}</p>`;
+        
+        // Cabeceras y filas adaptadas al castellano
+        html += `<table><thead><tr><th>Ticker</th><th class="left">Nombre</th><th>Precio Actual</th><th>Tendencia</th><th>PER</th><th>PEG</th><th>ROI</th><th>Yield</th><th>P/B</th><th>D/E</th><th>FCF%</th></tr></thead><tbody>`;
+        sortedScreenerResults.forEach(r => { html += `<tr><td><b>${r.ticker}</b></td><td class="left">${r.name}</td><td>${formatN(r.price)}</td><td>${r.trendStatus || '-'}</td><td>${r.per}</td><td>${r.peg}</td><td>${r.roi}%</td><td>${r.divYield}%</td><td>${r.pb}</td><td>${r.debtEquity}</td><td>${r.fcf}%</td></tr>`; });
+        
         html += `</tbody></table></body></html>`;
         w.document.write(html); w.document.close(); w.print();
     };
@@ -8365,18 +8466,24 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         <div className="h-full flex flex-col p-4 md:p-6 overflow-y-auto custom-scrollbar relative bg-[#0a0a0a]">
             {loading && <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-md flex flex-col items-center justify-center"><Icons.Loader size={60} className="text-blue-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando con Búsqueda Web Activa...</div><div className="text-xs text-slate-400 mt-2 text-center max-w-xs">Para informes multi-empresa: Fase 1 identifica las compañías del sector · Fase 2 recaba sus datos financieros reales · Fase 3 elabora el informe final</div></div>}
 
+
             {statusModal.isOpen && (
                 <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 fade-in">
                     <div className="bg-slate-900 border border-slate-700 p-6 rounded-2xl max-w-sm w-full shadow-2xl relative">
                         <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 mx-auto ${statusModal.type === 'error' ? 'bg-red-500/20 text-red-500' : statusModal.type === 'warning' ? 'bg-yellow-500/20 text-yellow-500' : 'bg-blue-500/20 text-blue-400'}`}>
-                            {statusModal.type === 'error' ? <Icons.AlertCircle size={28} /> : <Icons.CheckCircle size={28} />}
+                            {statusModal.type === 'error' ? <Icons.AlertCircle size={28} /> : statusModal.isProgress ? <Icons.Loader size={28} className="animate-spin" /> : <Icons.CheckCircle size={28} />}
                         </div>
                         <h3 className="text-lg font-bold text-center text-white mb-2">{statusModal.title}</h3>
                         <p className="text-sm text-slate-400 text-center mb-6 leading-relaxed whitespace-pre-wrap">{statusModal.msg}</p>
-                        <button onClick={() => setStatusModal({ isOpen: false })} className="w-full bg-slate-800 hover:bg-slate-700 py-3 rounded-xl font-bold uppercase text-xs text-white transition-colors border border-slate-600">Cerrar</button>
+                        {!statusModal.isProgress && (
+                            <button onClick={() => setStatusModal({ isOpen: false })} className="w-full bg-slate-800 hover:bg-slate-700 py-3 rounded-xl font-bold uppercase text-xs text-white transition-colors border border-slate-600">
+                                {statusModal.buttonText || 'CERRAR'}
+                            </button>
+                        )}
                     </div>
                 </div>
             )}
+
 
             <div className="flex gap-2 mb-6 bg-slate-900 p-1 rounded-xl border border-slate-800 w-fit shrink-0 shadow-lg">
                 <button onClick={() => setActiveSubTab('estudio')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'estudio' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Estudio Individual</button>
@@ -8731,6 +8838,44 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
                             </div>
                             <div className="flex items-end pb-1"><button onClick={runScreener} className="w-full h-12 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-2xl shadow-blue-900/40 border border-blue-400/20">Iniciar Rastreo Inteligente</button></div>
                         </div>
+
+                        {/* --- NUEVO BLOQUE UI: Filtros de Acción del Precio --- */}
+                        <div className="bg-slate-950 p-4 rounded-xl border border-slate-700 mt-2 mb-6 flex flex-col gap-4">
+                            <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Filtros de Acción del Precio (Excluyentes)</h4>
+                            <div className="flex flex-col md:flex-row gap-4">
+                                {/* Opción 1: ATH */}
+                                <label className={`flex flex-1 items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${screenerTrend === 'ath' ? 'bg-green-900/20 border-green-500/50' : 'bg-slate-900 border-slate-800'}`}>
+                                    <input type="checkbox" checked={screenerTrend === 'ath'} onChange={() => setScreenerTrend(screenerTrend === 'ath' ? 'none' : 'ath')} className="custom-checkbox w-4 h-4 accent-green-500" />
+                                    <div className="flex flex-col">
+                                        <span className={`text-xs font-bold uppercase ${screenerTrend === 'ath' ? 'text-green-400' : 'text-slate-400'}`}>En Máximos (ATH)</span>
+                                        <span className="text-[9px] text-slate-500 mt-0.5">Cotizando en sus máximos históricos o de 52 semanas.</span>
+                                    </div>
+                                </label>
+
+                                {/* Opción 2: Desplome */}
+                                <div className={`flex-[2] flex flex-col md:flex-row items-center gap-3 p-3 rounded-lg border transition-all ${screenerTrend === 'drop' ? 'bg-red-900/20 border-red-500/50' : 'bg-slate-900 border-slate-800'}`}>
+                                    <label className="flex items-center gap-3 cursor-pointer min-w-max">
+                                        <input type="checkbox" checked={screenerTrend === 'drop'} onChange={() => setScreenerTrend(screenerTrend === 'drop' ? 'none' : 'drop')} className="custom-checkbox w-4 h-4 accent-red-500" />
+                                        <div className="flex flex-col">
+                                            <span className={`text-xs font-bold uppercase ${screenerTrend === 'drop' ? 'text-red-400' : 'text-slate-400'}`}>Desplome desde Máximo</span>
+                                        </div>
+                                    </label>
+                                    
+                                    <div className={`flex items-center gap-4 w-full transition-opacity ${screenerTrend === 'drop' ? 'opacity-100' : 'opacity-30 pointer-events-none'}`}>
+                                        <div className="flex flex-col gap-1 w-1/2">
+                                            <span className="text-[9px] text-slate-500 font-bold uppercase">Caída Mínima (%)</span>
+                                            <input type="number" min="5" max="95" step="5" value={screenerDropConfig.pct} onChange={(e) => setScreenerDropConfig({...screenerDropConfig, pct: e.target.value})} className="w-full bg-black/50 border border-slate-700 rounded p-1.5 text-xs text-white font-mono text-center focus:border-red-500 outline-none" />
+                                        </div>
+                                        <div className="flex flex-col gap-1 w-1/2">
+                                            <span className="text-[9px] text-slate-500 font-bold uppercase">En los últimos (Meses)</span>
+                                            <input type="number" min="1" max="60" step="1" value={screenerDropConfig.months} onChange={(e) => setScreenerDropConfig({...screenerDropConfig, months: e.target.value})} className="w-full bg-black/50 border border-slate-700 rounded p-1.5 text-xs text-white font-mono text-center focus:border-red-500 outline-none" />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
                             {Object.entries(params).map(([id, config]) => <ParamCard key={id} id={id} config={config} />)}
                         </div>
@@ -8748,15 +8893,31 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
                             <div className="overflow-x-auto">
                                 <table className="w-full text-left text-xs">
 
-                                   <thead className="bg-slate-950/80 text-slate-500 uppercase text-[9px] font-black sticky top-0">
+                                 
+                                    <thead className="bg-slate-950/80 text-slate-500 uppercase text-[9px] font-black sticky top-0">
                                         <tr>
-                                            {['ticker', 'name', 'price', 'per', 'peg', 'roi', 'divYield', 'pb', 'debtEquity', 'fcf'].map(k => (
-                                                <th key={k} className="p-5 cursor-pointer hover:text-white transition-colors border-b border-slate-800" onClick={()=>setScreenerSort({key:k, direction: screenerSort.direction==='asc'?'desc':'asc'})}>
-                                                    <div className="flex items-center gap-1">{k === 'divYield' ? 'Yield' : k === 'debtEquity' ? 'D/E' : k === 'fcf' ? 'FCF%' : k} {screenerSort.key === k && (screenerSort.direction==='asc'?'▲':'▼')}</div>
-                                                </th>
-                                            ))}
+                                            {['ticker', 'name', 'price', 'trendStatus', 'per', 'peg', 'roi', 'divYield', 'pb', 'debtEquity', 'fcf'].map(k => {
+                                                let label = k;
+                                                if (k === 'name') label = 'Nombre';
+                                                if (k === 'price') label = 'Precio Actual';
+                                                if (k === 'trendStatus') label = 'Tendencia';
+                                                if (k === 'divYield') label = 'Yield';
+                                                if (k === 'debtEquity') label = 'D/E';
+                                                if (k === 'fcf') label = 'FCF%';
+                                                if (k === 'ticker') label = 'Ticker';
+
+                                                return (
+                                                    <th key={k} className="p-5 cursor-pointer hover:text-white transition-colors border-b border-slate-800" onClick={()=>setScreenerSort({key:k, direction: screenerSort.direction==='asc'?'desc':'asc'})}>
+                                                        <div className="flex items-center gap-1">
+                                                            {label} 
+                                                            {screenerSort.key === k && (screenerSort.direction==='asc'?'▲':'▼')}
+                                                        </div>
+                                                    </th>
+                                                );
+                                            })}
                                         </tr>
-                                    </thead>
+                                    </thead> 
+                                     
                                    
                                     <tbody className="divide-y divide-slate-800 font-mono">
                                         {sortedScreenerResults.map((r, i) => (
@@ -8771,6 +8932,7 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
                                                 </td>
                                                 <td className="p-5 text-slate-300 font-sans font-bold">{r.name}</td>
                                                 <td className="p-5 text-white font-bold">{formatN(r.price)}</td>
+                                                <td className="p-5 text-slate-400 font-mono text-[10px] whitespace-nowrap">{r.trendStatus || '-'}</td>
                                                 <td className={`p-5 ${checkCriteria('per', r.per)}`}>{r.per}</td>
                                                 <td className={`p-5 ${checkCriteria('peg', r.peg)}`}>{r.peg}</td>
                                                 <td className={`p-5 ${checkCriteria('roi', r.roi)}`}>{r.roi}%</td>
