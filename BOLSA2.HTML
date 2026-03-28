@@ -8269,9 +8269,9 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         
         let trendFilterStr = '';
         if (screenerTrend === 'ath') {
-            trendFilterStr = "Must be trading at or very close to its All-Time High (ATH) or 52-week high";
+            trendFilterStr = "Debe estar cotizando en sus máximos históricos (ATH) o en sus máximos de 52 semanas.";
         } else if (screenerTrend === 'drop') {
-            trendFilterStr = `Must have dropped at least ${screenerDropConfig.pct}% from its peak within the last ${screenerDropConfig.months} months`;
+            trendFilterStr = `Debe haber caído al menos un ${screenerDropConfig.pct}% desde su pico máximo en los últimos ${screenerDropConfig.months} meses.`;
         }
 
         const activeFiltersArr = Object.entries(params).filter(([_, p]) => p.active)
@@ -8288,19 +8288,23 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
             
         if (trendFilterStr) activeFiltersArr.unshift(trendFilterStr);
         const activeFilters = activeFiltersArr.join(' AND ');
-   
+
         if (!activeFilters) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Activa al menos un parámetro.', type: 'info' });
         setLoading(true);
         try {
+            const today = new Date().toLocaleString('es-ES'); // Fecha de referencia
+            
             const prompt = `YOU ARE A JSON GENERATOR MACHINE. YOU DO NOT SPEAK. YOU ONLY OUTPUT DATA.
+            TODAY'S DATE IS: ${today}. Use this as the absolute reference for calculating recent highs or drops.
             TASK: Generate a JSON Array of ${maxResults} stocks in "${marketDesc}" matching ALL these conditions: ${activeFilters}.
             STRICT RULES:
-            1. Use your knowledge to estimate current data.
-            2. If exact matches are rare, include closest matches.
-            3. OUTPUT MUST START WITH '[' AND END WITH ']'.
-            4. NO PREAMBLE. NO EXPLANATIONS.
+            1. Use your knowledge to estimate CURRENT data.
+            2. "price" MUST be the CURRENT market price of the stock, NOT the historical peak price.
+            3. "trendStatus" MUST be a short description in SPANISH of its current status regarding the peak (e.g., "-30% desde máximo en Enero", "En máximos históricos").
+            4. OUTPUT MUST START WITH '[' AND END WITH ']'.
+            5. NO PREAMBLE. NO EXPLANATIONS.
             OUTPUT FORMAT:
-            [{"ticker":"SYM","name":"Name","price":1.0,"trendStatus":"Short desc of ATH or Drop","per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0,"fcf":1.0}]`;
+            [{"ticker":"SYM","name":"Name","price":1.0,"trendStatus":"Descripción corta en español","per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0,"fcf":1.0}]`;
             
             const res = await askGemini(apiKey, prompt, aiModel);
             const results = extractJSON(res);
@@ -8310,7 +8314,6 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
             setStatusModal({ isOpen: true, title: 'Error de Rastreo', msg: e.message, type: 'error' });
         } finally { setLoading(false); }
     };
-
    
     const sortedScreenerResults = useMemo(() => {
         return [...screenerResults].sort((a, b) => {
@@ -8345,12 +8348,15 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
         w.document.write(html); w.document.close(); setTimeout(() => w.print(), 500);
     };
 
-    const handlePrintScreener = () => {
+   const handlePrintScreener = () => {
         const w = window.open('', '', 'height=800,width=1100');
         let html = `<html><head><title>Rastreo iA</title><style>body{font-family:sans-serif;padding:20px;font-size:10px;} h1{border-bottom:2px solid #333;} table{width:100%;border-collapse:collapse;margin-top:10px;} th,td{border:1px solid #ddd;padding:6px;text-align:right;} th{background:#f1f5f9;text-align:center;text-transform:uppercase;font-size:8px;} .left{text-align:left;}</style></head><body>`;
         html += `<h1>RASTREO: ${EXCHANGES.find(e => e.id === exchange)?.name || exchange}</h1><p><b>Filtros activos:</b> Revisar en la app.</p><p>Fecha: ${new Date().toLocaleString()}</p>`;
-        html += `<table><thead><tr><th>Ticker</th><th class="left">Nombre</th><th>Precio</th><th>Trend</th><th>PER</th><th>PEG</th><th>ROI</th><th>Yield</th><th>P/B</th><th>D/E</th><th>FCF%</th></tr></thead><tbody>`;
+        
+        // Cabeceras y filas adaptadas al castellano
+        html += `<table><thead><tr><th>Ticker</th><th class="left">Nombre</th><th>Precio Actual</th><th>Tendencia</th><th>PER</th><th>PEG</th><th>ROI</th><th>Yield</th><th>P/B</th><th>D/E</th><th>FCF%</th></tr></thead><tbody>`;
         sortedScreenerResults.forEach(r => { html += `<tr><td><b>${r.ticker}</b></td><td class="left">${r.name}</td><td>${formatN(r.price)}</td><td>${r.trendStatus || '-'}</td><td>${r.per}</td><td>${r.peg}</td><td>${r.roi}%</td><td>${r.divYield}%</td><td>${r.pb}</td><td>${r.debtEquity}</td><td>${r.fcf}%</td></tr>`; });
+        
         html += `</tbody></table></body></html>`;
         w.document.write(html); w.document.close(); w.print();
     };
@@ -8803,18 +8809,31 @@ const AnalysisTab = ({ apiKey, baseCurrency, setPortfolio, initialTicker, aiMode
                             <div className="overflow-x-auto">
                                 <table className="w-full text-left text-xs">
 
-                                   <thead className="bg-slate-950/80 text-slate-500 uppercase text-[9px] font-black sticky top-0">
+                                 
+                                    <thead className="bg-slate-950/80 text-slate-500 uppercase text-[9px] font-black sticky top-0">
                                         <tr>
-                                            {['ticker', 'name', 'price', 'trendStatus', 'per', 'peg', 'roi', 'divYield', 'pb', 'debtEquity', 'fcf'].map(k => (
-                                                <th key={k} className="p-5 cursor-pointer hover:text-white transition-colors border-b border-slate-800" onClick={()=>setScreenerSort({key:k, direction: screenerSort.direction==='asc'?'desc':'asc'})}>
-                                                    <div className="flex items-center gap-1">
-                                                         {k === 'divYield' ? 'Yield' : k === 'debtEquity' ? 'D/E' : k === 'fcf' ? 'FCF%' : k === 'trendStatus' ? 'Trend' : k} 
-                                                         {screenerSort.key === k && (screenerSort.direction==='asc'?'▲':'▼')}
-                                                     </div>
-                                                </th>
-                                            ))}
+                                            {['ticker', 'name', 'price', 'trendStatus', 'per', 'peg', 'roi', 'divYield', 'pb', 'debtEquity', 'fcf'].map(k => {
+                                                let label = k;
+                                                if (k === 'name') label = 'Nombre';
+                                                if (k === 'price') label = 'Precio Actual';
+                                                if (k === 'trendStatus') label = 'Tendencia';
+                                                if (k === 'divYield') label = 'Yield';
+                                                if (k === 'debtEquity') label = 'D/E';
+                                                if (k === 'fcf') label = 'FCF%';
+                                                if (k === 'ticker') label = 'Ticker';
+
+                                                return (
+                                                    <th key={k} className="p-5 cursor-pointer hover:text-white transition-colors border-b border-slate-800" onClick={()=>setScreenerSort({key:k, direction: screenerSort.direction==='asc'?'desc':'asc'})}>
+                                                        <div className="flex items-center gap-1">
+                                                            {label} 
+                                                            {screenerSort.key === k && (screenerSort.direction==='asc'?'▲':'▼')}
+                                                        </div>
+                                                    </th>
+                                                );
+                                            })}
                                         </tr>
-                                    </thead>
+                                    </thead> 
+                                     
                                    
                                     <tbody className="divide-y divide-slate-800 font-mono">
                                         {sortedScreenerResults.map((r, i) => (
