@@ -4490,7 +4490,9 @@ const getMarketStatus = (p) => {
 
             let prompt = isIsinCode 
                 ? `Actúa como API financiera. Busca el fondo con ISIN "${form.ticker}". Identifica su divisa base. Responde SOLO JSON: {"n":"nombre completo","p":valor_actual,"currency":"Divisa_ISO_3_letras","fx":cambio_a_${baseCurrency}}. USA PUNTO DECIMAL.` 
-                : `Actúa como API financiera. Busca la acción "${form.ticker}". Identifica su divisa de cotización en el mercado real. Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"currency":"Divisa_ISO_3_letras","fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_numero}. USA PUNTO DECIMAL.`;
+                : `Actúa como API financiera. Busca la acción exacta "${form.ticker}". 
+                REGLA CRÍTICA Y ESTRICTA: Se espera que esta acción cotice en la divisa "${inferredCurrency}". Si el ticker incluye un prefijo de mercado regional (ej. FRA:, BME:, EPA:, LSE:), DEBES buscar EXCLUSIVAMENTE el precio en ese mercado secundario europeo/local y en su moneda, IGNORANDO por completo su cotización en EEUU (USD). Ejemplo: Si es FRA:APC (Apple), da el precio en EUR de Frankfurt.
+                Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"currency":"Divisa_ISO_3_letras","fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_numero}. USA PUNTO DECIMAL.`;
 
             const aiRes = await askGemini(apiKey, prompt, aiModel);
             const json = extractJSON(aiRes);
@@ -4679,10 +4681,19 @@ const getMarketStatus = (p) => {
             } else {
                 totallyFailed = active.map(p => p.ticker);
             }
-    
+
             if (totallyFailed.length > 0 && apiKey) {
                 setUpdateText('Rescatando fallidos con IA...');
-                const prompt = `Actúa como API. Para estos tickers: ${totallyFailed.join(', ')}, devuelve el precio actual, el cierre anterior (pc) y el tipo de cambio a ${baseCurrency}. Formato JSON estricto: {"TICKER": {"p": precio, "pc": cierre_anterior, "fx": cambio}}. USA PUNTO DECIMAL.`;
+                
+                // Mapeamos los tickers con la divisa que tenemos guardada para darle contexto a la IA
+                const tickersWithContext = totallyFailed.map(t => {
+                    const item = active.find(p => p.ticker === t);
+                    return `${t} (Divisa esperada: ${item ? item.stockCurrency : 'N/A'})`;
+                }).join(', ');
+
+                const prompt = `Actúa como API financiera. Para los siguientes tickers: ${tickersWithContext}.
+                REGLA CRÍTICA Y ESTRICTA: Respeta escrupulosamente el mercado y la divisa indicada para cada ticker. Si es una empresa americana cotizando en Europa (ej. FRA:APC en EUR o LSE: en GBP), DEBES devolver el precio de la bolsa europea en esa divisa local, NUNCA el precio en dólares (USD) de NASDAQ/NYSE.
+                Devuelve SOLO un JSON estricto usando el TICKER EXACTO como clave: {"TICKER": {"p": precio_local, "pc": cierre_anterior_local, "fx": cambio_divisa_local_a_${baseCurrency}}}. USA PUNTO DECIMAL.`;
                 
                 try {
                     const aiRes = await askGemini(apiKey, prompt, aiModel);
@@ -4700,10 +4711,9 @@ const getMarketStatus = (p) => {
                             }
                         });
                     }
-
-
                 } catch (aiErr) { console.error("Fallo rescate IA:", aiErr); }
             }
+
     
             if (Object.keys(updatesMap).length > 0) {
                 setPortfolio(prev => prev.map(p => updatesMap[p.id] ? { ...p, ...updatesMap[p.id] } : p));
