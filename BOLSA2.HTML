@@ -3514,6 +3514,28 @@ const [inferStep, setInferStep] = useState('input'); // Controla los pasos: 'inp
 const [manualDateInput, setManualDateInput] = useState('');
 const [diffWarning, setDiffWarning] = useState(null);
 
+const updateLot = (id, field, val) => { const newLots = (form.lots || []).map(l => { if (l.id === id) return { ...l, [field]: field === 'date' ? val : (val === '' ? '' : val) }; return l; }); recalcFromLots(newLots); };
+
+const handleLotTotalChange = (id, totalValStr, lot) => {
+        const total = parseFloat(totalValStr);
+        if (isNaN(total)) {
+            updateLot(id, 'price', '');
+            return;
+        }
+        const s = parseFloat(lot.shares) || 0;
+        const f = parseFloat(lot.fx) || 1;
+        const fees = parseFloat(lot.fees) || 0;
+        const adj = parseFloat(lot.adj) || 0;
+        
+        if (s > 0 && f > 0) {
+            const feesToSubtract = form.feesIncludedInPrice ? 0 : fees;
+            const newPrice = (total - feesToSubtract - adj) / (s * f);
+            // Redondeamos a 6 decimales para no perder precisión en acciones/criptos baratas
+            updateLot(id, 'price', Math.round(newPrice * 1000000) / 1000000);
+        }
+};
+
+
 const applyInferData = (date, price, fx) => {
     setForm(prev => ({ 
         ...prev, 
@@ -6007,7 +6029,7 @@ const handleSellSubmit = () => {
                                                 <input type="number" step="0.01" value={lot.fees === 0 ? '' : lot.fees} onChange={e => updateLot(lot.id, 'fees', e.target.value)} className="w-full bg-slate-950 text-[10px] font-bold text-slate-300 border-slate-700 rounded p-1 text-center" />
                                                 <input type="number" step="0.01" value={lot.adj === 0 ? '' : lot.adj} onChange={e => updateLot(lot.id, 'adj', e.target.value)} className="w-full bg-slate-950 text-[10px] font-bold text-slate-300 border-slate-700 rounded p-1 text-center" />
                                                 <input type="number" step="0.1" value={lot.pe === 0 ? '' : lot.pe} onChange={e => updateLot(lot.id, 'pe', e.target.value)} className="w-full bg-slate-950 text-[10px] font-bold text-yellow-500 border-slate-700 rounded p-1 text-center" />
-                                                <div className="text-[10px] font-mono text-cyan-300 font-bold text-right pr-1">{formatMoney((parseFloat(lot.shares||0) * parseFloat(lot.price||0) * parseFloat(lot.fx||1)) + (form.feesIncludedInPrice ? 0 : parseFloat(lot.fees||0)) + parseFloat(lot.adj||0), baseCurrency)}</div>
+                                                <input      type="number"      step="0.01"      value={(() => {         const calcTotal = ((parseFloat(lot.shares)||0) * (parseFloat(lot.price)||0) * (parseFloat(lot.fx)||1)) + (form.feesIncludedInPrice ? 0 : (parseFloat(lot.fees)||0)) + (parseFloat(lot.adj)||0);         return calcTotal === 0 ? '' : Math.round(calcTotal * 100) / 100;     })()}     onChange={e => handleLotTotalChange(lot.id, e.target.value, lot)}     placeholder="Total"     className="w-full bg-slate-950 text-[10px] font-mono font-bold text-cyan-300 border-slate-700 rounded p-1 text-right focus:outline-none focus:border-cyan-500"  />
                                                 <button onClick={() => removeLot(lot.id)} className="text-red-400 hover:text-red-300 flex justify-center"><Icons.Trash2 size={12}/></button>
                                             </div>                                          
                                         ))}                                     
