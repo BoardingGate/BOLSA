@@ -3506,35 +3506,113 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     const [isRebuildingHistory, setIsRebuildingHistory] = useState(false);
     const [selectedBarIndex, setSelectedBarIndex] = useState(null);
 
-const [isInferring, setIsInferring] = useState(false);
-const [isInferModalOpen, setIsInferModalOpen] = useState(false);
-const [inferProfitInput, setInferProfitInput] = useState('');
-const [inferYearStart, setInferYearStart] = useState(new Date().getFullYear() - 4);
-const [inferStep, setInferStep] = useState('input'); // Controla los pasos: 'input', 'fail-options', 'manual-date', 'result-check'
-const [manualDateInput, setManualDateInput] = useState('');
-const [diffWarning, setDiffWarning] = useState(null);
+    const [isInferring, setIsInferring] = useState(false);
+    const [isInferModalOpen, setIsInferModalOpen] = useState(false);
+    const [inferProfitInput, setInferProfitInput] = useState('');
+    const [inferYearStart, setInferYearStart] = useState(new Date().getFullYear() - 4);
+    const [inferStep, setInferStep] = useState('input'); // Controla los pasos: 'input', 'fail-options', 'manual-date', 'result-check'
+    const [manualDateInput, setManualDateInput] = useState('');
+    const [diffWarning, setDiffWarning] = useState(null);
+    
+    const [failedTickersList, setFailedTickersList] = useState([]);
 
-const [failedTickersList, setFailedTickersList] = useState([]);
+    const [isConsultasModalOpen, setIsConsultasModalOpen] = useState(false);
+    const [consultasQuery, setConsultasQuery] = useState('');
+    const [consultasResult, setConsultasResult] = useState('');
+    const [isConsulting, setIsConsulting] = useState(false);
 
 
-const handleLotTotalChange = (id, totalValStr, lot) => {
-        const total = parseFloat(totalValStr);
-        if (isNaN(total)) {
-            updateLot(id, 'price', '');
-            return;
+    const handleConsultaSubmit = async () => {
+        if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' });
+        if (!consultasQuery.trim()) return;
+
+        setIsConsulting(true);
+        setConsultasResult('');
+
+        try {
+            // Preparamos un resumen numérico y de estado de toda la cartera
+            const portfolioSummary = portfolio.map(p => {
+                const isS = !!p.sellDate;
+                const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+                const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
+                const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
+                const val = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+                const divs = (p.dividends || []).reduce((a,b)=>a+b.net, 0);
+                
+                return `- [${isS ? 'VENDIDA' : 'ACTIVA'}] Ticker: ${p.ticker} (${p.name}). Acciones: ${p.shares}. Coste Total: ${cost.toFixed(2)}. Valor/Liquidación: ${val.toFixed(2)}. Dividendos: ${divs.toFixed(2)}. Fechas: ${p.buyDate} a ${isS ? p.sellDate : 'Hoy'}.`;
+            }).join('\n');
+
+            const prompt = `
+            Eres un Asesor Financiero Cuantitativo experto y asistente personal del usuario.
+            Aquí tienes los datos exactos actuales e históricos de TODA la cartera del usuario:
+            
+            ${portfolioSummary}
+
+            PREGUNTA O PETICIÓN DEL USUARIO:
+            "${consultasQuery}"
+
+            INSTRUCCIONES ESTRICTAS:
+            1. Responde a la pregunta analizando los datos matemáticos de la cartera proporcionados si la pregunta está relacionada con ellos.
+            2. Si la pregunta requiere buscar información actual en internet (precios, noticias, macroeconomía, proyecciones), usa tu herramienta de búsqueda web para complementar.
+            3. Redacta la respuesta en formato HTML limpio (usando <h3>, <ul>, <li>, <p>, <strong>), sin incluir markdown de código (\`\`\`html).
+            4. Responde en Español de forma profesional y clara.
+            `;
+
+            const res = await askGemini(apiKey, prompt, aiModel);
+            let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
+            const startIdx = cleanHtml.indexOf('<');
+            if (startIdx !== -1) cleanHtml = cleanHtml.substring(startIdx);
+            
+            setConsultasResult(cleanHtml);
+        } catch (e) {
+            setInfoModal({ isOpen: true, title: 'Error en Consulta', msg: e.message, type: 'error' });
+        } finally {
+            setIsConsulting(false);
         }
-        const s = parseFloat(lot.shares) || 0;
-        const f = parseFloat(lot.fx) || 1;
-        const fees = parseFloat(lot.fees) || 0;
-        const adj = parseFloat(lot.adj) || 0;
-        
-        if (s > 0 && f > 0) {
-            const feesToSubtract = form.feesIncludedInPrice ? 0 : fees;
-            const newPrice = (total - feesToSubtract - adj) / (s * f);
-            // Redondeamos a 6 decimales para no perder precisión en acciones/criptos baratas
-            updateLot(id, 'price', Math.round(newPrice * 1000000) / 1000000);
-        }
-};
+    };
+
+    const handlePrintConsulta = () => {
+        const printWindow = window.open('', '', 'height=800,width=800');
+        let html = `<html><head><title>Consulta Cartera iA</title><style>
+        body { font-family: sans-serif; padding: 40px; font-size: 13px; line-height: 1.6; color: #000; -webkit-print-color-adjust: exact; }
+        h1 { border-bottom: 4px solid #0d9488; color: #0d9488; text-transform: uppercase; padding-bottom: 10px; margin-bottom: 5px; }
+        h3 { color: #0f766e; border-bottom: 1px solid #ccc; margin-top: 30px; padding-bottom: 5px; text-transform: uppercase; font-size: 16px; }
+        ul { padding-left: 20px; } li { margin-bottom: 6px; }
+        .meta { font-size: 11px; color: #555; margin-bottom: 30px; border-left: 3px solid #0d9488; padding-left: 10px; background: #f0fdfa; padding: 10px; }
+        b, strong { color: #111827; }
+        </style></head><body>
+        <h1>RESPUESTA A CONSULTA FINANCIERA (iA)</h1>
+        <div class="meta">
+            <b>EMISIÓN:</b> ${new Date().toLocaleString()}<br/>
+            <b>CONSULTA:</b> "${consultasQuery}"
+        </div>
+        <div>${consultasResult}</div>
+        </body></html>`;
+        printWindow.document.write(html);
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(() => printWindow.print(), 500);
+    };
+
+
+    const handleLotTotalChange = (id, totalValStr, lot) => {
+            const total = parseFloat(totalValStr);
+            if (isNaN(total)) {
+                updateLot(id, 'price', '');
+                return;
+            }
+            const s = parseFloat(lot.shares) || 0;
+            const f = parseFloat(lot.fx) || 1;
+            const fees = parseFloat(lot.fees) || 0;
+            const adj = parseFloat(lot.adj) || 0;
+            
+            if (s > 0 && f > 0) {
+                const feesToSubtract = form.feesIncludedInPrice ? 0 : fees;
+                const newPrice = (total - feesToSubtract - adj) / (s * f);
+                // Redondeamos a 6 decimales para no perder precisión en acciones/criptos baratas
+                updateLot(id, 'price', Math.round(newPrice * 1000000) / 1000000);
+            }
+    };
 
 const applyInferData = (date, price, fx) => {
     setForm(prev => ({ 
@@ -5063,6 +5141,7 @@ const handleSellSubmit = () => {
                         </div>
                         <button onClick={onManualSync} className={`px-3 h-9 rounded-lg text-[10px] font-bold border flex items-center gap-2 transition-all ${syncStatus === 'unsaved' ? 'bg-orange-600 border-orange-500 text-white animate-pulse' : syncStatus === 'uploading' || syncStatus === 'downloading' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-green-400'}`}>{syncStatus === 'uploading' || syncStatus === 'downloading' ? <Icons.Loader/> : <Icons.Upload size={14}/>} {syncStatus === 'unsaved' ? 'GUARDAR' : 'SYNC OK'}</button>
                         <button onClick={analyzePortfolio} className="bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 transition-colors flex items-center gap-2"><Icons.Wand/> INFORME iA</button>
+                        <button onClick={() => setIsConsultasModalOpen(true)} className="bg-teal-800 px-3 h-9 rounded-lg text-[10px] font-bold border border-teal-500/50 hover:bg-teal-700 transition-colors flex items-center gap-2"><Icons.MessageCircle size={14}/> CONSULTAS</button>
                         <button onClick={() => setIsNewsSelectionModalOpen(true)} className="bg-blue-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-blue-500/50 hover:bg-blue-600 transition-colors flex items-center gap-2"><Icons.Globe size={14}/> NOTICIAS</button>  
                         <button onClick={() => setIsTimelineModalOpen(true)} className="bg-emerald-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-emerald-500/50 hover:bg-emerald-600 transition-colors flex items-center gap-2"><Icons.Network size={14}/> TIMELINE</button>
                         <button onClick={() => setShowEvolution(!showEvolution)} className={`px-3 h-9 rounded-lg text-[10px] font-bold border transition-colors flex items-center gap-2 ${showEvolution ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-indigo-900/80 border-indigo-500/50 hover:bg-indigo-800 text-white'}`}><Icons.ChartBar size={14}/> EVOLUCIÓN</button>
@@ -6472,6 +6551,40 @@ const handleSellSubmit = () => {
             <Icons.ExternalLink size={14}/> IMPRIMIR INFORME
         </button>
     </div>
+</Modal>
+
+
+<Modal isOpen={isConsultasModalOpen} title="Consultas Libres a la iA sobre la Cartera" onClose={() => setIsConsultasModalOpen(false)} size="lg">
+                <div className="flex flex-col gap-4">
+                    <div className="bg-teal-900/20 p-4 rounded-xl border border-teal-500/30 text-teal-200 text-xs leading-relaxed">
+                        <b>💡 ¿Para qué sirve esta opción?</b><br/>
+                        La IA recibirá en segundo plano todos los datos numéricos de tus operaciones <b>abiertas y cerradas</b>. Puedes preguntarle cosas como: <i>"¿Cuál es mi acción más rentable sumando dividendos?", "¿Qué exposición tengo al sector salud?", "¿Cuánto he ganado este año con las ventas?"</i> o pedirle previsiones de mercado en base a tus activos.
+                    </div>
+                    
+                    <textarea 
+                        value={consultasQuery} 
+                        onChange={e => setConsultasQuery(e.target.value)} 
+                        placeholder="Escribe aquí tu pregunta sobre la cartera o sobre el mercado en general..." 
+                        className="w-full h-24 bg-slate-950 border border-slate-700 rounded-xl p-4 text-sm text-slate-200 focus:border-teal-500 outline-none custom-scrollbar"
+                    />
+                    
+                    <button onClick={handleConsultaSubmit} disabled={isConsulting || !consultasQuery.trim()} className="w-full bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white py-3 rounded-xl font-black uppercase text-xs tracking-widest shadow-lg flex items-center justify-center gap-2 transition-colors">
+                        {isConsulting ? <Icons.Loader size={16} className="animate-spin" /> : <Icons.Wand size={16}/>}
+                        {isConsulting ? 'Analizando tu Cartera y Redactando...' : 'Consultar a la iA'}
+                    </button>
+
+                    {consultasResult && (
+                        <div className="mt-2 border-t border-slate-700 pt-4 fade-in">
+                            <div className="flex justify-between items-center mb-3">
+                                <h4 className="text-[10px] font-black text-teal-400 uppercase tracking-widest">Respuesta de la IA:</h4>
+                                <button onClick={handlePrintConsulta} className="bg-slate-700 px-3 py-1.5 rounded-lg text-[10px] font-bold text-white flex items-center gap-2 hover:bg-slate-600 shadow">
+                                    <Icons.ExternalLink size={12}/> IMPRIMIR RESPUESTA
+                                </button>
+                            </div>
+                            <div className="bg-slate-900/80 p-4 rounded-xl border border-slate-700 max-h-[40vh] overflow-y-auto custom-scrollbar prose-content text-sm text-slate-200 [&_h3]:text-teal-400 [&_h3]:mt-4 [&_h3]:border-slate-700 [&_strong]:text-white" dangerouslySetInnerHTML={{__html: consultasResult}}></div>
+                        </div>
+                    )}
+                </div>
 </Modal>
 
 
