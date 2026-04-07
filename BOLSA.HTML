@@ -3516,10 +3516,64 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, baseCurrency, refreshIn
     
     const [failedTickersList, setFailedTickersList] = useState([]);
 
+    const DEFAULT_CONSULTA = "Quiero que me des un listado con las acciones vendidas comparando el precio de venta con el precio actual dando la diferencia, sumando al final el resultado, para poder así comprobar qué resultados tendría de no haber vendido";
+
     const [isConsultasModalOpen, setIsConsultasModalOpen] = useState(false);
     const [consultasQuery, setConsultasQuery] = useState('');
     const [consultasResult, setConsultasResult] = useState('');
     const [isConsulting, setIsConsulting] = useState(false);
+
+    const [customConsultas, setCustomConsultas] = usePersistentState('bg_custom_consultas', [DEFAULT_CONSULTA]);
+    const [showConsultasQManager, setShowConsultasQManager] = useState(false);
+    const [newCustomConsulta, setNewCustomConsulta] = useState('');
+    const [editingCustomConsulta, setEditingCustomConsulta] = useState(null);
+
+    const syncCustomConsultasToCloud = async (questions) => {
+        try {
+            const url = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
+            if (!url) return;
+            const cloudRes = await fetch(url);
+            const cloudData = await cloudRes.json();
+            const payload = {
+                ...cloudData,
+                customConsultas: questions,
+                timestamp: Date.now()
+            };
+            await fetch(url, {
+                method: 'POST', mode: 'no-cors',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        } catch (e) {
+            console.warn("No se pudo sincronizar consultas con la nube:", e);
+        }
+    };
+
+    const handleAddCustomConsulta = () => {
+        const trimmed = newCustomConsulta.trim();
+        if (!trimmed || trimmed.length < 3) return;
+        if (customConsultas.includes(trimmed)) return;
+        const updated = [...customConsultas, trimmed];
+        setCustomConsultas(updated);
+        setNewCustomConsulta('');
+        syncCustomConsultasToCloud(updated);
+    };
+
+    const handleDeleteCustomConsulta = (index) => {
+        const updated = customConsultas.filter((_, i) => i !== index);
+        setCustomConsultas(updated);
+        syncCustomConsultasToCloud(updated);
+    };
+
+    const handleSaveEditCustomConsulta = () => {
+        if (!editingCustomConsulta) return;
+        const trimmed = editingCustomConsulta.text.trim();
+        if (!trimmed || trimmed.length < 3) return;
+        const updated = customConsultas.map((q, i) => i === editingCustomConsulta.index ? trimmed : q);
+        setCustomConsultas(updated);
+        setEditingCustomConsulta(null);
+        syncCustomConsultasToCloud(updated);
+    };
 
 
     const handleConsultaSubmit = async () => {
@@ -6413,7 +6467,7 @@ const handleSellSubmit = () => {
                     </div>
                 </div>
             </div>
-        </Modal>
+ </Modal>
 
 
 <Modal isOpen={isInferModalOpen} title="Asistente de Inferencia de Compra" onClose={() => { setIsInferModalOpen(false); setInferStep('input'); }} size="sm">
@@ -6553,12 +6607,11 @@ const handleSellSubmit = () => {
     </div>
 </Modal>
 
-
 <Modal isOpen={isConsultasModalOpen} title="Consultas Libres a la iA sobre la Cartera" onClose={() => setIsConsultasModalOpen(false)} size="lg">
                 <div className="flex flex-col gap-4">
                     <div className="bg-teal-900/20 p-4 rounded-xl border border-teal-500/30 text-teal-200 text-xs leading-relaxed">
                         <b>💡 ¿Para qué sirve esta opción?</b><br/>
-                        La IA recibirá en segundo plano todos los datos numéricos de tus operaciones <b>abiertas y cerradas</b>. Puedes preguntarle cosas como: <i>"¿Cuál es mi acción más rentable sumando dividendos?", "¿Qué exposición tengo al sector salud?", "¿Cuánto he ganado este año con las ventas?"</i> o pedirle previsiones de mercado en base a tus activos.
+                        La IA recibirá en segundo plano todos los datos numéricos de tus operaciones <b>abiertas y cerradas</b>. Puedes preguntarle cualquier cosa, hacer cálculos cruzados, o pedirle proyecciones basadas en tu historial real.
                     </div>
                     
                     <textarea 
@@ -6567,8 +6620,85 @@ const handleSellSubmit = () => {
                         placeholder="Escribe aquí tu pregunta sobre la cartera o sobre el mercado en general..." 
                         className="w-full h-24 bg-slate-950 border border-slate-700 rounded-xl p-4 text-sm text-slate-200 focus:border-teal-500 outline-none custom-scrollbar"
                     />
+
+                    {/* --- GESTOR DE PREGUNTAS GUARDADAS --- */}
+                    <div className="border-t border-slate-700 pt-3">
+                        <div className="flex justify-between items-center mb-3">
+                            <h4 className="text-[10px] font-black text-teal-400 uppercase tracking-widest flex items-center gap-2">
+                                <Icons.Copy size={12} /> Mis Consultas Guardadas
+                            </h4>
+                            <button onClick={() => setShowConsultasQManager(!showConsultasQManager)} className="text-[9px] text-teal-400 hover:text-teal-300 font-bold flex items-center gap-1 bg-teal-900/20 border border-teal-500/30 px-2 py-1 rounded-lg transition-colors">
+                                {showConsultasQManager ? '▲ Cerrar gestor' : '⚙️ Gestionar'}
+                            </button>
+                        </div>
+
+                        {customConsultas.length > 0 && !showConsultasQManager && (
+                            <div className="flex flex-wrap gap-2 mb-2">
+                                {customConsultas.map((q, i) => (
+                                    <button key={i} onClick={() => setConsultasQuery(q)} className="px-3 py-2 bg-teal-900/30 border border-teal-500/40 rounded-xl text-[10px] text-teal-200 hover:text-white hover:bg-teal-800/50 transition-colors font-medium text-left line-clamp-2 leading-tight">
+                                        {q}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
+                        {showConsultasQManager && (
+                            <div className="bg-slate-950 border border-teal-500/30 rounded-xl p-4 space-y-3 fade-in mt-2">
+                                <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-2">
+                                    Gestionar Consultas
+                                    <span className="text-slate-600 font-normal normal-case ml-2">— Se guardan en local y nube</span>
+                                </div>
+
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        value={newCustomConsulta}
+                                        onChange={e => setNewCustomConsulta(e.target.value)}
+                                        onKeyDown={e => e.key === 'Enter' && handleAddCustomConsulta()}
+                                        placeholder="Escribe tu nueva consulta habitual..."
+                                        className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:border-teal-500 outline-none"
+                                    />
+                                    <button
+                                        onClick={handleAddCustomConsulta}
+                                        disabled={!newCustomConsulta.trim() || newCustomConsulta.trim().length < 3}
+                                        className="bg-teal-600 hover:bg-teal-500 disabled:bg-slate-700 disabled:text-slate-500 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors flex items-center gap-1"
+                                    >
+                                        <Icons.Plus size={14} /> Añadir
+                                    </button>
+                                </div>
+
+                                <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar">
+                                    {customConsultas.map((q, i) => (
+                                        <div key={i} className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-lg p-2">
+                                            {editingCustomConsulta?.index === i ? (
+                                                <>
+                                                    <input
+                                                        type="text"
+                                                        value={editingCustomConsulta.text}
+                                                        onChange={e => setEditingCustomConsulta({ ...editingCustomConsulta, text: e.target.value })}
+                                                        className="flex-1 bg-slate-800 border border-teal-500 rounded px-2 py-1 text-xs text-white outline-none"
+                                                        autoFocus
+                                                    />
+                                                    <button onClick={handleSaveEditCustomConsulta} className="text-green-400 text-[10px] font-bold hover:text-green-300 px-2">✓ Guardar</button>
+                                                    <button onClick={() => setEditingCustomConsulta(null)} className="text-slate-500 text-[10px] hover:text-white px-1">✗</button>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <span className="flex-1 text-[11px] text-slate-300 line-clamp-1" title={q}>{q}</span>
+                                                    <button onClick={() => { setConsultasQuery(q); setShowConsultasQManager(false); }} className="text-[9px] text-blue-400 hover:text-blue-300 font-bold border border-blue-500/30 px-2 py-0.5 rounded transition-colors">Usar</button>
+                                                    <button onClick={() => setEditingCustomConsulta({ index: i, text: q })} className="text-slate-400 hover:text-white p-1 rounded transition-colors"><Icons.Edit size={12} /></button>
+                                                    <button onClick={() => handleDeleteCustomConsulta(i)} className="text-red-400 hover:text-red-300 p-1 rounded transition-colors"><Icons.Trash2 size={12} /></button>
+                                                </>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    {/* --- FIN GESTOR PREGUNTAS --- */}
                     
-                    <button onClick={handleConsultaSubmit} disabled={isConsulting || !consultasQuery.trim()} className="w-full bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white py-3 rounded-xl font-black uppercase text-xs tracking-widest shadow-lg flex items-center justify-center gap-2 transition-colors">
+                    <button onClick={handleConsultaSubmit} disabled={isConsulting || !consultasQuery.trim()} className="w-full bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white py-3 rounded-xl font-black uppercase text-xs tracking-widest shadow-lg flex items-center justify-center gap-2 transition-colors mt-2">
                         {isConsulting ? <Icons.Loader size={16} className="animate-spin" /> : <Icons.Wand size={16}/>}
                         {isConsulting ? 'Analizando tu Cartera y Redactando...' : 'Consultar a la iA'}
                     </button>
@@ -6585,7 +6715,7 @@ const handleSellSubmit = () => {
                         </div>
                     )}
                 </div>
-</Modal>
+  </Modal>
 
 
             {/* ========================================================= */}
