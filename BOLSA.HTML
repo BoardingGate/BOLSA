@@ -4401,10 +4401,10 @@ const getMarketStatus = (p) => {
     }, [effectivePortfolio, filterText, filterDateStart, filterDateEnd]);
     
 
-   const globalMetrics = useMemo(() => {
+    const globalMetrics = useMemo(() => {
         const calc = (items) => {
             let inv = 0, cur = 0, divN = 0, fX = 0, weightedDays = 0, intra = 0, prevValTotal = 0, totalFeesAdj = 0;
-            let sumBuyPE = 0, countBuyPE = 0, sumCurPE = 0, countCurPE = 0;
+            let sumWeightedBuyPE = 0, sumWeightedCurPE = 0, weightBuyTotal = 0, weightCurTotal = 0;
 
             items.forEach(p => {
                 const isS = !!p.sellDate;
@@ -4416,7 +4416,6 @@ const getMarketStatus = (p) => {
                 
                 totalFeesAdj += isS ? (parseFloat(p.sellFees)||0)+(parseFloat(p.sellAdjustments)||0) : (parseFloat(p.fees)||0)+(parseFloat(p.adjustments)||0);
 
-                
                 if (!isS && p.previousClose) {
                     const mStatus = getMarketStatus(p);
                     if (mStatus.status === 'OPEN' || mStatus.status === 'CLOSED_TODAY') {
@@ -4426,12 +4425,20 @@ const getMarketStatus = (p) => {
                     }
                 }
 
-
                 if (!p.isIndex) fX += (p.shares * (isS ? p.sellPrice : p.currentPrice) * (eF - p.buyFx));
                 inv += costT; cur += vN; weightedDays += (d * costT);
                 (p.dividends || []).forEach(dv => divN += dv.net);
-                if (p.buyPE > 0) { sumBuyPE += p.buyPE; countBuyPE++; }
-                if (p.currentPE > 0) { sumCurPE += p.currentPE; countCurPE++; }
+                
+                const bPE = parseFloat(p.buyPE);
+                const cPE = parseFloat(p.currentPE);
+                
+                if (bPE !== 0 && !isNaN(bPE) && cPE !== 0 && !isNaN(cPE)) {
+                    sumWeightedBuyPE += (bPE * costT);
+                    weightBuyTotal += costT;
+                    
+                    sumWeightedCurPE += (cPE * vN);
+                    weightCurTotal += vN;
+                }
             });
 
             const avgD = inv > 0 ? weightedDays / inv : 0;
@@ -4442,7 +4449,9 @@ const getMarketStatus = (p) => {
                 num: items.length, inv, cur, divN, fX, plPrice: cur - inv, plTotal: (cur + divN) - inv, 
                 plP_S: rP.simple, plP_A: rP.annual, plT_S: rT.simple, plT_A: rT.annual, intra, 
                 intraPct: prevValTotal !== 0 ? (intra / prevValTotal) * 100 : 0, 
-                avgBuyPE: countBuyPE > 0 ? sumBuyPE / countBuyPE : 0, avgCurPE: countCurPE > 0 ? sumCurPE / countCurPE : 0, totalFeesAdj 
+                avgBuyPE: weightBuyTotal > 0 ? sumWeightedBuyPE / weightBuyTotal : 0, 
+                avgCurPE: weightCurTotal > 0 ? sumWeightedCurPE / weightCurTotal : 0, 
+                totalFeesAdj 
             };
         };
 
