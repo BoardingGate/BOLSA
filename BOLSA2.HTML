@@ -2342,13 +2342,25 @@ function fetchStockData(tickersString) {
   var tickerList = tickersString.split(",");
   var requests = [];
   var validTickers = [];
+  
   for (var i = 0; i < tickerList.length; i++) {
     var rawTicker = tickerList[i].trim();
     if(!rawTicker) continue;
-    var url = "https" + "://" + "www.google.com/finance/quote/" + encodeURIComponent(rawTicker.includes(":") ? rawTicker.split(":")[1] + ":" + rawTicker.split(":")[0] : rawTicker);
+    
+    var queryTicker = rawTicker;
+    
+    if (rawTicker.includes(":")) {
+        queryTicker = rawTicker.split(":")[1] + ":" + rawTicker.split(":")[0];
+    } 
+    else if (rawTicker.length === 6 && !rawTicker.includes(".")) {
+        queryTicker = rawTicker.substring(0,3) + "-" + rawTicker.substring(3,6);
+    }
+
+    var url = "https" + "://" + "www.google.com/finance/quote/" + encodeURIComponent(queryTicker);
     requests.push({ url: url, method: "GET", muteHttpExceptions: true, headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36" } });
     validTickers.push(rawTicker);
   }
+  
   var results = {};
   try {
     var responses = UrlFetchApp.fetchAll(requests);
@@ -2357,10 +2369,12 @@ function fetchStockData(tickersString) {
       if (responses[j].getResponseCode() === 200) {
         var html = responses[j].getContentText();
         var res = { success: false };
-        var priceIdx = html.indexOf('class="YMlKec');
+        
+        var priceIdx = html.indexOf('class="YMlKec fxKbKc"');
+        
         if (priceIdx > -1) {
            var start = html.indexOf('>', priceIdx) + 1;
-           var end = html.indexOf('<' + '/div>', start);
+           var end = html.indexOf('<', start);
            res.p = cleanNumGAS(html.substring(start, end));
            
            var prevCloseIdx = html.indexOf('data-attrid="Previous close"');
@@ -2378,13 +2392,23 @@ function fetchStockData(tickersString) {
       }
     }
   } catch(err) { return ContentService.createTextOutput(JSON.stringify({error: err.toString()})).setMimeType(ContentService.MimeType.JSON); }
+  
   return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
 }
 
 function cleanNumGAS(str) {
   if (!str) return 0;
   var val = str.replace(/[^0-9.,-]/g, '');
-  val = val.replace(/\\./g, '').replace(',', '.');
+  
+  var lastDot = val.lastIndexOf('.');
+  var lastComma = val.lastIndexOf(',');
+  
+  if (lastDot > lastComma) {
+     val = val.replace(/,/g, ''); 
+  } else if (lastComma > lastDot) {
+    val = val.replace(/\./g, ''); 
+     val = val.replace(',', '.'); 
+  }
   return parseFloat(val) || 0;
 }`}
 </pre>
