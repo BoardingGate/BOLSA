@@ -302,19 +302,22 @@
           "gemini-2.5-pro",
           "gemini-2.5-flash",
           "gemini-2.5-flash-lite",
-           "meta-llama/llama-3-8b-instruct:free",
-          "google/gemma-2-9b-it:free",
-          "mistralai/mistral-7b-instruct:free"
-        ];
+          "meta-llama/llama-3.3-70b-instruct:free",
+          "deepseek/deepseek-r1-distill-llama-70b:free",
+          "mistralai/mistral-7b-instruct:free",
+          "openai/gpt-4o-mini",
+          "anthropic/claude-3.5-haiku"
+      ];
 
-      // 2. Enrutador: Mantenemos el nombre de la variable "groqApiKey" pero la mandamos a OpenRouter
-   const askAI = async (apiKey, prompt, model) => {
+      const askAI = async (geminiKey, secondaryApiKey, prompt, model) => {
           const targetModel = model || "gemini-2.5-flash";
-          const isGemini = targetModel.includes("gemini");
+          
+          // Detectamos si es una llamada DIRECTA a Google, o si pasa por OpenRouter (que usa barra "/")
+          const isGeminiDirect = targetModel.startsWith("gemini") && !targetModel.includes("/");
 
-          if (isGemini) {
-              if (!apiKey) throw new Error("Falta API Key de Gemini");
-              const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey}`, {
+          if (isGeminiDirect) {
+              if (!geminiKey) throw new Error("Falta API Key de Gemini");
+              const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${geminiKey}`, {
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }] })
               });
@@ -322,22 +325,15 @@
               if (data.error) throw new Error(data.error.message);
               return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
           } else {
-              // Leer la clave de OpenRouter directamente de la memoria para evitar errores de variables
-              let openRouterKey = '';
-              try {
-                  const stored = window.localStorage.getItem('bg_openrouter_key');
-                  if (stored) openRouterKey = JSON.parse(stored);
-              } catch (e) {}
-
-              if (!openRouterKey) throw new Error("Falta API Key de OpenRouter. Consíguela gratis en openrouter.ai");
-              
+              // Si no es un modelo directo de Gemini, usamos OpenRouter
+              if (!secondaryApiKey) throw new Error("Falta API Key Secundaria (OpenRouter). Consíguela en openrouter.ai/keys");
               const response = await fetch(`https://openrouter.ai/api/v1/chat/completions`, {
                   method: 'POST',
                   headers: { 
                       'Content-Type': 'application/json',
-                      'Authorization': `Bearer ${openRouterKey}`,
-                      'HTTP-Referer': 'https://boardinggate.github.io',
-                      'X-Title': 'BoardingGate'
+                      'Authorization': `Bearer ${secondaryApiKey}`,
+                      'HTTP-Referer': window.location.href, // Recomendado por OpenRouter
+                      'X-Title': 'BoardingGate Terminal' // Recomendado por OpenRouter
                   },
                   body: JSON.stringify({ 
                       model: targetModel, 
@@ -348,8 +344,9 @@
               if (data.error) throw new Error(data.error.message);
               return data.choices?.[0]?.message?.content || "";
           }
-      };
+      };  
 
+     
     
       const Modal = ({ isOpen, title, onClose, children, size = "md" }) => {
           if (!isOpen) return null;
@@ -2008,8 +2005,8 @@ const handleRestoreBak = async () => {
         } 
     };
 
-const SettingsTab = ({ apiKey, setApiKey, openRouterKey, setOpenRouterKey, _x_stat, _x_act, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio, onForceBackup, gScriptUrl, setGScriptUrl, resultsData, setResultsData, appPin, setAppPin, _x_lim, _x_trig, aiModel, setAiModel, availableModels, setAvailableModels, globalNotes, setGlobalNotes, hideInactive, setHideInactive, customConsultas, setCustomConsultas }) => {
-const [localLic, setLocalLic] = useState(''); 
+const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _x_stat, _x_act, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio, onForceBackup, gScriptUrl, setGScriptUrl, resultsData, setResultsData, appPin, setAppPin, _x_lim, _x_trig, aiModel, setAiModel, availableModels, setAvailableModels, globalNotes, setGlobalNotes, hideInactive, setHideInactive, customConsultas, setCustomConsultas }) => {
+    const [localLic, setLocalLic] = useState(''); 
     const [showKey, setShowKey] = useState(false); 
     const [testStatus, setTestStatus] = useState(null); 
     const [errorDetail, setErrorDetail] = useState(''); 
@@ -2046,8 +2043,8 @@ const [localLic, setLocalLic] = useState('');
         } 
     };
 
-    const testConnection = async () => { if(!apiKey && !openRouterKey) return alert("Introduce al menos una clave primero."); setTestStatus('loading'); setErrorDetail(''); try { await askAI(apiKey, "Test conexión. Responde OK si me recibes.", aiModel); setTestStatus('success'); } catch(e) { setTestStatus('error'); setErrorDetail(e.message); } };
-
+    const testConnection = async () => { setTestStatus('loading'); setErrorDetail(''); try { await askAI(apiKey, secondaryApiKey, "Test conexión. Responde OK si me recibes.", aiModel); setTestStatus('success'); } catch(e) { setTestStatus('error'); setErrorDetail(e.message); } };
+    
     const handleRunExport = () => { 
         setIoStatus('processing'); 
         try { 
@@ -2251,48 +2248,50 @@ const [localLic, setLocalLic] = useState('');
                 </div> 
             )}
 
+           
+            <div className="max-w-2xl w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
 
-<div className="max-w-2xl w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
 
-<div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
+ <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
     <div className="p-3 bg-purple-500/20 rounded-xl text-purple-400"><Icons.Wand size={32} /></div>
     <div>
         <h2 className="text-2xl font-bold text-white">Configuración IA Multimodelo</h2>
-        <p className="text-slate-400 text-sm">Conexión con Gemini y OpenRouter (Modelos 100% Gratuitos)</p>
+        <p className="text-slate-400 text-sm">Conexión directa con Gemini y OpenRouter (Acceso a cientos de modelos)</p>
     </div>
 </div>
 <div className="space-y-6">
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-        <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700">
-            <label className="block text-[11px] font-bold text-blue-400 mb-2 uppercase tracking-wider">1. Google Gemini API Key</label>
-            <div className="relative mb-2">
-                <input type={showKey ? "text" : "password"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full bg-black/50 border border-slate-600 rounded-lg p-3 pr-10 text-white focus:border-blue-500 outline-none font-mono text-xs"/>
-                <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"><Icons.Eye size={16}/></button>
+        <div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                {/* GEMINI KEY */}
+                <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700">
+                    <label className="block text-[11px] font-bold text-blue-400 mb-2 uppercase tracking-wider">1. Google Gemini API Key</label>
+                    <div className="relative mb-2">
+                        <input type={showKey ? "text" : "password"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full bg-black/50 border border-slate-600 rounded-lg p-3 pr-10 text-white focus:border-blue-500 outline-none font-mono text-xs"/>
+                        <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"><Icons.Eye size={16}/></button>
+                    </div>
+                    <p className="text-[9px] text-slate-400 italic">Obligatoria para búsquedas web en tiempo real (cotizaciones, noticias recientes). Límite: 15 peticiones/minuto.</p>
+                </div>
+                {/* OPENROUTER KEY */}
+                <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700">
+                    <label className="block text-[11px] font-bold text-orange-400 mb-2 uppercase tracking-wider">2. OpenRouter API Key (Opcional)</label>
+                    <div className="relative mb-2">
+                        <input type={showKey ? "text" : "password"} value={secondaryApiKey} onChange={(e) => setSecondaryApiKey(e.target.value)} placeholder="sk-or-v1-..." className="w-full bg-black/50 border border-slate-600 rounded-lg p-3 pr-10 text-white focus:border-orange-500 outline-none font-mono text-xs"/>
+                        <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"><Icons.Eye size={16}/></button>
+                    </div>
+                    <p className="text-[9px] text-slate-400 italic">Accede a ChatGPT, Claude, Llama y decenas de modelos 100% gratis o de pago. Consigue tu clave en <a href="https://openrouter.ai/keys" target="_blank" className="text-orange-400 underline font-bold">openrouter.ai</a>.</p>
+                </div>
             </div>
-            <p className="text-[9px] text-slate-400 italic">Búsquedas web. Límite: 15 peticiones/min.</p>
-        </div>
 
-        <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700">
-            <label className="block text-[11px] font-bold text-emerald-400 mb-2 uppercase tracking-wider">2. OpenRouter API Key (Gratis)</label>
-            <div className="relative mb-2">
-                <input type={showKey ? "text" : "password"} value={openRouterKey} onChange={(e) => setOpenRouterKey(e.target.value)} placeholder="sk-or-v1-..." className="w-full bg-black/50 border border-slate-600 rounded-lg p-3 pr-10 text-white focus:border-emerald-500 outline-none font-mono text-xs"/>
-                <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"><Icons.Eye size={16}/></button>
+
+            <div className="flex justify-end gap-3 items-center">
+                <button onClick={testConnection} className={`h-[40px] px-6 rounded-xl border font-bold text-sm flex items-center gap-2 ${testStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : testStatus === 'error' ? 'bg-red-600 border-red-500 text-white' : 'bg-slate-700 border-slate-600 text-slate-300'}`}>
+                    {testStatus === 'loading' ? <Icons.Loader/> : testStatus === 'success' ? <Icons.CheckCircle size={18}/> : 'PROBAR CONEXIÓN AL MODELO SELECCIONADO'}
+                </button>
             </div>
-            <p className="text-[9px] text-slate-400 italic">Modelos sin límite de tiempo (Llama 3, Mistral...). <a href="https://openrouter.ai/keys" target="_blank" className="text-emerald-400 underline font-bold">Consigue clave aquí</a></p>
-        </div>
-    </div>
-
-    <div className="flex justify-end gap-3 items-center">
-        <button onClick={testConnection} className={`h-[40px] px-6 rounded-xl border font-bold text-sm flex items-center gap-2 ${testStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : testStatus === 'error' ? 'bg-red-600 border-red-500 text-white' : 'bg-slate-700 border-slate-600 text-slate-300'}`}>
-            {testStatus === 'loading' ? <Icons.Loader className="animate-spin"/> : testStatus === 'success' ? <Icons.CheckCircle size={18}/> : 'PROBAR CONEXIÓN AL MODELO ACTIVO'}
-        </button>
-    </div>
-    {testStatus === 'error' && <div className="mt-4 p-4 bg-red-900/30 border border-red-500/50 rounded-xl text-red-200 text-xs font-mono whitespace-pre-wrap">{errorDetail}</div>}
-
-
-
-                    <div className="mb-6 border-t border-slate-700 pt-6">
-
+            
+            {testStatus === 'error' && <div className="mt-4 p-4 bg-red-900/30 border border-red-500/50 rounded-xl text-red-200 text-xs font-mono whitespace-pre-wrap">{errorDetail}</div>}
+            
+            <div className="mb-6 border-t border-slate-700 pt-6">
          
                             <div className="flex justify-between items-center mb-2">
                                  <label className="text-sm font-bold text-slate-300 uppercase tracking-wide">Modelo IA Activo</label>
@@ -8440,7 +8439,7 @@ const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, setPortfolio, init
             </div>`
     };
 
-    const askAI = async (apiKey, prompt, model) => {
+    const askGemini = async (apiKey, prompt, model) => {
         if (!apiKey) throw new Error("Falta API Key");
         const targetModel = model || "gemini-3-flash-preview";
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey}`, {
@@ -8673,7 +8672,7 @@ const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, setPortfolio, init
         if (!phaseOnePrompts[promptId]) return null;
 
         try {
-            const res1 = await askAI(apiKey, phaseOnePrompts[promptId], aiModel);
+            const res1 = await askGemini(apiKey, phaseOnePrompts[promptId], aiModel);
             let cleanRes = res1.trim().replace(/```json/g,'').replace(/```/g,'');
             const start = cleanRes.indexOf('{');
             const end = cleanRes.lastIndexOf('}');
@@ -8685,7 +8684,7 @@ const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, setPortfolio, init
             const jsonResultExample = '[{"ticker":"SYM1","name":"Nombre","price":0,"market_cap":"0B","per":0,"peg":0,"roi":0,"de":0,"yield":0,"eps":0,"net_margin":0,"source_date":"Mar 2026"}]';
             const phaseTwoPrompt = 'Actua como API financiera. Usa google_search para buscar datos financieros REALES y ACTUALIZADOS de las siguientes empresas: ' + tickersList + '. Para CADA empresa busca: precio actual, capitalizacion bursatil, PER, PEG, ROI/ROIC, Deuda/Equity, Dividend Yield, BPA/EPS, margen neto. Responde UNICAMENTE con un JSON valido, sin texto adicional. Si un dato no esta disponible usa null. Formato exacto de salida: {"results":' + jsonResultExample + '}';
 
-            const res2 = await askAI(apiKey, phaseTwoPrompt, aiModel);
+            const res2 = await askGemini(apiKey, phaseTwoPrompt, aiModel);
             let cleanRes2 = res2.trim().replace(/```json/g,'').replace(/```/g,'');
             const s2 = cleanRes2.indexOf('{');
             const e2 = cleanRes2.lastIndexOf('}');
@@ -8863,7 +8862,7 @@ const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, setPortfolio, init
             } else {
                 newsPrompt = `Busca activamente en internet las noticias más recientes sobre: "${customNewsTopic}". Incluye: título, fuente con URL clicable HTML, fecha y resumen. Fecha actual: ${today}. Formato HTML.`;
             }
-            const res = await askAI(apiKey, newsPrompt, aiModel);
+            const res = await askGemini(apiKey, newsPrompt, aiModel);
             setNewsResult(cleanAIResponse(res));
             setIsNewsModalOpen(true);
         } catch (e) {
@@ -8922,7 +8921,7 @@ const runScreener = async () => {
                 ACCION: Usa tu herramienta de búsqueda web para verificar cotizaciones recientes y picos máximos.
                 SALIDA: Devuelve ÚNICAMENTE un array JSON plano con los Tickers de hasta ${maxResults * 2} empresas que cumplan la condición. Ejemplo exacto: ["TICKER1", "TICKER2"]. SIN TEXTO EXTRA.`;
 
-                const res1 = await askAI(apiKey, promptPhase1, aiModel);
+                const res1 = await askGemini(apiKey, promptPhase1, aiModel);
                 const tickers = extractJSON(res1);
 
                 if (!tickers || !Array.isArray(tickers) || tickers.length === 0) {
@@ -8942,7 +8941,7 @@ const runScreener = async () => {
                 REGLA CRÍTICA: La propiedad "price" DEBE ser el precio REAL de cotización actual (el de HOY), NUNCA el precio del pico histórico.
                 RESPONDE SOLO EL JSON. SIN EXPLICACIONES.`;
 
-                const res2 = await askAI(apiKey, promptPhase2, aiModel);
+                const res2 = await askGemini(apiKey, promptPhase2, aiModel);
                 finalResults = extractJSON(res2);
 
             } else {
@@ -8978,7 +8977,7 @@ const runScreener = async () => {
             Usa tu herramienta google_search obligatoriamente para ver cotizaciones reales de hoy.
             RESPONDE ÚNICAMENTE un JSON con el ticker como clave y el precio numérico como valor. Ejemplo exacto: {"AAPL": 150.50, "SAN.MC": 3.20}`;
             
-            const res3 = await askAI(apiKey, promptPhase3, aiModel);
+            const res3 = await askGemini(apiKey, promptPhase3, aiModel);
             const realPrices = extractJSON(res3) || {};
 
             // Limpieza y filtrado final por discrepancia de precio
@@ -9672,7 +9671,7 @@ const App = () => {
     const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
     const [activeTab, setActiveTab] = useState('portfolio');
     const [apiKey, setApiKey] = usePersistentState('bg_api_key', '');
-    const [openRouterKey, setOpenRouterKey] = usePersistentState('bg_openrouter_key', '');
+    const [secondaryApiKey, setSecondaryApiKey] = usePersistentState('bg_secondary_api_key', '');
     const [baseCurrency, setBaseCurrency] = usePersistentState('bg_base_currency', 'EUR');
     const [refreshInterval, setRefreshInterval] = usePersistentState('bg_refresh_interval', 10);
     const [portfolio, setPortfolio] = usePersistentState('bg_portfolio', []);
@@ -10159,6 +10158,7 @@ const App = () => {
                         portfolio={portfolio} 
                         setPortfolio={updatePortfolio} 
                         apiKey={apiKey} 
+                        secondaryApiKey={secondaryApiKey}
                         baseCurrency={baseCurrency} 
                         refreshInterval={refreshInterval} 
                         lastUpdate={lastUpdate} 
@@ -10192,12 +10192,13 @@ const App = () => {
                       
 
                 {activeTab === 'dividends' && <DividendTab portfolio={portfolio} setPortfolio={updatePortfolio} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} />}
-                {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={updateResultsData} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} apiKey={apiKey}  aiModel={aiModel} setAiModel={(val) => updateConfig(setAiModel, val)}  availableModels={availableModels} onOpenConsultas={() => { setOpenConsultasOnLoad(true); setActiveTab('portfolio'); }} />}
+                {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={updateResultsData} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} apiKey={apiKey} secondaryApiKey={secondaryApiKey} aiModel={aiModel} setAiModel={(val) => updateConfig(setAiModel, val)}  availableModels={availableModels} onOpenConsultas={() => { setOpenConsultasOnLoad(true); setActiveTab('portfolio'); }} />}
 
         
              {activeTab === 'analysis' && (
                     <AnalysisTab 
                         apiKey={apiKey} 
+                        secondaryApiKey={secondaryApiKey}
                         baseCurrency={baseCurrency} 
                         setPortfolio={updatePortfolio}
                         initialTicker={analysisTicker}
@@ -10208,10 +10209,11 @@ const App = () => {
                     />
                 )}
 
+            
                {activeTab === 'settings' && <SettingsTab 
                     apiKey={apiKey} setApiKey={(val) => updateConfig(setApiKey, val)} 
-                    openRouterKey={openRouterKey} setOpenRouterKey={(val) => updateConfig(setOpenRouterKey, val)}
-                    _x_stat={_0xAuth} _x_act={_0xReg}  
+                    secondaryApiKey={secondaryApiKey} setSecondaryApiKey={(val) => updateConfig(setSecondaryApiKey, val)} 
+                    _x_stat={_0xAuth} _x_act={_0xReg} 
                     baseCurrency={baseCurrency} setBaseCurrency={(val) => updateConfig(setBaseCurrency, val)} 
                     refreshInterval={refreshInterval} setRefreshInterval={(val) => updateConfig(setRefreshInterval, val)} 
                     portfolio={portfolio} setPortfolio={updatePortfolio} 
