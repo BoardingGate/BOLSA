@@ -302,38 +302,48 @@
           "gemini-2.5-pro",
           "gemini-2.5-flash",
           "gemini-2.5-flash-lite",
-          "gpt-oss-20b-instant",      
-          "llama-3.3-70b-versatile",      
-          "meta-llama/llama-4-scout-17b-16e-instruct",
-           "llama-3.1-8b-instant",
-           "openai/gpt-oss-120b"
-      ];
+          "arcee-ai/trinity-large-preview:free",
+          "nvidia/nemotron-3-super-120b-a12b:free",
+          "moonshotai/kimi-k2.5", 
+          "openrouter/elephant-alpha"
+          ];
 
-        const askAI = async (geminiKey, groqKey, prompt, model) => {
-          const targetModel = model || "gemini-1.5-flash";
-          const isGemini = targetModel.includes("gemini");
 
-          if (isGemini) {
+      const askAI = async (geminiKey, secondaryApiKey, prompt, model) => {
+          const targetModel = model || "gemini-2.5-flash";
+          
+          const isGeminiDirect = targetModel.startsWith("gemini") && !targetModel.includes("/");
+
+          if (isGeminiDirect) {
               if (!geminiKey) throw new Error("Falta API Key de Gemini");
               const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${geminiKey}`, {
-                  method: 'POST', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }] })
+                  method: 'POST', 
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ 
+                      contents: [{ parts: [{ text: prompt }] }], 
+                      tools: [{ google_search: {} }] 
+                  })
               });
               const data = await response.json();
               if (data.error) throw new Error(data.error.message);
               return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+              
           } else {
-              // Si no es Gemini, asume que es un modelo de GROQ
-              if (!groqKey) throw new Error("Falta API Key Secundaria (Groq). Consíguela en console.groq.com");
-              const response = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
+              if (!secondaryApiKey) throw new Error("Falta API Key Secundaria (OpenRouter). Consíguela en openrouter.ai/keys");
+              const response = await fetch(`https://openrouter.ai/api/v1/chat/completions`, {
                   method: 'POST',
                   headers: { 
                       'Content-Type': 'application/json',
-                      'Authorization': `Bearer ${groqKey}`
+                      'Authorization': `Bearer ${secondaryApiKey}`,
+                      'HTTP-Referer': window.location.href, 
+                      'X-Title': 'BoardingGate Terminal' 
                   },
                   body: JSON.stringify({ 
                       model: targetModel, 
-                      messages: [{ role: "user", content: prompt }] 
+                      messages: [{ role: "user", content: prompt }],
+                      plugins: [
+                          { id: "web" }
+                      ]
                   })
               });
               const data = await response.json();
@@ -342,7 +352,7 @@
           }
       };  
 
-     
+      
     
       const Modal = ({ isOpen, title, onClose, children, size = "md" }) => {
           if (!isOpen) return null;
@@ -2246,12 +2256,13 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
 
            
             <div className="max-w-2xl w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
-               
-          <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
+
+
+ <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
     <div className="p-3 bg-purple-500/20 rounded-xl text-purple-400"><Icons.Wand size={32} /></div>
     <div>
         <h2 className="text-2xl font-bold text-white">Configuración IA Multimodelo</h2>
-        <p className="text-slate-400 text-sm">Conexión con Gemini y Groq (Alternativa gratuita ilimitada)</p>
+        <p className="text-slate-400 text-sm">Conexión directa con Gemini y OpenRouter (Acceso a cientos de modelos)</p>
     </div>
 </div>
 <div className="space-y-6">
@@ -2266,16 +2277,17 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
                     </div>
                     <p className="text-[9px] text-slate-400 italic">Obligatoria para búsquedas web en tiempo real (cotizaciones, noticias recientes). Límite: 15 peticiones/minuto.</p>
                 </div>
-                {/* GROQ KEY */}
+                {/* OPENROUTER KEY */}
                 <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700">
-                    <label className="block text-[11px] font-bold text-orange-400 mb-2 uppercase tracking-wider">2. Groq API Key (Gratis)</label>
+                    <label className="block text-[11px] font-bold text-orange-400 mb-2 uppercase tracking-wider">2. OpenRouter API Key (Opcional)</label>
                     <div className="relative mb-2">
-                        <input type={showKey ? "text" : "password"} value={secondaryApiKey} onChange={(e) => setSecondaryApiKey(e.target.value)} placeholder="gsk_..." className="w-full bg-black/50 border border-slate-600 rounded-lg p-3 pr-10 text-white focus:border-orange-500 outline-none font-mono text-xs"/>
+                        <input type={showKey ? "text" : "password"} value={secondaryApiKey} onChange={(e) => setSecondaryApiKey(e.target.value)} placeholder="sk-or-v1-..." className="w-full bg-black/50 border border-slate-600 rounded-lg p-3 pr-10 text-white focus:border-orange-500 outline-none font-mono text-xs"/>
                         <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"><Icons.Eye size={16}/></button>
                     </div>
-                    <p className="text-[9px] text-slate-400 italic">Sin límites molestos. Ultrarrápido. Consigue tu clave gratis en <a href="https://console.groq.com/keys" target="_blank" className="text-orange-400 underline font-bold">console.groq.com</a>.</p>
+                    <p className="text-[9px] text-slate-400 italic">Accede a ChatGPT, Claude, Llama y decenas de modelos 100% gratis o de pago. Consigue tu clave en <a href="https://openrouter.ai/keys" target="_blank" className="text-orange-400 underline font-bold">openrouter.ai</a>.</p>
                 </div>
             </div>
+
 
             <div className="flex justify-end gap-3 items-center">
                 <button onClick={testConnection} className={`h-[40px] px-6 rounded-xl border font-bold text-sm flex items-center gap-2 ${testStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : testStatus === 'error' ? 'bg-red-600 border-red-500 text-white' : 'bg-slate-700 border-slate-600 text-slate-300'}`}>
