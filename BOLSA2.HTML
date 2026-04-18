@@ -1,5 +1,5 @@
 <!DOCTYPE html>    
-<html lang="es">   
+<html lang="es">  
  
 <head> 
     <meta charset="UTF-8" />
@@ -305,9 +305,9 @@
           "meta-llama/llama-3-8b-instruct:free",
           "google/gemma-2-9b-it:free",
           "mistralai/mistral-7b-instruct:free"
- ];
+          ];
 
-         const askAI = async (apiKey, openRouterKey, prompt, model) => {
+       const askAI = async (apiKey, groqApiKey, prompt, model) => {
           const targetModel = model || "gemini-2.5-flash";
           const isGemini = targetModel.includes("gemini");
 
@@ -321,14 +321,14 @@
               if (data.error) throw new Error(data.error.message);
               return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
           } else {
-              // Si no es Gemini, usa OpenRouter
-              if (!openRouterKey) throw new Error("Falta API Key de OpenRouter. Consíguela gratis en openrouter.ai");
+              // AUNQUE LA VARIABLE SE LLAME groqApiKey, AQUÍ ENRUTAMOS A OPENROUTER
+              if (!groqApiKey) throw new Error("Falta API Key Secundaria (OpenRouter). Consíguela gratis en openrouter.ai");
               const response = await fetch(`https://openrouter.ai/api/v1/chat/completions`, {
                   method: 'POST',
                   headers: { 
                       'Content-Type': 'application/json',
-                      'Authorization': `Bearer ${openRouterKey}`,
-                      'HTTP-Referer': 'https://boardinggate.github.io', // Recomendado por OpenRouter
+                      'Authorization': `Bearer ${groqApiKey}`,
+                      'HTTP-Referer': 'https://boardinggate.github.io', // Etiqueta obligatoria en OpenRouter
                       'X-Title': 'BoardingGate'
                   },
                   body: JSON.stringify({ 
@@ -341,8 +341,6 @@
               return data.choices?.[0]?.message?.content || "";
           }
       };
-    
-
      
     
       const Modal = ({ isOpen, title, onClose, children, size = "md" }) => {
@@ -821,7 +819,7 @@ const CarouselCharts = ({ chartsData, baseCurrency }) => {
     );
 };
 
-const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, syncStatus, onManualSync, apiKey, openRouterKey, aiModel, setAiModel, availableModels, onOpenConsultas }) => {
+const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, syncStatus, onManualSync, apiKey, secondaryApiKey, aiModel, setAiModel, availableModels, onOpenConsultas }) => {
     const r2 = (num) => Math.round((parseFloat(num) || 0) * 100) / 100;
     
     const [isRentaModalOpen, setIsRentaModalOpen] = useState(false);
@@ -1071,7 +1069,7 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
             </ul>
             `;
 
-            const res = await askAI(apiKey, openRouterKey, prompt, aiModel);
+            const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
             
             let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
             const startIdx = cleanHtml.indexOf('<');
@@ -2002,7 +2000,7 @@ const handleRestoreBak = async () => {
         } 
     };
 
-const SettingsTab = ({ apiKey, setApiKey, openRouterKey, setSecondaryApiKey, _x_stat, _x_act, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio, onForceBackup, gScriptUrl, setGScriptUrl, resultsData, setResultsData, appPin, setAppPin, _x_lim, _x_trig, aiModel, setAiModel, availableModels, setAvailableModels, globalNotes, setGlobalNotes, hideInactive, setHideInactive, customConsultas, setCustomConsultas }) => {
+const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _x_stat, _x_act, baseCurrency, setBaseCurrency, refreshInterval, setRefreshInterval, portfolio, setPortfolio, onForceBackup, gScriptUrl, setGScriptUrl, resultsData, setResultsData, appPin, setAppPin, _x_lim, _x_trig, aiModel, setAiModel, availableModels, setAvailableModels, globalNotes, setGlobalNotes, hideInactive, setHideInactive, customConsultas, setCustomConsultas }) => {
     const [localLic, setLocalLic] = useState(''); 
     const [showKey, setShowKey] = useState(false); 
     const [testStatus, setTestStatus] = useState(null); 
@@ -2040,12 +2038,13 @@ const SettingsTab = ({ apiKey, setApiKey, openRouterKey, setSecondaryApiKey, _x_
         } 
     };
 
-    const testConnection = async () => { setTestStatus('loading'); setErrorDetail(''); try { await askAI(apiKey, openRouterKey, "Test conexión. Responde OK si me recibes.", aiModel); setTestStatus('success'); } catch(e) { setTestStatus('error'); setErrorDetail(e.message); } };
+    const testConnection = async () => { if(!apiKey && !groqApiKey) return alert("Introduce al menos una clave primero."); setTestStatus('loading'); setErrorDetail(''); try { await askAI(apiKey, groqApiKey, "Test conexión. Responde OK si me recibes.", aiModel); setTestStatus('success'); } catch(e) { setTestStatus('error'); setErrorDetail(e.message); } };
+
     
     const handleRunExport = () => { 
         setIoStatus('processing'); 
         try { 
-            const data = { portfolio, apiKey, openRouterKey, baseCurrency, refreshInterval, version: 3, resultsData, appPin, aiModel, availableModels, gScriptUrl, globalNotes, hideInactive, customConsultas };
+            const data = { portfolio, apiKey, secondaryApiKey, baseCurrency, refreshInterval, version: 3, resultsData, appPin, aiModel, availableModels, gScriptUrl, globalNotes, hideInactive, customConsultas };
             const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"}); 
             const url = URL.createObjectURL(blob); 
             const a = document.createElement('a'); a.href = url; a.download = `BoardingGate_Backup_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); setIoStatus('success'); setTimeout(() => setIoStatus('idle'), 2000); 
@@ -2080,7 +2079,7 @@ const SettingsTab = ({ apiKey, setApiKey, openRouterKey, setSecondaryApiKey, _x_
                 if (d.portfolio) setPortfolio(d.portfolio); 
                 if (d.resultsData) setResultsData(d.resultsData);
                 if (d.apiKey !== undefined) setApiKey(d.apiKey); 
-                if (d.openRouterKey !== undefined) setSecondaryApiKey(d.openRouterKey);
+                if (d.secondaryApiKey !== undefined) setSecondaryApiKey(d.secondaryApiKey);
                 if (d.baseCurrency) setBaseCurrency(d.baseCurrency); 
                 if (d.gScriptUrl !== undefined) setGScriptUrl(d.gScriptUrl);  
                 if (d.refreshInterval) setRefreshInterval(d.refreshInterval); 
@@ -2119,7 +2118,7 @@ const SettingsTab = ({ apiKey, setApiKey, openRouterKey, setSecondaryApiKey, _x_
             if (data.portfolio) setPortfolio(data.portfolio); 
             if (data.resultsData) setResultsData(data.resultsData);
             if (data.apiKey !== undefined) setApiKey(data.apiKey); 
-            if (data.openRouterKey !== undefined) setSecondaryApiKey(data.openRouterKey);
+            if (data.secondaryApiKey !== undefined) setSecondaryApiKey(data.secondaryApiKey);
             if (data.baseCurrency) setBaseCurrency(data.baseCurrency); 
             if (data.gScriptUrl !== undefined) setGScriptUrl(data.gScriptUrl);
             if (data.refreshInterval) setRefreshInterval(data.refreshInterval); 
@@ -2181,7 +2180,7 @@ const SettingsTab = ({ apiKey, setApiKey, openRouterKey, setSecondaryApiKey, _x_
               4. Ignore headers, totals, or footer text.
             `;
 
-            const res = await askAI(apiKey, openRouterKey, prompt, aiModel); 
+            const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel); 
             
             
             const extractedData = sanitizeAndParseJSON(res); 
@@ -2221,7 +2220,7 @@ const SettingsTab = ({ apiKey, setApiKey, openRouterKey, setSecondaryApiKey, _x_
             };
 
     return (
-        <div className="h-full p-6 flex flex-col items-center justify-start fade-in overflow-y-auto custom-scrollbar">
+       <div className="h-full p-6 flex flex-col items-center justify-start fade-in overflow-y-auto custom-scrollbar">
             {importing && <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center fade-in"><Icons.Loader size={60} className="text-purple-500 mb-4 animate-spin" /><div className="text-xl font-bold text-white animate-pulse">Analizando Datos...</div><div className="text-xs text-slate-400 mt-2">La IA está leyendo tu documento</div></div>}
             
             {importResult && ( 
@@ -2245,49 +2244,50 @@ const SettingsTab = ({ apiKey, setApiKey, openRouterKey, setSecondaryApiKey, _x_
                 </div> 
             )}
 
-           
-            <div className="max-w-2xl w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
-               
-          <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
-    <div className="p-3 bg-purple-500/20 rounded-xl text-purple-400"><Icons.Wand size={32} /></div>
-    <div>
-        <h2 className="text-2xl font-bold text-white">Configuración IA Multimodelo</h2>
-        <p className="text-slate-400 text-sm">Conexión con Gemini y Groq (Alternativa gratuita ilimitada)</p>
-    </div>
-</div>
-<div className="space-y-6">
-        <div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                {/* GEMINI KEY */}
-                <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700">
-                    <label className="block text-[11px] font-bold text-blue-400 mb-2 uppercase tracking-wider">1. Google Gemini API Key</label>
-                    <div className="relative mb-2">
-                        <input type={showKey ? "text" : "password"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full bg-black/50 border border-slate-600 rounded-lg p-3 pr-10 text-white focus:border-blue-500 outline-none font-mono text-xs"/>
-                        <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"><Icons.Eye size={16}/></button>
-                    </div>
-                    <p className="text-[9px] text-slate-400 italic">Obligatoria para búsquedas web en tiempo real (cotizaciones, noticias recientes). Límite: 15 peticiones/minuto.</p>
-                </div>
-                {/* GROQ KEY */}
-                <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700">
-                    <label className="block text-[11px] font-bold text-orange-400 mb-2 uppercase tracking-wider">2. Groq API Key (Gratis)</label>
-                    <div className="relative mb-2">
-                        <input type={showKey ? "text" : "password"} value={openRouterKey} onChange={(e) => setSecondaryApiKey(e.target.value)} placeholder="gsk_..." className="w-full bg-black/50 border border-slate-600 rounded-lg p-3 pr-10 text-white focus:border-orange-500 outline-none font-mono text-xs"/>
-                        <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"><Icons.Eye size={16}/></button>
-                    </div>
-                    <p className="text-[9px] text-slate-400 italic">Sin límites molestos. Ultrarrápido. Consigue tu clave gratis en <a href="https://console.groq.com/keys" target="_blank" className="text-orange-400 underline font-bold">console.groq.com</a>.</p>
-                </div>
-            </div>
 
-            <div className="flex justify-end gap-3 items-center">
-                <button onClick={testConnection} className={`h-[40px] px-6 rounded-xl border font-bold text-sm flex items-center gap-2 ${testStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : testStatus === 'error' ? 'bg-red-600 border-red-500 text-white' : 'bg-slate-700 border-slate-600 text-slate-300'}`}>
-                    {testStatus === 'loading' ? <Icons.Loader/> : testStatus === 'success' ? <Icons.CheckCircle size={18}/> : 'PROBAR CONEXIÓN AL MODELO SELECCIONADO'}
-                </button>
-            </div>
-            
-            {testStatus === 'error' && <div className="mt-4 p-4 bg-red-900/30 border border-red-500/50 rounded-xl text-red-200 text-xs font-mono whitespace-pre-wrap">{errorDetail}</div>}
-            
-            <div className="mb-6 border-t border-slate-700 pt-6">
-         
+
+          <div className="max-w-2xl w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-8 shadow-2xl mb-8">
+                <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-4">
+                    <div className="p-3 bg-purple-500/20 rounded-xl text-purple-400"><Icons.Wand size={32} /></div>
+                    <div>
+                        <h2 className="text-2xl font-bold text-white">Configuración IA Multimodelo</h2>
+                        <p className="text-slate-400 text-sm">Conexión con Gemini y OpenRouter (Modelos 100% Gratuitos)</p>
+                    </div>
+                </div>
+                <div className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        
+                        {/* GEMINI KEY */}
+                        <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700">
+                            <label className="block text-[11px] font-bold text-blue-400 mb-2 uppercase tracking-wider">1. Google Gemini API Key</label>
+                            <div className="relative mb-2">
+                                <input type={showKey ? "text" : "password"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full bg-black/50 border border-slate-600 rounded-lg p-3 pr-10 text-white focus:border-blue-500 outline-none font-mono text-xs"/>
+                                <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"><Icons.Eye size={16}/></button>
+                            </div>
+                            <p className="text-[9px] text-slate-400 italic">Búsquedas web en tiempo real. 15 peticiones/minuto gratis.</p>
+                        </div>
+
+                        {/* OPENROUTER KEY (Por debajo sigue siendo groqApiKey) */}
+                        <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700">
+                            <label className="block text-[11px] font-bold text-emerald-400 mb-2 uppercase tracking-wider">2. OpenRouter API Key (Gratis)</label>
+                            <div className="relative mb-2">
+                                <input type={showKey ? "text" : "password"} value={groqApiKey} onChange={(e) => setGroqApiKey(e.target.value)} placeholder="sk-or-v1-..." className="w-full bg-black/50 border border-slate-600 rounded-lg p-3 pr-10 text-white focus:border-emerald-500 outline-none font-mono text-xs"/>
+                                <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"><Icons.Eye size={16}/></button>
+                            </div>
+                            <p className="text-[9px] text-slate-400 italic">Acceso gratis a Llama 3, Mistral, etc. Consigue clave en <a href="https://openrouter.ai/keys" target="_blank" className="text-emerald-400 underline font-bold">openrouter.ai</a></p>
+                        </div>
+                        
+                    </div>
+
+                    <div className="flex justify-end gap-3 items-center">
+                        <button onClick={testConnection} className={`h-[40px] px-6 rounded-xl border font-bold text-sm flex items-center gap-2 ${testStatus === 'success' ? 'bg-green-600 border-green-500 text-white' : testStatus === 'error' ? 'bg-red-600 border-red-500 text-white' : 'bg-slate-700 border-slate-600 text-slate-300'}`}>
+                            {testStatus === 'loading' ? <Icons.Loader className="animate-spin"/> : testStatus === 'success' ? <Icons.CheckCircle size={18}/> : 'PROBAR CONEXIÓN AL MODELO SELECCIONADO'}
+                        </button>
+                    </div>
+                    {testStatus === 'error' && <div className="mt-4 p-4 bg-red-900/30 border border-red-500/50 rounded-xl text-red-200 text-xs font-mono whitespace-pre-wrap">{errorDetail}</div>}
+                    
+                    <div className="mb-6 border-t border-slate-700 pt-6">
+
                             <div className="flex justify-between items-center mb-2">
                                  <label className="text-sm font-bold text-slate-300 uppercase tracking-wide">Modelo IA Activo</label>
                                  <span className="text-[10px] text-slate-500 font-mono">{aiModel}</span>
@@ -2824,7 +2824,7 @@ const WorldSentimentMap = ({ apiKey, aiModel }) => {
             Responde ÚNICAMENTE un JSON con el nombre del país en inglés (clave) y el porcentaje numérico (valor). 
             Usa estos nombres: {"United States":0,"Canada":0,"Mexico":0,"Brazil":0,"Argentina":0,"Spain":0,"Germany":0,"France":0,"United Kingdom":0,"Italy":0,"Switzerland":0,"Netherlands":0,"Portugal":0,"Russia":0,"Japan":0,"China":0,"South Korea":0,"India":0,"Singapore":0,"Australia":0,"Saudi Arabia":0,"Turkey":0,"South Africa":0}`;
             
-            const res = await askAI(apiKey, openRouterKey, prompt, aiModel);
+            const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
             const sentimentData = extractJSON(res) || {};
 
             chartInstance.current.setOption({
@@ -3601,7 +3601,7 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
 };
 
 
-const PortfolioTab = ({ portfolio, setPortfolio, apiKey, openRouterKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady, _x_lim, _x_trig, globalNotes, setGlobalNotes, onAnalyze, aiModel, setAiModel, availableModels, gScriptUrl, onGoToDividends, hideInactive, setHideInactive, customConsultas, setCustomConsultas, openConsultasOnLoad, setOpenConsultasOnLoad }) => {
+const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady, _x_lim, _x_trig, globalNotes, setGlobalNotes, onAnalyze, aiModel, setAiModel, availableModels, gScriptUrl, onGoToDividends, hideInactive, setHideInactive, customConsultas, setCustomConsultas, openConsultasOnLoad, setOpenConsultasOnLoad }) => {
     const [showDivBreakdown, setShowDivBreakdown] = useState(false);
     const [recalcModal, setRecalcModal] = useState({ isOpen: false, isSell: false });
     const [inflacionData, setInflacionData] = usePersistentState('bg_inflacion_data', { val: 0, sp500: 0, ibex: 0, lastCalc: 0 });  
@@ -3752,7 +3752,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, openRouterKey, baseCurr
             4. Responde en Español de forma profesional y clara.
             `;
 
-            const res = await askAI(apiKey, openRouterKey, prompt, aiModel);
+            const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
             let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
             const startIdx = cleanHtml.indexOf('<');
             if (startIdx !== -1) cleanHtml = cleanHtml.substring(startIdx);
@@ -3888,7 +3888,7 @@ const handleRebuildHistory = async () => {
             
             Responde SOLO el JSON puro.`;
 
-            const res = await askAI(apiKey, openRouterKey, prompt, aiModel);
+            const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
             const json = extractJSON(res);
             
             if (json && Array.isArray(json)) {
@@ -4006,7 +4006,7 @@ const executeInference = async () => {
         5. SALIDA: Responde exclusivamente con este JSON: {"date": "YYYY-MM-DD", "price": valor_local, "fx": cambio_a_base, "margin_error": "X%"}.
         `;
 
-        const res = await askAI(apiKey, openRouterKey, prompt, aiModel);
+        const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
         const json = extractJSON(res);
 
         // Si el modelo devuelve null o no devuelve fecha, disparamos el flujo de opciones
@@ -4054,7 +4054,7 @@ const handleOptionB = async () => {
         const prompt = `Busca el precio de cierre y el tipo de cambio ${form.stockCurrency}/${baseCurrency} para el ticker ${form.ticker} el día exacto ${manualDateInput}. 
         Responde exclusivamente con un JSON: {"price": valor, "fx": cambio_a_base}`;
         
-        const res = await askAI(apiKey, openRouterKey, prompt, aiModel);
+        const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
         const json = extractJSON(res);
         
         if (json && json.price) {
@@ -4145,7 +4145,7 @@ const handleOptionB = async () => {
         setIsFetchingAnalysts(true);
         try {
             const prompt = `Actúa como API financiera. Busca el consenso actual de analistas de Wall Street para el ticker ${strategyItem.ticker}. Devuelve UNICAMENTE un JSON estricto: {"numAnalysts": 25, "low": 120.5, "mean": 150.0, "high": 180.0, "recommendation": "Comprar"}. Si no hay datos, haz tu mejor estimación basándote en el sector. Usa SOLO números para los precios.`;
-            const res = await askAI(apiKey, openRouterKey, prompt, aiModel);
+            const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
             const json = extractJSON(res);
             if (!json || !json.mean) throw new Error("No se pudieron obtener los datos de consenso.");
             setAnalystData(json);
@@ -4164,7 +4164,7 @@ const handleOptionB = async () => {
             const prompt = `Actúa como un terminal de noticias financieras. FECHA ACTUAL: ${today}. Busca en internet las 3 o 4 noticias más críticas de los ÚLTIMOS 7 DÍAS estrictamente sobre la empresa con ticker ${strategyItem.ticker}. 
             REGLA ESTRICTA: Para cada noticia DEBES incluir OBLIGATORIAMENTE el enlace (URL) a la fuente original usando la etiqueta HTML <a href="URL" target="_blank">Leer fuente</a>.
             Devuelve la respuesta ÚNICAMENTE en formato HTML limpio (usando <ul>, <li>, <strong>, <a>), sin preámbulos, sin markdown (\`\`\`html). Si no hay noticias relevantes, devuelve un <p> indicando que no hay eventos destacables recientes.`;
-            const res = await askAI(apiKey, openRouterKey, prompt, aiModel);
+            const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
             
             let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
             const startIdx = cleanHtml.indexOf('<');
@@ -4221,7 +4221,7 @@ const handleOptionB = async () => {
             }
             `;
 
-            const res = await askAI(apiKey, openRouterKey, prompt, aiModel);
+            const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
             const json = extractJSON(res);
             
             if (!json || !json.entryZone) throw new Error("La IA no pudo estructurar la respuesta tras analizar los datos. Vuelve a intentarlo.");
@@ -4490,7 +4490,7 @@ const getMarketStatus = (p) => {
                 prompt = `Actúa como un investigador de noticias financieras. FECHA ACTUAL: ${today}. Realiza una búsqueda exhaustiva en internet de las noticias de los ÚLTIMOS 7 DÍAS sobre este tema específico: "${customNewsTopic}". Estructura las noticias cronológicamente o por impacto usando <h3>. Usa listas <ul> y <li>. Incluye la URL de la fuente original. Usa SOLO formato HTML limpio. Responde en Español.`;
             }
 
-            const res = await askAI(apiKey, openRouterKey, prompt, aiModel);
+            const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
             let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
             const startIdx = cleanHtml.indexOf('<');
             if (startIdx !== -1) cleanHtml = cleanHtml.substring(startIdx);
@@ -4800,7 +4800,7 @@ const getMarketStatus = (p) => {
                 REGLA CRÍTICA Y ESTRICTA: Se espera que esta acción cotice en la divisa "${inferredCurrency}". Si el ticker incluye un prefijo de mercado regional (ej. FRA:, BME:, EPA:, LSE:), DEBES buscar EXCLUSIVAMENTE el precio en ese mercado secundario europeo/local y en su moneda, IGNORANDO por completo su cotización en EEUU (USD). Ejemplo: Si es FRA:APC (Apple), da el precio en EUR de Frankfurt.
                 Responde SOLO JSON: {"n":"nombre empresa","p":precio_numero,"currency":"Divisa_ISO_3_letras","fx":cambio_a_${baseCurrency},"pe":per_numero,"div":dividendo_anual_numero}. USA PUNTO DECIMAL.`;
 
-            const aiRes = await askAI(apiKey, openRouterKey, prompt, aiModel);
+            const aiRes = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
             const json = extractJSON(aiRes);
             
             if (json) {
@@ -5002,7 +5002,7 @@ const getMarketStatus = (p) => {
                 Devuelve SOLO un JSON estricto usando el TICKER EXACTO como clave: {"TICKER": {"p": precio_local, "pc": cierre_anterior_local, "fx": cambio_divisa_local_a_${baseCurrency}}}. USA PUNTO DECIMAL.`;
                 
                 try {
-                    const aiRes = await askAI(apiKey, openRouterKey, prompt, aiModel);
+                    const aiRes = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
                     const aiData = extractJSON(aiRes);
                     if (aiData) {
                         active.forEach(item => {
@@ -5068,7 +5068,7 @@ const getMarketStatus = (p) => {
 
         const prompt = `Contexto: Actúa como Portfolio Manager. Audita mi cartera a fecha (${today}). DATOS (Reales): Total Op: ${totalTrades}, Win Rate: ${winRate.toFixed(1)}%, Profit Factor: ${profitFactor.toFixed(2)}, ROI: ${totalROI.toFixed(2)}%, Años Activo: ${yearsActive.toFixed(1)}. Operaciones: \n${operations.join('\n')} \n\nInstrucciones: 1. Atribución Retornos. 2. Riesgo (Drawdown est). 3. Auditoría Sesgos. 4. Costo Oportunidad (vs S&P500). 5. Análisis Temporal. FORMATO HTML LIMPIO (h3, p, table, ul).`;
 
-        const res = await askAI(apiKey, openRouterKey, prompt, aiModel);
+        const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
         let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
         const startIdx = cleanHtml.indexOf('<'); const endIdx = cleanHtml.lastIndexOf('>');
         if (startIdx !== -1 && endIdx !== -1) cleanHtml = cleanHtml.substring(startIdx, endIdx + 1);
@@ -5223,7 +5223,7 @@ const handleSellSubmit = () => {
             setIsRotating(true);
             try {
                 const prompt = `Actúa como analista. Calcula el rendimiento acumulado EXACTO en porcentaje desde la fecha ${firstDateStr} hasta hoy para: 1. IPC (España), 2. S&P 500, 3. IBEX 35. Responde ÚNICAMENTE con un JSON: {"ipc": 15.2, "sp500": 45.6, "ibex": -2.4}`;
-                const res = await askAI(apiKey, openRouterKey, prompt, aiModel);
+                const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
                 const match = res.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
                 if (match) { const data = JSON.parse(match[0]); setInflacionData({ val: parseFloat(data.ipc) || parseFloat(data.val) || 0, sp500: parseFloat(data.sp500) || 0, ibex: parseFloat(data.ibex) || 0, lastCalc: Date.now() }); } else throw new Error("Respuesta no válida de la IA.");
             } catch (e) { alert("Error obteniendo benchmarks: " + e.message); } finally { setIsRotating(false); }
@@ -6250,7 +6250,7 @@ const handleSellSubmit = () => {
                                             
                                             if ((!fPrice || fPrice === form.currentPrice || fPrice === 0) && apiKey) {
                                                 const prompt = `Actúa como API. Busca precio actual de ${form.ticker}. Devuelve SOLO JSON: {"p":precio, "fx":cambio_a_${baseCurrency}}`;
-                                                const aiRes = await askAI(apiKey, openRouterKey, prompt, aiModel);
+                                                const aiRes = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
                                                 const json = extractJSON(aiRes);
                                                 if(json && json.p) { 
                                                     fPrice = json.p; 
@@ -7754,7 +7754,7 @@ const DependencyGraph = ({ data, onClose }) => {
     );
 };
 
-const AnalysisTab = ({ apiKey, openRouterKey, baseCurrency, setPortfolio, initialTicker, aiModel, setAiModel, availableModels, gScriptUrl }) => {
+const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, setPortfolio, initialTicker, aiModel, setAiModel, availableModels, gScriptUrl }) => {
     const [activeSubTab, setActiveSubTab] = useState('estudio');
 
     const [isGraphModalOpen, setIsGraphModalOpen] = useState(false);
@@ -8516,7 +8516,7 @@ const AnalysisTab = ({ apiKey, openRouterKey, baseCurrency, setPortfolio, initia
             }
             Reglas: 'weight' de 10 a 100. Si no cotiza usa "N/A" en ticker. Sin markdown.`;
 
-            const res = await askAI(apiKey, openRouterKey, prompt, aiModel);
+            const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
             let cleanRes = res.trim();
             const start = cleanRes.indexOf('{');
             const end = cleanRes.lastIndexOf('}');
@@ -8582,7 +8582,7 @@ const AnalysisTab = ({ apiKey, openRouterKey, baseCurrency, setPortfolio, initia
                 </div>
             </div>`;
 
-            const res = await askAI(apiKey, openRouterKey, prompt, aiModel);
+            const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
             let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
             const startIdx = cleanHtml.indexOf('<');
             if (startIdx !== -1) cleanHtml = cleanHtml.substring(startIdx);
@@ -8615,7 +8615,7 @@ const AnalysisTab = ({ apiKey, openRouterKey, baseCurrency, setPortfolio, initia
                 
                 PREGUNTA: "${question}" sobre el valor "${ticker}".
                 FORMATO: HTML (<h3>, <ul>, <p>, <a>). Empieza directamente con el tag HTML.`;
-                const res = await askAI(apiKey, openRouterKey, prompt, aiModel);
+                const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
                 setSpecificAnswer(cleanAIResponse(res));
                 rotateSuggestions(question);
             } else {
@@ -8639,7 +8639,7 @@ const AnalysisTab = ({ apiKey, openRouterKey, baseCurrency, setPortfolio, initia
                     "peers": ["TICKER1", "TICKER2"], "suggested_questions": ["q1","q2","q3"]
                 }
                 Responde SOLO con el JSON.`;
-                const res = await askAI(apiKey, openRouterKey, prompt, aiModel);
+                const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
                 const json = extractJSON(res);
                 if (!json) throw new Error("La IA no devolvió un JSON válido.");
                 setData(json);
@@ -8667,7 +8667,7 @@ const AnalysisTab = ({ apiKey, openRouterKey, baseCurrency, setPortfolio, initia
         if (!phaseOnePrompts[promptId]) return null;
 
         try {
-            const res1 = await askAI(apiKey, openRouterKey, phaseOnePrompts[promptId], aiModel);
+            const res1 = await askGemini(apiKey, phaseOnePrompts[promptId], aiModel);
             let cleanRes = res1.trim().replace(/```json/g,'').replace(/```/g,'');
             const start = cleanRes.indexOf('{');
             const end = cleanRes.lastIndexOf('}');
@@ -8679,7 +8679,7 @@ const AnalysisTab = ({ apiKey, openRouterKey, baseCurrency, setPortfolio, initia
             const jsonResultExample = '[{"ticker":"SYM1","name":"Nombre","price":0,"market_cap":"0B","per":0,"peg":0,"roi":0,"de":0,"yield":0,"eps":0,"net_margin":0,"source_date":"Mar 2026"}]';
             const phaseTwoPrompt = 'Actua como API financiera. Usa google_search para buscar datos financieros REALES y ACTUALIZADOS de las siguientes empresas: ' + tickersList + '. Para CADA empresa busca: precio actual, capitalizacion bursatil, PER, PEG, ROI/ROIC, Deuda/Equity, Dividend Yield, BPA/EPS, margen neto. Responde UNICAMENTE con un JSON valido, sin texto adicional. Si un dato no esta disponible usa null. Formato exacto de salida: {"results":' + jsonResultExample + '}';
 
-            const res2 = await askAI(apiKey, openRouterKey, phaseTwoPrompt, aiModel);
+            const res2 = await askGemini(apiKey, phaseTwoPrompt, aiModel);
             let cleanRes2 = res2.trim().replace(/```json/g,'').replace(/```/g,'');
             const s2 = cleanRes2.indexOf('{');
             const e2 = cleanRes2.lastIndexOf('}');
@@ -8794,7 +8794,7 @@ const AnalysisTab = ({ apiKey, openRouterKey, baseCurrency, setPortfolio, initia
             FORMATO DE SALIDA: Solo HTML limpio (h3, ul, li, p, table, a, span). Sin markdown.
             `;
 
-            const res = await askAI(apiKey, openRouterKey, prompt, aiModel);
+            const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
             const cleanBody = cleanAIResponse(res);
             if (!cleanBody || cleanBody.length < 50) throw new Error("Informe insuficiente o vacío.");
 
@@ -8857,7 +8857,7 @@ const AnalysisTab = ({ apiKey, openRouterKey, baseCurrency, setPortfolio, initia
             } else {
                 newsPrompt = `Busca activamente en internet las noticias más recientes sobre: "${customNewsTopic}". Incluye: título, fuente con URL clicable HTML, fecha y resumen. Fecha actual: ${today}. Formato HTML.`;
             }
-            const res = await askAI(apiKey, openRouterKey, newsPrompt, aiModel);
+            const res = await askGemini(apiKey, newsPrompt, aiModel);
             setNewsResult(cleanAIResponse(res));
             setIsNewsModalOpen(true);
         } catch (e) {
@@ -8916,7 +8916,7 @@ const runScreener = async () => {
                 ACCION: Usa tu herramienta de búsqueda web para verificar cotizaciones recientes y picos máximos.
                 SALIDA: Devuelve ÚNICAMENTE un array JSON plano con los Tickers de hasta ${maxResults * 2} empresas que cumplan la condición. Ejemplo exacto: ["TICKER1", "TICKER2"]. SIN TEXTO EXTRA.`;
 
-                const res1 = await askAI(apiKey, openRouterKey, promptPhase1, aiModel);
+                const res1 = await askGemini(apiKey, promptPhase1, aiModel);
                 const tickers = extractJSON(res1);
 
                 if (!tickers || !Array.isArray(tickers) || tickers.length === 0) {
@@ -8936,7 +8936,7 @@ const runScreener = async () => {
                 REGLA CRÍTICA: La propiedad "price" DEBE ser el precio REAL de cotización actual (el de HOY), NUNCA el precio del pico histórico.
                 RESPONDE SOLO EL JSON. SIN EXPLICACIONES.`;
 
-                const res2 = await askAI(apiKey, openRouterKey, promptPhase2, aiModel);
+                const res2 = await askGemini(apiKey, promptPhase2, aiModel);
                 finalResults = extractJSON(res2);
 
             } else {
@@ -8954,7 +8954,7 @@ const runScreener = async () => {
                 OUTPUT FORMAT:
                 [{"ticker":"SYM","name":"Nombre Corto","price":1.0,"trendStatus":"-","per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0,"fcf":1.0}]`;
                 
-                const res = await askAI(apiKey, openRouterKey, prompt, aiModel);
+                const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
                 finalResults = extractJSON(res);
             }
 
@@ -8972,7 +8972,7 @@ const runScreener = async () => {
             Usa tu herramienta google_search obligatoriamente para ver cotizaciones reales de hoy.
             RESPONDE ÚNICAMENTE un JSON con el ticker como clave y el precio numérico como valor. Ejemplo exacto: {"AAPL": 150.50, "SAN.MC": 3.20}`;
             
-            const res3 = await askAI(apiKey, openRouterKey, promptPhase3, aiModel);
+            const res3 = await askGemini(apiKey, promptPhase3, aiModel);
             const realPrices = extractJSON(res3) || {};
 
             // Limpieza y filtrado final por discrepancia de precio
@@ -9666,7 +9666,7 @@ const App = () => {
     const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
     const [activeTab, setActiveTab] = useState('portfolio');
     const [apiKey, setApiKey] = usePersistentState('bg_api_key', '');
-    const [openRouterKey, setSecondaryApiKey] = usePersistentState('bg_secondary_api_key', '');
+    const [secondaryApiKey, setSecondaryApiKey] = usePersistentState('bg_secondary_api_key', '');
     const [baseCurrency, setBaseCurrency] = usePersistentState('bg_base_currency', 'EUR');
     const [refreshInterval, setRefreshInterval] = usePersistentState('bg_refresh_interval', 10);
     const [portfolio, setPortfolio] = usePersistentState('bg_portfolio', []);
@@ -9764,7 +9764,7 @@ const App = () => {
             const now = Date.now(); 
            
            const payload = { 
-                timestamp: now, portfolio, resultsData, apiKey,openRouterKey, baseCurrency, 
+                timestamp: now, portfolio, resultsData, apiKey,secondaryApiKey, baseCurrency, 
                 refreshInterval, version: 3, appPin, globalNotes, 
                 aiModel, availableModels, gScriptUrl, hideInactive, customConsultas 
             }; 
@@ -9796,7 +9796,7 @@ const App = () => {
         if (data.portfolio) setPortfolio(data.portfolio); 
         if (data.resultsData) setResultsData(data.resultsData); 
         if (data.apiKey !== undefined) setApiKey(data.apiKey); 
-        if (data.openRouterKey !== undefined) setSecondaryApiKey(data.openRouterKey);
+        if (data.secondaryApiKey !== undefined) setSecondaryApiKey(data.secondaryApiKey);
         if (data.baseCurrency) setBaseCurrency(data.baseCurrency); 
         if (data.gScriptUrl !== undefined) setGScriptUrl(data.gScriptUrl); 
         if (data.refreshInterval) setRefreshInterval(data.refreshInterval); 
@@ -10153,7 +10153,7 @@ const App = () => {
                         portfolio={portfolio} 
                         setPortfolio={updatePortfolio} 
                         apiKey={apiKey} 
-                        openRouterKey={openRouterKey}
+                        secondaryApiKey={secondaryApiKey}
                         baseCurrency={baseCurrency} 
                         refreshInterval={refreshInterval} 
                         lastUpdate={lastUpdate} 
@@ -10187,13 +10187,13 @@ const App = () => {
                       
 
                 {activeTab === 'dividends' && <DividendTab portfolio={portfolio} setPortfolio={updatePortfolio} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} />}
-                {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={updateResultsData} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} apiKey={apiKey} openRouterKey={openRouterKey} aiModel={aiModel} setAiModel={(val) => updateConfig(setAiModel, val)}  availableModels={availableModels} onOpenConsultas={() => { setOpenConsultasOnLoad(true); setActiveTab('portfolio'); }} />}
+                {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={updateResultsData} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} apiKey={apiKey} secondaryApiKey={secondaryApiKey} aiModel={aiModel} setAiModel={(val) => updateConfig(setAiModel, val)}  availableModels={availableModels} onOpenConsultas={() => { setOpenConsultasOnLoad(true); setActiveTab('portfolio'); }} />}
 
         
              {activeTab === 'analysis' && (
                     <AnalysisTab 
                         apiKey={apiKey} 
-                        openRouterKey={openRouterKey}
+                        secondaryApiKey={secondaryApiKey}
                         baseCurrency={baseCurrency} 
                         setPortfolio={updatePortfolio}
                         initialTicker={analysisTicker}
@@ -10207,7 +10207,7 @@ const App = () => {
             
                {activeTab === 'settings' && <SettingsTab 
                     apiKey={apiKey} setApiKey={(val) => updateConfig(setApiKey, val)} 
-                    openRouterKey={openRouterKey} setSecondaryApiKey={(val) => updateConfig(setSecondaryApiKey, val)} 
+                    secondaryApiKey={secondaryApiKey} setSecondaryApiKey={(val) => updateConfig(setSecondaryApiKey, val)} 
                     _x_stat={_0xAuth} _x_act={_0xReg} 
                     baseCurrency={baseCurrency} setBaseCurrency={(val) => updateConfig(setBaseCurrency, val)} 
                     refreshInterval={refreshInterval} setRefreshInterval={(val) => updateConfig(setRefreshInterval, val)} 
