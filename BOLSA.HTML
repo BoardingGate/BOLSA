@@ -4974,32 +4974,62 @@ const getMarketStatus = (p) => {
             let totallyFailed = [];
     
             if (scriptUrl) {
-                setUpdateText('Consultando Mercados...');
-                const tickers = active.map(p => p.ticker);
-                const currencies = [...new Set(active.filter(p => p.stockCurrency !== baseCurrency).map(p => p.stockCurrency + baseCurrency))];
-                const tickersList = [...tickers, ...currencies].join(',');
+                let attempts = 0;
+                const maxAttempts = 3;
+                let itemsToFetch = [...active]; // Iniciamos con todos los activos
                 
-                const response = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(tickersList)}&_t=${Date.now()}`);
-                const data = await response.json();
-    
-                active.forEach(item => {
-                    const stockData = data[item.ticker];
-                    const fxKey = item.stockCurrency + baseCurrency;
-                    const fxData = data[fxKey];
-    
-                    const price = stockData?.success ? cleanVal(stockData.p) : 0;
-                    if (stockData?.success && price > (item.ticker.includes(".INX") ? 95 : 0)) {
-                        updatesMap[item.id] = { currentPrice: price };
-                        if (stockData.pc !== undefined) {
-                            updatesMap[item.id].previousClose = cleanVal(stockData.pc);
+                while (attempts < maxAttempts && itemsToFetch.length > 0) {
+                    attempts++;
+                    setUpdateText(attempts === 1 ? 'Consultando Mercados...' : `Reintentando API (${attempts}/${maxAttempts})...`);
+                    
+                    const tickers = itemsToFetch.map(p => p.ticker);
+                    const currencies = [...new Set(itemsToFetch.filter(p => p.stockCurrency !== baseCurrency).map(p => p.stockCurrency + baseCurrency))];
+                    const tickersList = [...tickers, ...currencies].join(',');
+                    
+                    try {
+                        const response = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(tickersList)}&_t=${Date.now()}`);
+                        const data = await response.json();
+                        
+                        let failedThisRound = [];
+            
+                        itemsToFetch.forEach(item => {
+                            const stockData = data[item.ticker];
+                            const fxKey = item.stockCurrency + baseCurrency;
+                            const fxData = data[fxKey];
+            
+                            const price = stockData?.success ? cleanVal(stockData.p) : 0;
+                            
+                            if (stockData?.success && price > (item.ticker.includes(".INX") ? 95 : 0)) {
+                                updatesMap[item.id] = { currentPrice: price };
+                                if (stockData.pc !== undefined) {
+                                    updatesMap[item.id].previousClose = cleanVal(stockData.pc);
+                                }
+                                if (item.stockCurrency !== baseCurrency && fxData?.success) {
+                                    updatesMap[item.id].currentFx = cleanVal(fxData.p);
+                                }
+                            } else {
+                                failedThisRound.push(item);
+                            }
+                        });
+                        
+                        itemsToFetch = failedThisRound;
+                        
+                        if (itemsToFetch.length > 0 && attempts < maxAttempts) {
+                            setUpdateText(`Esperando 10s... (${itemsToFetch.length} pendientes)`);
+                            await new Promise(resolve => setTimeout(resolve, 10000));
                         }
-                        if (item.stockCurrency !== baseCurrency && fxData?.success) {
-                            updatesMap[item.id].currentFx = cleanVal(fxData.p);
+                        
+                    } catch (fetchErr) {
+                        console.warn(`Fallo de red en el intento ${attempts}:`, fetchErr);
+                        if (attempts < maxAttempts) {
+                            setUpdateText(`Error de red. Esperando 10s...`);
+                            await new Promise(resolve => setTimeout(resolve, 10000));
                         }
-                    } else {
-                        totallyFailed.push(item.ticker);
                     }
-                });
+                }
+                
+                totallyFailed = itemsToFetch.map(p => p.ticker);
+                
             } else {
                 totallyFailed = active.map(p => p.ticker);
             }
@@ -5036,7 +5066,6 @@ const getMarketStatus = (p) => {
                 } catch (aiErr) { console.error("Fallo rescate IA:", aiErr); }
             }
 
-    
             if (Object.keys(updatesMap).length > 0) {
                 setPortfolio(prev => prev.map(p => updatesMap[p.id] ? { ...p, ...updatesMap[p.id] } : p));
                 setLastUpdate(new Date().toISOString());
@@ -5048,8 +5077,7 @@ const getMarketStatus = (p) => {
             setTimeout(() => setFailedTickersList([]), 3000);
         }
     };
-
-    
+ 
 
     const analyzePortfolio = async () => {
       const dataToAnalyze = visiblePortfolio;
@@ -5423,10 +5451,10 @@ const handleSellSubmit = () => {
                    </div>
                   
                     <div className="flex items-center gap-4 bg-slate-900 rounded border border-slate-700 h-8 p-0.5 ml-2">
-                        <span className="text-[8px] text-slate-500 uppercase font-bold self-center px-2 hidden sm:block">SIMULAR:</span>
+                        <span className="text-[8px] text-slate-500 uppercase font-bold self-center px-2 hidden sm:block">OBJETIVOS:</span>
                         <button onClick={() => setSimulationMode('off')} className={`px-2 h-full rounded text-[9px] font-bold transition-all ${simulationMode === 'off' ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white'}`}>OFF</button>
-                        <button onClick={() => setSimulationMode('target')} className={`px-2 h-full rounded text-[9px] font-bold transition-all ${simulationMode === 'target' ? 'bg-green-600 text-white' : 'text-slate-400 hover:text-white'}`}>GANANCIAS</button>
-                        <button onClick={() => setSimulationMode('stop')} className={`px-2 h-full rounded text-[9px] font-bold transition-all ${simulationMode === 'stop' ? 'bg-red-600 text-white' : 'text-slate-400 hover:text-white'}`}>PÉRDIDAS</button>
+                        <button onClick={() => setSimulationMode('target')} className={`px-2 h-full rounded text-[9px] font-bold transition-all ${simulationMode === 'target' ? 'bg-green-600 text-white' : 'text-slate-400 hover:text-white'}`}>GANAR</button>
+                        <button onClick={() => setSimulationMode('stop')} className={`px-2 h-full rounded text-[9px] font-bold transition-all ${simulationMode === 'stop' ? 'bg-red-600 text-white' : 'text-slate-400 hover:text-white'}`}>LOSS</button>
                         
                         {simulationMode !== 'off' && (() => {
                             let sumGainDist = 0;
