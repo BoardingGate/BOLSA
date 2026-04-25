@@ -2289,8 +2289,7 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
                         <input type={showKey ? "text" : "password"} value={secondaryApiKey} onChange={(e) => setSecondaryApiKey(e.target.value)} placeholder="sk-or-v1-..." className="w-full bg-black/50 border border-slate-600 rounded-lg p-3 pr-10 text-white focus:border-orange-500 outline-none font-mono text-xs"/>
                         <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"><Icons.Eye size={16}/></button>
                     </div>
-                    <p className="text-[9px] text-slate-400 italic">Accede a ChatGPT, Claude, DeepSeek y decenas de modelos gratis o cargando crédito en Openrouter que podrás usar en cualquiera de ellos usando una única API de OpenRouter. Consigue tu clave API en <a href="https://openrouter.ai/keys" target="_blank" className="text-orange-400 underline font-bold">openrouter.ai y luego pégala aquí. Y simplemente añade abajo el nombre del modelo tal y como sale en Openrouter. Al abrir el modelo en Openrouter hay un botón de copiado del nombre a usar que debes añadir en la opción inferior</a>.</p>
-                </div>
+ euros o una cantidad similar y probar modelos de pago que te darán un rendimiento muy superior por un coste ridículo</div>
             </div>
 
 
@@ -8700,10 +8699,9 @@ const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, setPortfolio, init
         if (!phaseOnePrompts[promptId]) return null;
 
         try {
-         
             const res1 = await askAI(apiKey, secondaryApiKey, phaseOnePrompts[promptId], aiModel);
             let cleanRes = res1.trim().replace(/```json/g,'').replace(/```/g,'');
-            
+
             const start = cleanRes.indexOf('{');
             const end = cleanRes.lastIndexOf('}');
             if (start === -1 || end === -1) throw new Error("Fase 0: No se obtuvo JSON de empresas.");
@@ -8714,15 +8712,21 @@ const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, setPortfolio, init
             const jsonResultExample = '[{"ticker":"SYM1","name":"Nombre","price":0,"market_cap":"0B","per":0,"peg":0,"roi":0,"de":0,"yield":0,"eps":0,"net_margin":0,"source_date":"Mar 2026"}]';
             const phaseTwoPrompt = 'Actua como API financiera. Usa google_search para buscar datos financieros REALES y ACTUALIZADOS de las siguientes empresas: ' + tickersList + '. Para CADA empresa busca: precio actual, capitalizacion bursatil, PER, PEG, ROI/ROIC, Deuda/Equity, Dividend Yield, BPA/EPS, margen neto. Responde UNICAMENTE con un JSON valido, sin texto adicional. Si un dato no esta disponible usa null. Formato exacto de salida: {"results":' + jsonResultExample + '}';
 
-            const res2 = await askAI(apiKey, secondaryApiKey, phaseTwoPrompt, aiModel);
-            let cleanRes2 = res2.trim().replace(/```json/g,'').replace(/```/g,'');
 
+            const res2 = await askAI(apiKey, secondaryApiKey, promptPhase2, aiModel);
+            let cleanRes2 = res2.trim().replace(/```json/g,'').replace(/```/g,''); 
             const s2 = cleanRes2.indexOf('{');
             const e2 = cleanRes2.lastIndexOf('}');
             if (s2 === -1 || e2 === -1) return { sector: entityData.sector, companies: entityData.companies, financials: null };
             const financialData = JSON.parse(cleanRes2.substring(s2, e2 + 1));
 
-            return          console.warn("Prefetch multi-entidad falló:", e.message);
+            return {
+                sector: entityData.sector,
+                companies: entityData.companies,
+                financials: financialData.results || []
+            };
+        } catch (e) {
+            console.warn("Prefetch multi-entidad falló:", e.message);
             return null;
         }
     };
@@ -8887,8 +8891,6 @@ const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, setPortfolio, init
             } else {
                 newsPrompt = `Busca activamente en internet las noticias más recientes sobre: "${customNewsTopic}". Incluye: título, fuente con URL clicable HTML, fecha y resumen. Fecha actual: ${today}. Formato HTML.`;
             }
-            
-
             const res = await askAI(apiKey, secondaryApiKey, newsPrompt, aiModel);
             setNewsResult(cleanAIResponse(res));
             setIsNewsModalOpen(true);
@@ -8949,7 +8951,6 @@ const runScreener = async () => {
                 SALIDA: Devuelve ÚNICAMENTE un array JSON plano con los Tickers de hasta ${maxResults * 2} empresas que cumplan la condición. Ejemplo exacto: ["TICKER1", "TICKER2"]. SIN TEXTO EXTRA.`;
 
                 const res1 = await askAI(apiKey, secondaryApiKey, promptPhase1, aiModel);
-                
                 const tickers = extractJSON(res1);
 
                 if (!tickers || !Array.isArray(tickers) || tickers.length === 0) {
@@ -8969,11 +8970,10 @@ const runScreener = async () => {
                 REGLA CRÍTICA: La propiedad "price" DEBE ser el precio REAL de cotización actual (el de HOY), NUNCA el precio del pico histórico.
                 RESPONDE SOLO EL JSON. SIN EXPLICACIONES.`;
 
-                const res2 = await askAI(apiKey, secondaryApiKey, promptPhase1, aiModel);
+                const res2 = await askAI(apiKey, secondaryApiKey, promptPhase2, aiModel);
                 finalResults = extractJSON(res2);
 
             } else {
-                // RASTREO NORMAL (Sín tendencia - Directamente Fase 1 y luego Verificación)
                 setStatusModal({ isOpen: true, title: 'Rastreo Fase 1/2', msg: 'Analizando mercado y filtrando fundamentales...', type: 'info', isProgress: true });
                 
                 const prompt = `YOU ARE A JSON GENERATOR MACHINE. YOU DO NOT SPEAK. YOU ONLY OUTPUT DATA.
@@ -9005,10 +9005,9 @@ const runScreener = async () => {
             Usa tu herramienta google_search obligatoriamente para ver cotizaciones reales de hoy.
             RESPONDE ÚNICAMENTE un JSON con el ticker como clave y el precio numérico como valor. Ejemplo exacto: {"AAPL": 150.50, "SAN.MC": 3.20}`;
             
-            const res3 = await askAI(apiKey, secondaryApiKey, promptPhase1, aiModel);
+            const res3 = await askAI(apiKey, secondaryApiKey, promptPhase3, aiModel);
             const realPrices = extractJSON(res3) || {};
 
-            // Limpieza y filtrado final por discrepancia de precio
             finalResults = finalResults.filter(r => {
                 const verifiedPrice = realPrices[r.ticker] || realPrices[r.ticker.split(':')[1]];
                 if (!verifiedPrice) return false; // Si no logra verificarlo, se descarta por seguridad
