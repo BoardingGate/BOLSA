@@ -3664,9 +3664,8 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCu
     const [manualDateInput, setManualDateInput] = useState('');
     const [diffWarning, setDiffWarning] = useState(null);
     
-    const [failedTickersList, setFailedTickersList] = useState([]);
-
-    const DEFAULT_CONSULTA = "Quiero que me des un listado con las acciones vendidas comparando el precio de venta con el precio actual dando la diferencia, sumando al final el resultado, para poder así comprobar qué resultados tendría de no haber vendido";
+    
+   const DEFAULT_CONSULTA = "Quiero que me des un listado con las acciones vendidas comparando el precio de venta con el precio actual dando la diferencia, sumando al final el resultado, para poder así comprobar qué resultados tendría de no haber vendido";
 
     const [isConsultasModalOpen, setIsConsultasModalOpen] = useState(false);
     const [consultasQuery, setConsultasQuery] = useState('');
@@ -4199,9 +4198,6 @@ const handleOptionB = async () => {
     }, [simLot, targetSim, analystData, strategyNewsData]);
 
      
-    const [updateText, setUpdateText] = useState('');
-
-
     const handleFetchAnalysts = async () => {
         if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key. Configúrala en Ajustes.', type: 'error' });
         setIsFetchingAnalysts(true);
@@ -4379,11 +4375,14 @@ const getMarketStatus = (p) => {
 };
 
 
-
     const [visibleSections, setVisibleSections] = usePersistentState('bg_visible_sections', { table: true, diverging: true, stats: true, charts: true, chartTV: true });
     const [updating, setUpdating] = useState(false);
     const [updateProgress, setUpdateProgress] = useState(0); 
+    const [updateText, setUpdateText] = useState('');
+    const [pendingTickersList, setPendingTickersList] = useState([]);
+    const [failedTickersInfo, setFailedTickersInfo] = useState([]);
     const [analyzing, setAnalyzing] = useState(false);
+
     const [fetchingSingle, setFetchingSingle] = useState(false);
     const [analysisResult, setAnalysisResult] = useState(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -5009,51 +5008,57 @@ const getMarketStatus = (p) => {
     };   
 
 
-   const updatePrices = async (isAuto = false) => {
+  const updatePrices = async (isAuto = false) => {
         const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
         const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
         
         if (active.length === 0) return;
-        setUpdating(true); setUpdateProgress(20); setUpdateText('Consultando precios...');
+        setUpdating(true); setUpdateProgress(5); 
+        setUpdateText('Iniciando...');
+        setPendingTickersList(active.map(p => p.ticker));
+        setFailedTickersInfo([]);
         
         try {
             let updatesMap = {}; 
             let totallyFailed = [];
+            let errorDetails = [];
             let unifiedFxMap = {}; 
     
             if (scriptUrl) {
                 let attempts = 0;
-                const maxAttempts = 5; // Reducimos reintentos porque por bloques fallará menos
+                const maxAttempts = 5;
                 let itemsToFetch = [...active]; 
-                const CHUNK_SIZE = 15; // Tamaño del bloque
+                const CHUNK_SIZE = 15;
                 
                 while (attempts < maxAttempts && itemsToFetch.length > 0) {
                     attempts++;
                     let failedThisRound = [];
                     
                     const currencies = [...new Set(itemsToFetch.filter(p => p.stockCurrency !== baseCurrency).map(p => p.stockCurrency + baseCurrency))];
+                    const totalChunks = Math.ceil(itemsToFetch.length / CHUNK_SIZE);
                     
-                    // Procesamiento por bloques (Chunks)
                     for (let i = 0; i < itemsToFetch.length; i += CHUNK_SIZE) {
                         const chunk = itemsToFetch.slice(i, i + CHUNK_SIZE);
                         const tickers = chunk.map(p => p.ticker);
+                        const chunkIndex = Math.floor(i / CHUNK_SIZE) + 1;
                         
-                        // Solo añadimos las divisas en el primer bloque de cada ronda
+                        setUpdateText(`Lote ${chunkIndex}/${totalChunks} | Intento ${attempts}/5`);
+                        setUpdateProgress(10 + ((chunkIndex / totalChunks) * 60) * (attempts === 1 ? 1 : 0));
+                        
                         const tickersList = i === 0 ? [...tickers, ...currencies].join(',') : tickers.join(',');
-                        
-                        setUpdateText(attempts === 1 
-                            ? `Bloque ${(i/CHUNK_SIZE)+1}/${Math.ceil(itemsToFetch.length/CHUNK_SIZE)}...` 
-                            : `Reintento Bloque ${(i/CHUNK_SIZE)+1}...`);
                         
                         try {
                             const response = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(tickersList)}&_t=${Date.now()}`);
                             const data = await response.json();
                             
-                            // Guardar FX unificado (solo en el primer bloque)
                             if (i === 0) {
                                 currencies.forEach(cPair => {
                                     if (data[cPair]?.success && data[cPair].p > 0) {
                                         unifiedFxMap[cPair.substring(0,3)] = cleanVal(data[cPair].p);
+                                    } else {
+                                        if (attempts === maxAttempts) {
+                                            errorDetails.push({ ticker: cPair, reason: "Error al obtener FX de Google Finance." });
+                                        }
                                     }
                                 });
                             }
@@ -5072,42 +5077,47 @@ const getMarketStatus = (p) => {
                                     }
                                 } else {
                                     failedThisRound.push(item);
+                                    if (attempts === maxAttempts) {
+                                        errorDetails.push({ ticker: item.ticker, reason: stockData?.error || "Dato vacío o no hallado en el origen." });
+                                    }
                                 }
                             });
                         } catch (fetchErr) {
-                            console.warn(`Fallo de red en bloque ${(i/CHUNK_SIZE)+1}:`, fetchErr);
+                            console.warn(`Fallo de red en lote ${chunkIndex}:`, fetchErr);
                             failedThisRound.push(...chunk);
+                            if (attempts === maxAttempts) {
+                                chunk.forEach(item => errorDetails.push({ ticker: item.ticker, reason: "Error de red al consultar el script." }));
+                            }
                         }
                         
-                        // Pausa de 1.5 segundos entre bloques para no saturar a Google
+                        setPendingTickersList(prev => prev.filter(t => !chunk.some(c => c.ticker === t) || failedThisRound.some(f => f.ticker === t)));
+
                         if (i + CHUNK_SIZE < itemsToFetch.length) {
                             await new Promise(resolve => setTimeout(resolve, 2000));
                         }
                     }
                     
                     itemsToFetch = failedThisRound;
+                    setPendingTickersList(itemsToFetch.map(p => p.ticker));
                     
                     if (itemsToFetch.length > 0 && attempts < maxAttempts) {
-                        setUpdateText(`Esperando 5s... (${itemsToFetch.length} pendientes)`);
-                        await new Promise(resolve => setTimeout(resolve, 10000));
+                        setUpdateText(`Esperando 5s... (${itemsToFetch.length} pendientes) | Intento ${attempts}/5`);
+                        await new Promise(resolve => setTimeout(resolve, 5000));
                     }
                 }
                 
-                totallyFailed = itemsToFetch.map(p => p.ticker);
+                totallyFailed = itemsToFetch;
                 
             } else {
-                totallyFailed = active.map(p => p.ticker);
+                totallyFailed = active;
+                totallyFailed.forEach(item => errorDetails.push({ ticker: item.ticker, reason: "No hay URL de Google Script configurada." }));
             }
 
-            // Rescate con IA para los que fallaron irremediablemente
             if (totallyFailed.length > 0 && apiKey) {
-                setUpdateText('Rescatando fallidos con IA...');
-                setFailedTickersList(totallyFailed);
+                setUpdateText(`Rescatando ${totallyFailed.length} fallidos con IA...`);
+                setUpdateProgress(85);
                 
-                const tickersWithContext = totallyFailed.map(t => {
-                    const item = active.find(p => p.ticker === t);
-                    return `${t} (Divisa esperada: ${item ? item.stockCurrency : 'N/A'})`;
-                }).join(', ');
+                const tickersWithContext = totallyFailed.map(item => `${item.ticker} (Divisa: ${item.stockCurrency})`).join(', ');
 
                 const prompt = `Actúa como API financiera. Para los siguientes tickers: ${tickersWithContext}.
                 REGLA CRÍTICA Y ESTRICTA: Respeta escrupulosamente el mercado y la divisa indicada para cada ticker. Si es una empresa americana cotizando en Europa, DEBES devolver el precio de la bolsa europea en esa divisa local, NUNCA el precio en dólares (USD) de NASDAQ/NYSE.
@@ -5117,7 +5127,7 @@ const getMarketStatus = (p) => {
                     const aiRes = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
                     const aiData = extractJSON(aiRes);
                     if (aiData) {
-                        active.forEach(item => {
+                        totallyFailed.forEach(item => {
                             const res = aiData[item.ticker] || aiData[item.ticker.split(':')[1]];
                             if (res && res.p) {
                                 let finalFx = unifiedFxMap[item.stockCurrency];
@@ -5132,24 +5142,50 @@ const getMarketStatus = (p) => {
                                     ...(res.pc !== undefined ? { previousClose: cleanVal(res.pc) } : {}),
                                     ...(finalFx ? { currentFx: finalFx } : {})
                                 };
+                                errorDetails = errorDetails.filter(e => e.ticker !== item.ticker);
+                                setPendingTickersList(prev => prev.filter(t => t !== item.ticker));
+                            } else {
+                                const existingError = errorDetails.find(e => e.ticker === item.ticker);
+                                if (existingError) existingError.reason += " | También falló el rescate con iA.";
+                                else errorDetails.push({ ticker: item.ticker, reason: "No encontrado por Script ni IA." });
                             }
                         });
                     }
-                } catch (aiErr) { console.error("Fallo rescate IA:", aiErr); }
+                } catch (aiErr) { 
+                    console.error("Fallo rescate IA:", aiErr); 
+                    totallyFailed.forEach(item => {
+                        const existingError = errorDetails.find(e => e.ticker === item.ticker);
+                        if (existingError) existingError.reason += " | Error en consulta de IA.";
+                    });
+                }
             }
 
             if (Object.keys(updatesMap).length > 0) {
                 setPortfolio(prev => prev.map(p => updatesMap[p.id] ? { ...p, ...updatesMap[p.id] } : p));
                 setLastUpdate(new Date().toISOString());
             }
+
+            if (errorDetails.length > 0) {
+                setFailedTickersInfo(errorDetails);
+                setUpdateText(`Finalizado con ${errorDetails.length} fallos.`);
+            } else {
+                setUpdateText('¡Actualización completa!');
+            }
+            setUpdateProgress(100);
+
         } catch (e) {
             console.error("Error general en updatePrices:", e);
+            setUpdateText('Error crítico en actualización.');
         } finally {
-            setUpdating(false); setUpdateProgress(0); setUpdateText('');
-            setTimeout(() => setFailedTickersList([]), 3000);
+            setTimeout(() => {
+                setUpdating(false); 
+                setUpdateProgress(0); 
+                setUpdateText('');
+                // Mantenemos el error box visible por 20 segundos para que el usuario pueda leerlo
+                setTimeout(() => setFailedTickersInfo([]), 20000);
+            }, 2000);
         }
     };
- 
 
     const analyzePortfolio = async () => {
       const dataToAnalyze = visiblePortfolio;
@@ -5440,20 +5476,20 @@ const handleSellSubmit = () => {
 
             <div className="flex flex-col gap-3 shrink-0 bg-slate-900/50 p-3 rounded-xl border border-slate-800">
                 
-                {/* --- BOTONERA CON SCROLL HORIZONTAL (TABLET/MOVIL) --- */}
+               {/* --- BOTONERA CON SCROLL HORIZONTAL (TABLET/MOVIL) --- */}
                 <div className="flex items-start gap-2 w-full overflow-x-auto custom-scrollbar pb-2">
-                    <div className="flex flex-col shrink-0">
-                        <button onClick={() => updatePrices(false)} disabled={updating} className="relative bg-slate-800 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-700 hover:bg-slate-700 transition-all flex items-center gap-2 overflow-hidden">
+                    <div className="flex flex-col shrink-0 min-w-[140px] max-w-[180px]">
+                        <button onClick={() => updatePrices(false)} disabled={updating} className="relative bg-slate-800 px-3 h-9 rounded-lg text-[10px] font-bold border border-slate-700 hover:bg-slate-700 transition-all flex items-center justify-center gap-2 overflow-hidden w-full">
                             {updating && <div className="absolute left-0 top-0 h-full bg-blue-600/30 transition-all duration-500 ease-out" style={{ width: `${updateProgress}%` }}/>}
-                            <span className="relative z-10 flex items-center gap-2">{updating ? <span className="animate-pulse">{updateProgress}%</span> : <Icons.Refresh/>} {updating ? 'PROCESANDO...' : 'ACTUALIZAR'}</span>
+                            <span className="relative z-10 flex items-center gap-2">{updating ? <span className="animate-pulse">{Math.round(updateProgress)}%</span> : <Icons.Refresh/>} {updating ? 'PROCESANDO...' : 'ACTUALIZAR'}</span>
                         </button>
-                        <span className="text-[9px] text-slate-500 mt-1 uppercase font-bold text-center tracking-wider h-3">{updating ? updateText : `Sinc: ${lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}`}</span>
-                            {updating && failedTickersList.length > 0 && (
-                                 <div className="w-full overflow-hidden mt-1 bg-orange-950/20 border border-orange-500/20 rounded py-0.5 px-1">
+                        <span className="text-[9px] text-slate-500 mt-1 uppercase font-bold text-center tracking-wider h-3 w-full truncate">{updating ? updateText : `Sinc: ${lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '--:--'}`}</span>
+                            {updating && pendingTickersList.length > 0 && (
+                                 <div className="w-full overflow-hidden mt-1 bg-blue-950/20 border border-blue-500/20 rounded py-0.5 px-1">
                                      <div className="flex gap-2 animate-pulse whitespace-nowrap overflow-x-auto custom-scrollbar">
-                                         <span className="text-[7px] text-orange-400 font-black"></span>
-                                         {failedTickersList.map(ticker => (
-                                             <span key={ticker} className="text-[7px] text-orange-200 font-mono">
+                                         <span className="text-[7px] text-blue-400 font-black">PENDIENTES:</span>
+                                         {pendingTickersList.map(ticker => (
+                                             <span key={ticker} className="text-[7px] text-blue-200 font-mono">
                                                  {ticker}
                                              </span>
                                          ))}
@@ -5477,6 +5513,23 @@ const handleSellSubmit = () => {
                         </select>
                     </div>
                 </div>
+
+                {failedTickersInfo.length > 0 && (
+                    <div className="w-full bg-red-950/40 border border-red-500/30 rounded-lg p-2 max-h-24 overflow-y-auto custom-scrollbar mb-2 fade-in">
+                        <div className="text-[9px] text-red-400 font-black uppercase mb-1 flex items-center gap-1"><Icons.AlertCircle size={10} /> Informe de Fallos de Actualización</div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-1">
+                            {failedTickersInfo.map((info, i) => (
+                                <div key={i} className="text-[8px] leading-tight bg-red-900/20 px-1.5 py-0.5 rounded border border-red-500/10 truncate" title={info.reason}>
+                                    <span className="text-white font-bold">{info.ticker}:</span> <span className="text-red-200">{info.reason}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+
+
+
               
               
                 <div className="flex flex-wrap gap-2 items-center bg-slate-950/50 p-2 rounded-lg border border-slate-800/50">
