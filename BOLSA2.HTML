@@ -4962,6 +4962,7 @@ const getMarketStatus = (p) => {
         printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); setTimeout(() => printWindow.print(), 500); 
     };   
 
+
     const updatePrices = async (isAuto = false) => {
         const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
         const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
@@ -4972,6 +4973,8 @@ const getMarketStatus = (p) => {
         try {
             let updatesMap = {}; 
             let totallyFailed = [];
+            // NUEVO: Mapa centralizado para unificar las divisas
+            let unifiedFxMap = {}; 
     
             if (scriptUrl) {
                 let attempts = 0;
@@ -4992,11 +4995,15 @@ const getMarketStatus = (p) => {
                         
                         let failedThisRound = [];
             
+                        // NUEVO: Guardar los FX fiables de Google para usarlos globalmente
+                        currencies.forEach(cPair => {
+                            if (data[cPair]?.success && data[cPair].p > 0) {
+                                unifiedFxMap[cPair.substring(0,3)] = cleanVal(data[cPair].p);
+                            }
+                        });
+
                         itemsToFetch.forEach(item => {
                             const stockData = data[item.ticker];
-                            const fxKey = item.stockCurrency + baseCurrency;
-                            const fxData = data[fxKey];
-            
                             const price = stockData?.success ? cleanVal(stockData.p) : 0;
                             
                             if (stockData?.success && price > (item.ticker.includes(".INX") ? 95 : 0)) {
@@ -5004,8 +5011,9 @@ const getMarketStatus = (p) => {
                                 if (stockData.pc !== undefined) {
                                     updatesMap[item.id].previousClose = cleanVal(stockData.pc);
                                 }
-                                if (item.stockCurrency !== baseCurrency && fxData?.success) {
-                                    updatesMap[item.id].currentFx = cleanVal(fxData.p);
+                                // NUEVO: Aplicar SIEMPRE el FX del mapa unificado
+                                if (item.stockCurrency !== baseCurrency && unifiedFxMap[item.stockCurrency]) {
+                                    updatesMap[item.id].currentFx = unifiedFxMap[item.stockCurrency];
                                 }
                             } else {
                                 failedThisRound.push(item);
@@ -5054,11 +5062,18 @@ const getMarketStatus = (p) => {
                         active.forEach(item => {
                             const res = aiData[item.ticker] || aiData[item.ticker.split(':')[1]];
                             if (res && res.p) {
+                                // NUEVO: Unificamos el FX de la IA. Si no estaba en Google, usamos el primero que la IA invente para todas las demás acciones.
+                                let finalFx = unifiedFxMap[item.stockCurrency];
+                                if (!finalFx && res.fx) {
+                                    finalFx = cleanVal(res.fx);
+                                    unifiedFxMap[item.stockCurrency] = finalFx; 
+                                }
+
                                 updatesMap[item.id] = { 
                                     ...updatesMap[item.id], 
                                     currentPrice: cleanVal(res.p),
                                     ...(res.pc !== undefined ? { previousClose: cleanVal(res.pc) } : {}),
-                                    ...(res.fx ? { currentFx: cleanVal(res.fx) } : {})
+                                    ...(finalFx ? { currentFx: finalFx } : {})
                                 };
                             }
                         });
@@ -5076,7 +5091,8 @@ const getMarketStatus = (p) => {
             setUpdating(false); setUpdateProgress(0); setUpdateText('');
             setTimeout(() => setFailedTickersList([]), 3000);
         }
-    };
+    };   
+
  
 
     const analyzePortfolio = async () => {
