@@ -2408,7 +2408,7 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
 
 <pre className="bg-black text-green-400 p-2 rounded mt-1 mb-1 border border-slate-800 overflow-x-auto text-[11px] font-mono select-all">
 {`function A_AUTORIZAR_AQUI() {
-  var files = DriveApp.getFiles(); 
+  DriveApp.getFiles(); 
   UrlFetchApp.fetch("https://www.google.com");
   console.log("✅ Permisos concedidos.");
 }
@@ -2421,7 +2421,6 @@ function doPost(e) {
     var fileName = "BOARDINGGATE_DB.json";
     var backupName = "BOARDINGGATE_DB.json.bak";
     var files = DriveApp.getFilesByName(fileName);
-    
     if (files.hasNext()) {
       var file = files.next();
       var backupFiles = DriveApp.getFilesByName(backupName);
@@ -2432,8 +2431,8 @@ function doPost(e) {
       DriveApp.createFile(fileName, JSON.stringify(data), MimeType.PLAIN_TEXT);
     }
     return ContentService.createTextOutput(JSON.stringify({ status: "success", timestamp: data.timestamp })).setMimeType(ContentService.MimeType.JSON);
-  } catch(e) { 
-    return ContentService.createTextOutput(JSON.stringify({status: "error", error: e.toString()})).setMimeType(ContentService.MimeType.JSON); 
+  } catch(err) { 
+    return ContentService.createTextOutput(JSON.stringify({status: "error", error: err.toString()})).setMimeType(ContentService.MimeType.JSON); 
   } finally { lock.releaseLock(); }
 }
 
@@ -2444,114 +2443,109 @@ function doGet(e) {
     var files = DriveApp.getFilesByName(fileName);
     if (files.hasNext()) { return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON); }
     return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
-  } catch(e) { return ContentService.createTextOutput(JSON.stringify({error:e.toString()})).setMimeType(ContentService.MimeType.JSON); }
+  } catch(err) { return ContentService.createTextOutput(JSON.stringify({error:err.toString()})).setMimeType(ContentService.MimeType.JSON); }
 }
+
 
 function fetchStockData(tickersString) {
   var tickerList = tickersString.split(",");
   var requests = [];
   var validTickers = [];
-  
+  var yahooSymbols = [];
+
   for (var i = 0; i < tickerList.length; i++) {
     var rawTicker = tickerList[i].trim();
-    if(!rawTicker) continue;
-    
-    var queryTicker = rawTicker;
-    if (rawTicker.includes(":")) {
-        var parts = rawTicker.split(":");
-        queryTicker = parts[1] + ":" + parts[0];
-    } else if (rawTicker.length === 6 && !rawTicker.includes(".")) {
-        queryTicker = rawTicker.substring(0,3) + "-" + rawTicker.substring(3,6);
-    }
-
-    // Forzamos hl=en y añadimos un parámetro aleatorio para evitar el "caché" de bloqueo
-    var url = "https://www.google.com/finance/quote/" + encodeURIComponent(queryTicker) + "?hl=en&_cb=" + Math.random();
-    
-    requests.push({ 
-      url: url, 
-      method: "GET", 
-      muteHttpExceptions: true, 
-      headers: { 
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9"
-      } 
+    if (!rawTicker) continue;
+    var yahooTicker = convertToYahoo(rawTicker);
+    var url = "https://query1.finance.yahoo.com/v8/finance/chart/" + 
+              encodeURIComponent(yahooTicker) + 
+              "?interval=1d&range=2d&includePrePost=false";
+    requests.push({
+      url: url,
+      method: "GET",
+      muteHttpExceptions: true,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json"
+      }
     });
     validTickers.push(rawTicker);
+    yahooSymbols.push(yahooTicker);
   }
-  
+
   var results = {};
   var responses = UrlFetchApp.fetchAll(requests);
-  
+
   for (var j = 0; j < responses.length; j++) {
     var rawTicker = validTickers[j];
     var res = { success: false };
-    
-    if (responses[j].getResponseCode() === 200) {
-      var html = responses[j].getContentText();
-      
-      // --- MÉTODO 1: CLASE ESTÁNDAR ---
-      var priceMatch = html.match(/class="YMlKec fxKbKc">([^<]+)</);
-      if (priceMatch) {
-        res.p = cleanNumGAS(priceMatch[1]);
-      }
-      
-      // --- MÉTODO 2: SI FALLA EL 1, BUSCAR EN METADATOS (Altamente fiable) ---
-      if (!res.p) {
-        var metaMatch = html.match(/<meta itemprop="price" content="([^"]+)"/);
-        if (metaMatch) {
-          res.p = parseFloat(metaMatch[1]);
+    var code = responses[j].getResponseCode();
+    if (code === 200) {
+      try {
+        var json = JSON.parse(responses[j].getContentText());
+        var meta = json.chart.result[0].meta;
+        var p = meta.regularMarketPrice || meta.postMarketPrice || 0;
+        var pc = meta.chartPreviousClose || meta.previousClose || 0;
+        if (p > 0) {
+          res.p = p;
+          res.pc = pc;
+          res.success = true;
+        } else {
+          res.error = "Precio 0 en respuesta.";
         }
+      } catch(err) {
+        res.error = "Error JSON: " + err.toString();
       }
-
-      // --- MÉTODO 3: SI FALLA EL 2, BUSCAR EN DATA-LAST-PRICE ---
-      if (!res.p) {
-        var dataMatch = html.match(/data-last-price="([^"]+)"/);
-        if (dataMatch) {
-          res.p = parseFloat(dataMatch[1]);
-        }
-      }
-
-      // --- BÚSQUEDA DEL CIERRE ANTERIOR (Solo para Intradía) ---
-      var pcMatch = html.match(/Previous close[^>]+>([^<]+)</);
-      if (pcMatch) {
-        res.pc = cleanNumGAS(pcMatch[1]);
-      } else {
-        // Fallback para cierre anterior en JSON interno
-        var pcJsonMatch = html.match(/\["([^"]+)",\d+,\d+,\d+,"[^"]+",\[\[\d+,(\d+\.\d+)/);
-        if (pcJsonMatch) res.pc = parseFloat(pcJsonMatch[2]);
-      }
-
-      if (res.p > 0) res.success = true;
-      else res.error = "Precio no localizado en ninguna etiqueta.";
-      
     } else {
-      res.error = "Google bloqueó la petición (Error " + responses[j].getResponseCode() + ")";
+      res.error = "HTTP " + code;
+      Logger.log("❌ " + rawTicker + " (" + yahooSymbols[j] + ") → HTTP " + code);
     }
     results[rawTicker] = res;
   }
-  
   return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
 }
 
-function cleanNumGAS(str) {
-  if (!str) return 0;
-  // Eliminamos símbolos de moneda y espacios
-  var val = str.replace(/[^-0-9.,]/g, '');
-  
-  // Detectar formato: 1,234.56 vs 1.234,56
-  var lastDot = val.lastIndexOf('.');
-  var lastComma = val.lastIndexOf(',');
-  
-  if (lastDot > lastComma) {
-     // Formato US: 1,234.56 -> quitamos comas
-     val = val.replace(/,/g, ''); 
-  } else if (lastComma > lastDot) {
-    // Formato EU: 1.234,56 -> quitamos puntos, cambiamos coma por punto
-    val = val.replace(/\./g, ''); 
-    val = val.replace(',', '.'); 
+function convertToYahoo(rawTicker) {
+  // Mapa directo para índices conocidos
+  var indexMap = {
+    "INDEXSP:.INX":     "^GSPC",
+    "INDEXDJX:.DJI":    "^DJI", 
+    "INDEXNASDAQ:.IXIC":"^IXIC",
+    "INDEXRUSSELL:RUT": "^RUT",
+    "INDEXCBOE:VIX":    "^VIX",
+    "INDEXFTSE:UKX":    "^FTSE",
+    "INDEXEURO:SX5E":   "^STOXX50E",
+    "BME:IBEX":         "^IBEX",
+    "INDEXBVB:BET":     "^BET"
+  };
+
+  if (indexMap[rawTicker]) return indexMap[rawTicker];
+
+  if (rawTicker.includes(":")) {
+    var parts = rawTicker.split(":");
+    var exchange = parts[0].toUpperCase();
+    var sym = parts[1].toUpperCase();
+    var exchangeMap = {
+      "BME": ".MC", "EPA": ".PA", "ETR": ".DE", "LON": ".L",
+      "BIT": ".MI", "AMS": ".AS", "SWX": ".SW", "TSE": ".TO",
+      "ASX": ".AX", "HKG": ".HK", "TYO": ".T",
+      "NYSE": "", "NASDAQ": "", "INDEXSP": "", "INDEXDJX": "", "INDEXNASDAQ": ""
+    };
+    return sym + (exchangeMap[exchange] !== undefined ? exchangeMap[exchange] : "." + exchange);
   }
-  return parseFloat(val) || 0;
-}`}
+
+  if (rawTicker.length === 6 && !rawTicker.includes(".") && !rawTicker.includes("-")) {
+    return rawTicker + "=X";
+  }
+
+  return rawTicker;
+}
+
+function testFetch() {
+  var result = fetchStockData("BME:SAN,AAPL,USDEUR,INDEXSP:.INX,INDEXDJX:.DJI,INDEXNASDAQ:.IXIC");
+  Logger.log(JSON.stringify(JSON.parse(result.getContent()), null, 2));
+}
+`}
 </pre>
                
                             </li>
