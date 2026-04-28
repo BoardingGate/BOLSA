@@ -2409,7 +2409,7 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
 <pre className="bg-black text-green-400 p-2 rounded mt-1 mb-1 border border-slate-800 overflow-x-auto text-[11px] font-mono select-all">
 {`function A_AUTORIZAR_AQUI() {
   var files = DriveApp.getFiles(); 
-  UrlFetchApp.fetch("https" + "://" + "www.google.com");
+  UrlFetchApp.fetch("https://www.google.com");
   console.log("✅ Permisos concedidos.");
 }
 
@@ -2427,7 +2427,6 @@ function doPost(e) {
       var backupFiles = DriveApp.getFilesByName(backupName);
       var backupFile = backupFiles.hasNext() ? backupFiles.next() : DriveApp.createFile(backupName, "", MimeType.PLAIN_TEXT);
       backupFile.setContent(file.getBlob().getDataAsString());
-      
       file.setContent(JSON.stringify(data));
     } else {
       DriveApp.createFile(fileName, JSON.stringify(data), MimeType.PLAIN_TEXT);
@@ -2458,7 +2457,6 @@ function fetchStockData(tickersString) {
     if(!rawTicker) continue;
     
     var queryTicker = rawTicker;
-    
     if (rawTicker.includes(":")) {
         queryTicker = rawTicker.split(":")[1] + ":" + rawTicker.split(":")[0];
     } 
@@ -2466,14 +2464,14 @@ function fetchStockData(tickersString) {
         queryTicker = rawTicker.substring(0,3) + "-" + rawTicker.substring(3,6);
     }
 
-    var url = "https" + "://" + "www.google.com/finance/quote/" + encodeURIComponent(queryTicker);
+    var url = "https://www.google.com/finance/quote/" + encodeURIComponent(queryTicker);
     requests.push({ 
       url: url, 
       method: "GET", 
       muteHttpExceptions: true, 
       headers: { 
-        "Accept-Language": "en-US,en;q=0.9", // OBLIGAMOS A QUE DEVUELVA INGLÉS
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36" 
+        "Accept-Language": "en-US", 
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" 
       } 
     });
     validTickers.push(rawTicker);
@@ -2484,51 +2482,53 @@ function fetchStockData(tickersString) {
     var responses = UrlFetchApp.fetchAll(requests);
     for (var j = 0; j < responses.length; j++) {
       var rawTicker = validTickers[j];
+      var html = responses[j].getContentText();
+      var res = { success: false };
+
       if (responses[j].getResponseCode() === 200) {
-        var html = responses[j].getContentText();
-        var res = { success: false };
-        
-        var priceIdx = html.indexOf('class="YMlKec fxKbKc"');
-        
-        if (priceIdx > -1) {
-           var start = html.indexOf('>', priceIdx) + 1;
-           var end = html.indexOf('<', start);
-           res.p = cleanNumGAS(html.substring(start, end));
+        // --- BÚSQUEDA DE PRECIO ---
+        // Buscamos solo por la clase principal 'YMlKec' que es más estable
+        var priceMatch = html.match(/class="[^"]*YMlKec[^"]*">([^<]+)</);
+        if (priceMatch && priceMatch[1]) {
+           res.p = cleanNumGAS(priceMatch[1]);
            
-           var prevCloseIdx = html.indexOf('Previous close');
-           if (prevCloseIdx === -1) {
-               prevCloseIdx = html.indexOf('Cierre anterior');
-           }
-           
-           if (prevCloseIdx > -1) {
-               var pcClassIdx = html.indexOf('class="P6K39c"', prevCloseIdx);
-               if (pcClassIdx > -1) {
-                   var pcStart = html.indexOf('>', pcClassIdx) + 1;
-                   var pcEnd = html.indexOf('<', pcStart);
-                   res.pc = cleanNumGAS(html.substring(pcStart, pcEnd));
+           // --- BÚSQUEDA DE CIERRE ANTERIOR ---
+           // Buscamos el texto "Previous close" y luego el valor en la clase 'P6K39c'
+           var prevCloseSearchText = "Previous close";
+           var pcIdx = html.indexOf(prevCloseSearchText);
+           if (pcIdx > -1) {
+               var containerPart = html.substring(pcIdx, pcIdx + 300);
+               var pcMatch = containerPart.match(/class="P6K39c">([^<]+)</);
+               if (pcMatch && pcMatch[1]) {
+                   res.pc = cleanNumGAS(pcMatch[1]);
                }
            }
            res.success = true;
         }
-        results[rawTicker] = res;
       }
+      results[rawTicker] = res;
     }
-  } catch(err) { return ContentService.createTextOutput(JSON.stringify({error: err.toString()})).setMimeType(ContentService.MimeType.JSON); }
+  } catch(err) { 
+    return ContentService.createTextOutput(JSON.stringify({error: err.toString()})).setMimeType(ContentService.MimeType.JSON); 
+  }
   
   return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
 }
 
 function cleanNumGAS(str) {
   if (!str) return 0;
-  var val = str.replace(/[^0-9.,-]/g, '');
+  // Eliminar símbolos de moneda y caracteres invisibles/espacios raros
+  var val = str.replace(/[^-0-9.,]/g, '');
   
   var lastDot = val.lastIndexOf('.');
   var lastComma = val.lastIndexOf(',');
   
   if (lastDot > lastComma) {
+     // Formato US: 1,200.50
      val = val.replace(/,/g, ''); 
   } else if (lastComma > lastDot) {
-    val = val.replace(/\./g, ''); 
+     // Formato EU: 1.200,50
+     val = val.replace(/\./g, ''); 
      val = val.replace(',', '.'); 
   }
   return parseFloat(val) || 0;
