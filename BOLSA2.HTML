@@ -2459,13 +2459,13 @@ function fetchStockData(tickersString) {
     
     var queryTicker = rawTicker;
     
-    if (rawTicker.includes(":")) {
-        queryTicker = rawTicker.split(":")[1] + ":" + rawTicker.split(":")[0];
+    if (rawTicker.startsWith("CURRENCY:")) {
+        var pair = rawTicker.replace("CURRENCY:", "");
+        queryTicker = pair.substring(0,3) + "-" + pair.substring(3,6);
     } 
-    else if (rawTicker.length === 6 && !rawTicker.includes(".")) {
-        queryTicker = rawTicker.substring(0,3) + "-" + rawTicker.substring(3,6);
+    else if (rawTicker.includes(":")) {
+        queryTicker = rawTicker.split(":")[1] + ":" + rawTicker.split(":")[0];
     }
-
     var url = "https" + "://" + "www.google.com/finance/quote/" + encodeURIComponent(queryTicker);
     requests.push({ 
       url: url, 
@@ -4784,7 +4784,7 @@ const getMarketStatus = (p) => {
                 else if (!tUpper.includes(':')) inferredCurrency = 'USD'; // Por defecto sin prefijo suele ser mercado americano
             }
 
-            const fxPair = inferredCurrency + baseCurrency;
+            const fxPair = "CURRENCY:" + inferredCurrency + baseCurrency;
             let googleData = null;
 
             if (!isIsinCode && scriptUrl) {
@@ -4983,7 +4983,7 @@ const getMarketStatus = (p) => {
                     setUpdateText(attempts === 1 ? 'Consultando Mercados...' : `Reintentando API (${attempts}/${maxAttempts})...`);
                     
                     const tickers = itemsToFetch.map(p => p.ticker);
-                    const currencies = [...new Set(itemsToFetch.filter(p => p.stockCurrency !== baseCurrency).map(p => p.stockCurrency + baseCurrency))];
+                    const currencies = [...new Set(itemsToFetch.filter(p => p.stockCurrency !== baseCurrency).map(p => "CURRENCY:" + p.stockCurrency + baseCurrency))];
                     const tickersList = [...tickers, ...currencies].join(',');
                     
                     try {
@@ -4991,25 +4991,33 @@ const getMarketStatus = (p) => {
                         const data = await response.json();
                         
                         let failedThisRound = [];
+
+                        const stockData = data[item.ticker];
+
             
                         itemsToFetch.forEach(item => {
-                            const stockData = data[item.ticker];
-                            const fxKey = item.stockCurrency + baseCurrency;
+                            const fxKey = "CURRENCY:" + item.stockCurrency + baseCurrency;
                             const fxData = data[fxKey];
-            
-                            const price = stockData?.success ? cleanVal(stockData.p) : 0;
                             
-                            if (stockData?.success && price > (item.ticker.includes(".INX") ? 95 : 0)) {
+                            const price = stockData?.success ? cleanVal(stockData.p) : 0;
+                            const needsFx = item.stockCurrency !== baseCurrency;
+                            
+                            const stockOk = stockData?.success && price > (item.ticker.includes(".INX") ? 95 : 0);
+                            const fxOk = !needsFx || (fxData?.success && cleanVal(fxData.p) > 0);
+                            
+                            if (stockOk && fxOk) {
                                 updatesMap[item.id] = { currentPrice: price };
                                 if (stockData.pc !== undefined) {
                                     updatesMap[item.id].previousClose = cleanVal(stockData.pc);
                                 }
-                                if (item.stockCurrency !== baseCurrency && fxData?.success) {
+                                if (needsFx) {
                                     updatesMap[item.id].currentFx = cleanVal(fxData.p);
                                 }
                             } else {
+                                // Si falla la acción O falla la divisa, enviamos TODO al array de rescate de la iA
                                 failedThisRound.push(item);
-                            }
+                            } 
+
                         });
                         
                         itemsToFetch = failedThisRound;
