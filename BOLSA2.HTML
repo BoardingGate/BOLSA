@@ -4963,7 +4963,7 @@ const getMarketStatus = (p) => {
     };   
 
 
-    const updatePrices = async (isAuto = false) => {
+   const updatePrices = async (isAuto = false) => {
         const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
         const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
         
@@ -4973,66 +4973,77 @@ const getMarketStatus = (p) => {
         try {
             let updatesMap = {}; 
             let totallyFailed = [];
-            // NUEVO: Mapa centralizado para unificar las divisas
             let unifiedFxMap = {}; 
     
             if (scriptUrl) {
                 let attempts = 0;
-                const maxAttempts = 5;
-                let itemsToFetch = [...active]; // Iniciamos con todos los activos
+                const maxAttempts = 3; // Reducimos reintentos porque por bloques fallará menos
+                let itemsToFetch = [...active]; 
+                const CHUNK_SIZE = 5; // Tamaño del bloque
                 
                 while (attempts < maxAttempts && itemsToFetch.length > 0) {
                     attempts++;
-                    setUpdateText(attempts === 1 ? 'Consultando Mercados...' : `Reintentando API (${attempts}/${maxAttempts})...`);
+                    let failedThisRound = [];
                     
-                    const tickers = itemsToFetch.map(p => p.ticker);
                     const currencies = [...new Set(itemsToFetch.filter(p => p.stockCurrency !== baseCurrency).map(p => p.stockCurrency + baseCurrency))];
-                    const tickersList = [...tickers, ...currencies].join(',');
                     
-                    try {
-                        const response = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(tickersList)}&_t=${Date.now()}`);
-                        const data = await response.json();
+                    // Procesamiento por bloques (Chunks)
+                    for (let i = 0; i < itemsToFetch.length; i += CHUNK_SIZE) {
+                        const chunk = itemsToFetch.slice(i, i + CHUNK_SIZE);
+                        const tickers = chunk.map(p => p.ticker);
                         
-                        let failedThisRound = [];
-            
-                        // NUEVO: Guardar los FX fiables de Google para usarlos globalmente
-                        currencies.forEach(cPair => {
-                            if (data[cPair]?.success && data[cPair].p > 0) {
-                                unifiedFxMap[cPair.substring(0,3)] = cleanVal(data[cPair].p);
-                            }
-                        });
-
-                        itemsToFetch.forEach(item => {
-                            const stockData = data[item.ticker];
-                            const price = stockData?.success ? cleanVal(stockData.p) : 0;
+                        // Solo añadimos las divisas en el primer bloque de cada ronda
+                        const tickersList = i === 0 ? [...tickers, ...currencies].join(',') : tickers.join(',');
+                        
+                        setUpdateText(attempts === 1 
+                            ? `Bloque ${(i/CHUNK_SIZE)+1}/${Math.ceil(itemsToFetch.length/CHUNK_SIZE)}...` 
+                            : `Reintento Bloque ${(i/CHUNK_SIZE)+1}...`);
+                        
+                        try {
+                            const response = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(tickersList)}&_t=${Date.now()}`);
+                            const data = await response.json();
                             
-                            if (stockData?.success && price > (item.ticker.includes(".INX") ? 95 : 0)) {
-                                updatesMap[item.id] = { currentPrice: price };
-                                if (stockData.pc !== undefined) {
-                                    updatesMap[item.id].previousClose = cleanVal(stockData.pc);
-                                }
-                                // NUEVO: Aplicar SIEMPRE el FX del mapa unificado
-                                if (item.stockCurrency !== baseCurrency && unifiedFxMap[item.stockCurrency]) {
-                                    updatesMap[item.id].currentFx = unifiedFxMap[item.stockCurrency];
-                                }
-                            } else {
-                                failedThisRound.push(item);
+                            // Guardar FX unificado (solo en el primer bloque)
+                            if (i === 0) {
+                                currencies.forEach(cPair => {
+                                    if (data[cPair]?.success && data[cPair].p > 0) {
+                                        unifiedFxMap[cPair.substring(0,3)] = cleanVal(data[cPair].p);
+                                    }
+                                });
                             }
-                        });
-                        
-                        itemsToFetch = failedThisRound;
-                        
-                        if (itemsToFetch.length > 0 && attempts < maxAttempts) {
-                            setUpdateText(`Esperando 10s... (${itemsToFetch.length} pendientes)`);
-                            await new Promise(resolve => setTimeout(resolve, 10000));
+
+                            chunk.forEach(item => {
+                                const stockData = data[item.ticker];
+                                const price = stockData?.success ? cleanVal(stockData.p) : 0;
+                                
+                                if (stockData?.success && price > (item.ticker.includes(".INX") ? 95 : 0)) {
+                                    updatesMap[item.id] = { currentPrice: price };
+                                    if (stockData.pc !== undefined) {
+                                        updatesMap[item.id].previousClose = cleanVal(stockData.pc);
+                                    }
+                                    if (item.stockCurrency !== baseCurrency && unifiedFxMap[item.stockCurrency]) {
+                                        updatesMap[item.id].currentFx = unifiedFxMap[item.stockCurrency];
+                                    }
+                                } else {
+                                    failedThisRound.push(item);
+                                }
+                            });
+                        } catch (fetchErr) {
+                            console.warn(`Fallo de red en bloque ${(i/CHUNK_SIZE)+1}:`, fetchErr);
+                            failedThisRound.push(...chunk);
                         }
                         
-                    } catch (fetchErr) {
-                        console.warn(`Fallo de red en el intento ${attempts}:`, fetchErr);
-                        if (attempts < maxAttempts) {
-                            setUpdateText(`Error de red. Esperando 10s...`);
-                            await new Promise(resolve => setTimeout(resolve, 10000));
+                        // Pausa de 1.5 segundos entre bloques para no saturar a Google
+                        if (i + CHUNK_SIZE < itemsToFetch.length) {
+                            await new Promise(resolve => setTimeout(resolve, 1500));
                         }
+                    }
+                    
+                    itemsToFetch = failedThisRound;
+                    
+                    if (itemsToFetch.length > 0 && attempts < maxAttempts) {
+                        setUpdateText(`Esperando 5s... (${itemsToFetch.length} pendientes)`);
+                        await new Promise(resolve => setTimeout(resolve, 5000));
                     }
                 }
                 
@@ -5042,6 +5053,7 @@ const getMarketStatus = (p) => {
                 totallyFailed = active.map(p => p.ticker);
             }
 
+            // Rescate con IA para los que fallaron irremediablemente
             if (totallyFailed.length > 0 && apiKey) {
                 setUpdateText('Rescatando fallidos con IA...');
                 setFailedTickersList(totallyFailed);
@@ -5052,7 +5064,7 @@ const getMarketStatus = (p) => {
                 }).join(', ');
 
                 const prompt = `Actúa como API financiera. Para los siguientes tickers: ${tickersWithContext}.
-                REGLA CRÍTICA Y ESTRICTA: Respeta escrupulosamente el mercado y la divisa indicada para cada ticker. Si es una empresa americana cotizando en Europa (ej. FRA:APC en EUR o LSE: en GBP), DEBES devolver el precio de la bolsa europea en esa divisa local, NUNCA el precio en dólares (USD) de NASDAQ/NYSE.
+                REGLA CRÍTICA Y ESTRICTA: Respeta escrupulosamente el mercado y la divisa indicada para cada ticker. Si es una empresa americana cotizando en Europa, DEBES devolver el precio de la bolsa europea en esa divisa local, NUNCA el precio en dólares (USD) de NASDAQ/NYSE.
                 Devuelve SOLO un JSON estricto usando el TICKER EXACTO como clave: {"TICKER": {"p": precio_local, "pc": cierre_anterior_local, "fx": cambio_divisa_local_a_${baseCurrency}}}. USA PUNTO DECIMAL.`;
                 
                 try {
@@ -5062,7 +5074,6 @@ const getMarketStatus = (p) => {
                         active.forEach(item => {
                             const res = aiData[item.ticker] || aiData[item.ticker.split(':')[1]];
                             if (res && res.p) {
-                                // NUEVO: Unificamos el FX de la IA. Si no estaba en Google, usamos el primero que la IA invente para todas las demás acciones.
                                 let finalFx = unifiedFxMap[item.stockCurrency];
                                 if (!finalFx && res.fx) {
                                     finalFx = cleanVal(res.fx);
@@ -5091,8 +5102,7 @@ const getMarketStatus = (p) => {
             setUpdating(false); setUpdateProgress(0); setUpdateText('');
             setTimeout(() => setFailedTickersList([]), 3000);
         }
-    };   
-
+    };
  
 
     const analyzePortfolio = async () => {
