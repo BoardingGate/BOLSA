@@ -3712,6 +3712,9 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCu
 
     const [updatingSingleId, setUpdatingSingleId] = useState(null);
 
+    const [isFetchingDividendsInfo, setIsFetchingDividendsInfo] = useState(false);
+    const [dividendsInfoData, setDividendsInfoData] = useState(null); 
+
     const updateSingleItem = async (item) => {
         if (!item || updatingSingleId) return;
         const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
@@ -4184,6 +4187,7 @@ const handleOptionB = async () => {
        if (p.strategyCache) {
             setStrategyInputs({ capital: p.strategyCache.capital || 1000, risk: p.strategyCache.risk || 2, marginOfSafety: p.strategyCache.marginOfSafety || 15 });
             setStrategyResult(p.strategyCache.result || null);
+            setDividendsInfoData(p.strategyCache.dividendsInfoData || null);  
 
             setAnalystData(p.strategyCache.analystData || null);
             setStrategyNewsData(p.strategyCache.strategyNewsData || null);    
@@ -4211,6 +4215,7 @@ const handleOptionB = async () => {
 
         } else {
             setStrategyInputs({ capital: 1000, risk: 2, marginOfSafety: 15 });
+            setDividendsInfoData(null);
             setStrategyResult(null);
             setAnalystData(null);
             setStrategyNewsData(null);
@@ -4220,14 +4225,12 @@ const handleOptionB = async () => {
         setIsStrategyModalOpen(true);
     };
 
-
     useEffect(() => {
         if (isStrategyModalOpen && strategyItem) {
-            setPortfolio(prev => prev.map(x => x.id === strategyItem.id ? { ...x, strategyCache: { ...(x.strategyCache || {}), simLot: simLot, targetSim: targetSim, analystData: analystData, strategyNewsData: strategyNewsData } } : x));
+            setPortfolio(prev => prev.map(x => x.id === strategyItem.id ? { ...x, strategyCache: { ...(x.strategyCache || {}), simLot: simLot, targetSim: targetSim, analystData: analystData, strategyNewsData: strategyNewsData, dividendsInfoData: dividendsInfoData } } : x));
         }
-    }, [simLot, targetSim, analystData, strategyNewsData]);
-
-     
+    }, [simLot, targetSim, analystData, strategyNewsData, dividendsInfoData]);
+        
     const handleFetchAnalysts = async () => {
         if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key. Configúrala en Ajustes.', type: 'error' });
         setIsFetchingAnalysts(true);
@@ -4263,6 +4266,37 @@ const handleOptionB = async () => {
             setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' });
         } finally {
             setIsFetchingStrategyNews(false);
+        }
+    };
+
+    const handleFetchDividendsInfo = async () => {
+        if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key. Configúrala en Ajustes.', type: 'error' });
+        setIsFetchingDividendsInfo(true);
+        try {
+            const today = new Date().toLocaleString('es-ES');
+            const sharesStr = formatN(strategyItem.shares);
+            
+            const prompt = `Actúa como un analista financiero. Ticker: ${strategyItem.ticker}. Fecha actual: ${today}. Acciones en cartera del usuario: ${sharesStr}.
+            Busca en internet los datos actualizados y responde estrictamente en formato HTML limpio (usando <h3>, <ul>, <li>, <strong>, <p>), sin markdown (\`\`\`html).
+            
+            DEBES INCLUIR:
+            1. ¿Paga dividendo actualmente? (Si no, indícalo claramente y finaliza).
+            2. Rango de Fechas: Próxima Fecha Ex-Dividend (para tener derecho a cobro) y Fecha de Pago.
+            3. Calendario Anual: Otras fechas de pago habituales.
+            4. Estimación de Cobro: Importe bruto por acción estimado. Calcula el total esperado para las ${sharesStr} acciones, y desglosa: Bruto Total, Retención en Origen estimada (según el país de la empresa), Retención Destino (España 19%) y Neto final a percibir (pon el importe neto en un tag <span style="color:#4ade80; font-weight:bold;">).
+            5. Política Histórica: Breve resumen de su trayectoria de dividendos (crecimiento, recortes, yield).`;
+            
+            const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
+            
+            let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
+            const startIdx = cleanHtml.indexOf('<');
+            if (startIdx !== -1) cleanHtml = cleanHtml.substring(startIdx);
+            
+            setDividendsInfoData(cleanHtml);
+        } catch(e) {
+            setInfoModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' });
+        } finally {
+            setIsFetchingDividendsInfo(false);
         }
     };
 
@@ -7431,10 +7465,46 @@ const handleSellSubmit = () => {
                         })()}
                     </div>
 
+
+                    {/* PANEL DERECHO A COBRO DEL DIVIDENDO */}
+                    <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 shadow-xl relative overflow-hidden mt-6">
+                        <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div>
+                        <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-2">
+                            <h3 className="text-sm font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-2">
+                                <Icons.DollarSign size={16}/> Derecho a Cobro del Dividendo
+                            </h3>
+                            <div className="flex items-center gap-2">
+                                {dividendsInfoData && (
+                                    <button 
+                                        onClick={() => setDividendsInfoData(null)} 
+                                        className="bg-slate-800 hover:bg-red-900/40 border border-slate-700 hover:border-red-500/50 text-slate-400 hover:text-red-400 px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 transition-colors"
+                                    >
+                                        <Icons.Trash2 size={12}/> Borrar
+                                    </button>
+                                )}
+                                <button onClick={handleFetchDividendsInfo} disabled={isFetchingDividendsInfo} className="bg-emerald-900/40 hover:bg-emerald-600 border border-emerald-500/50 text-emerald-300 hover:text-white disabled:opacity-50 px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 transition-colors">
+                                    {isFetchingDividendsInfo ? <Icons.Loader size={12} className="animate-spin"/> : <Icons.Search size={12}/>} 
+                                    {dividendsInfoData ? 'Actualizar Datos' : 'Consultar Dividendos'}
+                                </button>
+                            </div>
+                        </div>
+
+                        {dividendsInfoData ? (
+                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-[11px] text-slate-300 leading-relaxed font-sans prose-content [&_strong]:text-white [&_ul]:pl-4 fade-in" dangerouslySetInnerHTML={{__html: dividendsInfoData}}></div>
+                        ) : (
+                            <div className="text-center p-4 bg-slate-950 rounded-xl border border-slate-800 text-[11px] text-slate-500">
+                                Pulsa el botón "Consultar Dividendos" para que la IA verifique las fechas <b>Ex-Dividend</b>, estime tus cobros y evalúe la política de remuneración de <b>{strategyItem.ticker}</b>.
+                            </div>
+                        )}
+                    </div>
+
+
+
                     <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 shadow-xl relative overflow-hidden mt-6">
                         <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
                         <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-2">
-                            <h3 className="text-sm font-bold text-blue-400 uppercase tracking-widest flex items-center gap-2"><Icons.Globe size={16}/> Noticias Recientes (Últimos 7 días)</h3>
+
+                          <h3 className="text-sm font-bold text-blue-400 uppercase tracking-widest flex items-center gap-2"><Icons.Globe size={16}/> Noticias Recientes (Últimos 7 días)</h3>
                             <div className="flex items-center gap-2">
                                 {strategyNewsData && (
                                     <button 
