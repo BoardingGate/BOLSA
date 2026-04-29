@@ -863,12 +863,12 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
         const newData = { ...resultsData }; 
         const yearsToCalc = getDisplayYears(); 
         let runningAccum = 0; 
-
         yearsToCalc.forEach(y => { 
-            if (!newData[y]) {
-                newData[y] = { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, fees:0, resNoDiv:0, resWithDiv:0, taxRate:19, tax:0, accumulated:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0, comp1: 0, comp2: 0, comp3: 0, comp4: 0, compRest: 0 }; 
-            }
-            
+                if (!newData[y]) {
+                    newData[y] = { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, custodyFees:0, lossPrice:0, fees:0, resNoDiv:0, resWithDiv:0, taxRate:19, tax:0, accumulated:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0, comp1: 0, comp2: 0, comp3: 0, comp4: 0, compRest: 0 }; 
+                }
+       
+               
             const currentData = newData[y];
 
             if (currentData.locked) { 
@@ -901,15 +901,20 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                 yearFees += r2(buyFees + buyAdj + sellFees + sellAdj); 
             }); 
 
+            let yearCustody = 0; // NUEVO
             portfolio.forEach(p => { 
                 if (p.dividends && Array.isArray(p.dividends)) { 
                     p.dividends.forEach(d => { if (d.year === y) yearDivs += (parseFloat(d.net) || 0); }); 
                 } 
+                // NUEVO: Sumar gastos de custodia del año
+                if (p.custodyFees && Array.isArray(p.custodyFees)) {
+                    p.custodyFees.forEach(cf => { if (new Date(cf.date).getFullYear() === y) yearCustody += (parseFloat(cf.amount) || 0); });
+                }
             }); 
 
-            yearProfitPrice = r2(yearProfitPrice); yearLossPrice = r2(yearLossPrice); yearDivs = r2(yearDivs); yearFees = r2(yearFees); 
+            yearProfitPrice = r2(yearProfitPrice); yearLossPrice = r2(yearLossPrice); yearDivs = r2(yearDivs); yearFees = r2(yearFees); yearCustody = r2(yearCustody);
             const resNoDiv = r2(yearProfitPrice - yearLossPrice); 
-            const resWithDiv = r2(resNoDiv + yearDivs); 
+            const resWithDiv = r2(resNoDiv + yearDivs - yearCustody); // Restamos los gastos al resultado final
             
             const currentTaxRate = currentData.taxRate !== undefined ? parseFloat(currentData.taxRate) : 19;
             const tax = resNoDiv > 0 ? r2(resNoDiv * (currentTaxRate / 100)) : 0; 
@@ -926,7 +931,7 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                 finalCompRest = r2(rentaBase + c1 + c2 + c3 + c4); 
             } else { finalCompRest = 0; }
 
-            newData[y] = { ...newData[y], soldCount: lotesTotal, uniqueCount: uniqueTickers.size, profitPrice: yearProfitPrice, dividends: yearDivs, lossPrice: yearLossPrice, fees: yearFees, resNoDiv: resNoDiv, resWithDiv: resWithDiv, taxRate: currentTaxRate, tax: tax, accumulated: runningAccum, rentaResNoDiv: rentaResNoDiv, rentaFees: yearFees, rentaAdj: rentaAdj, rentaBase: rentaBase, comp1: parseFloat(currentData.comp1) || 0, comp2: parseFloat(currentData.comp2) || 0, comp3: parseFloat(currentData.comp3) || 0, comp4: parseFloat(currentData.comp4) || 0, compRest: finalCompRest }; 
+            newData[y] = { ...newData[y], soldCount: lotesTotal, uniqueCount: uniqueTickers.size, profitPrice: yearProfitPrice, dividends: yearDivs, custodyFees: yearCustody, lossPrice: yearLossPrice, fees: yearFees, resNoDiv: resNoDiv, resWithDiv: resWithDiv, taxRate: currentTaxRate, tax: tax, accumulated: runningAccum, rentaResNoDiv: rentaResNoDiv, rentaFees: yearFees, rentaAdj: rentaAdj, rentaBase: rentaBase, comp1: parseFloat(currentData.comp1) || 0, comp2: parseFloat(currentData.comp2) || 0, comp3: parseFloat(currentData.comp3) || 0, comp4: parseFloat(currentData.comp4) || 0, compRest: finalCompRest }; 
         }); 
         setResultsData(newData); 
     };
@@ -942,7 +947,7 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
             const currentTaxRate = d.taxRate !== undefined ? parseFloat(d.taxRate) : 19;
 
             if (field === 'profitPrice' || field === 'lossPrice') { d.resNoDiv = r2(d.profitPrice - d.lossPrice); d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * (currentTaxRate / 100)) : 0; d.resWithDiv = r2(d.resNoDiv + d.dividends); d.accumulated = r2(d.resNoDiv - d.tax); d.rentaResNoDiv = d.resNoDiv; d.rentaBase = r2(d.rentaResNoDiv + (d.rentaAdj || 0)); }
-            if (field === 'dividends') { d.resWithDiv = r2(d.resNoDiv + d.dividends); }
+            if (field === 'dividends' || field === 'custodyFees') { d.resWithDiv = r2(d.resNoDiv + (d.dividends || 0) - (d.custodyFees || 0)); }
             if (field === 'resNoDiv') { d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * (currentTaxRate / 100)) : 0; d.resWithDiv = r2(d.resNoDiv + d.dividends); d.accumulated = r2(d.resNoDiv - d.tax); d.rentaResNoDiv = d.resNoDiv; d.rentaBase = r2(d.rentaResNoDiv + (d.rentaAdj || 0)); }
             if (field === 'rentaAdj' || field === 'rentaResNoDiv') { d.rentaBase = r2(d.rentaResNoDiv + d.rentaAdj); }
             if (field === 'taxRate') { d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * (currentTaxRate / 100)) : 0; d.accumulated = r2(d.resNoDiv - d.tax); }
@@ -954,10 +959,11 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
     const toggleLock = (year) => { setResultsData(prev => ({ ...prev, [year]: { ...prev[year], locked: !prev[year].locked } })); };
 
     const yearsToShow = getDisplayYears();
-    const totals = yearsToShow.reduce((acc, year) => { 
+
+   const totals = yearsToShow.reduce((acc, year) => { 
         const curr = resultsData[year] || {}; 
-        return { soldCount: acc.soldCount + (curr.soldCount || 0), profitPrice: acc.profitPrice + (curr.profitPrice || 0), dividends: acc.dividends + (curr.dividends || 0), lossPrice: acc.lossPrice + (curr.lossPrice || 0), fees: acc.fees + (curr.fees || 0), resNoDiv: acc.resNoDiv + (curr.resNoDiv || 0), resWithDiv: acc.resWithDiv + (curr.resWithDiv || 0), tax: acc.tax + (curr.tax || 0), rentaBase: acc.rentaBase + (curr.rentaBase || 0), accumulated: acc.accumulated + (curr.accumulated || 0) }; 
-    }, { soldCount: 0, profitPrice: 0, dividends: 0, lossPrice: 0, fees: 0, resNoDiv: 0, resWithDiv: 0, tax: 0, rentaBase: 0, accumulated: 0 });
+        return { soldCount: acc.soldCount + (curr.soldCount || 0), profitPrice: acc.profitPrice + (curr.profitPrice || 0), dividends: acc.dividends + (curr.dividends || 0), custodyFees: acc.custodyFees + (curr.custodyFees || 0), lossPrice: acc.lossPrice + (curr.lossPrice || 0), fees: acc.fees + (curr.fees || 0), resNoDiv: acc.resNoDiv + (curr.resNoDiv || 0), resWithDiv: acc.resWithDiv + (curr.resWithDiv || 0), tax: acc.tax + (curr.tax || 0), rentaBase: acc.rentaBase + (curr.rentaBase || 0), accumulated: acc.accumulated + (curr.accumulated || 0) }; 
+    }, { soldCount: 0, profitPrice: 0, dividends: 0, custodyFees: 0, lossPrice: 0, fees: 0, resNoDiv: 0, resWithDiv: 0, tax: 0, rentaBase: 0, accumulated: 0 });
 
     const chartData = useMemo(() => { return yearsToShow.map(y => ({ label: y.toString(), value: (resultsData[y]?.resWithDiv || 0) })); }, [resultsData, yearsToShow]);
 
@@ -1018,6 +1024,13 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                 }
             });
 
+            let totalCustodyRenta = 0;
+            portfolio.forEach(p => {
+                if (p.custodyFees && Array.isArray(p.custodyFees)) {
+                    p.custodyFees.forEach(cf => { if (new Date(cf.date).getFullYear() === rentaYear) totalCustodyRenta += (parseFloat(cf.amount) || 0); });
+                }
+            });
+
             let pendingComp = 0;
             const compDetails = [];
             for (let i = 1; i <= 4; i++) {
@@ -1044,6 +1057,7 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
             1. DESGLOSE DE DIVIDENDOS COBRADOS:
             ${divDetails.length > 0 ? divDetails.join('\n') : 'No hay dividendos cobrados este ejercicio.'}
             --> TOTALES DIVIDENDOS: Bruto: ${formatMoney(divBruto, baseCurrency)} | Ret. Extranjera: ${formatMoney(divRetExt, baseCurrency)} | Ret. España: ${formatMoney(divRetEsp, baseCurrency)} | Base para Deducción Doble Imposición (Límite 15% aplicado): ${formatMoney(divDobleImp15, baseCurrency)}
+            --> GASTOS ADMINISTRACIÓN Y CUSTODIA DEDUCIBLES: ${formatMoney(totalCustodyRenta, baseCurrency)}
 
             2. DESGLOSE DE VENTA DE ACCIONES:
             ${stockSalesList.length > 0 ? stockSalesList.join('\n') : 'No se realizaron ventas de acciones este ejercicio.'}
@@ -1059,10 +1073,10 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
 
             FORMATO DE SALIDA REQUERIDO (Usa código HTML limpio, text-align left para textos y right para números):
 
-            <h3>1. INSTRUCCIONES PARA DECLARAR DIVIDENDOS</h3>
-            <p>Indica de forma clara, con párrafos cortos, la sección del Renta Web y las CASILLAS EXACTAS para el importe bruto (indicar importe), la retención nacional (indicar importe), y la casilla para aplicar la deducción por doble imposición internacional con el importe de ${formatMoney(divDobleImp15, baseCurrency)}.</p>
+            <h3>1. INSTRUCCIONES PARA DECLARAR DIVIDENDOS Y GASTOS</h3>
+            <p>Indica de forma clara, con párrafos cortos, la sección del Renta Web y las CASILLAS EXACTAS para el importe bruto (indicar importe), la retención nacional (indicar importe), y la casilla para aplicar la deducción por doble imposición internacional con el importe de ${formatMoney(divDobleImp15, baseCurrency)}. <b>Indica también obligatoriamente la CASILLA EXACTA de 'Gastos de administración y depósito de valores negociables' donde debe introducir los ${formatMoney(totalCustodyRenta, baseCurrency)} deducibles.</b></p>
             [AQUÍ DEBES GENERAR UNA TABLA HTML con el desglose Ticker a Ticker de los dividendos indicados arriba (Columnas: Ticker, Bruto, Ret. Origen, Ret. Destino, Neto). INCLUYE UNA FILA FINAL DE TOTALES AL PIE DE LA TABLA. Usa un estilo corporativo sencillo: <table style="width:100%; border-collapse:collapse; margin-top:10px; margin-bottom:20px;" border="1">...</table> con encabezados y pies con letras negra, roja o azul y fondo gris].
-
+            
             <h3>2. INSTRUCCIONES PARA DECLARAR VENTA DE ACCIONES</h3>
             <p>Indica la sección y las CASILLAS correspondientes en Renta Web. Aconseja brevemente sobre la agrupación de operaciones.</p>
             [AQUÍ DEBES GENERAR OTRA TABLA HTML con las operaciones de venta de acciones desglosadas arriba (Columnas: Fecha compra, Fecha venta, Acción, Importe Compra, Importe Venta, Plusvalía/Pérdida). INCLUYE UNA FILA FINAL DE TOTALES AL PIE DE LA TABLA separando Ganancias y Pérdidas. Aplica el mismo estilo de tabla que en dividendos].
@@ -1241,6 +1255,7 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                              <th className="p-2 text-right border-b border-slate-700 text-red-400">Pérdida<br/><span className="text-[7px] opacity-60 font-normal">(Precio)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 border-l border-slate-700/50 bg-slate-800/30 font-bold text-slate-200">Res. SIN Div<br/><span className="text-[7px] opacity-60 font-normal">(Ing - Pérd)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 text-blue-400">Dividendos<br/><span className="text-[7px] opacity-60 font-normal">(Cobrados)</span></th>
+                             <th className="p-2 text-right border-b border-slate-700 text-yellow-500">Gtos. Custodia<br/><span className="text-[7px] opacity-60 font-normal">(Deducibles)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 bg-slate-800/30 font-bold text-white">Res. CON Div<br/><span className="text-[7px] opacity-60 font-normal">(+ Divs)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 text-purple-300 w-16">% Impto.<br/><span className="text-[7px] opacity-60 font-normal">(Tasa)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 text-purple-400">Impuestos<br/><span className="text-[7px] opacity-60 font-normal">(s/ Sin Div)</span></th>
@@ -1255,9 +1270,10 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                              <th className="p-2 text-right border-b border-slate-700 bg-orange-900/10 text-orange-400 w-24">4do AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 bg-orange-600/20 text-yellow-500 font-black border-l border-orange-500/30 w-32">PENDIENTE<br/><span className="text-[7px] opacity-60 font-normal">(Resta)</span></th>
                          </tr>
+
                      </thead>
                      <tbody className="divide-y divide-slate-800 font-mono text-xs">{yearsToShow.map(year => { 
-                         const d = resultsData[year] || { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, lossPrice:0, resNoDiv:0, resWithDiv:0, taxRate:19, tax:0, accumulated:0, fees:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0, comp1:0, comp2:0, comp3:0, comp4:0, compRest:0 }; 
+                         const d = resultsData[year] || { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, custodyFees:0, lossPrice:0, resNoDiv:0, resWithDiv:0, taxRate:19, tax:0, accumulated:0, fees:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0, comp1:0, comp2:0, comp3:0, comp4:0, compRest:0 };
                          return ( 
                              <tr key={year} className={`hover:bg-slate-900/40 transition-colors ${d.locked ? 'opacity-70' : ''}`}>
                                  <td className="p-2 text-center bg-slate-900 sticky left-0 z-20 border-r border-slate-800"><input type="checkbox" checked={d.locked} onChange={()=>toggleLock(year)} className="w-3 h-3 accent-red-500 cursor-pointer" /></td>
@@ -1267,6 +1283,7 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                                  <td className="p-2"><input type="number" step="0.01" value={d.lossPrice} onChange={e=>handleEdit(year, 'lossPrice', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-red-500 outline-none" /></td>
                                  <td className="p-2 border-l border-slate-800/50 bg-slate-900/20"><input type="number" step="0.01" value={d.resNoDiv} onChange={e=>handleEdit(year, 'resNoDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resNoDiv >=0 ? 'text-slate-200':'text-red-400'}`} /></td>
                                  <td className="p-2"><input type="number" step="0.01" value={d.dividends} onChange={e=>handleEdit(year, 'dividends', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-blue-400 outline-none" /></td>
+                                 <td className="p-2 border-r border-slate-800/50"><input type="number" step="0.01" value={d.custodyFees || 0} onChange={e=>handleEdit(year, 'custodyFees', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-yellow-500 outline-none" /></td>
                                  <td className="p-2 bg-slate-900/20"><input type="number" step="0.01" value={d.resWithDiv} onChange={e=>handleEdit(year, 'resWithDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resWithDiv >=0 ? 'text-white':'text-red-400'}`} /></td>
                                  <td className="p-2 bg-slate-900/10"><input type="number" step="0.1" value={d.taxRate !== undefined ? d.taxRate : 19} onChange={e=>handleEdit(year, 'taxRate', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-purple-300 outline-none" /></td>
                                  <td className="p-2"><input type="number" step="0.01" value={d.tax} onChange={e=>handleEdit(year, 'tax', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-purple-400 font-bold outline-none" /></td>
@@ -1285,7 +1302,7 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                              </tr> 
                          ); 
                      })}
-                     <tr className="bg-slate-900 border-t-2 border-slate-700 text-white font-bold text-xs shadow-xl"><td colSpan="3" className="p-3 text-right text-[10px] uppercase text-slate-500 tracking-widest bg-slate-900 sticky left-0 border-r border-slate-800">Total Global: <span className="text-white ml-2">{formatN(totals.soldCount, 0)} Op.</span></td><td className="p-3 text-right text-green-500">{formatMoney(totals.profitPrice, baseCurrency)}</td><td className="p-3 text-right text-red-500">{formatMoney(totals.lossPrice, baseCurrency)}</td><td className="p-3 text-right text-slate-300">{formatMoney(totals.resNoDiv, baseCurrency)}</td><td className="p-3 text-right text-blue-400">{formatMoney(totals.dividends, baseCurrency)}</td><td className="p-3 text-right text-white text-sm">{formatMoney(totals.resWithDiv, baseCurrency)}</td><td className="p-3 bg-slate-950"></td><td className="p-3 text-right text-purple-400">{formatMoney(totals.tax, baseCurrency)}</td><td className="p-3 bg-slate-950"></td><td className="p-3 bg-[#11151d]"></td><td className="p-3 text-right text-slate-500 bg-[#11151d]">{formatMoney(totals.fees, baseCurrency)}</td><td className="p-3 bg-[#11151d]"></td><td className="p-3 text-right text-blue-200 bg-[#11151d]">{formatMoney(totals.rentaBase, baseCurrency)}</td><td colSpan="5" className="bg-[#11151d]"></td></tr></tbody></table>
+                     <tr className="bg-slate-900 border-t-2 border-slate-700 text-white font-bold text-xs shadow-xl"><td colSpan="3" className="p-3 text-right text-[10px] uppercase text-slate-500 tracking-widest bg-slate-900 sticky left-0 border-r border-slate-800">Total Global: <span className="text-white ml-2">{formatN(totals.soldCount, 0)} Op.</span></td><td className="p-3 text-right text-green-500">{formatMoney(totals.profitPrice, baseCurrency)}</td><td className="p-3 text-right text-red-500">{formatMoney(totals.lossPrice, baseCurrency)}</td><td className="p-3 text-right text-slate-300">{formatMoney(totals.resNoDiv, baseCurrency)}</td><td className="p-3 text-right text-blue-400">{formatMoney(totals.dividends, baseCurrency)}</td><td className="p-3 text-right text-yellow-500 border-r border-slate-800/50">{formatMoney(totals.custodyFees, baseCurrency)}</td><td className="p-3 text-right text-white text-sm">{formatMoney(totals.resWithDiv, baseCurrency)}</td><td className="p-3 bg-slate-950"></td><td className="p-3 text-right text-purple-400">{formatMoney(totals.tax, baseCurrency)}</td><td className="p-3 bg-slate-950"></td><td className="p-3 bg-[#11151d]"></td><td className="p-3 text-right text-slate-500 bg-[#11151d]">{formatMoney(totals.fees, baseCurrency)}</td><td className="p-3 bg-[#11151d]"></td><td className="p-3 text-right text-blue-200 bg-[#11151d]">{formatMoney(totals.rentaBase, baseCurrency)}</td><td colSpan="5" className="bg-[#11151d]"></td></tr></tbody></table>
              </div>
              <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-6 flex flex-col md:flex-row gap-6">
                  <div className="flex-1"><h4 className="text-sm font-bold text-orange-400 mb-3 flex items-center gap-2"><Icons.HelpCircle size={16}/> Información Fiscal: Compensación de Pérdidas (España)</h4><div className="text-[11px] text-slate-400 space-y-3 leading-relaxed text-justify"><p><strong className="text-white">Regla 1: Año en Curso.</strong> Las pérdidas por ventas de acciones (Ganancias y Pérdidas Patrimoniales - GPP) se compensan primero con las ganancias del mismo tipo. Si el saldo sigue siendo negativo, se puede compensar con hasta el <strong>25%</strong> del saldo positivo de dividendos e intereses (Rendimientos Capital Mobiliario - RCM).</p><p><strong className="text-white">Regla 2: 4 Años Siguientes.</strong> Si tras lo anterior queda un saldo negativo (pérdida pendiente), se lleva a los 4 años siguientes para compensarse en este orden obligatorio:</p><ul className="list-disc list-inside pl-2 space-y-1"><li><strong className="text-blue-400">1º Contra Ganancias Patrimoniales:</strong> Se resta de los beneficios de futuras ventas de acciones de esos años (Sin límite).</li><li><strong className="text-blue-400">2º Contra Capital Mobiliario:</strong> Si aún sobra pérdida, se resta de los dividendos de esos años (Límite 25%).</li></ul><p className="mt-2 text-slate-500 italic border-t border-slate-800 pt-2">(*) Verificar casilla "Pendiente de compensación ejercicios anteriores" en el apartado <strong>Base Imponible del Ahorro</strong> del Modelo 100.</p></div></div>
@@ -4408,7 +4425,7 @@ const getMarketStatus = (p) => {
     const [sellItem, setSellItem] = useState(null);
     const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
 
-    const [form, setForm] = useState({ ticker: '', name: '', group: '', notes: '', customOrder: '', isIndex: false, indexDivisor: 1, shares: 0, buyPrice: 0, buyDate: '', stockCurrency: baseCurrency, buyFx: 1, fees: 0, adjustments: 0, feesIncludedInPrice: false, buyPE: 0, annualDividend: 0, sellPrice: 0, sellDate: '', sellFx: 1, sellFees: 0, sellAdjustments: 0, sellFeesIncludedInPrice: false, currentPE: 0, dividends: [], lots: [], targetPrice: 0, stopLossPrice: 0 });
+    const [form, setForm] = useState({ ticker: '', name: '', group: '', notes: '', customOrder: '', isIndex: false, indexDivisor: 1, shares: 0, buyPrice: 0, buyDate: '', stockCurrency: baseCurrency, buyFx: 1, fees: 0, adjustments: 0, feesIncludedInPrice: false, buyPE: 0, annualDividend: 0, sellPrice: 0, sellDate: '', sellFx: 1, sellFees: 0, sellAdjustments: 0, sellFeesIncludedInPrice: false, currentPE: 0, dividends: [], custodyFees: [], lots: [], targetPrice: 0, stopLossPrice: 0 });
     const [sellForm, setSellForm] = useState({ sharesToSell: 0, sellPrice: 0, sellDate: new Date().toISOString().slice(0,10), sellFx: 1, sellFees: 0, sellAdjustments: 0, sellFeesIncludedInPrice: false });
 
     const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
@@ -5782,7 +5799,7 @@ const handleSellSubmit = () => {
                                 <th className={`py-2 px-2 cursor-pointer group bg-slate-900 border-r border-b border-slate-800 min-w-[160px] sticky top-0 left-10 z-[100] ${sortConfig.key==='value'?'text-white bg-slate-800':''}`} onClick={()=>requestSort('value')}>
                                     <div className="flex items-center justify-between w-full">
                                         <div className="flex items-center gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 ${sortConfig.key==='value'?'opacity-100':''}`}/><span>Valor {sortConfig.key==='value' && (sortConfig.direction==='asc'?'▲':'▼')}</span></div>
-                                        <button onClick={(e) => { e.stopPropagation(); setEditingId(null); setForm({ ticker:'', name:'', group: '', notes: '', customOrder:'', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:baseCurrency, buyFx:1, fees:0, adjustments:0, feesIncludedInPrice: false, buyPE:0, annualDividend:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, sellFeesIncludedInPrice: false, currentPE:0, dividends: [], lots:[], targetPrice: 0, stopLossPrice: 0 }); setShowDivBreakdown(false); setIsModalOpen(true); }} className="bg-blue-600 hover:bg-blue-500 text-white py-1 px-2 rounded border border-white/20 shadow-lg flex items-center gap-1 active:scale-95 transition-all"><Icons.Plus size={10}/><span className="text-[8px] font-black tracking-tighter">APUNTE</span></button>
+                                        <button onClick={(e) => { e.stopPropagation(); setEditingId(null); setForm({ ticker:'', name:'', group: '', notes: '', customOrder:'', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:baseCurrency, buyFx:1, fees:0, adjustments:0, feesIncludedInPrice: false, buyPE:0, annualDividend:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, sellFeesIncludedInPrice: false, currentPE:0, dividends: [], custodyFees: [], lots:[], targetPrice: 0, stopLossPrice: 0 }); setShowDivBreakdown(false); setIsModalOpen(true); }} className="bg-blue-600 hover:bg-blue-500 text-white py-1 px-2 rounded border border-white/20 shadow-lg flex items-center gap-1 active:scale-95 transition-all"><Icons.Plus size={10}/><span className="text-[8px] font-black tracking-tighter">APUNTE</span></button> 
                                     </div>
                                 </th>
                                 <th className={`py-2 px-2 min-w-[20px] text-center cursor-pointer border-r border-b border-slate-800 bg-slate-800 sticky top-0 z-[90] ${sortConfig.key==='customOrder'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('customOrder')}>Ord {sortConfig.key==='customOrder' && (sortConfig.direction==='asc'?'▲':'▼')}</th>
@@ -6594,6 +6611,27 @@ const handleSellSubmit = () => {
                                                 </table>
                                             </div>
                                         )}
+
+           
+                                       {/* NUEVO SUBPANEL: GASTOS DE CUSTODIA */}
+                                       <div className="mt-4 border-t border-yellow-500/30 pt-3">
+                                            <div className="flex justify-between items-center mb-2">
+                                                <h5 className="text-[10px] uppercase font-bold text-slate-400">Gastos Administración / Custodia</h5>
+                                                <button onClick={() => setForm({...form, custodyFees: [...(form.custodyFees||[]), {id: Date.now(), date: new Date().toISOString().slice(0,10), amount: ''}]})} className="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded text-[8px] font-bold shadow transition-colors">+ AÑADIR GASTO</button>
+                                            </div>
+                                            {form.custodyFees && form.custodyFees.length > 0 && (
+                                                <div className="space-y-1 max-h-32 overflow-y-auto custom-scrollbar">
+                                                    {form.custodyFees.map(cf => (
+                                                        <div key={cf.id} className="flex gap-2 items-center bg-slate-900/50 p-1 rounded border border-slate-700">
+                                                            <input type="date" value={cf.date} onChange={e => { const newCf = form.custodyFees.map(x => x.id === cf.id ? {...x, date: e.target.value} : x); setForm({...form, custodyFees: newCf}); }} className="w-1/2 bg-slate-950 border border-slate-800 text-white text-[10px] p-1 rounded focus:border-blue-500 outline-none" />
+                                                            <input type="number" step="0.01" value={cf.amount} onChange={e => { const newCf = form.custodyFees.map(x => x.id === cf.id ? {...x, amount: parseFloat(e.target.value)||0} : x); setForm({...form, custodyFees: newCf}); }} className="w-1/2 bg-slate-950 border border-slate-800 text-white text-[10px] text-right p-1 rounded focus:border-blue-500 outline-none" placeholder="Importe" />
+                                                            <button onClick={() => setForm({...form, custodyFees: form.custodyFees.filter(x => x.id !== cf.id)})} className="text-red-400 hover:text-red-300 p-1"><Icons.Trash2 size={12}/></button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                       </div>    
+
                                     </div>
                                 ); 
                             })()}
