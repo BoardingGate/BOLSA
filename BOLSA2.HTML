@@ -8129,6 +8129,76 @@ const DependencyGraph = ({ data, onClose }) => {
     );
 };
 
+const handleCribado = async () => {
+        const validTickers = cribadoTickers.filter(t => t.trim() !== '');
+        if (validTickers.length < 2) {
+            return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce al menos 2 tickers para comparar.', type: 'info' });
+        }
+        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key. Configúrala en la pestaña Ajustes.', type: 'error' });
+
+        setIsCribadoLoading(true);
+        setCribadoResult(null);
+        
+        try {
+            const today = new Date().toLocaleString('es-ES');
+            const prompt = `ROL: ANALISTA SENIOR BURSÁTIL DE WALL STREET.
+            FECHA: ${today}.
+            
+            TAREA: Realiza un "Cribado Comparativo" exhaustivo entre las siguientes empresas: ${validTickers.join(', ')}.
+            Debes determinar cuál es la mejor opción de inversión actualmente.
+
+            PROTOCOLO DE FIABILIDAD OBLIGATORIO:
+            1. Usa google_search para buscar datos actualizados ANTES de responder.
+            2. Cada dato numérico DEBE ir con su fuente como enlace HTML clicable: [Fuente: <a href="..." target="_blank">Nombre</a>].
+            3. Añade SIEMPRE breves explicaciones didácticas de cualquier concepto técnico bursátil (<span style="font-size:10px; font-style:italic; color:#666;">explicación</span>).
+
+            ESTRUCTURA DEL INFORME (En formato HTML limpio, usando <h3>, <h4>, <table>, <ul>, <p>, <strong>):
+            
+            1. PREÁMBULO COMERCIAL: Presenta brevemente a cada empresa (a qué se dedica, producto, mercado, tamaño, posición en su sector).
+            2. EVALUACIÓN POR CATEGORÍAS (Puntúa cada una de 1 a 100 para cada empresa, explica el porqué, da los datos reales encontrados y links a fuentes):
+               - Fundamentales (PER, ROI, Deuda, etc.)
+               - Valor Intrínseco y Margen de Seguridad
+               - Momentum de Mercado (Fuerza de la tendencia)
+               - Crecimiento Futuro (Estimaciones de analistas)
+               - Riesgos de Cisne Negro (Resiliencia macroeconómica extrema)
+               - Análisis Técnico (Soportes, Resistencias, Medias móviles)
+            3. TABLA RESUMEN DE PUNTUACIONES: Una tabla HTML comparativa con las puntuaciones de cada categoría (columnas para cada empresa) y la MEDIA FINAL (Puntuación Total / 100).
+            4. CONCLUSIÓN Y GANADOR: Un veredicto fuertemente razonado indicando cuál es la MEJOR OPCIÓN para invertir hoy, con sus puntos fuertes y débiles definitivos.
+
+            IMPORTANTE: Responde ÚNICAMENTE con el código HTML del análisis. Sin bloques de markdown ni comillas triples.`;
+
+            const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
+            setCribadoResult(cleanAIResponse(res));
+        } catch (error) {
+            setStatusModal({ isOpen: true, title: 'Error en Cribado', msg: error.message, type: 'error' });
+        } finally {
+            setIsCribadoLoading(false);
+        }
+    };
+
+    const handlePrintCribado = () => {
+        const w = window.open('', '', 'height=800,width=900');
+        w.document.write(`<html><head><title>Cribado Comparativo iA</title><style>
+            body{font-family:sans-serif;padding:30px;font-size:12px;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+            h1{color:#1e3a8a;border-bottom:3px solid #1e3a8a;padding-bottom:10px;text-transform:uppercase;}
+            h3{color:#047857;border-bottom:2px solid #a7f3d0;padding-bottom:5px;margin-top:25px;text-transform:uppercase;font-size:14px;}
+            h4{color:#b45309;margin-top:15px;margin-bottom:5px;}
+            table{width:100%;border-collapse:collapse;margin:15px 0;font-size:11px;box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);}
+            th,td{border:1px solid #94a3b8;padding:10px;text-align:center;}
+            th{background-color:#047857 !important;color:white !important;font-weight:bold;text-transform:uppercase;}
+            a{color:#2563eb;text-decoration:none;font-weight:bold;}
+            .meta{font-size:10px;color:#555;margin-bottom:20px;background:#f8fafc;padding:10px;border-left:4px solid #1e3a8a;}
+            span[style*="font-size:10px"]{background:#f1f5f9;padding:2px 4px;border-radius:4px;border:1px dashed #cbd5e1;display:inline-block;margin-top:2px;}
+        </style></head><body>
+        <h1>CRIBADO COMPARATIVO DE INVERSIÓN</h1>
+        <div class="meta"><b>TICKERS ANALIZADOS:</b> ${cribadoTickers.filter(t=>t.trim()!=='').join(' vs ')}<br/><b>FECHA:</b> ${new Date().toLocaleString()}<br/><b>MODELO IA:</b> ${aiModel}</div>
+        <div>${cribadoResult}</div>
+        </body></html>`);
+        w.document.close();
+        setTimeout(() => w.print(), 500);
+    };
+
+
 const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, setPortfolio, initialTicker, aiModel, setAiModel, availableModels, gScriptUrl }) => {
     const [activeSubTab, setActiveSubTab] = useState('estudio');
 
@@ -8170,6 +8240,9 @@ const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, setPortfolio, init
     const [analyzingNews, setAnalyzingNews] = useState(false);
     const [customNewsTopic, setCustomNewsTopic] = useState('');
 
+    const [cribadoTickers, setCribadoTickers] = useState(['', '', '']);
+    const [isCribadoLoading, setIsCribadoLoading] = useState(false);
+    const [cribadoResult, setCribadoResult] = useState(null);
 
     const handleAddCustomQuestion = () => {
         const trimmed = newCustomQuestion.trim();
@@ -9460,7 +9533,8 @@ const runScreener = async () => {
                 <div className="flex gap-2 bg-slate-900 p-1 rounded-xl border border-slate-800 w-fit shadow-lg shrink-0">
                     <button onClick={() => setActiveSubTab('estudio')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'estudio' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Estudio Individual</button>
                     <button onClick={() => setActiveSubTab('rastreo')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'rastreo' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Rastreo de Mercado</button>
-                </div>
+                    <button onClick={() => setActiveSubTab('cribado')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'cribado' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Cribado</button>
+            </div>
                 
                 <div className="bg-slate-900 px-3 h-[44px] rounded-xl border border-purple-500/30 flex items-center gap-2 shadow-lg shrink-0 md:ml-auto" title="Modelo Inteligencia Artificial">
                     <Icons.Wand size={14} className="text-purple-400"/>
@@ -9471,7 +9545,7 @@ const runScreener = async () => {
             </div>
 
 
-           {activeSubTab === 'estudio' ? (
+           {activeSubTab === 'estudio' && (
                 <div className="flex flex-col gap-6 fade-in max-w-6xl mx-auto w-full pb-10">
 
                     <div className="flex flex-col gap-6 shrink-0 bg-slate-900/50 p-6 rounded-2xl border border-slate-800 shadow-xl">
@@ -9800,9 +9874,12 @@ const runScreener = async () => {
                         </div>
                     )}
 
-                </div>
-            ) : (
+            </div>
+            )}
+
+            {activeSubTab === 'rastreo' && (
                 <div className="flex flex-col gap-6 max-w-7xl mx-auto w-full pb-10">
+
                     <div className="bg-slate-900/50 p-6 rounded-3xl border border-slate-800 space-y-8 shadow-2xl">
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                             <div className="flex flex-col gap-2">
@@ -9930,6 +10007,86 @@ const runScreener = async () => {
                     )}
                 </div>
             )}
+
+            {activeSubTab === 'cribado' && (
+                <div className="flex flex-col gap-6 fade-in max-w-6xl mx-auto w-full pb-10">
+                    <div className="bg-slate-900/50 p-6 rounded-2xl border border-slate-800 shadow-xl">
+                        <h3 className="text-lg font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-2 mb-4 border-b border-slate-800 pb-2">
+                            <Icons.Target size={20}/> Batalla de Activos (Cribado iA)
+                        </h3>
+                        <p className="text-xs text-slate-400 mb-6">Introduce hasta 3 tickers para que la IA los enfrente en un análisis exhaustivo. Puntuará sus fundamentales, situación técnica, riesgos y valor intrínseco, dictaminando la mejor opción de compra mediante un ranking global.</p>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                            {[0, 1, 2].map(i => (
+                                <div key={i} className="relative">
+                                    <Icons.Search className="absolute left-3 top-3.5 text-slate-500" size={18} />
+                                    <input 
+                                        type="text" 
+                                        value={cribadoTickers[i]} 
+                                        onChange={e => {
+                                            const newTickers = [...cribadoTickers];
+                                            newTickers[i] = e.target.value.toUpperCase();
+                                            setCribadoTickers(newTickers);
+                                        }} 
+                                        placeholder={`Ticker ${i + 1} ${i < 2 ? '(Obligatorio)' : '(Opcional)'}`} 
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-white font-bold tracking-widest text-sm focus:border-emerald-500 outline-none transition-colors" 
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                        
+                        <div className="flex gap-4">
+                            <button 
+                                onClick={handleCribado} 
+                                disabled={isCribadoLoading || cribadoTickers.filter(t => t.trim() !== '').length < 2} 
+                                className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white px-8 py-4 rounded-xl font-black flex items-center justify-center gap-3 shadow-lg shadow-emerald-900/20 transition-all text-sm uppercase tracking-widest"
+                            >
+                                {isCribadoLoading ? <Icons.Loader className="animate-spin" size={20} /> : <Icons.Wand size={20} />} 
+                                {isCribadoLoading ? 'ANALIZANDO Y PUNTUANDO ACTIVO...' : 'SELECCIONAR LA MEJOR OPCIÓN'}
+                            </button>
+                            <button 
+                                onClick={() => { setCribadoTickers(['', '', '']); setCribadoResult(null); }} 
+                                className="bg-slate-800 px-6 rounded-xl font-bold text-slate-300 hover:text-white hover:bg-slate-700 transition-colors text-xs border border-slate-700"
+                            >
+                                LIMPIAR
+                            </button>
+                        </div>
+                    </div>
+
+                    {cribadoResult && (
+                        <div className="mt-2 shadow-2xl rounded-2xl overflow-hidden fade-in relative border border-emerald-500/30">
+                            <div className="bg-slate-800 p-4 flex justify-between items-center border-b border-emerald-500/30">
+                                <span className="text-white text-xs font-black uppercase tracking-widest flex items-center gap-2">
+                                    <Icons.Award size={16} className="text-emerald-400" />
+                                    Veredicto del Cribado
+                                    <span className="text-emerald-400/70 text-[9px] font-normal ml-2">· Puntuación sobre 100</span>
+                                </span>
+                                <button onClick={handlePrintCribado} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-xs font-bold flex gap-2 items-center transition-colors shadow-lg">
+                                    <Icons.ExternalLink size={14} /> IMPRIMIR / PDF
+                                </button>
+                            </div>
+                            
+                            <div className="bg-white p-6 md:p-10">
+                                <style dangerouslySetInnerHTML={{__html: `
+                                    .cribado-container * { color: #0f172a !important; }
+                                    .cribado-container h3 { color: #047857 !important; font-size: 1.1rem; font-weight: 900; margin-top: 1.5rem; margin-bottom: 0.8rem; border-bottom: 2px solid #a7f3d0; padding-bottom: 4px; text-transform: uppercase; }
+                                    .cribado-container h4 { color: #b45309 !important; font-weight: 700; margin-top: 1rem; margin-bottom: 0.4rem; }
+                                    .cribado-container p { margin-bottom: 1rem; text-align: justify; line-height: 1.6; }
+                                    .cribado-container li { margin-bottom: 0.5rem; line-height: 1.5; }
+                                    .cribado-container table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 1.5rem 0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+                                    .cribado-container th { background: #047857 !important; color: white !important; border: 1px solid #065f46; padding: 10px; text-align: center; font-weight: bold; text-transform: uppercase; }
+                                    .cribado-container td { border: 1px solid #cbd5e1; padding: 10px; text-align: center; }
+                                    .cribado-container a { color: #2563eb !important; text-decoration: underline !important; font-weight: bold; }
+                                    .cribado-container a:hover { color: #1d4ed8 !important; }
+                                    .cribado-container span[style*="font-size:10px"], .cribado-container span[style*="font-size: 10px"] { background: #f1f5f9; padding: 2px 4px; border-radius: 4px; border: 1px dashed #cbd5e1; display: inline-block; margin-top: 2px; }
+                                `}} />
+                                <div className="cribado-container" dangerouslySetInnerHTML={{ __html: cribadoResult }}></div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+            {/* ---> AQUÍ TERMINA EL CÓDIGO DEL PASO 4 <--- */}
 
             <Modal isOpen={isProjModalOpen} title={`Proyección: ${ticker}`} onClose={() => setIsProjModalOpen(false)} size="sm">
                 <div className="space-y-4 p-2">
