@@ -4614,24 +4614,37 @@ const getMarketStatus = (p) => {
     const [customNewsTopic, setCustomNewsTopic] = useState('');
 
 
-    const fetchNews = async (type) => {
-        if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key para consultar noticias.', type: 'error' });
+     const fetchNews = async (type) => {
+        const isAuto = type === 'portfolio_auto';
+
+        if (!apiKey) {
+            if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key para consultar noticias.', type: 'error' });
+            return;
+        }
+
         setIsNewsSelectionModalOpen(false); 
-        setAnalyzingNews(true); 
-        setNewsResult(null);
+        
+        if (!isAuto) {
+            setAnalyzingNews(true); 
+            setNewsResult(null);
+        }
 
         try {
             let prompt = "";
             const today = new Date().toLocaleString('es-ES');
 
-            if (type === 'portfolio' || type === 'portfolio_auto') {
-                const sourcePortfolio = type === 'portfolio_auto' ? portfolio.filter(p => !p.sellDate) : visiblePortfolio;
+            if (type === 'portfolio' || isAuto) {
+                const sourcePortfolio = isAuto ? portfolio.filter(p => !p.sellDate) : visiblePortfolio;
                 const uniqueAssets = Array.from(new Set(sourcePortfolio.map(p => `${p.name} (${p.ticker})`))).slice(0, 15);
-                if (uniqueAssets.length === 0) throw new Error("No hay activos para analizar.");
                 
-                prompt = `Actúa como un analista jefe de Bloomberg. FECHA ACTUAL: ${today}. Realiza una búsqueda activa en internet de EVENTOS CLAVE Y NOTICIAS de los ÚLTIMOS 7 DÍAS y de los PRÓXIMOS DÍAS para las siguientes empresas: ${uniqueAssets.join(', ')}. 
-                OBLIGATORIO: Busca e incluye explícitamente fechas de presentación de resultados (Earnings), fechas de pago de dividendos (Ex-Dividend), y cualquier noticia reciente que les afecte directa o indirectamente. 
-                Agrupa las noticias/eventos por empresa usando <h3>. Descarta las que no tengan eventos o noticias relevantes. Usa listas <ul> y <li>. Incluye la URL de la fuente original usando la etiqueta HTML <a href="..." target="_blank">Leer fuente</a>. Usa SOLO formato HTML limpio. Responde en Español.`;
+                if (uniqueAssets.length === 0) {
+                    if (isAuto) return;
+                    throw new Error("No hay activos para analizar.");
+                }
+                
+                prompt = `Actúa como un analista jefe de Bloomberg. FECHA ACTUAL: ${today}. Realiza una búsqueda activa en internet de EVENTOS CLAVE Y NOTICIAS de los ÚLTIMOS 7 DÍAS y PRÓXIMAS SEMANAS para las empresas: ${uniqueAssets.join(', ')}. 
+                REGLA CRÍTICA: Debes buscar e indicar EXPLÍCITAMENTE LAS FECHAS EXACTAS (día y mes) de la próxima presentación de resultados (Earnings) y el próximo Ex-Dividend o pago de dividendos.
+                Agrupa los eventos por empresa usando <h3>. Descarta las empresas que no tengan eventos relevantes a la vista. Usa listas <ul> y <li>, destacando SIEMPRE las fechas en negrita. Incluye la URL de la fuente (<a href="..." target="_blank">Leer fuente</a>). Usa SOLO HTML limpio. Responde en Español.`;
             } else if (type === 'general') {
                 prompt = `Actúa como un analista jefe de Bloomberg. FECHA ACTUAL: ${today}. Realiza una búsqueda activa en internet del panorama MACROECONÓMICO Y BURSÁTIL MUNDIAL de las ÚLTIMAS 48 HORAS. Céntrate en: Decisiones de bancos centrales, inflación, datos de empleo importantes, y grandes movimientos de índices mundiales. Estructura por temas usando <h3>. Usa listas <ul> y <li>. Incluye la URL de la fuente original. Usa SOLO formato HTML limpio. Responde en Español.`;
             } else if (type === 'custom') {
@@ -4648,13 +4661,16 @@ const getMarketStatus = (p) => {
             setNewsResult(cleanHtml);
             setIsNewsModalOpen(true); 
         } catch (e) {
-            if (type !== 'portfolio_auto') {
+            if (!isAuto) {
                 setInfoModal({ isOpen: true, title: 'Fallo en Búsqueda', msg: e.message, type: 'error' });
             }
         } finally {
-            setAnalyzingNews(false); 
+            if (!isAuto) {
+                setAnalyzingNews(false); 
+            }
         }
     };
+
 
     useEffect(() => {
         if (showEventsCheck && apiKey && isAppReady && portfolio.length > 0) {
