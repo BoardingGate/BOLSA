@@ -3715,6 +3715,9 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCu
     const [isFetchingDividendsInfo, setIsFetchingDividendsInfo] = useState(false);
     const [dividendsInfoData, setDividendsInfoData] = useState(null); 
 
+    const [showEventsCheck, setShowEventsCheck] = usePersistentState('bg_show_events_check', false);
+    const [lastEventsFetchDate, setLastEventsFetchDate] = usePersistentState('bg_last_events_fetch', '');
+
     const updateSingleItem = async (item) => {
         if (!item || updatingSingleId) return;
         const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
@@ -4610,6 +4613,7 @@ const getMarketStatus = (p) => {
     const [isNewsSelectionModalOpen, setIsNewsSelectionModalOpen] = useState(false);
     const [customNewsTopic, setCustomNewsTopic] = useState('');
 
+
     const fetchNews = async (type) => {
         if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key para consultar noticias.', type: 'error' });
         setIsNewsSelectionModalOpen(false); 
@@ -4620,10 +4624,14 @@ const getMarketStatus = (p) => {
             let prompt = "";
             const today = new Date().toLocaleString('es-ES');
 
-            if (type === 'portfolio') {
-                const uniqueAssets = Array.from(new Set(visiblePortfolio.map(p => `${p.name} (${p.ticker})`))).slice(0, 15);
-                if (uniqueAssets.length === 0) throw new Error("No hay activos visibles.");
-                prompt = `Actúa como un analista jefe de Bloomberg. FECHA ACTUAL: ${today}. Realiza una búsqueda activa en internet de las noticias más críticas de los ÚLTIMOS 7 DÍAS para las siguientes empresas: ${uniqueAssets.join(', ')}. Agrupa las noticias por empresa usando <h3>. Descarta las que no tengan noticias relevantes. Usa listas <ul> y <li>. Incluye la URL de la fuente original. Usa SOLO formato HTML limpio. Responde en Español.`;
+            if (type === 'portfolio' || type === 'portfolio_auto') {
+                const sourcePortfolio = type === 'portfolio_auto' ? portfolio.filter(p => !p.sellDate) : visiblePortfolio;
+                const uniqueAssets = Array.from(new Set(sourcePortfolio.map(p => `${p.name} (${p.ticker})`))).slice(0, 15);
+                if (uniqueAssets.length === 0) throw new Error("No hay activos para analizar.");
+                
+                prompt = `Actúa como un analista jefe de Bloomberg. FECHA ACTUAL: ${today}. Realiza una búsqueda activa en internet de EVENTOS CLAVE Y NOTICIAS de los ÚLTIMOS 7 DÍAS y de los PRÓXIMOS DÍAS para las siguientes empresas: ${uniqueAssets.join(', ')}. 
+                OBLIGATORIO: Busca e incluye explícitamente fechas de presentación de resultados (Earnings), fechas de pago de dividendos (Ex-Dividend), y cualquier noticia reciente que les afecte directa o indirectamente. 
+                Agrupa las noticias/eventos por empresa usando <h3>. Descarta las que no tengan eventos o noticias relevantes. Usa listas <ul> y <li>. Incluye la URL de la fuente original usando la etiqueta HTML <a href="..." target="_blank">Leer fuente</a>. Usa SOLO formato HTML limpio. Responde en Español.`;
             } else if (type === 'general') {
                 prompt = `Actúa como un analista jefe de Bloomberg. FECHA ACTUAL: ${today}. Realiza una búsqueda activa en internet del panorama MACROECONÓMICO Y BURSÁTIL MUNDIAL de las ÚLTIMAS 48 HORAS. Céntrate en: Decisiones de bancos centrales, inflación, datos de empleo importantes, y grandes movimientos de índices mundiales. Estructura por temas usando <h3>. Usa listas <ul> y <li>. Incluye la URL de la fuente original. Usa SOLO formato HTML limpio. Responde en Español.`;
             } else if (type === 'custom') {
@@ -4640,11 +4648,27 @@ const getMarketStatus = (p) => {
             setNewsResult(cleanHtml);
             setIsNewsModalOpen(true); 
         } catch (e) {
-            setInfoModal({ isOpen: true, title: 'Fallo en Búsqueda', msg: e.message, type: 'error' });
+            if (type !== 'portfolio_auto') {
+                setInfoModal({ isOpen: true, title: 'Fallo en Búsqueda', msg: e.message, type: 'error' });
+            }
         } finally {
             setAnalyzingNews(false); 
         }
     };
+
+    useEffect(() => {
+        if (showEventsCheck && apiKey && isAppReady && portfolio.length > 0) {
+            const todayStr = new Date().toISOString().slice(0, 10); // Ej: 2024-03-15
+            if (lastEventsFetchDate !== todayStr) {
+                // Actualiza la fecha para que no vuelva a saltar hoy
+                setLastEventsFetchDate(todayStr); 
+                // Lanza la búsqueda automática
+                fetchNews('portfolio_auto');
+            }
+        }
+    }, [showEventsCheck, lastEventsFetchDate, apiKey, isAppReady, portfolio.length]);
+
+
 
     const handlePrintNews = () => {
         const printWindow = window.open('', '', 'height=800,width=800');
@@ -5653,6 +5677,11 @@ const handleSellSubmit = () => {
                     <div className="flex items-center gap-1.5 bg-slate-900 rounded border border-slate-700 h-8 px-2 ml-2">
                        <input type="checkbox" id="pygModeCheck" checked={pygMode} onChange={(e) => { setPygMode(e.target.checked); if(e.target.checked) setSimplifiedMode(true); }} className="custom-checkbox w-3.5 h-3.5" />
                        <label htmlFor="pygModeCheck" className="text-[9px] font-bold text-slate-400 uppercase cursor-pointer">P y G</label>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 bg-slate-900 rounded border border-slate-700 h-8 px-2 ml-2">
+                       <input type="checkbox" id="showEventsCheck" checked={showEventsCheck} onChange={(e) => setShowEventsCheck(e.target.checked)} className="custom-checkbox w-3.5 h-3.5 accent-blue-500" />
+                       <label htmlFor="showEventsCheck" className="text-[9px] font-bold text-slate-400 uppercase cursor-pointer" title="Analiza automáticamente eventos y dividendos 1 vez al día">Ver Eventos</label>
                    </div>
                   
                     <div className="flex items-center gap-4 bg-slate-900 rounded border border-slate-700 h-8 p-0.5 ml-2">
