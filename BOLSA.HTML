@@ -1612,11 +1612,41 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
 
 
 
-
-const DividendTab = ({ portfolio, setPortfolio, baseCurrency, syncStatus, onManualSync }) => {
+const DividendTab = ({ portfolio, setPortfolio, baseCurrency, syncStatus, onManualSync, apiKey, secondaryApiKey, aiModel }) => {
     const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
     const [showAllHistory, setShowAllHistory] = useState(false);
 
+   const [isFetchingMonths, setIsFetchingMonths] = useState({});
+
+    const handleFetchDivMonths = async (id, ticker) => {
+        if (!apiKey) {
+            alert("⚠️ Configura la API Key en la pestaña Ajustes para usar la IA.");
+            return;
+        }
+        setIsFetchingMonths(prev => ({ ...prev, [id]: true }));
+        try {
+            const prompt = `Busca en internet los meses exactos en los que la empresa con ticker "${ticker}" suele pagar sus dividendos anualmente. Responde ÚNICAMENTE con un JSON que sea un array de números enteros, donde 0 es Enero y 11 es Diciembre. Ejemplo si paga en Marzo, Junio, Septiembre y Diciembre: [2, 5, 8, 11]. Si no paga dividendos o no encuentras datos fiables, devuelve []. Sin texto adicional ni markdown.`;
+            
+            const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
+            const json = extractJSON(res);
+            
+            if (Array.isArray(json)) {
+                // Lo guardamos directamente en la ficha de la acción de la cartera
+                setPortfolio(prev => prev.map(item => 
+                    item.id === id ? { ...item, expectedDivMonths: json } : item
+                ));
+            } else {
+                throw new Error("Formato devuelto inválido");
+            }
+        } catch (e) {
+            console.error("Error obteniendo meses de dividendo:", e);
+            alert(`No se pudieron obtener los meses para ${ticker}. Se mantendrá la previsión del año anterior.`);
+        } finally {
+            setIsFetchingMonths(prev => ({ ...prev, [id]: false }));
+        }
+    };
+
+    
     const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
 
     const formatDateSimple = (d) => {
@@ -1886,10 +1916,25 @@ const handlePrint = () => {
                             const p = portfolio.find(x => x.id === r.id); const isS = !!p.sellDate; 
                             return ( 
                                 <tr key={r.id} className="hover:bg-white/5 border-b border-slate-800">
+                                 
                                     <td className="p-2 sticky left-0 bg-slate-950 border-r border-slate-800">
-                                        <div className={`font-bold text-xs ${isS ? 'text-red-400' : 'text-green-400'}`}>{r.name}</div>
-                                        <div className="text-[8px] text-slate-500 font-mono mt-0.5">{r.ticker} <span className="opacity-60">({formatDateSimple(isS?p.sellDate:p.buyDate)})</span></div>
-                                    </td>
+                                       <div className="flex justify-between items-start">
+                                           <div>
+                                               <div className={`font-bold text-xs ${isS ? 'text-red-400' : 'text-green-400'}`}>{r.name}</div>
+                                               <div className="text-[8px] text-slate-500 font-mono mt-0.5">{r.ticker} <span className="opacity-60">({formatDateSimple(isS?p.sellDate:p.buyDate)})</span></div>
+                                           </div>
+                                           {!isS && !showAllHistory && (
+                                               <button 
+                                                   onClick={(e) => { e.stopPropagation(); handleFetchDivMonths(r.id, r.ticker); }}
+                                                   disabled={isFetchingMonths[r.id]}
+                                                   title="Rastrear con IA los meses de pago"
+                                                   className="ml-2 text-blue-400 hover:text-white p-1.5 bg-blue-900/20 hover:bg-blue-600/50 rounded border border-blue-500/30 transition-colors shadow-sm"
+                                               >
+                                                   {isFetchingMonths[r.id] ? <Icons.Loader size={12} className="animate-spin" /> : <Icons.Wand size={12} />}
+                                               </button>
+                                           )}
+                                       </div>
+                                   </td>
                                    
                                     <td className="p-2 bg-yellow-900/5 text-right font-mono space-x-1.5 text-[9px] whitespace-nowrap">
                                         <span className="text-green-300">{formatN(r.n)}</span>|<span className="text-slate-400">{formatN(r.o)}</span>|<span className="text-slate-400">{formatN(r.d)}</span>|<span className="text-white font-bold">{formatN(r.b)}</span>
@@ -1897,9 +1942,11 @@ const handlePrint = () => {
 
 
                                     {r.rowMonths.map((m, i) => {
-                                        const isExpected = !showAllHistory && paymentSchedule[r.id]?.includes(i);
+                                       
+                                        const expectedArray = p.expectedDivMonths !== undefined ? p.expectedDivMonths : (paymentSchedule[r.id] || []);
+                                        const isExpected = !showAllHistory && expectedArray.includes(i);
                                         const hasData = (m.n || m.o || m.d);
-                                        
+
                                         return ( 
                                             <td key={i} 
                                                 className={`p-1 border-l border-slate-800 transition-all duration-300
@@ -10817,7 +10864,7 @@ const App = () => {
                 )}
                       
 
-                {activeTab === 'dividends' && <DividendTab portfolio={portfolio} setPortfolio={updatePortfolio} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} />}
+                {activeTab === 'dividends' && <DividendTab portfolio={portfolio} setPortfolio={updatePortfolio} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} apiKey={apiKey} secondaryApiKey={secondaryApiKey} aiModel={aiModel} />}
                 {activeTab === 'results' && <ResultsTab portfolio={portfolio} resultsData={resultsData} setResultsData={updateResultsData} baseCurrency={baseCurrency} syncStatus={syncStatus} onManualSync={uploadToCloud} apiKey={apiKey} secondaryApiKey={secondaryApiKey} aiModel={aiModel} setAiModel={(val) => updateConfig(setAiModel, val)}  availableModels={availableModels} onOpenConsultas={() => { setOpenConsultasOnLoad(true); setActiveTab('portfolio'); }} />}
 
         
@@ -10856,7 +10903,7 @@ const App = () => {
                 
                
        </main>
-            <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase"><div>BoardingGate 3.3 (Secure PIN)</div><div className="flex gap-4"><span>Estado: {syncStatus === 'synced' ? 'Sincronizado en gDrive' : syncStatus === 'unsaved' ? 'Cambios sin guardar en gDrive' : 'Comprobando...'}</span><span>Ult. Mod. Datos Local: {localTimestamp > 0 ? new Date(localTimestamp).toLocaleTimeString() : 'N/A'}</span></div></footer>
+            <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase"><div>BoardingGate v2026.5.1</div><div className="flex gap-4"><span>Estado: {syncStatus === 'synced' ? 'Sincronizado en gDrive' : syncStatus === 'unsaved' ? 'Cambios sin guardar en gDrive' : 'Comprobando...'}</span><span>Ult. Mod. Datos Local: {localTimestamp > 0 ? new Date(localTimestamp).toLocaleTimeString() : 'N/A'}</span></div></footer>
         </div>
     );
 };
