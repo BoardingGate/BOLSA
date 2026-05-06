@@ -859,20 +859,22 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
         return range; 
     };
 
+
     const handleRecalculate = () => { 
         const newData = { ...resultsData }; 
         const yearsToCalc = getDisplayYears(); 
         let runningAccum = 0; 
         yearsToCalc.forEach(y => { 
-                if (!newData[y]) {
-                    newData[y] = { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, custodyFees:0, lossPrice:0, fees:0, resNoDiv:0, resWithDiv:0, taxRate:19, tax:0, accumulated:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0, comp1: 0, comp2: 0, comp3: 0, comp4: 0, compRest: 0 }; 
-                }
+            if (!newData[y]) {
+                newData[y] = { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, custodyFees:0, lossPrice:0, fees:0, resNoDiv:0, resWithDiv:0, taxRate:19, tax:0, accumulated:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0, comp1: 0, comp2: 0, comp3: 0, comp4: 0, compRest: 0 }; 
+            }
        
-               
             const currentData = newData[y];
 
             if (currentData.locked) { 
-                runningAccum = r2(runningAccum + (parseFloat(currentData.resWithDiv) || 0)); 
+                // CORRECCIÓN: Si está bloqueado, sumar al acumulado el Neto Real (Con Div - Impuestos)
+                const netLocked = r2((parseFloat(currentData.resWithDiv) || 0) - (parseFloat(currentData.tax) || 0));
+                runningAccum = r2(runningAccum + netLocked); 
                 newData[y].accumulated = runningAccum; 
                 return; 
             } 
@@ -901,12 +903,11 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                 yearFees += r2(buyFees + buyAdj + sellFees + sellAdj); 
             }); 
 
-            let yearCustody = 0; // NUEVO
+            let yearCustody = 0; 
             portfolio.forEach(p => { 
                 if (p.dividends && Array.isArray(p.dividends)) { 
                     p.dividends.forEach(d => { if (d.year === y) yearDivs += (parseFloat(d.net) || 0); }); 
                 } 
-                // NUEVO: Sumar gastos de custodia del año
                 if (p.custodyFees && Array.isArray(p.custodyFees)) {
                     p.custodyFees.forEach(cf => { if (new Date(cf.date).getFullYear() === y) yearCustody += (parseFloat(cf.amount) || 0); });
                 }
@@ -914,12 +915,14 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
 
             yearProfitPrice = r2(yearProfitPrice); yearLossPrice = r2(yearLossPrice); yearDivs = r2(yearDivs); yearFees = r2(yearFees); yearCustody = r2(yearCustody);
             const resNoDiv = r2(yearProfitPrice - yearLossPrice); 
-            const resWithDiv = r2(resNoDiv + yearDivs - yearCustody); // Restamos los gastos al resultado final
+            const resWithDiv = r2(resNoDiv + yearDivs - yearCustody); 
             
             const currentTaxRate = currentData.taxRate !== undefined ? parseFloat(currentData.taxRate) : 19;
             const tax = resNoDiv > 0 ? r2(resNoDiv * (currentTaxRate / 100)) : 0; 
             
-            runningAccum = r2(runningAccum + resWithDiv); 
+            // CORRECCIÓN: Restamos el impuesto a "Res. CON Div" para el neto del año y lo sumamos al acumulado
+            const netYear = r2(resWithDiv - tax);
+            runningAccum = r2(runningAccum + netYear); 
 
             const rentaResNoDiv = resNoDiv;
             const rentaAdj = parseFloat(currentData.rentaAdj) || 0;
@@ -946,16 +949,48 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
             
             const currentTaxRate = d.taxRate !== undefined ? parseFloat(d.taxRate) : 19;
 
-            if (field === 'profitPrice' || field === 'lossPrice') { d.resNoDiv = r2(d.profitPrice - d.lossPrice); d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * (currentTaxRate / 100)) : 0; d.resWithDiv = r2(d.resNoDiv + d.dividends); d.accumulated = r2(d.resNoDiv - d.tax); d.rentaResNoDiv = d.resNoDiv; d.rentaBase = r2(d.rentaResNoDiv + (d.rentaAdj || 0)); }
-            if (field === 'dividends' || field === 'custodyFees') { d.resWithDiv = r2(d.resNoDiv + (d.dividends || 0) - (d.custodyFees || 0)); }
-            if (field === 'resNoDiv') { d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * (currentTaxRate / 100)) : 0; d.resWithDiv = r2(d.resNoDiv + d.dividends); d.accumulated = r2(d.resNoDiv - d.tax); d.rentaResNoDiv = d.resNoDiv; d.rentaBase = r2(d.rentaResNoDiv + (d.rentaAdj || 0)); }
-            if (field === 'rentaAdj' || field === 'rentaResNoDiv') { d.rentaBase = r2(d.rentaResNoDiv + d.rentaAdj); }
-            if (field === 'taxRate') { d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * (currentTaxRate / 100)) : 0; d.accumulated = r2(d.resNoDiv - d.tax); }
-            if (['comp1', 'comp2', 'comp3', 'comp4', 'rentaBase', 'profitPrice', 'lossPrice', 'resNoDiv', 'rentaAdj'].includes(field)) { if (d.rentaBase < 0) { const c1 = parseFloat(d.comp1) || 0; const c2 = parseFloat(d.comp2) || 0; const c3 = parseFloat(d.comp3) || 0; const c4 = parseFloat(d.comp4) || 0; d.compRest = r2(d.rentaBase + c1 + c2 + c3 + c4); } else { d.compRest = 0; } } 
+            if (field === 'profitPrice' || field === 'lossPrice') { 
+                d.resNoDiv = r2(d.profitPrice - d.lossPrice); 
+                d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * (currentTaxRate / 100)) : 0; 
+                d.resWithDiv = r2(d.resNoDiv + (d.dividends || 0) - (d.custodyFees || 0)); 
+                d.accumulated = r2(d.resWithDiv - d.tax); // CORREGIDO
+                d.rentaResNoDiv = d.resNoDiv; 
+                d.rentaBase = r2(d.rentaResNoDiv + (d.rentaAdj || 0)); 
+            }
+            if (field === 'dividends' || field === 'custodyFees') { 
+                d.resWithDiv = r2(d.resNoDiv + (d.dividends || 0) - (d.custodyFees || 0)); 
+                d.accumulated = r2(d.resWithDiv - d.tax); // CORREGIDO
+            }
+            if (field === 'resNoDiv') { 
+                d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * (currentTaxRate / 100)) : 0; 
+                d.resWithDiv = r2(d.resNoDiv + (d.dividends || 0) - (d.custodyFees || 0)); 
+                d.accumulated = r2(d.resWithDiv - d.tax); // CORREGIDO
+                d.rentaResNoDiv = d.resNoDiv; 
+                d.rentaBase = r2(d.rentaResNoDiv + (d.rentaAdj || 0)); 
+            }
+            if (field === 'rentaAdj' || field === 'rentaResNoDiv') { 
+                d.rentaBase = r2(d.rentaResNoDiv + d.rentaAdj); 
+            }
+            if (field === 'taxRate') { 
+                d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * (currentTaxRate / 100)) : 0; 
+                d.accumulated = r2(d.resWithDiv - d.tax); // CORREGIDO
+            }
+            if (field === 'tax') {
+                d.accumulated = r2(d.resWithDiv - d.tax); // CORREGIDO
+            }
+            if (['comp1', 'comp2', 'comp3', 'comp4', 'rentaBase', 'profitPrice', 'lossPrice', 'resNoDiv', 'rentaAdj'].includes(field)) { 
+                if (d.rentaBase < 0) { 
+                    const c1 = parseFloat(d.comp1) || 0; const c2 = parseFloat(d.comp2) || 0; const c3 = parseFloat(d.comp3) || 0; const c4 = parseFloat(d.comp4) || 0; 
+                    d.compRest = r2(d.rentaBase + c1 + c2 + c3 + c4); 
+                } else { 
+                    d.compRest = 0; 
+                } 
+            } 
             return { ...prev, [year]: d }; 
         }); 
     };
 
+    
     const toggleLock = (year) => { setResultsData(prev => ({ ...prev, [year]: { ...prev[year], locked: !prev[year].locked } })); };
 
     const yearsToShow = getDisplayYears();
