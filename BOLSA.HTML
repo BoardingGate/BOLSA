@@ -859,20 +859,22 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
         return range; 
     };
 
+
     const handleRecalculate = () => { 
         const newData = { ...resultsData }; 
         const yearsToCalc = getDisplayYears(); 
         let runningAccum = 0; 
         yearsToCalc.forEach(y => { 
-                if (!newData[y]) {
-                    newData[y] = { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, custodyFees:0, lossPrice:0, fees:0, resNoDiv:0, resWithDiv:0, taxRate:19, tax:0, accumulated:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0, comp1: 0, comp2: 0, comp3: 0, comp4: 0, compRest: 0 }; 
-                }
+            if (!newData[y]) {
+                newData[y] = { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, custodyFees:0, lossPrice:0, fees:0, resNoDiv:0, resWithDiv:0, taxRate:19, tax:0, accumulated:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0, comp1: 0, comp2: 0, comp3: 0, comp4: 0, compRest: 0 }; 
+            }
        
-               
             const currentData = newData[y];
 
             if (currentData.locked) { 
-                runningAccum = r2(runningAccum + (parseFloat(currentData.resWithDiv) || 0)); 
+                // CORRECCIÓN: Si está bloqueado, sumar al acumulado el Neto Real (Con Div - Impuestos)
+                const netLocked = r2((parseFloat(currentData.resWithDiv) || 0) - (parseFloat(currentData.tax) || 0));
+                runningAccum = r2(runningAccum + netLocked); 
                 newData[y].accumulated = runningAccum; 
                 return; 
             } 
@@ -901,12 +903,11 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                 yearFees += r2(buyFees + buyAdj + sellFees + sellAdj); 
             }); 
 
-            let yearCustody = 0; // NUEVO
+            let yearCustody = 0; 
             portfolio.forEach(p => { 
                 if (p.dividends && Array.isArray(p.dividends)) { 
                     p.dividends.forEach(d => { if (d.year === y) yearDivs += (parseFloat(d.net) || 0); }); 
                 } 
-                // NUEVO: Sumar gastos de custodia del año
                 if (p.custodyFees && Array.isArray(p.custodyFees)) {
                     p.custodyFees.forEach(cf => { if (new Date(cf.date).getFullYear() === y) yearCustody += (parseFloat(cf.amount) || 0); });
                 }
@@ -914,12 +915,14 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
 
             yearProfitPrice = r2(yearProfitPrice); yearLossPrice = r2(yearLossPrice); yearDivs = r2(yearDivs); yearFees = r2(yearFees); yearCustody = r2(yearCustody);
             const resNoDiv = r2(yearProfitPrice - yearLossPrice); 
-            const resWithDiv = r2(resNoDiv + yearDivs - yearCustody); // Restamos los gastos al resultado final
+            const resWithDiv = r2(resNoDiv + yearDivs - yearCustody); 
             
             const currentTaxRate = currentData.taxRate !== undefined ? parseFloat(currentData.taxRate) : 19;
             const tax = resNoDiv > 0 ? r2(resNoDiv * (currentTaxRate / 100)) : 0; 
             
-            runningAccum = r2(runningAccum + resWithDiv); 
+            // CORRECCIÓN: Restamos el impuesto a "Res. CON Div" para el neto del año y lo sumamos al acumulado
+            const netYear = r2(resWithDiv - tax);
+            runningAccum = r2(runningAccum + netYear); 
 
             const rentaResNoDiv = resNoDiv;
             const rentaAdj = parseFloat(currentData.rentaAdj) || 0;
@@ -946,23 +949,67 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
             
             const currentTaxRate = d.taxRate !== undefined ? parseFloat(d.taxRate) : 19;
 
-            if (field === 'profitPrice' || field === 'lossPrice') { d.resNoDiv = r2(d.profitPrice - d.lossPrice); d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * (currentTaxRate / 100)) : 0; d.resWithDiv = r2(d.resNoDiv + d.dividends); d.accumulated = r2(d.resNoDiv - d.tax); d.rentaResNoDiv = d.resNoDiv; d.rentaBase = r2(d.rentaResNoDiv + (d.rentaAdj || 0)); }
-            if (field === 'dividends' || field === 'custodyFees') { d.resWithDiv = r2(d.resNoDiv + (d.dividends || 0) - (d.custodyFees || 0)); }
-            if (field === 'resNoDiv') { d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * (currentTaxRate / 100)) : 0; d.resWithDiv = r2(d.resNoDiv + d.dividends); d.accumulated = r2(d.resNoDiv - d.tax); d.rentaResNoDiv = d.resNoDiv; d.rentaBase = r2(d.rentaResNoDiv + (d.rentaAdj || 0)); }
-            if (field === 'rentaAdj' || field === 'rentaResNoDiv') { d.rentaBase = r2(d.rentaResNoDiv + d.rentaAdj); }
-            if (field === 'taxRate') { d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * (currentTaxRate / 100)) : 0; d.accumulated = r2(d.resNoDiv - d.tax); }
-            if (['comp1', 'comp2', 'comp3', 'comp4', 'rentaBase', 'profitPrice', 'lossPrice', 'resNoDiv', 'rentaAdj'].includes(field)) { if (d.rentaBase < 0) { const c1 = parseFloat(d.comp1) || 0; const c2 = parseFloat(d.comp2) || 0; const c3 = parseFloat(d.comp3) || 0; const c4 = parseFloat(d.comp4) || 0; d.compRest = r2(d.rentaBase + c1 + c2 + c3 + c4); } else { d.compRest = 0; } } 
+            if (field === 'profitPrice' || field === 'lossPrice') { 
+                d.resNoDiv = r2(d.profitPrice - d.lossPrice); 
+                d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * (currentTaxRate / 100)) : 0; 
+                d.resWithDiv = r2(d.resNoDiv + (d.dividends || 0) - (d.custodyFees || 0)); 
+                d.accumulated = r2(d.resWithDiv - d.tax); // CORREGIDO
+                d.rentaResNoDiv = d.resNoDiv; 
+                d.rentaBase = r2(d.rentaResNoDiv + (d.rentaAdj || 0)); 
+            }
+            if (field === 'dividends' || field === 'custodyFees') { 
+                d.resWithDiv = r2(d.resNoDiv + (d.dividends || 0) - (d.custodyFees || 0)); 
+                d.accumulated = r2(d.resWithDiv - d.tax); // CORREGIDO
+            }
+            if (field === 'resNoDiv') { 
+                d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * (currentTaxRate / 100)) : 0; 
+                d.resWithDiv = r2(d.resNoDiv + (d.dividends || 0) - (d.custodyFees || 0)); 
+                d.accumulated = r2(d.resWithDiv - d.tax); // CORREGIDO
+                d.rentaResNoDiv = d.resNoDiv; 
+                d.rentaBase = r2(d.rentaResNoDiv + (d.rentaAdj || 0)); 
+            }
+            if (field === 'rentaAdj' || field === 'rentaResNoDiv') { 
+                d.rentaBase = r2(d.rentaResNoDiv + d.rentaAdj); 
+            }
+            if (field === 'taxRate') { 
+                d.tax = d.resNoDiv > 0 ? r2(d.resNoDiv * (currentTaxRate / 100)) : 0; 
+                d.accumulated = r2(d.resWithDiv - d.tax); // CORREGIDO
+            }
+            if (field === 'tax') {
+                d.accumulated = r2(d.resWithDiv - d.tax); // CORREGIDO
+            }
+            if (['comp1', 'comp2', 'comp3', 'comp4', 'rentaBase', 'profitPrice', 'lossPrice', 'resNoDiv', 'rentaAdj'].includes(field)) { 
+                if (d.rentaBase < 0) { 
+                    const c1 = parseFloat(d.comp1) || 0; const c2 = parseFloat(d.comp2) || 0; const c3 = parseFloat(d.comp3) || 0; const c4 = parseFloat(d.comp4) || 0; 
+                    d.compRest = r2(d.rentaBase + c1 + c2 + c3 + c4); 
+                } else { 
+                    d.compRest = 0; 
+                } 
+            } 
             return { ...prev, [year]: d }; 
         }); 
     };
 
+    
     const toggleLock = (year) => { setResultsData(prev => ({ ...prev, [year]: { ...prev[year], locked: !prev[year].locked } })); };
 
     const yearsToShow = getDisplayYears();
 
-   const totals = yearsToShow.reduce((acc, year) => { 
+    const totals = yearsToShow.reduce((acc, year) => { 
         const curr = resultsData[year] || {}; 
-        return { soldCount: acc.soldCount + (curr.soldCount || 0), profitPrice: acc.profitPrice + (curr.profitPrice || 0), dividends: acc.dividends + (curr.dividends || 0), custodyFees: acc.custodyFees + (curr.custodyFees || 0), lossPrice: acc.lossPrice + (curr.lossPrice || 0), fees: acc.fees + (curr.fees || 0), resNoDiv: acc.resNoDiv + (curr.resNoDiv || 0), resWithDiv: acc.resWithDiv + (curr.resWithDiv || 0), tax: acc.tax + (curr.tax || 0), rentaBase: acc.rentaBase + (curr.rentaBase || 0), accumulated: acc.accumulated + (curr.accumulated || 0) }; 
+        return { 
+            soldCount: acc.soldCount + (curr.soldCount || 0), 
+            profitPrice: acc.profitPrice + (curr.profitPrice || 0), 
+            dividends: acc.dividends + (curr.dividends || 0), 
+            custodyFees: acc.custodyFees + (curr.custodyFees || 0), 
+            lossPrice: acc.lossPrice + (curr.lossPrice || 0), 
+            fees: acc.fees + (curr.rentaFees || 0), // CORRECCIÓN: Ahora suma rentaFees para actualizarse en vivo
+            resNoDiv: acc.resNoDiv + (curr.resNoDiv || 0), 
+            resWithDiv: acc.resWithDiv + (curr.resWithDiv || 0), 
+            tax: acc.tax + (curr.tax || 0), 
+            rentaBase: acc.rentaBase + (curr.rentaBase || 0), 
+            accumulated: acc.accumulated + (curr.accumulated || 0) 
+        }; 
     }, { soldCount: 0, profitPrice: 0, dividends: 0, custodyFees: 0, lossPrice: 0, fees: 0, resNoDiv: 0, resWithDiv: 0, tax: 0, rentaBase: 0, accumulated: 0 });
 
     const chartData = useMemo(() => { return yearsToShow.map(y => ({ label: y.toString(), value: (resultsData[y]?.resWithDiv || 0) })); }, [resultsData, yearsToShow]);
@@ -1243,68 +1290,105 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
                 </div>
              </div>
 
-             
-             <div className="w-full overflow-x-auto bg-slate-900/50 border border-slate-800 rounded-xl">
+            <div className="w-full overflow-x-auto bg-slate-900/50 border border-slate-800 rounded-xl">
                  <table className="w-full text-sm border-collapse min-w-[2000px]">
                      <thead className="bg-slate-800 text-[10px] uppercase font-bold text-slate-400">
                          <tr>
                              <th className="p-2 text-center border-b border-slate-700 w-10 bg-slate-900 sticky left-0 z-30 border-r border-slate-800"><Icons.CheckCircle size={12}/></th>
                              <th className="p-2 text-center border-b border-slate-700 w-16 bg-slate-900 sticky left-10 z-30 border-r border-slate-800">Año</th>
                              <th className="p-2 text-center border-b border-slate-700 w-24">Lotes<br/><span className="text-[7px] opacity-60 font-normal">(Tot / Únicos)</span></th>
+                             
                              <th className="p-2 text-right border-b border-slate-700 border-l border-slate-700/50 text-green-400">Beneficio<br/><span className="text-[7px] opacity-60 font-normal">(Precio)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 text-red-400">Pérdida<br/><span className="text-[7px] opacity-60 font-normal">(Precio)</span></th>
-                             <th className="p-2 text-right border-b border-slate-700 border-l border-slate-700/50 bg-slate-800/30 font-bold text-slate-200">Res. SIN Div<br/><span className="text-[7px] opacity-60 font-normal">(Ing - Pérd)</span></th>
-                             <th className="p-2 text-right border-b border-slate-700 text-blue-400">Dividendos<br/><span className="text-[7px] opacity-60 font-normal">(Cobrados)</span></th>
+                             
+                             <th className="p-2 text-right border-b border-slate-700 border-l border-slate-700/50 text-blue-400">Dividendos<br/><span className="text-[7px] opacity-60 font-normal">(Cobrados)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 text-yellow-500">Gtos. Custodia<br/><span className="text-[7px] opacity-60 font-normal">(Deducibles)</span></th>
-                             <th className="p-2 text-right border-b border-slate-700 bg-slate-800/30 font-bold text-white">Res. CON Div<br/><span className="text-[7px] opacity-60 font-normal">(+ Divs)</span></th>
-                             <th className="p-2 text-right border-b border-slate-700 text-purple-300 w-16">% Impto.<br/><span className="text-[7px] opacity-60 font-normal">(Tasa)</span></th>
+                             <th className="p-2 text-right border-b border-slate-700 bg-slate-800/30 font-bold text-white border-r border-slate-700/50">Res. CON Div<br/><span className="text-[7px] opacity-60 font-normal">(+ Div-Cust)</span></th>
+                             
+                             <th className="p-2 text-right border-b border-slate-700 bg-slate-800/30 font-bold text-slate-200">Res. SIN Div<br/><span className="text-[7px] opacity-60 font-normal">(Ing - Pérd)</span></th>
+                             
+                             <th className="p-2 text-right border-b border-slate-700 border-l border-slate-700/50 text-purple-300 w-16">% Impto.<br/><span className="text-[7px] opacity-60 font-normal">(Tasa)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 text-purple-400">Impuestos<br/><span className="text-[7px] opacity-60 font-normal">(s/ Sin Div)</span></th>
                              <th className="p-2 text-right border-b border-slate-700 font-bold text-yellow-500">Neto / Acum<br/><span className="text-[7px] opacity-60 font-normal">(Res - Imp)</span></th>
-                             <th className="p-2 text-right border-b border-slate-700 border-l-4 border-slate-900 bg-[#1e2330] text-slate-300">Res. SIN Div<br/><span className="text-[7px] opacity-60 font-normal">(Renta)</span></th>
-                             <th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-slate-400">Gtos Broker<br/><span className="text-[7px] opacity-60 font-normal">(Total)</span></th>
-                             <th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-slate-300">Ajustes<br/><span className="text-[7px] opacity-60 font-normal">(Manual)</span></th>
-                             <th className="p-2 text-right border-b border-slate-700 bg-[#1e2330] text-blue-200 font-bold">Base Imp. 19%<br/><span className="text-[7px] opacity-60 font-normal">(Res + Adj)</span></th>
-                             <th className="p-2 text-right border-b border-slate-700 border-l-4 border-slate-900 bg-orange-900/10 text-orange-400 w-24">1er AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
-                             <th className="p-2 text-right border-b border-slate-700 bg-orange-900/10 text-orange-400 w-24">2do AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
-                             <th className="p-2 text-right border-b border-slate-700 bg-orange-900/10 text-orange-400 w-24">3er AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
-                             <th className="p-2 text-right border-b border-slate-700 bg-orange-900/10 text-orange-400 w-24">4do AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
-                             <th className="p-2 text-right border-b border-slate-700 bg-orange-600/20 text-yellow-500 font-black border-l border-orange-500/30 w-32">PENDIENTE<br/><span className="text-[7px] opacity-60 font-normal">(Resta)</span></th>
+                             
+                             {/* BLOQUE CASTAÑO (GASTOS Y BASE) CON BORDE DIVISOR */}
+                             <th className="p-2 text-right border-b border-orange-900/50 border-l-[3px] border-l-orange-600/60 bg-orange-950 text-slate-300">Gtos Broker<br/><span className="text-[7px] opacity-60 font-normal">(Total)</span></th>
+                             <th className="p-2 text-right border-b border-orange-900/50 bg-orange-950 text-slate-300">Ajustes<br/><span className="text-[7px] opacity-60 font-normal">(Manual)</span></th>
+                             <th className="p-2 text-right border-b border-orange-900/50 bg-orange-950 text-orange-200 font-bold">Base Impuesto<br/><span className="text-[7px] opacity-60 font-normal">(Res + Adj)</span></th>
+                             
+                             {/* BLOQUE ESMERALDA (COMPENSACIONES) CON BORDE DIVISOR */}
+                             <th className="p-2 text-right border-b border-emerald-700/50 border-l-[3px] border-l-emerald-500/60 bg-emerald-900 text-emerald-200 w-24">1er AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
+                             <th className="p-2 text-right border-b border-emerald-700/50 bg-emerald-900 text-emerald-200 w-24">2do AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
+                             <th className="p-2 text-right border-b border-emerald-700/50 bg-emerald-900 text-emerald-200 w-24">3er AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
+                             <th className="p-2 text-right border-b border-emerald-700/50 bg-emerald-900 text-emerald-200 w-24">4do AÑO<br/><span className="text-[7px] opacity-60 font-normal">(Compensa)</span></th>
+                             <th className="p-2 text-right border-b border-emerald-700/50 bg-emerald-800 text-green-300 font-black border-l border-emerald-600/50 w-32">PENDIENTE<br/><span className="text-[7px] opacity-60 font-normal">(Resta)</span></th>
                          </tr>
-
                      </thead>
                      <tbody className="divide-y divide-slate-800 font-mono text-xs">{yearsToShow.map(year => { 
-                         const d = resultsData[year] || { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, custodyFees:0, lossPrice:0, resNoDiv:0, resWithDiv:0, taxRate:19, tax:0, accumulated:0, fees:0, rentaResNoDiv:0, rentaFees:0, rentaAdj:0, rentaBase:0, comp1:0, comp2:0, comp3:0, comp4:0, compRest:0 };
+                         const d = resultsData[year] || { locked:false, soldCount:0, uniqueCount:0, profitPrice:0, dividends:0, custodyFees:0, lossPrice:0, resNoDiv:0, resWithDiv:0, taxRate:19, tax:0, accumulated:0, fees:0, rentaFees:0, rentaAdj:0, rentaBase:0, comp1:0, comp2:0, comp3:0, comp4:0, compRest:0 };
                          return ( 
                              <tr key={year} className={`hover:bg-slate-900/40 transition-colors ${d.locked ? 'opacity-70' : ''}`}>
                                  <td className="p-2 text-center bg-slate-900 sticky left-0 z-20 border-r border-slate-800"><input type="checkbox" checked={d.locked} onChange={()=>toggleLock(year)} className="w-3 h-3 accent-red-500 cursor-pointer" /></td>
                                  <td className="p-2 text-center font-bold text-white bg-slate-900 sticky left-10 z-20 border-r border-slate-800">{year}</td>
                                  <td className="p-2 text-center text-slate-400 text-[10px]">{formatN(d.soldCount, 0)} <span className="text-slate-600">/</span> <span className="text-slate-300 font-bold">{formatN(d.uniqueCount, 0)}</span></td>
+                                 
                                  <td className="p-2 border-l border-slate-800/50"><input type="number" step="0.01" value={d.profitPrice} onChange={e=>handleEdit(year, 'profitPrice', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-green-500 outline-none" /></td>
                                  <td className="p-2"><input type="number" step="0.01" value={d.lossPrice} onChange={e=>handleEdit(year, 'lossPrice', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-red-500 outline-none" /></td>
-                                 <td className="p-2 border-l border-slate-800/50 bg-slate-900/20"><input type="number" step="0.01" value={d.resNoDiv} onChange={e=>handleEdit(year, 'resNoDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resNoDiv >=0 ? 'text-slate-200':'text-red-400'}`} /></td>
-                                 <td className="p-2"><input type="number" step="0.01" value={d.dividends} onChange={e=>handleEdit(year, 'dividends', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-blue-400 outline-none" /></td>
-                                 <td className="p-2 border-r border-slate-800/50"><input type="number" step="0.01" value={d.custodyFees || 0} onChange={e=>handleEdit(year, 'custodyFees', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-yellow-500 outline-none" /></td>
-                                 <td className="p-2 bg-slate-900/20"><input type="number" step="0.01" value={d.resWithDiv} onChange={e=>handleEdit(year, 'resWithDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resWithDiv >=0 ? 'text-white':'text-red-400'}`} /></td>
-                                 <td className="p-2 bg-slate-900/10"><input type="number" step="0.1" value={d.taxRate !== undefined ? d.taxRate : 19} onChange={e=>handleEdit(year, 'taxRate', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-purple-300 outline-none" /></td>
-                                 <td className="p-2"><input type="number" step="0.01" value={d.tax} onChange={e=>handleEdit(year, 'tax', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-purple-400 font-bold outline-none" /></td>
-                                 <td className="p-2 border-r border-slate-800 bg-slate-900/10"><input type="number" step="0.01" value={d.accumulated} onChange={e=>handleEdit(year, 'accumulated', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.accumulated >= 0 ? 'text-yellow-500' : 'text-red-500'}`} /></td>
                                  
-                                 <td className="p-2 border-l-4 border-slate-900 bg-[#161b25]"><input type="number" step="0.01" value={d.rentaResNoDiv} onChange={e=>handleEdit(year, 'rentaResNoDiv', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-300 outline-none font-bold" /></td>
-                                 <td className="p-2 bg-[#161b25]"><input type="number" step="0.01" value={d.rentaFees} onChange={e=>handleEdit(year, 'rentaFees', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-500 outline-none" /></td>
-                                 <td className="p-2 bg-[#161b25]"><input type="number" step="0.01" value={d.rentaAdj} onChange={e=>handleEdit(year, 'rentaAdj', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-300 outline-none border-b border-slate-700/50 focus:border-blue-500" /></td>
-                                 <td className="p-2 bg-[#161b25]"><input type="number" step="0.01" value={d.rentaBase} onChange={e=>handleEdit(year, 'rentaBase', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-blue-200 font-bold outline-none" /></td>
+                                 <td className="p-2 border-l border-slate-800/50"><input type="number" step="0.01" value={d.dividends} onChange={e=>handleEdit(year, 'dividends', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-blue-400 outline-none" /></td>
+                                 <td className="p-2"><input type="number" step="0.01" value={d.custodyFees || 0} onChange={e=>handleEdit(year, 'custodyFees', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-yellow-500 outline-none" /></td>
+                                 <td className="p-2 bg-slate-900/20 border-r border-slate-800/50"><input type="number" step="0.01" value={d.resWithDiv} onChange={e=>handleEdit(year, 'resWithDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resWithDiv >=0 ? 'text-white':'text-red-400'}`} /></td>
                                  
-                                 <td className="p-2 border-l-4 border-slate-900 bg-orange-900/5"><input type="number" step="0.01" value={d.comp1} onChange={e=>handleEdit(year, 'comp1', e.target.value)} className="w-full bg-transparent text-right text-orange-200 outline-none" placeholder="0.00" /></td>
-                                 <td className="p-2 bg-orange-900/5"><input type="number" step="0.01" value={d.comp2} onChange={e=>handleEdit(year, 'comp2', e.target.value)} className="w-full bg-transparent text-right text-orange-200 outline-none" placeholder="0.00" /></td>
-                                 <td className="p-2 bg-orange-900/5"><input type="number" step="0.01" value={d.comp3} onChange={e=>handleEdit(year, 'comp3', e.target.value)} className="w-full bg-transparent text-right text-orange-200 outline-none" placeholder="0.00" /></td>
-                                 <td className="p-2 bg-orange-900/5"><input type="number" step="0.01" value={d.comp4} onChange={e=>handleEdit(year, 'comp4', e.target.value)} className="w-full bg-transparent text-right text-orange-200 outline-none" placeholder="0.00" /></td>
-                                 <td className="p-2 border-l border-orange-500/20 bg-orange-600/10"><input type="number" step="0.01" value={d.compRest} onChange={e=>handleEdit(year, 'compRest', e.target.value)} className="w-full bg-transparent text-right text-yellow-400 font-bold outline-none" placeholder="0.00" /></td>
+                                 <td className="p-2 bg-slate-900/20"><input type="number" step="0.01" value={d.resNoDiv} onChange={e=>handleEdit(year, 'resNoDiv', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.resNoDiv >=0 ? 'text-slate-200':'text-red-400'}`} /></td>
+                                 
+                                 <td className="p-2 border-l border-slate-800/50 bg-slate-900/10"><input type="number" step="0.1" value={d.taxRate !== undefined ? d.taxRate : 19} onChange={e=>handleEdit(year, 'taxRate', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right font-bold text-purple-300 outline-none" /></td>
+                                 <td className="p-2 bg-slate-900/10"><input type="number" step="0.01" value={d.tax} onChange={e=>handleEdit(year, 'tax', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-purple-400 font-bold outline-none" /></td>
+                                 <td className="p-2 bg-slate-900/10"><input type="number" step="0.01" value={d.accumulated} onChange={e=>handleEdit(year, 'accumulated', e.target.value)} disabled={d.locked} className={`w-full bg-transparent text-right font-bold outline-none ${d.accumulated >= 0 ? 'text-yellow-500' : 'text-red-500'}`} /></td>
+                                 
+                                 {/* BLOQUE CASTAÑO BODY */}
+                                 <td className="p-2 border-l-[3px] border-l-orange-600/30 bg-orange-950/40"><input type="number" step="0.01" value={d.rentaFees} onChange={e=>handleEdit(year, 'rentaFees', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-400 outline-none" /></td>
+                                 <td className="p-2 bg-orange-950/40"><input type="number" step="0.01" value={d.rentaAdj} onChange={e=>handleEdit(year, 'rentaAdj', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-slate-300 outline-none border-b border-orange-900/30 focus:border-orange-500" /></td>
+                                 <td className="p-2 bg-orange-950/40"><input type="number" step="0.01" value={d.rentaBase} onChange={e=>handleEdit(year, 'rentaBase', e.target.value)} disabled={d.locked} className="w-full bg-transparent text-right text-orange-300 font-bold outline-none" /></td>
+                                 
+                                 {/* BLOQUE VERDE BODY */}
+                                 <td className="p-2 border-l-[3px] border-l-emerald-500/30 bg-emerald-950/40"><input type="number" step="0.01" value={d.comp1} onChange={e=>handleEdit(year, 'comp1', e.target.value)} className="w-full bg-transparent text-right text-emerald-200/80 outline-none" placeholder="0.00" /></td>
+                                 <td className="p-2 bg-emerald-950/40"><input type="number" step="0.01" value={d.comp2} onChange={e=>handleEdit(year, 'comp2', e.target.value)} className="w-full bg-transparent text-right text-emerald-200/80 outline-none" placeholder="0.00" /></td>
+                                 <td className="p-2 bg-emerald-950/40"><input type="number" step="0.01" value={d.comp3} onChange={e=>handleEdit(year, 'comp3', e.target.value)} className="w-full bg-transparent text-right text-emerald-200/80 outline-none" placeholder="0.00" /></td>
+                                 <td className="p-2 bg-emerald-950/40"><input type="number" step="0.01" value={d.comp4} onChange={e=>handleEdit(year, 'comp4', e.target.value)} className="w-full bg-transparent text-right text-emerald-200/80 outline-none" placeholder="0.00" /></td>
+                                 <td className="p-2 border-l border-emerald-700/30 bg-emerald-900/40"><input type="number" step="0.01" value={d.compRest} onChange={e=>handleEdit(year, 'compRest', e.target.value)} className="w-full bg-transparent text-right text-green-300 font-bold outline-none" placeholder="0.00" /></td>
                              </tr> 
                          ); 
                      })}
-                     <tr className="bg-slate-900 border-t-2 border-slate-700 text-white font-bold text-xs shadow-xl"><td colSpan="3" className="p-3 text-right text-[10px] uppercase text-slate-500 tracking-widest bg-slate-900 sticky left-0 border-r border-slate-800">Total Global: <span className="text-white ml-2">{formatN(totals.soldCount, 0)} Op.</span></td><td className="p-3 text-right text-green-500">{formatMoney(totals.profitPrice, baseCurrency)}</td><td className="p-3 text-right text-red-500">{formatMoney(totals.lossPrice, baseCurrency)}</td><td className="p-3 text-right text-slate-300">{formatMoney(totals.resNoDiv, baseCurrency)}</td><td className="p-3 text-right text-blue-400">{formatMoney(totals.dividends, baseCurrency)}</td><td className="p-3 text-right text-yellow-500 border-r border-slate-800/50">{formatMoney(totals.custodyFees, baseCurrency)}</td><td className="p-3 text-right text-white text-sm">{formatMoney(totals.resWithDiv, baseCurrency)}</td><td className="p-3 bg-slate-950"></td><td className="p-3 text-right text-purple-400">{formatMoney(totals.tax, baseCurrency)}</td><td className="p-3 bg-slate-950"></td><td className="p-3 bg-[#11151d]"></td><td className="p-3 text-right text-slate-500 bg-[#11151d]">{formatMoney(totals.fees, baseCurrency)}</td><td className="p-3 bg-[#11151d]"></td><td className="p-3 text-right text-blue-200 bg-[#11151d]">{formatMoney(totals.rentaBase, baseCurrency)}</td><td colSpan="5" className="bg-[#11151d]"></td></tr></tbody></table>
+                     <tr className="bg-slate-900 border-t-2 border-slate-700 text-white font-bold text-xs shadow-xl">
+                        <td colSpan="3" className="p-3 text-right text-[10px] uppercase text-slate-500 tracking-widest bg-slate-900 sticky left-0 border-r border-slate-800">Total Global: <span className="text-white ml-2">{formatN(totals.soldCount, 0)} Op.</span></td>
+                        
+                        <td className="p-3 text-right text-green-500 border-l border-slate-800/50">{formatMoney(totals.profitPrice, baseCurrency)}</td>
+                        <td className="p-3 text-right text-red-500">{formatMoney(totals.lossPrice, baseCurrency)}</td>
+                        
+                        <td className="p-3 text-right text-blue-400 border-l border-slate-800/50">{formatMoney(totals.dividends, baseCurrency)}</td>
+                        <td className="p-3 text-right text-yellow-500">{formatMoney(totals.custodyFees, baseCurrency)}</td>
+                        <td className="p-3 text-right text-white text-sm bg-slate-900/20 border-r border-slate-800/50">{formatMoney(totals.resWithDiv, baseCurrency)}</td>
+                        
+                        <td className="p-3 text-right text-slate-300 bg-slate-900/20">{formatMoney(totals.resNoDiv, baseCurrency)}</td>
+                        
+                        <td className="p-3 bg-slate-950 border-l border-slate-800/50"></td>
+                        <td className="p-3 text-right text-purple-400 bg-slate-950">{formatMoney(totals.tax, baseCurrency)}</td>
+                        <td className="p-3 bg-slate-950"></td>
+                        
+                        {/* FOOTER CASTAÑO */}
+                        <td className="p-3 text-right text-slate-400 bg-orange-950 border-l-[3px] border-l-orange-600/50">{formatMoney(totals.fees, baseCurrency)}</td>
+                        <td className="p-3 bg-orange-950"></td>
+                        <td className="p-3 text-right text-orange-300 bg-orange-950">{formatMoney(totals.rentaBase, baseCurrency)}</td>
+                        
+                        {/* FOOTER VERDE */}
+                        <td colSpan="5" className="bg-emerald-900 border-l-[3px] border-l-emerald-500/50"></td>
+                     </tr>
+                    </tbody>
+                 </table>
              </div>
-             <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-6 flex flex-col md:flex-row gap-6">
+
+            
+            <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-6 flex flex-col md:flex-row gap-6">
                  <div className="flex-1"><h4 className="text-sm font-bold text-orange-400 mb-3 flex items-center gap-2"><Icons.HelpCircle size={16}/> Información Fiscal: Compensación de Pérdidas (España)</h4><div className="text-[11px] text-slate-400 space-y-3 leading-relaxed text-justify"><p><strong className="text-white">Regla 1: Año en Curso.</strong> Las pérdidas por ventas de acciones (Ganancias y Pérdidas Patrimoniales - GPP) se compensan primero con las ganancias del mismo tipo. Si el saldo sigue siendo negativo, se puede compensar con hasta el <strong>25%</strong> del saldo positivo de dividendos e intereses (Rendimientos Capital Mobiliario - RCM).</p><p><strong className="text-white">Regla 2: 4 Años Siguientes.</strong> Si tras lo anterior queda un saldo negativo (pérdida pendiente), se lleva a los 4 años siguientes para compensarse en este orden obligatorio:</p><ul className="list-disc list-inside pl-2 space-y-1"><li><strong className="text-blue-400">1º Contra Ganancias Patrimoniales:</strong> Se resta de los beneficios de futuras ventas de acciones de esos años (Sin límite).</li><li><strong className="text-blue-400">2º Contra Capital Mobiliario:</strong> Si aún sobra pérdida, se resta de los dividendos de esos años (Límite 25%).</li></ul><p className="mt-2 text-slate-500 italic border-t border-slate-800 pt-2">(*) Verificar casilla "Pendiente de compensación ejercicios anteriores" en el apartado <strong>Base Imponible del Ahorro</strong> del Modelo 100.</p></div></div>
                  <div className="md:w-1/3 border-l border-slate-800 md:pl-6 pt-4 md:pt-0 flex flex-col justify-center"><div className="bg-orange-900/10 p-4 rounded-xl border border-orange-500/20 text-center"><Icons.AlertCircle className="mx-auto text-orange-500 mb-2" size={24}/><div className="text-xs font-bold text-orange-200 mb-1">Estrategia Fiscal</div><p className="text-[10px] text-slate-400">Aprovecha las caídas de fin de año para aflorar minusvalías y compensar beneficios fiscales ("Tax Loss Harvesting").</p></div><a href="https://sede.agenciatributaria.gob.es/" target="_blank" className="mt-4 text-center block text-[10px] text-blue-400 hover:text-blue-300 font-bold border border-blue-500/30 rounded py-2 hover:bg-blue-900/20 transition-colors">Consultar Normativa AEAT <Icons.ExternalLink size={10} className="inline"/></a></div>
              </div>
