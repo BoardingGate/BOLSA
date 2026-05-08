@@ -10653,30 +10653,67 @@ const UtilsTab = ({ baseCurrency }) => {
         );
     };
 
-    // --- 2. CALCULADORA RENTING VS COMPRA ---
+    // --- 2. CALCULADORA RENTING VS COMPRA (VERSIÓN COMPLETA) ---
     const RentingCalculator = () => {
-        const [data, setData] = usePersistentState('bg_rentingData', { years: 10, propPrice: 35000, propAid: 0, propResaleValuePct: 30, propInsurance: 600, propTax: 100, propMaint: 200, propBreakdownPct: 5, rentMonthly: 450, rentEntry: 0, rentExtraAnnual: 0 });
+        const [data, setData] = usePersistentState('bg_rentingData_full', {
+            years: 15,
+            kmPerYear: 20000,
+
+            propPrice: 45000,
+            propAid: 8500, 
+            propResaleValuePct: 4, 
+            propInsurance: 850, 
+            propTax: 100, 
+            propMaint: 100, 
+            propBreakdownPct: 5, 
+            propCons: 16.0, 
+            propEnergyPrice: 0.10, 
+            
+            rentMonthly: 400, 
+            rentEntry: 1000, 
+            rentExtraAnnual: 0, 
+            rentCons: 16.0, 
+            rentEnergyPrice: 0.10 
+        });
+
         const [showTable, setShowTable] = useState(true);
 
         const num = (v) => parseFloat(v) || 0;
         const yearsProjected = Math.max(1, Math.round(num(data.years)));
 
+        const propAnnualEnergy = (num(data.kmPerYear) / 100) * num(data.propCons) * num(data.propEnergyPrice);
+        const rentAnnualEnergy = (num(data.kmPerYear) / 100) * num(data.rentCons) * num(data.rentEnergyPrice);
+
         const propTotalBreakdownCost = num(data.propPrice) * (num(data.propBreakdownPct) / 100);
         const propAnnualBreakdown = propTotalBreakdownCost / yearsProjected;
-        const propAnnualTotal = num(data.propInsurance) + num(data.propTax) + num(data.propMaint) + propAnnualBreakdown;
-        const rentAnnualTotal = (num(data.rentMonthly) * 12) + num(data.rentExtraAnnual);
+
+        const propAnnualTotal = num(data.propInsurance) + num(data.propTax) + num(data.propMaint) + propAnnualBreakdown + propAnnualEnergy;
+        const rentAnnualTotal = (num(data.rentMonthly) * 12) + num(data.rentExtraAnnual) + rentAnnualEnergy;
 
         const propInitialOut = num(data.propPrice) - num(data.propAid);
         const rentInitialOut = num(data.rentEntry);
         const finalResidualValue = num(data.propPrice) * (num(data.propResaleValuePct) / 100);
+
+        const totalRentingAbsolute = rentInitialOut + (rentAnnualTotal * yearsProjected);
+        const totalPropAbsoluteNoSale = propInitialOut + (propAnnualTotal * yearsProjected);
+        const equilibriumPrice = totalPropAbsoluteNoSale - totalRentingAbsolute;
 
         const tableRows = useMemo(() => {
             const rows = [];
             for (let i = 0; i <= yearsProjected; i++) {
                 const rentAccum = rentInitialOut + (rentAnnualTotal * i);
                 let propAccum = propInitialOut + (propAnnualTotal * i);
-                if (i === yearsProjected) propAccum = propAccum - finalResidualValue;
-                rows.push({ year: i, propVal: propAccum, rentVal: rentAccum, diff: rentAccum - propAccum });
+
+                if (i === yearsProjected) {
+                    propAccum = propAccum - finalResidualValue;
+                }
+
+                rows.push({
+                    year: i,
+                    propVal: propAccum,
+                    rentVal: rentAccum,
+                    diff: rentAccum - propAccum
+                });
             }
             return rows;
         }, [data, yearsProjected, propInitialOut, propAnnualTotal, rentInitialOut, rentAnnualTotal, finalResidualValue]);
@@ -10684,17 +10721,40 @@ const UtilsTab = ({ baseCurrency }) => {
         const finalRow = tableRows[tableRows.length - 1];
         const totalSavings = finalRow.diff;
         const winner = totalSavings > 0 ? "COMPRA" : "RENTING";
-        const monthlyProp = finalRow.propVal / (yearsProjected * 12);
-        const monthlyRent = finalRow.rentVal / (yearsProjected * 12);
+        
+        const totalMonths = yearsProjected * 12;
+        const monthlyProp = finalRow.propVal / totalMonths;
+        const monthlyRent = finalRow.rentVal / totalMonths;
+        const annualProp = finalRow.propVal / yearsProjected;
+        const annualRent = finalRow.rentVal / yearsProjected;
+
+        let crossOverYear = "N/A";
+        let crossOverWinner = "";
+        
+        for(let i = 1; i < tableRows.length; i++) {
+            const prevRow = tableRows[i-1];
+            const currRow = tableRows[i];
+            const prevWin = prevRow.rentVal < prevRow.propVal ? 'Renting' : 'Compra';
+            const currWin = currRow.rentVal < currRow.propVal ? 'Renting' : 'Compra';
+            if (prevWin !== currWin) { crossOverYear = currRow.year; crossOverWinner = currWin; break; }
+        }
+        if (crossOverYear === "N/A") {
+            crossOverYear = "Siempre";
+            crossOverWinner = tableRows[0].rentVal < tableRows[0].propVal ? "Renting" : "Compra";
+        }
 
         const RentingCSSChart = ({ rows }) => {
             const maxVal = Math.max(...rows.map(r => Math.max(r.propVal, r.rentVal)));
-            const step = Math.max(1000, Math.ceil(maxVal / 5000) * 1000); 
+            const step = 5000; 
             const yMax = Math.ceil((maxVal * 1.05) / step) * step;
-            const ticks = []; for (let i = 0; i <= yMax; i += step) ticks.push(i);
+            
+            const ticks = [];
+            for (let i = 0; i <= yMax; i += step) {
+                ticks.push(i);
+            }
 
             return (
-                <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-6 relative h-[400px] flex flex-col mt-8">
+                <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-6 relative h-[500px] flex flex-col">
                     <div className="flex justify-between items-center mb-6 px-2">
                         <div className="text-xs font-bold uppercase text-slate-400">Evolución Coste Acumulado</div>
                         <div className="flex gap-4 text-[10px] font-bold uppercase">
@@ -10702,24 +10762,38 @@ const UtilsTab = ({ baseCurrency }) => {
                             <div className="flex items-center gap-2"><div className="w-3 h-3 bg-orange-600 rounded"></div> Renting</div>
                         </div>
                     </div>
+
                     <div className="flex-1 relative flex items-end ml-10 mb-6 border-l border-b border-slate-600">
                         <div className="absolute inset-0 pointer-events-none">
                             {ticks.map((tickVal) => (
                                 <div key={tickVal} className="absolute w-full flex items-center" style={{ bottom: `${(tickVal / yMax) * 100}%` }}>
-                                    <div className={`w-full border-t ${tickVal === 0 ? 'border-white' : 'border-slate-700'}`}></div>
-                                    <span className="absolute -left-10 text-[9px] font-bold text-slate-400 w-8 text-right font-mono">{(tickVal / 1000).toFixed(0)}k</span>
+                                    <div className={`w-full border-t ${tickVal === 0 ? 'border-white' : 'border-slate-500'}`}></div>
+                                    <span className="absolute -left-10 text-[9px] font-bold text-slate-400 w-8 text-right font-mono">
+                                        {(tickVal / 1000).toFixed(0)}k
+                                    </span>
                                 </div>
                             ))}
                         </div>
+
                         <div className="w-full h-full flex items-end justify-between px-2 z-10">
                             {rows.map((row) => (
                                 <div key={row.year} className="flex-1 flex flex-col justify-end items-center h-full group relative gap-1 mx-0.5">
                                     <div className="w-full flex gap-0.5 items-end h-full justify-center">
-                                        <div className="w-1/2 bg-blue-600 rounded-t-sm transition-all duration-500 hover:bg-blue-500 relative min-h-[1px]" style={{ height: `${(row.propVal / yMax) * 100}%` }}>
-                                            <div className="opacity-0 group-hover:opacity-100 absolute bottom-full left-1/2 -translate-x-1/2 mb-1 bg-black/90 text-white text-[10px] px-2 py-1 rounded whitespace-nowrap z-20 pointer-events-none shadow-xl border border-blue-500/50">Compra: {formatMoney(row.propVal)}</div>
+                                        <div 
+                                            className="w-1/2 bg-blue-600 rounded-t-sm transition-all duration-500 hover:bg-blue-500 relative min-h-[1px]"
+                                            style={{ height: `${(row.propVal / yMax) * 100}%` }}
+                                        >
+                                            <div className="opacity-0 group-hover:opacity-100 absolute bottom-full left-1/2 -translate-x-1/2 mb-1 bg-black/90 text-white text-[10px] px-2 py-1 rounded whitespace-nowrap z-20 pointer-events-none border border-blue-500/50 shadow-xl">
+                                                Compra: {formatMoney(row.propVal)}
+                                            </div>
                                         </div>
-                                        <div className="w-1/2 bg-orange-600 rounded-t-sm transition-all duration-500 hover:bg-orange-500 relative min-h-[1px]" style={{ height: `${(row.rentVal / yMax) * 100}%` }}>
-                                            <div className="opacity-0 group-hover:opacity-100 absolute bottom-full left-1/2 -translate-x-1/2 mb-8 bg-black/90 text-white text-[10px] px-2 py-1 rounded whitespace-nowrap z-20 pointer-events-none shadow-xl border border-orange-500/50">Renting: {formatMoney(row.rentVal)}</div>
+                                        <div 
+                                            className="w-1/2 bg-orange-600 rounded-t-sm transition-all duration-500 hover:bg-orange-500 relative min-h-[1px]"
+                                            style={{ height: `${(row.rentVal / yMax) * 100}%` }}
+                                        >
+                                            <div className="opacity-0 group-hover:opacity-100 absolute bottom-full left-1/2 -translate-x-1/2 mb-8 bg-black/90 text-white text-[10px] px-2 py-1 rounded whitespace-nowrap z-20 pointer-events-none border border-orange-500/50 shadow-xl">
+                                                Renting: {formatMoney(row.rentVal)}
+                                            </div>
                                         </div>
                                     </div>
                                     <div className="text-[10px] text-slate-500 font-bold absolute -bottom-6">{row.year}</div>
@@ -10732,23 +10806,74 @@ const UtilsTab = ({ baseCurrency }) => {
         };
 
         const handleChange = (field, value) => setData({...data, [field]: parseFloat(value) || 0});
+        
+        const handleResaleEuroChange = (euroValue) => {
+            const price = num(data.propPrice);
+            if (price > 0) {
+                const newPct = (euroValue / price) * 100;
+                setData({...data, propResaleValuePct: newPct});
+            }
+        };
 
         return (
             <div className="max-w-5xl mx-auto space-y-6 fade-in pb-10">
                 <div className="bg-gradient-to-r from-slate-900 to-slate-800 border border-slate-700 rounded-2xl p-6 text-center shadow-xl">
                     <h3 className="text-slate-300 text-xs font-display uppercase tracking-widest mb-4 font-bold">Resumen Comparativo ({data.years} años)</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className={`rounded-xl p-5 border-2 flex flex-col justify-center shadow-lg ${totalSavings > 0 ? 'bg-blue-900/20 border-blue-500/50' : 'bg-orange-900/20 border-orange-500/50'}`}>
-                             <div className="text-xs text-slate-300 mb-1 uppercase font-bold tracking-wider">Opción más rentable: {winner}</div>
-                             <div className="text-3xl font-bold font-display text-white">Ahorro: {formatMoney(Math.abs(totalSavings))} {baseCurrency}</div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-stretch">
+                        
+                        <div className={`rounded-xl p-5 border-2 flex flex-col justify-center lg:col-span-1 shadow-lg ${totalSavings > 0 ? 'bg-blue-900/20 border-blue-500/50' : 'bg-orange-900/20 border-orange-500/50'}`}>
+                             <div className="text-xs text-slate-300 mb-2 uppercase font-bold tracking-wider">Mejor Opción: {winner}</div>
+                             
+                             <div className="text-4xl font-bold font-display text-white mb-1">
+                                Ahorro: {formatMoney(Math.abs(totalSavings))} {baseCurrency}
+                             </div>
+                             
+                             <div className="w-full h-px bg-white/10 my-3"></div>
+                             
+                             <div className="flex justify-between w-full text-sm px-2">
+                                <div className="text-left">
+                                    <div className="text-[10px] text-blue-400 uppercase font-bold">Total Compra</div>
+                                    <div className="font-mono font-bold text-slate-200">{formatMoney(finalRow.propVal)} {baseCurrency}</div>
+                                </div>
+                                <div className="text-right">
+                                    <div className="text-[10px] text-orange-400 uppercase font-bold">Total Renting</div>
+                                    <div className="font-mono font-bold text-slate-200">{formatMoney(finalRow.rentVal)} {baseCurrency}</div>
+                                </div>
+                             </div>
+                             <div className="mt-3 text-[10px] text-slate-400 bg-black/20 rounded p-1">
+                                 Precio Venta Equilibrio: <span className="font-bold text-white">{formatMoney(equilibriumPrice)} {baseCurrency}</span>
+                             </div>
                         </div>
+                        
                         <div className="bg-slate-900/50 rounded-xl p-4 border border-slate-600 flex flex-col justify-center">
-                            <div className="text-[10px] text-slate-400 mb-2 uppercase font-bold tracking-wider text-center">Gasto Real Mensual (Neto Promedio)</div>
+                            <div className="text-[10px] text-slate-400 mb-3 uppercase font-bold tracking-wider text-center">Coste Medio Neto / Mes</div>
                             <div className="grid grid-cols-2 gap-4 text-center divide-x divide-slate-700">
-                                <div><div className="text-blue-400 text-[10px] font-bold mb-1 uppercase">Compra</div><div className="text-2xl font-bold text-white">{formatMoney(monthlyProp)}<span className="text-sm text-slate-500 font-normal">/mes</span></div></div>
-                                <div><div className="text-orange-400 text-[10px] font-bold mb-1 uppercase">Renting</div><div className="text-2xl font-bold text-white">{formatMoney(monthlyRent)}<span className="text-sm text-slate-500 font-normal">/mes</span></div></div>
+                                <div>
+                                    <div className="text-blue-400 text-[10px] font-bold mb-1 uppercase">Compra</div>
+                                    <div className="text-xl font-bold text-white">{formatMoney(monthlyProp)} {baseCurrency}<span className="text-[10px] text-slate-500">/mes</span></div>
+                                    <div className="text-xs text-slate-400 mt-1 font-mono">{formatMoney(annualProp)} {baseCurrency}/año</div>
+                                </div>
+                                <div>
+                                    <div className="text-orange-400 text-[10px] font-bold mb-1 uppercase">Renting</div>
+                                    <div className="text-xl font-bold text-white">{formatMoney(monthlyRent)} {baseCurrency}<span className="text-[10px] text-slate-500">/mes</span></div>
+                                    <div className="text-xs text-slate-400 mt-1 font-mono">{formatMoney(annualRent)} {baseCurrency}/año</div>
+                                </div>
                             </div>
                         </div>
+
+                        <div className="bg-slate-900/50 rounded-xl p-4 border border-slate-600 flex flex-col justify-center">
+                            <div className="text-[10px] text-slate-300 mb-2 uppercase font-bold">Punto de Inflexión (Cruce)</div>
+                            <div className="text-3xl font-bold font-display text-white">
+                                {crossOverYear === "Siempre" ? "Sin cambios" : `Año ${crossOverYear}`}
+                            </div>
+                            <div className="text-xs font-bold text-slate-400 mt-2 bg-black/20 px-3 py-1 rounded-full inline-block mx-auto">
+                                {crossOverYear === "Siempre" 
+                                    ? `Siempre es mejor ${crossOverWinner}` 
+                                    : `A partir de aquí gana ${crossOverWinner}`}
+                            </div>
+                        </div>
+
                     </div>
                 </div>
 
@@ -10761,6 +10886,13 @@ const UtilsTab = ({ baseCurrency }) => {
                                 <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">Precio Vehículo</label><FormattedInput value={data.propPrice} onChange={val=>handleChange('propPrice', val)} grouped={true}/></div>
                                 <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">Ayudas / Dto Inicial</label><FormattedInput value={data.propAid} onChange={val=>handleChange('propAid', val)} grouped={true}/></div>
                             </div>
+                            <div className="bg-slate-800/40 p-3 rounded border border-slate-700/50">
+                                <h5 className="text-xs font-bold text-blue-200 mb-2 uppercase flex items-center gap-2"><Icons.Zap className="w-3 h-3"/> Consumo / Combustible</h5>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1">Consumo (L/100 o kWh)</label><FormattedInput value={data.propCons} onChange={val=>handleChange('propCons', val)} decimals={1}/></div>
+                                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1">Precio (Unidad)</label><FormattedInput value={data.propEnergyPrice} onChange={val=>handleChange('propEnergyPrice', val)} decimals={3}/></div>
+                                </div>
+                            </div>
                             <div className="pt-2 border-t border-slate-700/50">
                                 <h5 className="text-xs font-bold text-slate-300 mb-2">Gastos Anuales Fijos</h5>
                                 <div className="grid grid-cols-3 gap-2">
@@ -10768,21 +10900,34 @@ const UtilsTab = ({ baseCurrency }) => {
                                     <div><label className="text-[10px] font-bold text-slate-400 block mb-1">Impuestos/Año</label><FormattedInput value={data.propTax} onChange={val=>handleChange('propTax', val)} /></div>
                                     <div><label className="text-[10px] font-bold text-slate-400 block mb-1">Mtto/Año</label><FormattedInput value={data.propMaint} onChange={val=>handleChange('propMaint', val)} /></div>
                                 </div>
-                            </div>
-                            <div className="pt-2 border-t border-slate-700/50">
-                                <label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">Fondo Averías (% s/ Precio Compra)</label>
-                                <div className="flex items-center gap-4">
-                                    <input type="range" min="0" max="30" step="1" value={data.propBreakdownPct} onChange={(e) => handleChange('propBreakdownPct', e.target.value)} className="flex-grow h-2 bg-slate-700 rounded-lg cursor-pointer accent-red-500" />
-                                    <div className="text-xs font-bold text-red-400 w-12 text-right">{data.propBreakdownPct}%</div>
+                                <div className="mt-3">
+                                    <label className="text-[10px] font-bold text-red-400 block mb-1">% Averías sobre Precio Compra</label>
+                                    <div className="grid grid-cols-2 gap-4 items-center">
+                                        <FormattedInput value={data.propBreakdownPct} onChange={val=>handleChange('propBreakdownPct', val)} decimals={1}/>
+                                        <div className="text-[10px] text-slate-400 leading-tight">
+                                            <div>Anual: <span className="text-white font-bold">{formatMoney(propAnnualBreakdown)} {baseCurrency}</span></div>
+                                            <div>Total ({data.years} a): <span className="text-white font-bold">{formatMoney(propTotalBreakdownCost)} {baseCurrency}</span></div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             <div className="pt-2 border-t border-slate-700/50">
                                 <label className="text-[10px] font-bold text-green-400 block mb-1 uppercase">Valor de Reventa Final (Año {data.years})</label>
                                 <div className="flex items-center gap-4 mb-2">
-                                    <input type="range" min="0" max="100" step="1" value={data.propResaleValuePct} onChange={(e) => handleChange('propResaleValuePct', e.target.value)} className="flex-grow h-2 bg-slate-700 rounded-lg cursor-pointer accent-green-500" />
-                                    <div className="text-xs font-bold text-green-400 w-12 text-right">{data.propResaleValuePct}%</div>
+                                    <input type="range" min="0" max="100" step="1" value={data.propResaleValuePct} onChange={(e) => handleChange('propResaleValuePct', e.target.value)} className="flex-grow h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-green-500" />
+                                    <div className="text-xs font-bold text-green-400 w-12 text-right">{formatDecimal(data.propResaleValuePct, 0)}%</div>
                                 </div>
-                                <div className="bg-slate-800 p-2 rounded text-center text-sm font-bold text-slate-300">Recuperas: <span className="text-white font-mono">{formatMoney(finalResidualValue)} {baseCurrency}</span></div>
+                                <div className="bg-slate-800/50 p-2 rounded border border-slate-700 flex justify-between items-center">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase mr-2">Valor Estimado:</label>
+                                    <div className="w-32">
+                                        <FormattedInput value={finalResidualValue} onChange={handleResaleEuroChange} grouped={true} />
+                                    </div>
+                                </div>
+                                <div className="text-xs text-slate-500 mt-2 space-y-1 bg-black/20 p-2 rounded">
+                                    <div className="text-blue-300">
+                                        Para igualar el coste neto del Renting, deberías vender el coche por <span className="font-bold border-b border-blue-500/50">{formatMoney(equilibriumPrice)} {baseCurrency}</span>.
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -10791,17 +10936,31 @@ const UtilsTab = ({ baseCurrency }) => {
                     <div className="bg-orange-900/10 border border-orange-800/50 rounded-xl p-6">
                         <h4 className="text-orange-400 font-bold mb-4 uppercase tracking-widest text-sm flex items-center gap-2"><Icons.FileText size={16}/> Renting / Leasing</h4>
                         <div className="space-y-4">
-                            <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">Duración de la Comparativa (Años)</label><FormattedInput value={data.years} onChange={val=>handleChange('years', val)} decimals={0}/></div>
                             <div className="grid grid-cols-2 gap-4">
-                                <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">Cuota Mensual</label><FormattedInput value={data.rentMonthly} onChange={val=>handleChange('rentMonthly', val)} grouped={true}/></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">Cuota Mensual (IVA inc)</label><FormattedInput value={data.rentMonthly} onChange={val=>handleChange('rentMonthly', val)} grouped={true}/></div>
                                 <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">Aportación Inicial</label><FormattedInput value={data.rentEntry} onChange={val=>handleChange('rentEntry', val)} grouped={true}/></div>
                             </div>
-                            <div className="pt-2 border-t border-slate-700/50">
+                            <div>
                                 <label className="text-[10px] font-bold text-orange-300 block mb-1 uppercase">Gastos Extra Anuales (No cubiertos)</label>
                                 <FormattedInput value={data.rentExtraAnnual} onChange={val=>handleChange('rentExtraAnnual', val)} grouped={true}/>
                                 <p className="text-[9px] text-slate-500 mt-1 italic">Ej: Franquicias de seguro, excesos de kilometraje, lavados...</p>
                             </div>
+                            <div className="bg-slate-800/40 p-3 rounded border border-slate-700/50">
+                                <h5 className="text-xs font-bold text-orange-200 mb-2 uppercase flex items-center gap-2"><Icons.Zap className="w-3 h-3"/> Consumo / Combustible</h5>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1">Consumo (L/100 o kWh)</label><FormattedInput value={data.rentCons} onChange={val=>handleChange('rentCons', val)} decimals={1}/></div>
+                                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1">Precio (Unidad)</label><FormattedInput value={data.rentEnergyPrice} onChange={val=>handleChange('rentEnergyPrice', val)} decimals={3}/></div>
+                                </div>
+                            </div>
                         </div>
+                    </div>
+                </div>
+
+                <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-6">
+                    <h4 className="text-slate-300 font-bold mb-4 text-base">Variables de Comparación</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div><label className="text-sm font-bold text-slate-400 block mb-1">Duración (Años)</label><FormattedInput value={data.years} onChange={val=>handleChange('years', val)} decimals={0}/></div>
+                        <div><label className="text-sm font-bold text-slate-400 block mb-1">Kilómetros Anuales</label><FormattedInput value={data.kmPerYear} onChange={val=>handleChange('kmPerYear', val)} grouped={true}/></div>
                     </div>
                 </div>
 
@@ -10837,6 +10996,21 @@ const UtilsTab = ({ baseCurrency }) => {
                         </table>
                     </div>
                 )}
+                
+                <div className="mt-8 p-6 bg-slate-800 border border-slate-700 rounded-xl">
+                    <h5 className="text-sm font-bold text-white uppercase mb-2 flex items-center gap-2"><Icons.Book className="w-4 h-4"/> Guía de Uso de la Herramienta</h5>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                        Esta calculadora está diseñada para cubrir dos escenarios de análisis distintos. Elige el enfoque que se ajuste a tu situación:
+                        <br/><br/>
+                        <strong className="text-blue-200">1. Renting vs Compra (Periodo corto/medio):</strong>
+                        <br/>
+                        Configura la duración exacta del contrato de Renting (ej. 4 años). En la sección de Compra, ajusta el "Valor Venta Final" estimado del coche tras esos 4 años. El resultado comparará el coste neto de haber alquilado el coche frente a haberlo comprado y vendido al finalizar el periodo.
+                        <br/><br/>
+                        <strong className="text-blue-200">2. Renting Encadenado vs Propiedad a Largo Plazo:</strong>
+                        <br/>
+                        Configura la vida útil total que esperas del coche en propiedad (ej. 10 o 15 años). En la columna de Renting, el sistema asumirá que renuevas contratos consecutivamente (encadenando rentings). En la columna de Compra, ajusta el valor de venta final a algo residual (ej. 0% o 5%). El resultado te dirá si compensa tener un coche en propiedad hasta el final de su vida útil o vivir de rentings continuados.
+                    </p>
+                </div>
             </div>
         );
     };
