@@ -293,7 +293,48 @@
         Candles: (p) => ( <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18" {...p}> <path d="M7 13h2v7H7v-7zm10-8h2v9h-2V5zm-5 4h2v12h-2V9zm-5-3h2v2H7V6zm10-3h2v2h-2V3zm-5 4h2v2h-2V7z"/></svg>),
         Network: (p) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" {...p}><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>,
         Lock: (p) => <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18" {...p}><path fillRule="evenodd" d="M12 1.5a5.25 5.25 0 0 0-5.25 5.25v3a3 3 0 0 0-3 3v6.75a3 3 0 0 0 3 3h10.5a3 3 0 0 0 3-3v-6.75a3 3 0 0 0-3-3v-3c0-2.9-2.35-5.25-5.25-5.25Zm3.75 8.25v-3a3.75 3.75 0 1 0-7.5 0v3h7.5Z" clipRule="evenodd" /></svg>,
+        Table: (p) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" {...p}><path d="M3 3h18v18H3z"/><path d="M21 9H3"/><path d="M21 15H3"/><path d="M12 3v18"/></svg>,
+        Car: (p) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" {...p}><path d="M14 16H9m10 0h3v-3.15a1 1 0 0 0-.84-.99L16 11l-2.7-3.6a2 2 0 0 0-1.6-.8H9.3a2 2 0 0 0-1.6.8L5 11l-5.16.86a1 1 0 0 0-.84.99V16h3m10 0a2 2 0 1 1-4 0m4 0a2 2 0 1 0-4 0m-10 0a2 2 0 1 1-4 0m4 0a2 2 0 1 0-4 0"/></svg>,
+        Book: (p) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" {...p}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>,
         };
+
+       const formatDecimal = (val, digits = 2) => new Intl.NumberFormat('es-ES', { style: 'decimal', minimumFractionDigits: digits, maximumFractionDigits: digits }).format(val);
+
+      const FormattedInput = ({ value, onChange, decimals = 0, grouped = false }) => {
+          const getDisplayString = (val) => {
+              if (val === null || val === undefined || val === '') return '';
+              return new Intl.NumberFormat('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: Math.max(decimals, 6), useGrouping: grouped }).format(val);
+          };
+          const [localValue, setLocalValue] = useState(() => getDisplayString(value));
+          const [isFocused, setIsFocused] = useState(false);
+      
+          useEffect(() => { if (!isFocused) setLocalValue(getDisplayString(value)); }, [value, isFocused, decimals, grouped]);
+      
+          const handleChange = (e) => {
+              const inputVal = e.target.value;
+              setLocalValue(inputVal); 
+              if (inputVal === '' || inputVal === '-') return;
+              if (!/^[\d.,-]+$/.test(inputVal)) return;
+              let normalized = inputVal;
+              if (grouped) normalized = inputVal.replace(/\./g, '').replace(/,/g, '.');
+              else normalized = inputVal.replace(/,/g, '.');
+              if (normalized.endsWith('.')) return;
+              const num = parseFloat(normalized);
+              if (!isNaN(num)) onChange(num);
+          };
+      
+          const handleFocus = (e) => {
+              setIsFocused(true);
+              if (value !== null && value !== undefined) {
+                  if (grouped) setLocalValue(getDisplayString(value));
+                  else setLocalValue(value.toString().replace('.', ','));
+              }
+          };
+      
+          return (
+              <input type="text" inputMode="decimal" value={localValue} onChange={handleChange} onFocus={handleFocus} onBlur={() => setIsFocused(false)} onKeyDown={(e) => {if(e.key === 'Enter') e.target.blur();}} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 text-white font-mono font-bold focus:outline-none focus:border-blue-500 text-lg transition-colors text-right shadow-inner" />
+          );
+      };
 
 
       const DEFAULT_AI_MODELS = [
@@ -10511,7 +10552,337 @@ const runScreener = async () => {
         </div>
     );
 };
-          
+
+
+// =====================================================================
+// PESTAÑA ÚTILES (Calculadoras y Herramientas del Autor)
+// =====================================================================
+const UtilsTab = ({ baseCurrency }) => {
+    const [activeSubTab, setActiveSubTab] = useState('compound');
+
+    // --- 1. CALCULADORA DE INTERÉS COMPUESTO ---
+    const CompoundCalculator = () => {
+        const [compState, setCompState] = usePersistentState('bg_compoundCalc', {
+            principal: 10000, annualAddition: 6000, years: 20, rate: 10, inflationRate: 2.5, compoundsPerYear: 1, addAtStart: true
+        });
+        const [showCompTable, setShowCompTable] = useState(false);
+
+        const calculateCompound = () => {
+            let balance = compState.principal;
+            let totalPrincipal = compState.principal;
+            const history = [];
+            const r = compState.rate / 100;
+            const inf = (compState.inflationRate || 0) / 100;
+            const n = compState.compoundsPerYear;
+            const effectiveAnnualRate = Math.pow(1 + (r/n), n) - 1;
+
+            for(let i = 1; i <= compState.years; i++) {
+                let contribution = compState.annualAddition;
+                if(compState.addAtStart) { balance += contribution; totalPrincipal += contribution; }
+                const interestEarned = balance * effectiveAnnualRate;
+                balance += interestEarned;
+                if(!compState.addAtStart) { balance += contribution; totalPrincipal += contribution; }
+                const realBalance = balance / Math.pow(1 + inf, i);
+                history.push({ year: i, principal: totalPrincipal, interest: balance - totalPrincipal, balance: balance, realBalance: realBalance });
+            }
+            const finalRealBalance = balance / Math.pow(1 + inf, compState.years);
+            return { finalBalance: balance, finalRealBalance, totalPrincipal, history };
+        };
+
+        const compResult = calculateCompound();
+        const handleCompChange = (k, v) => setCompState(p => ({...p, [k]: parseFloat(v) || 0}));
+
+        return (
+            <div className="max-w-5xl mx-auto space-y-6 fade-in pb-10">
+                <div className="bg-slate-900/80 p-8 rounded-2xl border border-slate-700 shadow-2xl">
+                    <h3 className="text-2xl font-display font-bold text-green-400 mb-8 flex items-center gap-3"><Icons.TrendingUp className="w-8 h-8" /> Interés Compuesto Ajustado a Inflación</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+                        <div><label className="text-xs font-bold text-slate-400 block mb-2 uppercase tracking-wider">Capital Inicial</label><FormattedInput value={compState.principal} onChange={v => handleCompChange('principal', v)} grouped={true} /></div>
+                        <div><label className="text-xs font-bold text-slate-400 block mb-2 uppercase tracking-wider">Aportación Anual</label><FormattedInput value={compState.annualAddition} onChange={v => handleCompChange('annualAddition', v)} grouped={true} /></div>
+                        <div><label className="text-xs font-bold text-slate-400 block mb-2 uppercase tracking-wider">Años</label><FormattedInput value={compState.years} onChange={v => handleCompChange('years', v)} decimals={0} /></div>
+                        <div><label className="text-xs font-bold text-slate-400 block mb-2 uppercase tracking-wider">Interés Anual (%)</label><FormattedInput value={compState.rate} onChange={v => handleCompChange('rate', v)} decimals={2} /></div>
+                        <div><label className="text-xs font-bold text-slate-400 block mb-2 uppercase tracking-wider">Inflación (%)</label><FormattedInput value={compState.inflationRate} onChange={v => handleCompChange('inflationRate', v)} decimals={2} /></div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8 pb-8 border-b border-slate-700/50">
+                        <div>
+                            <label className="text-xs font-bold text-slate-400 block mb-2 uppercase">Capitalización (veces/año)</label>
+                            <div className="flex items-center gap-4">
+                                <input type="range" min="1" max="12" step="1" value={compState.compoundsPerYear} onChange={e => handleCompChange('compoundsPerYear', e.target.value)} className="flex-grow h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                                <div className="w-24 text-right font-bold text-white bg-slate-800 px-3 py-2 rounded border border-slate-600">{compState.compoundsPerYear} {compState.compoundsPerYear === 1 ? 'vez' : 'veces'}</div>
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-slate-400 block mb-3 uppercase">Momento de aportación</label>
+                            <div className="flex gap-4">
+                                <label className="flex items-center gap-2 cursor-pointer group"><input type="radio" className="accent-blue-500 w-4 h-4" checked={compState.addAtStart} onChange={() => setCompState(p => ({...p, addAtStart: true}))} /><span className={`text-sm font-bold ${compState.addAtStart ? 'text-white' : 'text-slate-400 group-hover:text-slate-300'}`}>Inicio del periodo</span></label>
+                                <label className="flex items-center gap-2 cursor-pointer group"><input type="radio" className="accent-blue-500 w-4 h-4" checked={!compState.addAtStart} onChange={() => setCompState(p => ({...p, addAtStart: false}))} /><span className={`text-sm font-bold ${!compState.addAtStart ? 'text-white' : 'text-slate-400 group-hover:text-slate-300'}`}>Final del periodo</span></label>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="bg-gradient-to-r from-green-900/30 to-slate-900 rounded-xl p-6 border border-green-500/30 flex flex-col md:flex-row justify-between items-center gap-6 shadow-lg">
+                        <div className="text-center md:text-left">
+                            <div className="text-xs font-bold text-green-400 uppercase tracking-widest mb-1">Valor Futuro (Poder Adquisitivo Real)</div>
+                            <div className="text-5xl font-display font-bold text-white">{formatMoney(compResult.finalRealBalance)} {baseCurrency}</div>
+                            <div className="text-lg font-bold text-slate-500 mt-2">{formatMoney(compResult.finalBalance)} {baseCurrency} <span className="text-sm font-normal">(Nominal sin restar inflación)</span></div>
+                        </div>
+                        <div className="flex gap-8 text-right">
+                            <div><div className="text-[10px] font-bold text-slate-400 uppercase">Total Aportado</div><div className="text-xl font-bold text-slate-200">{formatMoney(compResult.totalPrincipal)} {baseCurrency}</div></div>
+                            <div><div className="text-[10px] font-bold text-green-400 uppercase">Beneficio Neto</div><div className="text-xl font-bold text-green-400">+{formatMoney(compResult.finalRealBalance - compResult.totalPrincipal)} {baseCurrency}</div></div>
+                        </div>
+                    </div>
+                    <div className="mt-8">
+                        <button onClick={() => setShowCompTable(!showCompTable)} className="w-full py-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-bold text-slate-300 uppercase tracking-widest transition-colors flex items-center justify-center gap-2"><Icons.Table size={16} /> {showCompTable ? 'Ocultar Desglose Anual' : 'Ver Desglose Año a Año'}</button>
+                        {showCompTable && (
+                            <div className="mt-4 overflow-x-auto rounded-xl border border-slate-800 animate-fade-in max-h-[500px] overflow-y-auto custom-scrollbar">
+                                <table className="w-full text-sm border-collapse text-right">
+                                    <thead className="bg-slate-900 sticky top-0 z-10 text-[10px] uppercase font-bold text-slate-400"><tr><th className="p-3 text-center">Año</th><th className="p-3">Aportado</th><th className="p-3">Interés</th><th className="p-3 text-slate-300">Total Nominal</th><th className="p-3 text-white border-l border-slate-700">Valor Real (Aj. Inflación)</th></tr></thead>
+                                    <tbody className="bg-slate-900/50 divide-y divide-slate-800 font-mono">
+                                        {compResult.history.map((row) => (
+                                            <tr key={row.year} className="hover:bg-slate-800/50 transition-colors"><td className="p-3 font-bold text-slate-400 text-center">{row.year}</td><td className="p-3 text-slate-300">{formatMoney(row.principal)}</td><td className="p-3 text-green-400">+{formatMoney(row.interest)}</td><td className="p-3 font-bold text-slate-300">{formatMoney(row.balance)}</td><td className="p-3 font-bold text-white text-base border-l border-slate-700">{formatMoney(row.realBalance)}</td></tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    // --- 2. CALCULADORA RENTING VS COMPRA ---
+    const RentingCalculator = () => {
+        const [data, setData] = usePersistentState('bg_rentingData', { years: 10, propPrice: 35000, propAid: 0, propResaleValuePct: 30, propInsurance: 600, propTax: 100, propMaint: 200, propBreakdownPct: 5, rentMonthly: 450, rentEntry: 0, rentExtraAnnual: 0 });
+        const [showTable, setShowTable] = useState(true);
+
+        const num = (v) => parseFloat(v) || 0;
+        const yearsProjected = Math.max(1, Math.round(num(data.years)));
+
+        const propTotalBreakdownCost = num(data.propPrice) * (num(data.propBreakdownPct) / 100);
+        const propAnnualBreakdown = propTotalBreakdownCost / yearsProjected;
+        const propAnnualTotal = num(data.propInsurance) + num(data.propTax) + num(data.propMaint) + propAnnualBreakdown;
+        const rentAnnualTotal = (num(data.rentMonthly) * 12) + num(data.rentExtraAnnual);
+
+        const propInitialOut = num(data.propPrice) - num(data.propAid);
+        const rentInitialOut = num(data.rentEntry);
+        const finalResidualValue = num(data.propPrice) * (num(data.propResaleValuePct) / 100);
+
+        const tableRows = useMemo(() => {
+            const rows = [];
+            for (let i = 0; i <= yearsProjected; i++) {
+                const rentAccum = rentInitialOut + (rentAnnualTotal * i);
+                let propAccum = propInitialOut + (propAnnualTotal * i);
+                if (i === yearsProjected) propAccum = propAccum - finalResidualValue;
+                rows.push({ year: i, propVal: propAccum, rentVal: rentAccum, diff: rentAccum - propAccum });
+            }
+            return rows;
+        }, [data, yearsProjected, propInitialOut, propAnnualTotal, rentInitialOut, rentAnnualTotal, finalResidualValue]);
+
+        const finalRow = tableRows[tableRows.length - 1];
+        const totalSavings = finalRow.diff;
+        const winner = totalSavings > 0 ? "COMPRA" : "RENTING";
+        const monthlyProp = finalRow.propVal / (yearsProjected * 12);
+        const monthlyRent = finalRow.rentVal / (yearsProjected * 12);
+
+        const RentingCSSChart = ({ rows }) => {
+            const maxVal = Math.max(...rows.map(r => Math.max(r.propVal, r.rentVal)));
+            const step = Math.max(1000, Math.ceil(maxVal / 5000) * 1000); 
+            const yMax = Math.ceil((maxVal * 1.05) / step) * step;
+            const ticks = []; for (let i = 0; i <= yMax; i += step) ticks.push(i);
+
+            return (
+                <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-6 relative h-[400px] flex flex-col mt-8">
+                    <div className="flex justify-between items-center mb-6 px-2">
+                        <div className="text-xs font-bold uppercase text-slate-400">Evolución Coste Acumulado</div>
+                        <div className="flex gap-4 text-[10px] font-bold uppercase">
+                            <div className="flex items-center gap-2"><div className="w-3 h-3 bg-blue-600 rounded"></div> Compra</div>
+                            <div className="flex items-center gap-2"><div className="w-3 h-3 bg-orange-600 rounded"></div> Renting</div>
+                        </div>
+                    </div>
+                    <div className="flex-1 relative flex items-end ml-10 mb-6 border-l border-b border-slate-600">
+                        <div className="absolute inset-0 pointer-events-none">
+                            {ticks.map((tickVal) => (
+                                <div key={tickVal} className="absolute w-full flex items-center" style={{ bottom: `${(tickVal / yMax) * 100}%` }}>
+                                    <div className={`w-full border-t ${tickVal === 0 ? 'border-white' : 'border-slate-700'}`}></div>
+                                    <span className="absolute -left-10 text-[9px] font-bold text-slate-400 w-8 text-right font-mono">{(tickVal / 1000).toFixed(0)}k</span>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="w-full h-full flex items-end justify-between px-2 z-10">
+                            {rows.map((row) => (
+                                <div key={row.year} className="flex-1 flex flex-col justify-end items-center h-full group relative gap-1 mx-0.5">
+                                    <div className="w-full flex gap-0.5 items-end h-full justify-center">
+                                        <div className="w-1/2 bg-blue-600 rounded-t-sm transition-all duration-500 hover:bg-blue-500 relative min-h-[1px]" style={{ height: `${(row.propVal / yMax) * 100}%` }}>
+                                            <div className="opacity-0 group-hover:opacity-100 absolute bottom-full left-1/2 -translate-x-1/2 mb-1 bg-black/90 text-white text-[10px] px-2 py-1 rounded whitespace-nowrap z-20 pointer-events-none shadow-xl border border-blue-500/50">Compra: {formatMoney(row.propVal)}</div>
+                                        </div>
+                                        <div className="w-1/2 bg-orange-600 rounded-t-sm transition-all duration-500 hover:bg-orange-500 relative min-h-[1px]" style={{ height: `${(row.rentVal / yMax) * 100}%` }}>
+                                            <div className="opacity-0 group-hover:opacity-100 absolute bottom-full left-1/2 -translate-x-1/2 mb-8 bg-black/90 text-white text-[10px] px-2 py-1 rounded whitespace-nowrap z-20 pointer-events-none shadow-xl border border-orange-500/50">Renting: {formatMoney(row.rentVal)}</div>
+                                        </div>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 font-bold absolute -bottom-6">{row.year}</div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const handleChange = (field, value) => setData({...data, [field]: parseFloat(value) || 0});
+
+        return (
+            <div className="max-w-5xl mx-auto space-y-6 fade-in pb-10">
+                <div className="bg-gradient-to-r from-slate-900 to-slate-800 border border-slate-700 rounded-2xl p-6 text-center shadow-xl">
+                    <h3 className="text-slate-300 text-xs font-display uppercase tracking-widest mb-4 font-bold">Resumen Comparativo ({data.years} años)</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className={`rounded-xl p-5 border-2 flex flex-col justify-center shadow-lg ${totalSavings > 0 ? 'bg-blue-900/20 border-blue-500/50' : 'bg-orange-900/20 border-orange-500/50'}`}>
+                             <div className="text-xs text-slate-300 mb-1 uppercase font-bold tracking-wider">Opción más rentable: {winner}</div>
+                             <div className="text-3xl font-bold font-display text-white">Ahorro: {formatMoney(Math.abs(totalSavings))} {baseCurrency}</div>
+                        </div>
+                        <div className="bg-slate-900/50 rounded-xl p-4 border border-slate-600 flex flex-col justify-center">
+                            <div className="text-[10px] text-slate-400 mb-2 uppercase font-bold tracking-wider text-center">Gasto Real Mensual (Neto Promedio)</div>
+                            <div className="grid grid-cols-2 gap-4 text-center divide-x divide-slate-700">
+                                <div><div className="text-blue-400 text-[10px] font-bold mb-1 uppercase">Compra</div><div className="text-2xl font-bold text-white">{formatMoney(monthlyProp)}<span className="text-sm text-slate-500 font-normal">/mes</span></div></div>
+                                <div><div className="text-orange-400 text-[10px] font-bold mb-1 uppercase">Renting</div><div className="text-2xl font-bold text-white">{formatMoney(monthlyRent)}<span className="text-sm text-slate-500 font-normal">/mes</span></div></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* PANEL COMPRA */}
+                    <div className="bg-blue-900/10 border border-blue-800/50 rounded-xl p-6">
+                        <h4 className="text-blue-400 font-bold mb-4 uppercase tracking-widest text-sm flex items-center gap-2"><Icons.Car size={16}/> Compra en Propiedad</h4>
+                        <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">Precio Vehículo</label><FormattedInput value={data.propPrice} onChange={val=>handleChange('propPrice', val)} grouped={true}/></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">Ayudas / Dto Inicial</label><FormattedInput value={data.propAid} onChange={val=>handleChange('propAid', val)} grouped={true}/></div>
+                            </div>
+                            <div className="pt-2 border-t border-slate-700/50">
+                                <h5 className="text-xs font-bold text-slate-300 mb-2">Gastos Anuales Fijos</h5>
+                                <div className="grid grid-cols-3 gap-2">
+                                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1">Seguro/Año</label><FormattedInput value={data.propInsurance} onChange={val=>handleChange('propInsurance', val)} /></div>
+                                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1">Impuestos/Año</label><FormattedInput value={data.propTax} onChange={val=>handleChange('propTax', val)} /></div>
+                                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1">Mtto/Año</label><FormattedInput value={data.propMaint} onChange={val=>handleChange('propMaint', val)} /></div>
+                                </div>
+                            </div>
+                            <div className="pt-2 border-t border-slate-700/50">
+                                <label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">Fondo Averías (% s/ Precio Compra)</label>
+                                <div className="flex items-center gap-4">
+                                    <input type="range" min="0" max="30" step="1" value={data.propBreakdownPct} onChange={(e) => handleChange('propBreakdownPct', e.target.value)} className="flex-grow h-2 bg-slate-700 rounded-lg cursor-pointer accent-red-500" />
+                                    <div className="text-xs font-bold text-red-400 w-12 text-right">{data.propBreakdownPct}%</div>
+                                </div>
+                            </div>
+                            <div className="pt-2 border-t border-slate-700/50">
+                                <label className="text-[10px] font-bold text-green-400 block mb-1 uppercase">Valor de Reventa Final (Año {data.years})</label>
+                                <div className="flex items-center gap-4 mb-2">
+                                    <input type="range" min="0" max="100" step="1" value={data.propResaleValuePct} onChange={(e) => handleChange('propResaleValuePct', e.target.value)} className="flex-grow h-2 bg-slate-700 rounded-lg cursor-pointer accent-green-500" />
+                                    <div className="text-xs font-bold text-green-400 w-12 text-right">{data.propResaleValuePct}%</div>
+                                </div>
+                                <div className="bg-slate-800 p-2 rounded text-center text-sm font-bold text-slate-300">Recuperas: <span className="text-white font-mono">{formatMoney(finalResidualValue)} {baseCurrency}</span></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* PANEL RENTING */}
+                    <div className="bg-orange-900/10 border border-orange-800/50 rounded-xl p-6">
+                        <h4 className="text-orange-400 font-bold mb-4 uppercase tracking-widest text-sm flex items-center gap-2"><Icons.FileText size={16}/> Renting / Leasing</h4>
+                        <div className="space-y-4">
+                            <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">Duración de la Comparativa (Años)</label><FormattedInput value={data.years} onChange={val=>handleChange('years', val)} decimals={0}/></div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">Cuota Mensual</label><FormattedInput value={data.rentMonthly} onChange={val=>handleChange('rentMonthly', val)} grouped={true}/></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">Aportación Inicial</label><FormattedInput value={data.rentEntry} onChange={val=>handleChange('rentEntry', val)} grouped={true}/></div>
+                            </div>
+                            <div className="pt-2 border-t border-slate-700/50">
+                                <label className="text-[10px] font-bold text-orange-300 block mb-1 uppercase">Gastos Extra Anuales (No cubiertos)</label>
+                                <FormattedInput value={data.rentExtraAnnual} onChange={val=>handleChange('rentExtraAnnual', val)} grouped={true}/>
+                                <p className="text-[9px] text-slate-500 mt-1 italic">Ej: Franquicias de seguro, excesos de kilometraje, lavados...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <RentingCSSChart rows={tableRows} />
+
+                <button onClick={() => setShowTable(!showTable)} className="w-full py-4 mt-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-bold text-slate-300 uppercase tracking-widest transition-colors flex items-center justify-center gap-2"><Icons.Table size={16} /> {showTable ? 'Ocultar Tabla' : 'Ver Tabla Detallada'}</button>
+                {showTable && (
+                    <div className="mt-4 overflow-x-auto rounded-xl border border-slate-800 animate-fade-in custom-scrollbar">
+                        <table className="w-full text-sm text-right border-collapse">
+                            <thead className="bg-slate-900 text-[10px] uppercase font-bold text-slate-400">
+                                <tr>
+                                    <th className="p-3 text-center">Año</th>
+                                    <th className="p-3 text-blue-300">Coste Acumulado Propiedad</th>
+                                    <th className="p-3 text-orange-300">Coste Acumulado Renting</th>
+                                    <th className="p-3">Diferencia</th>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-slate-900/50 divide-y divide-slate-800 font-mono">
+                                {tableRows.map((row) => (
+                                    <tr key={row.year} className={`hover:bg-slate-800/50 transition-colors ${row.year === yearsProjected ? "bg-slate-800/80 font-bold" : ""}`}>
+                                        <td className="p-3 text-center font-bold text-slate-400">{row.year}</td>
+                                        <td className="p-3 text-blue-300">
+                                            {formatMoney(row.propVal)}
+                                            {row.year === yearsProjected && <span className="text-[9px] text-green-400 block font-sans">(Inc. Venta)</span>}
+                                        </td>
+                                        <td className="p-3 text-orange-300">{formatMoney(row.rentVal)}</td>
+                                        <td className={`p-3 font-bold ${row.diff > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                            {row.diff > 0 ? '+' : ''}{formatMoney(row.diff)}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    // --- 3. HERRAMIENTAS DEL AUTOR ---
+    const AuthorTools = () => (
+        <div className="max-w-4xl mx-auto space-y-6 fade-in mt-6 pb-10">
+            <div className="bg-slate-900/80 p-8 rounded-2xl border border-slate-700 shadow-xl text-center">
+                <h3 className="text-2xl font-display font-bold text-white mb-2">Ecosistema BoardingGate</h3>
+                <p className="text-slate-400 mb-8 text-sm">Accede a otros proyectos, calculadoras y utilidades gratuitas desarrolladas por el autor.</p>
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <a href="https://boardinggate.github.io/Tesla/tesla.html" target="_blank" className="flex flex-col items-center p-6 bg-slate-800 hover:bg-blue-900/40 border border-slate-700 hover:border-blue-500 rounded-xl transition-all group shadow-lg">
+                        <Icons.Car className="w-12 h-12 text-blue-400 mb-4 group-hover:scale-110 transition-transform" />
+                        <span className="font-bold text-white text-lg mb-2">Navegador Tesla</span>
+                        <span className="text-xs text-slate-400">Herramientas nativas de eficiencia para la pantalla de tu Tesla.</span>
+                    </a>
+                    
+                    <a href="https://boardinggate.github.io/BGUTIL/index.html" target="_blank" className="flex flex-col items-center p-6 bg-slate-800 hover:bg-green-900/40 border border-slate-700 hover:border-green-500 rounded-xl transition-all group shadow-lg">
+                        <Icons.Zap className="w-12 h-12 text-green-400 mb-4 group-hover:scale-110 transition-transform" />
+                        <span className="font-bold text-white text-lg mb-2">Utilidades EV</span>
+                        <span className="text-xs text-slate-400">Calculadoras de tarifas, peajes, solar y eficiencia energética.</span>
+                    </a>
+                    
+                    <a href="https://boardinggate.github.io/MASTER/index.html" target="_blank" className="flex flex-col items-center p-6 bg-slate-800 hover:bg-purple-900/40 border border-slate-700 hover:border-purple-500 rounded-xl transition-all group shadow-lg">
+                        <Icons.Book className="w-12 h-12 text-purple-400 mb-4 group-hover:scale-110 transition-transform" />
+                        <span className="font-bold text-white text-lg mb-2">Estudio / Máster</span>
+                        <span className="text-xs text-slate-400">Plataforma avanzada de estudio, test y flashcards para oposiciones.</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    );
+
+    return (
+        <div className="w-full p-4 md:p-6 flex flex-col gap-6">
+            <div className="flex gap-2 bg-slate-900 p-1 rounded-xl border border-slate-800 w-fit shadow-lg shrink-0 mx-auto md:mx-0 overflow-x-auto max-w-full custom-scrollbar">
+                <button onClick={() => setActiveSubTab('compound')} className={`px-6 py-2.5 rounded-lg text-[10px] font-bold uppercase transition-all whitespace-nowrap ${activeSubTab === 'compound' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>Interés Compuesto</button>
+                <button onClick={() => setActiveSubTab('renting')} className={`px-6 py-2.5 rounded-lg text-[10px] font-bold uppercase transition-all whitespace-nowrap ${activeSubTab === 'renting' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>Renting vs Compra</button>
+                <button onClick={() => setActiveSubTab('author')} className={`px-6 py-2.5 rounded-lg text-[10px] font-bold uppercase transition-all whitespace-nowrap ${activeSubTab === 'author' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>Más Herramientas</button>
+            </div>
+
+            {activeSubTab === 'compound' && <CompoundCalculator />}
+            {activeSubTab === 'renting' && <RentingCalculator />}
+            {activeSubTab === 'author' && <AuthorTools />}
+        </div>
+    );
+};
+
 
 const App = () => {
     const [globalNotes, setGlobalNotes] = usePersistentState('bg_global_notes', '');
@@ -10996,6 +11367,7 @@ const App = () => {
     <button onClick={() => setActiveTab('dividends')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'dividends' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}><Icons.DollarSign size={14}/> Dividendos</button>
     <button onClick={() => setActiveTab('results')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'results' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}><Icons.ChartBar size={14}/> Resultados</button>
     <button onClick={() => setActiveTab('analysis')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'analysis' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}><Icons.Search size={14}/> Estudio</button>
+    <button onClick={() => setActiveTab('utils')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'utils' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}><Icons.Wrench size={14}/> Útiles</button>
     <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all ${activeTab === 'settings' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}><Icons.Settings size={14}/> Ajustes</button>
     <button onClick={() => setIsHelpModalOpen(true)} className="px-4 py-2 rounded-md text-[10px] font-bold uppercase flex items-center gap-2 transition-all text-yellow-500 hover:bg-yellow-500/20 border border-transparent hover:border-yellow-500/50 ml-2"><Icons.HelpCircle size={14}/> Ayuda</button>
 </nav></header>
@@ -11055,6 +11427,9 @@ const App = () => {
                         gScriptUrl={gScriptUrl}
                     />
                 )}
+
+              
+               {activeTab === 'utils' && <UtilsTab baseCurrency={baseCurrency} />}
 
             
                {activeTab === 'settings' && <SettingsTab 
