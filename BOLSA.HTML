@@ -2406,6 +2406,89 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
         } 
     };
 
+    const fetchDynamicModels = async (type) => {
+        try {
+            setIoStatus('processing'); 
+            
+            const res = await fetch('https://openrouter.ai/api/v1/models');
+            const data = await res.json();
+
+            let models = data.data.filter(m => 
+                !m.id.includes('vision') && 
+                !m.id.includes('moderation') && 
+                !m.name.toLowerCase().includes('image') &&
+                !m.name.toLowerCase().includes('beta')
+            );
+
+            if (type === 'free') {
+                models = models.filter(m => m.pricing.prompt === "0" && m.pricing.completion === "0" || m.id.endsWith(':free'));
+                
+                models.sort((a, b) => {
+                    const scoreA = (a.id.includes('r1') ? 100 : 0) + (a.id.includes('70b') || a.id.includes('72b') ? 50 : 0);
+                    const scoreB = (b.id.includes('r1') ? 100 : 0) + (b.id.includes('70b') || b.id.includes('72b') ? 50 : 0);
+                    if (scoreA !== scoreB) return scoreB - scoreA;
+                    return b.context_length - a.context_length;
+                });
+            } else {
+                models = models.filter(m => parseFloat(m.pricing.prompt) > 0 && !m.id.endsWith(':free'));
+                
+                const flagships = ['o1', 'o3', 'claude-3.5', 'deepseek-r1', 'gpt-4o', 'grok'];
+                
+                models.sort((a, b) => {
+                    const aIsFlag = flagships.some(f => a.id.includes(f)) ? 1 : 0;
+                    const bIsFlag = flagships.some(f => b.id.includes(f)) ? 1 : 0;
+                    
+                    if (aIsFlag !== bIsFlag) return bIsFlag - aIsFlag;
+                    return b.context_length - a.context_length;
+                });
+            }
+
+            const selectedModels = [];
+            const seenProviders = new Set();
+            
+            for (const m of models) {
+                const provider = m.id.split('/')[0];
+                if (!seenProviders.has(provider)) {
+                    selectedModels.push(m);
+                    seenProviders.add(provider);
+                }
+                if (selectedModels.length === 6) break;
+            }
+            
+            if (selectedModels.length < 6) {
+                for (const m of models) {
+                    if (!selectedModels.find(sm => sm.id === m.id)) {
+                        selectedModels.push(m);
+                    }
+                    if (selectedModels.length === 6) break;
+                }
+            }
+
+           const top6 = selectedModels.map(m => {
+                if (type === 'free') {
+                    return `${m.id} | 🎁 FREE`;
+                } else {
+                    // OpenRouter da el precio por 1 token. Lo pasamos a 1 Millón de tokens para que sea legible.
+                    const costIn = (parseFloat(m.pricing.prompt) * 1000000).toFixed(2);
+                    const costOut = (parseFloat(m.pricing.completion) * 1000000).toFixed(2);
+                    return `${m.id} | 💎 In:$${costIn}/M - Out:$${costOut}/M`;
+                }
+            });
+
+            const uniqueModels = [...new Set([...top6, ...availableModels])];
+            
+            setAvailableModels(uniqueModels);
+            setAiModel(top6[0]); 
+            
+            alert(`✅ Se han añadido los 6 modelos ${type === 'free' ? 'GRATUITOS' : 'PREMIUM'} de los 6 mejores proveedores actuales.`);
+
+        } catch (e) {
+            alert("❌ Error: No se pudo conectar con el repositorio de OpenRouter para obtener la lista.");
+        } finally {
+            setIoStatus('idle');
+        }
+    };
+  
 
     const handleAiImport = async () => { 
         if (!apiKey) return alert("Falta API Key"); 
@@ -2570,6 +2653,25 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
                                  <p className="text-[9px] text-slate-400 mb-3 leading-relaxed">
                                      Añade nuevos modelos. Puedes usar el separador <strong>|</strong> para añadir una descripción visible en los menús (Ej: <code className="text-blue-300">moonshotai/kimi-k2.5 | Modelo finanzas</code>). El sistema solo usará el ID previo a la barra para conectar.
                                  </p>
+
+                                 {/* NUEVA BOTONERA DINÁMICA DE OPENROUTER */}
+                                 <div className="flex flex-col sm:flex-row gap-2 mb-4 p-3 bg-slate-900 border border-slate-700/50 rounded-lg">
+                                     <button 
+                                         onClick={() => fetchDynamicModels('paid')}
+                                         className="flex-1 bg-gradient-to-r from-blue-700 to-indigo-800 hover:from-blue-600 hover:to-indigo-700 text-white px-3 py-2 rounded-lg text-[10px] font-bold uppercase transition-colors shadow-lg flex items-center justify-center gap-2"
+                                     >
+                                         <Icons.TrendingUp size={14} className="text-blue-300"/>
+                                         Añadir Top 6 Premium (De Pago Openrouter)
+                                     </button>
+                                     <button 
+                                         onClick={() => fetchDynamicModels('free')}
+                                         className="flex-1 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-600 hover:to-teal-700 text-white px-3 py-2 rounded-lg text-[10px] font-bold uppercase transition-colors shadow-lg flex items-center justify-center gap-2"
+                                     >
+                                          <Icons.Wand size={14} className="text-emerald-300"/>
+                                         Añadir Top 6 Gratuitos de Openrouter
+                                     </button>
+                                 </div>
+
                                  <div className="flex gap-2 mb-3">
                                      <input type="text" id="newModelInput" placeholder="ID (Ej: gemini-1.5-pro | Descripción opcional)" className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-blue-500"/>
                                      <button onClick={() => {
