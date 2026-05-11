@@ -2408,19 +2408,19 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
 
     const fetchDynamicModels = async (type) => {
         try {
-           setIoStatus('processing'); 
+            setIoStatus('processing'); 
             
-           const res = await fetch('https://openrouter.ai/api/v1/models');
+            const res = await fetch('https://openrouter.ai/api/v1/models');
             const data = await res.json();
 
             let models = data.data.filter(m => 
                 !m.id.includes('vision') && 
                 !m.id.includes('moderation') && 
-                !m.name.toLowerCase().includes('image')
+                !m.name.toLowerCase().includes('image') &&
+                !m.name.toLowerCase().includes('beta')
             );
 
             if (type === 'free') {
-                // Filtrar solo los gratis
                 models = models.filter(m => m.pricing.prompt === "0" && m.pricing.completion === "0" || m.id.endsWith(':free'));
                 
                 models.sort((a, b) => {
@@ -2432,33 +2432,62 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
             } else {
                 models = models.filter(m => parseFloat(m.pricing.prompt) > 0 && !m.id.endsWith(':free'));
                 
-                const flagships = ['o1', 'o3', 'claude-3.5', 'deepseek-r1', 'gpt-4o'];
+                const flagships = ['o1', 'o3', 'claude-3.5', 'deepseek-r1', 'gpt-4o', 'grok'];
                 
                 models.sort((a, b) => {
                     const aIsFlag = flagships.some(f => a.id.includes(f)) ? 1 : 0;
                     const bIsFlag = flagships.some(f => b.id.includes(f)) ? 1 : 0;
                     
-                    if (aIsFlag !== bIsFlag) return bIsFlag - aIsFlag; // Primero los flagships
-                    return b.context_length - a.context_length; // Desempate por memoria
+                    if (aIsFlag !== bIsFlag) return bIsFlag - aIsFlag;
+                    return b.context_length - a.context_length;
                 });
             }
 
-           const top6 = models.slice(0, 6).map(m => `${m.id} | ${m.name}`);
+            const selectedModels = [];
+            const seenProviders = new Set();
+            
+            for (const m of models) {
+                const provider = m.id.split('/')[0];
+                if (!seenProviders.has(provider)) {
+                    selectedModels.push(m);
+                    seenProviders.add(provider);
+                }
+                if (selectedModels.length === 6) break;
+            }
+            
+            if (selectedModels.length < 6) {
+                for (const m of models) {
+                    if (!selectedModels.find(sm => sm.id === m.id)) {
+                        selectedModels.push(m);
+                    }
+                    if (selectedModels.length === 6) break;
+                }
+            }
 
-           const uniqueModels = [...new Set([...top6, ...availableModels])];
+           const top6 = selectedModels.map(m => {
+                if (type === 'free') {
+                    return `${m.id} | 🎁 FREE`;
+                } else {
+                    // OpenRouter da el precio por 1 token. Lo pasamos a 1 Millón de tokens para que sea legible.
+                    const costIn = (parseFloat(m.pricing.prompt) * 1000000).toFixed(2);
+                    const costOut = (parseFloat(m.pricing.completion) * 1000000).toFixed(2);
+                    return `${m.id} | 💎 In:$${costIn}/M - Out:$${costOut}/M`;
+                }
+            });
+
+            const uniqueModels = [...new Set([...top6, ...availableModels])];
             
             setAvailableModels(uniqueModels);
-            setAiModel(top6[0]); // Seleccionar automáticamente el #1 de la nueva lista
+            setAiModel(top6[0]); 
             
-            alert(`✅ Se han añadido los 6 modelos ${type === 'free' ? 'GRATUITOS' : 'PREMIUM'} más potentes disponibles en este momento.`);
+            alert(`✅ Se han añadido los 6 modelos ${type === 'free' ? 'GRATUITOS' : 'PREMIUM'} de los 6 mejores proveedores actuales.`);
 
         } catch (e) {
-           alert("❌ Error: No se pudo conectar con el repositorio de OpenRouter para obtener la lista.");
+            alert("❌ Error: No se pudo conectar con el repositorio de OpenRouter para obtener la lista.");
         } finally {
             setIoStatus('idle');
         }
     };
-
   
 
     const handleAiImport = async () => { 
