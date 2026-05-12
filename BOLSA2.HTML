@@ -2406,7 +2406,8 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
         } 
     };
 
-    const fetchDynamicModels = async (type) => {
+   
+  const fetchDynamicModels = async (type) => {
         try {
             setIoStatus('processing'); 
             
@@ -2422,30 +2423,25 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
             );
 
             if (type === 'free') {
-                // LÓGICA PARA MODELOS GRATUITOS
+                // LÓGICA DINÁMICA PARA GRATUITOS (Por peso de parámetros)
                 models = models.filter(m => m.pricing.prompt === "0" || m.id.endsWith(':free'));
                 
                 const getModelScore = (m) => {
-                    // Extraer número de parámetros (ej: de "70b" extrae 70)
                     const match = m.id.toLowerCase().match(/(\d+)b/);
                     let weight = match ? parseInt(match[1]) : 0;
-                    
-                    // Bonus por razonamiento (R1 es tendencia actual y futura)
                     if (m.id.toLowerCase().includes('r1')) weight += 1000; 
-                    
                     return weight;
                 };
 
                 models.sort((a, b) => {
                     const scoreA = getModelScore(a);
                     const scoreB = getModelScore(b);
-                    if (scoreA !== scoreB) return scoreB - scoreA; // Más pesado primero
-                    return b.context_length - a.context_length; // Desempate por memoria
+                    if (scoreA !== scoreB) return scoreB - scoreA;
+                    return b.context_length - a.context_length;
                 });
 
             } else {
-                // LÓGICA PARA MODELOS DE PAGO (PREMIUM)
-                // Filtro Negativo: Excluimos versiones recortadas/baratas para quedarnos con los buques insignia
+                // LÓGICA DINÁMICA PARA PREMIUM (Filtro anti-versiones recortadas)
                 const budgetTerms = /(mini|lite|flash|haiku|nano|small|(?<!\d)[1-9]b|1[0-4]b)/i;
                 
                 models = models.filter(m => 
@@ -2454,7 +2450,6 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
                     parseFloat(m.pricing.prompt) > 0
                 );
 
-                // Ordenamos por Ventana de Contexto (Músculo de procesamiento)
                 models.sort((a, b) => b.context_length - a.context_length);
             }
 
@@ -2471,7 +2466,7 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
                 if (selectedModels.length === 6) break;
             }
             
-            // Si no hay 6 proveedores distintos, rellenamos con los siguientes mejores
+            // Relleno de seguridad si no hay 6 proveedores
             if (selectedModels.length < 6) {
                 for (const m of models) {
                     if (!selectedModels.find(sm => sm.id === m.id)) {
@@ -2481,22 +2476,24 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
                 }
             }
 
-            // 3. Formateo final para la lista de la aplicación
+            // 3. Formateo de la descripción (Precios In/Out y Contexto)
             const finalFormattedList = selectedModels.map(m => {
+                const contextK = Math.floor(m.context_length / 1024);
                 if (type === 'free') {
-                    return `${m.id} | 🎁 FREE (${Math.floor(m.context_length/1024)}k)`;
+                    return `${m.id} | 🎁 FREE (${contextK}k)`;
                 } else {
+                    // Convertimos precio por token a precio por Millón de tokens para lectura humana
                     const costIn = (parseFloat(m.pricing.prompt) * 1000000).toFixed(2);
-                    return `${m.id} | 💎 $${costIn}/M (${Math.floor(m.context_length/1024)}k)`;
+                    const costOut = (parseFloat(m.pricing.completion) * 1000000).toFixed(2);
+                    return `${m.id} | 💎 In:$${costIn} - Out:$${costOut}/M (${contextK}k)`;
                 }
             });
 
-            // Actualizar estado preservando los modelos que el usuario haya añadido a mano
             const combinedList = [...new Set([...finalFormattedList, ...availableModels])];
             setAvailableModels(combinedList);
-            setAiModel(finalFormattedList[0]); // Seleccionar el mejor automáticamente
+            setAiModel(finalFormattedList[0]); 
             
-            alert(`✅ Se han localizado los 6 mejores modelos ${type === 'free' ? 'gratuitos por peso/razonamiento' : 'Premium (Flagships)'} de proveedores distintos.`);
+            alert(`✅ Localizados los 6 mejores modelos ${type === 'free' ? 'gratuitos' : 'Premium'} de proveedores distintos.`);
 
         } catch (e) {
             console.error(e);
@@ -2505,7 +2502,6 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
             setIoStatus('idle');
         }
     };
-  
 
     const handleAiImport = async () => { 
         if (!apiKey) return alert("Falta API Key"); 
