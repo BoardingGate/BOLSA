@@ -2406,13 +2406,23 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
         } 
     };
 
-    const fetchDynamicModels = async (type) => {
+   
+
+const fetchDynamicModels = async (type) => {
         try {
             setIoStatus('processing'); 
             
+            // 1. Capturar filtro manual e IDs ya existentes para no repetirlos
+            const filterInput = document.getElementById('newModelInput');
+            const filterText = filterInput ? filterInput.value.trim().toLowerCase() : '';
+            
+            // Extraemos solo el ID (lo que está antes del |) de los modelos que ya tiene el usuario
+            const existingIds = new Set(availableModels.map(am => am.split('|')[0].trim()));
+
             const res = await fetch('https://openrouter.ai/api/v1/models');
             const data = await res.json();
 
+            // 2. Limpieza base
             let models = data.data.filter(m => 
                 !m.id.includes('vision') && 
                 !m.id.includes('moderation') && 
@@ -2420,75 +2430,95 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
                 !m.name.toLowerCase().includes('beta')
             );
 
+            // 3. Aplicar filtro por literal si existe
+            if (filterText) {
+                models = models.filter(m => 
+                    m.id.toLowerCase().includes(filterText) || 
+                    m.name.toLowerCase().includes(filterText)
+                );
+            }
+
+            // 4. Lógica de ordenación (Free vs Premium)
             if (type === 'free') {
-                models = models.filter(m => m.pricing.prompt === "0" && m.pricing.completion === "0" || m.id.endsWith(':free'));
-                
+                models = models.filter(m => m.pricing.prompt === "0" || m.id.endsWith(':free'));
+                const getModelScore = (m) => {
+                    const match = m.id.toLowerCase().match(/(\d+)b/);
+                    let weight = match ? parseInt(match[1]) : 0;
+                    if (m.id.toLowerCase().includes('r1')) weight += 1000; 
+                    return weight;
+                };
                 models.sort((a, b) => {
-                    const scoreA = (a.id.includes('r1') ? 100 : 0) + (a.id.includes('70b') || a.id.includes('72b') ? 50 : 0);
-                    const scoreB = (b.id.includes('r1') ? 100 : 0) + (b.id.includes('70b') || b.id.includes('72b') ? 50 : 0);
+                    const scoreA = getModelScore(a);
+                    const scoreB = getModelScore(b);
                     if (scoreA !== scoreB) return scoreB - scoreA;
                     return b.context_length - a.context_length;
                 });
             } else {
-                models = models.filter(m => parseFloat(m.pricing.prompt) > 0 && !m.id.endsWith(':free'));
-                
-                const flagships = ['o1', 'o3', 'claude-3.5', 'deepseek-r1', 'gpt-4o', 'grok'];
-                
-                models.sort((a, b) => {
-                    const aIsFlag = flagships.some(f => a.id.includes(f)) ? 1 : 0;
-                    const bIsFlag = flagships.some(f => b.id.includes(f)) ? 1 : 0;
-                    
-                    if (aIsFlag !== bIsFlag) return bIsFlag - aIsFlag;
-                    return b.context_length - a.context_length;
-                });
+                const budgetTerms = /(mini|lite|flash|haiku|nano|small|(?<!\d)[1-9]b|1[0-4]b)/i;
+                models = models.filter(m => 
+                    !budgetTerms.test(m.id) && 
+                    !budgetTerms.test(m.name) &&
+                    parseFloat(m.pricing.prompt) > 0
+                );
+                models.sort((a, b) => b.context_length - a.context_length);
             }
 
+            // 5. SELECCIÓN DE NOVEDADES (Diversidad + No Repetidos)
             const selectedModels = [];
             const seenProviders = new Set();
             
+            // Intento 1: Proveedores nuevos que no estén ya en la lista del usuario
             for (const m of models) {
                 const provider = m.id.split('/')[0];
-                if (!seenProviders.has(provider)) {
+                if (!seenProviders.has(provider) && !existingIds.has(m.id)) {
                     selectedModels.push(m);
                     seenProviders.add(provider);
                 }
                 if (selectedModels.length === 6) break;
             }
             
+            // Intento 2: Si aún faltan (porque el usuario ya tiene mucho o hay pocos proveedores), 
+            // rellenamos con cualquier modelo que no esté repetido
             if (selectedModels.length < 6) {
                 for (const m of models) {
-                    if (!selectedModels.find(sm => sm.id === m.id)) {
+                    if (!existingIds.has(m.id) && !selectedModels.find(sm => sm.id === m.id)) {
                         selectedModels.push(m);
                     }
                     if (selectedModels.length === 6) break;
                 }
             }
 
-           const top6 = selectedModels.map(m => {
+            if (selectedModels.length === 0) {
+                alert(filterText ? `No hay modelos nuevos que coincidan con "${filterText}"` : "No se han encontrado modelos nuevos.");
+                return;
+            }
+
+            // 6. Formateo descriptivo
+            const newFormattedModels = selectedModels.map(m => {
+                const contextK = Math.floor(m.context_length / 1024);
                 if (type === 'free') {
-                    return `${m.id} | 🎁 FREE`;
+                    return `${m.id} | 🎁 FREE (${contextK}k)`;
                 } else {
-                    // OpenRouter da el precio por 1 token. Lo pasamos a 1 Millón de tokens para que sea legible.
                     const costIn = (parseFloat(m.pricing.prompt) * 1000000).toFixed(2);
                     const costOut = (parseFloat(m.pricing.completion) * 1000000).toFixed(2);
-                    return `${m.id} | 💎 In:$${costIn}/M - Out:$${costOut}/M`;
+                    return `${m.id} | 💎 In:$${costIn} - Out:$${costOut}/M (${contextK}k)`;
                 }
             });
 
-            const uniqueModels = [...new Set([...top6, ...availableModels])];
+            // 7. Actualizar listas
+            setAvailableModels([...newFormattedModels, ...availableModels]);
+            setAiModel(newFormattedModels[0]); 
             
-            setAvailableModels(uniqueModels);
-            setAiModel(top6[0]); 
-            
-            alert(`✅ Se han añadido los 6 modelos ${type === 'free' ? 'GRATUITOS' : 'PREMIUM'} de los 6 mejores proveedores actuales.`);
+            alert(`✅ Se han añadido ${newFormattedModels.length} modelos nuevos.`);
 
         } catch (e) {
-            alert("❌ Error: No se pudo conectar con el repositorio de OpenRouter para obtener la lista.");
+            console.error(e);
+            alert("❌ Error de conexión.");
         } finally {
             setIoStatus('idle');
         }
     };
-  
+
 
     const handleAiImport = async () => { 
         if (!apiKey) return alert("Falta API Key"); 
@@ -2651,7 +2681,7 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
                             <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
                                  <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase flex items-center gap-2"><Icons.Settings size={12}/> Gestión de Modelos Personalizados</label>
                                  <p className="text-[9px] text-slate-400 mb-3 leading-relaxed">
-                                     Añade nuevos modelos. Puedes usar el separador <strong>|</strong> para añadir una descripción visible en los menús (Ej: <code className="text-blue-300">moonshotai/kimi-k2.5 | Modelo finanzas</code>). El sistema solo usará el ID previo a la barra para conectar.
+                                     Añade nuevos modelos. Puedes usar el separador <strong>|</strong> para añadir una descripción visible en los menús (Ej: <code className="text-blue-300">moonshotai/kimi-k2.5 | Modelo finanzas</code>). El sistema solo usará el ID previo a la barra para conectar. Si teclea en ese campo un literal y luego usa los botones de buscar los 6 mejores modelos se filtrarán por esa palabra.
                                  </p>
 
                                  {/* NUEVA BOTONERA DINÁMICA DE OPENROUTER */}
