@@ -2407,18 +2407,22 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
     };
 
    
- const fetchDynamicModels = async (type) => {
+
+const fetchDynamicModels = async (type) => {
         try {
             setIoStatus('processing'); 
             
-            // Capturamos el filtro del input manual si existe
+            // 1. Capturar filtro manual e IDs ya existentes para no repetirlos
             const filterInput = document.getElementById('newModelInput');
             const filterText = filterInput ? filterInput.value.trim().toLowerCase() : '';
             
+            // Extraemos solo el ID (lo que está antes del |) de los modelos que ya tiene el usuario
+            const existingIds = new Set(availableModels.map(am => am.split('|')[0].trim()));
+
             const res = await fetch('https://openrouter.ai/api/v1/models');
             const data = await res.json();
 
-            // 1. Limpieza base: Quitar modelos multimedia o experimentales
+            // 2. Limpieza base
             let models = data.data.filter(m => 
                 !m.id.includes('vision') && 
                 !m.id.includes('moderation') && 
@@ -2426,7 +2430,7 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
                 !m.name.toLowerCase().includes('beta')
             );
 
-            // NUEVO: Filtro por literal de búsqueda si el usuario ha escrito algo
+            // 3. Aplicar filtro por literal si existe
             if (filterText) {
                 models = models.filter(m => 
                     m.id.toLowerCase().includes(filterText) || 
@@ -2434,67 +2438,63 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
                 );
             }
 
-            if (models.length === 0) {
-                alert(`⚠️ No se han encontrado modelos que coincidan con "${filterText}"`);
-                return;
-            }
-
+            // 4. Lógica de ordenación (Free vs Premium)
             if (type === 'free') {
-                // LÓGICA PARA GRATUITOS (Por peso de parámetros)
                 models = models.filter(m => m.pricing.prompt === "0" || m.id.endsWith(':free'));
-                
                 const getModelScore = (m) => {
                     const match = m.id.toLowerCase().match(/(\d+)b/);
                     let weight = match ? parseInt(match[1]) : 0;
                     if (m.id.toLowerCase().includes('r1')) weight += 1000; 
                     return weight;
                 };
-
                 models.sort((a, b) => {
                     const scoreA = getModelScore(a);
                     const scoreB = getModelScore(b);
                     if (scoreA !== scoreB) return scoreB - scoreA;
                     return b.context_length - a.context_length;
                 });
-
             } else {
-                // LÓGICA PARA PREMIUM (Filtro anti-versiones recortadas)
                 const budgetTerms = /(mini|lite|flash|haiku|nano|small|(?<!\d)[1-9]b|1[0-4]b)/i;
-                
                 models = models.filter(m => 
                     !budgetTerms.test(m.id) && 
                     !budgetTerms.test(m.name) &&
                     parseFloat(m.pricing.prompt) > 0
                 );
-
                 models.sort((a, b) => b.context_length - a.context_length);
             }
 
-            // 2. Diversidad: Seleccionar 1 modelo por cada proveedor diferente
+            // 5. SELECCIÓN DE NOVEDADES (Diversidad + No Repetidos)
             const selectedModels = [];
             const seenProviders = new Set();
             
+            // Intento 1: Proveedores nuevos que no estén ya en la lista del usuario
             for (const m of models) {
                 const provider = m.id.split('/')[0];
-                if (!seenProviders.has(provider)) {
+                if (!seenProviders.has(provider) && !existingIds.has(m.id)) {
                     selectedModels.push(m);
                     seenProviders.add(provider);
                 }
                 if (selectedModels.length === 6) break;
             }
             
-            // Relleno si no hay 6 proveedores (común cuando se filtra por un solo nombre como "Google")
+            // Intento 2: Si aún faltan (porque el usuario ya tiene mucho o hay pocos proveedores), 
+            // rellenamos con cualquier modelo que no esté repetido
             if (selectedModels.length < 6) {
                 for (const m of models) {
-                    if (!selectedModels.find(sm => sm.id === m.id)) {
+                    if (!existingIds.has(m.id) && !selectedModels.find(sm => sm.id === m.id)) {
                         selectedModels.push(m);
                     }
                     if (selectedModels.length === 6) break;
                 }
             }
 
-            // 3. Formateo descriptivo detallado (Precios y Contexto)
-            const finalFormattedList = selectedModels.map(m => {
+            if (selectedModels.length === 0) {
+                alert(filterText ? `No hay modelos nuevos que coincidan con "${filterText}"` : "No se han encontrado modelos nuevos.");
+                return;
+            }
+
+            // 6. Formateo descriptivo
+            const newFormattedModels = selectedModels.map(m => {
                 const contextK = Math.floor(m.context_length / 1024);
                 if (type === 'free') {
                     return `${m.id} | 🎁 FREE (${contextK}k)`;
@@ -2505,19 +2505,20 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
                 }
             });
 
-            const combinedList = [...new Set([...finalFormattedList, ...availableModels])];
-            setAvailableModels(combinedList);
-            setAiModel(finalFormattedList[0]); 
+            // 7. Actualizar listas
+            setAvailableModels([...newFormattedModels, ...availableModels]);
+            setAiModel(newFormattedModels[0]); 
             
-            alert(`✅ Localizados ${finalFormattedList.length} modelos ${type === 'free' ? 'gratuitos' : 'Premium'} ${filterText ? 'filtrados por "' + filterText + '"' : ''}.`);
+            alert(`✅ Se han añadido ${newFormattedModels.length} modelos nuevos.`);
 
         } catch (e) {
             console.error(e);
-            alert("❌ Error al conectar con OpenRouter.");
+            alert("❌ Error de conexión.");
         } finally {
             setIoStatus('idle');
         }
     };
+
 
     const handleAiImport = async () => { 
         if (!apiKey) return alert("Falta API Key"); 
