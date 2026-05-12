@@ -2407,9 +2407,13 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
     };
 
    
-  const fetchDynamicModels = async (type) => {
+ const fetchDynamicModels = async (type) => {
         try {
             setIoStatus('processing'); 
+            
+            // Capturamos el filtro del input manual si existe
+            const filterInput = document.getElementById('newModelInput');
+            const filterText = filterInput ? filterInput.value.trim().toLowerCase() : '';
             
             const res = await fetch('https://openrouter.ai/api/v1/models');
             const data = await res.json();
@@ -2422,8 +2426,21 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
                 !m.name.toLowerCase().includes('beta')
             );
 
+            // NUEVO: Filtro por literal de búsqueda si el usuario ha escrito algo
+            if (filterText) {
+                models = models.filter(m => 
+                    m.id.toLowerCase().includes(filterText) || 
+                    m.name.toLowerCase().includes(filterText)
+                );
+            }
+
+            if (models.length === 0) {
+                alert(`⚠️ No se han encontrado modelos que coincidan con "${filterText}"`);
+                return;
+            }
+
             if (type === 'free') {
-                // LÓGICA DINÁMICA PARA GRATUITOS (Por peso de parámetros)
+                // LÓGICA PARA GRATUITOS (Por peso de parámetros)
                 models = models.filter(m => m.pricing.prompt === "0" || m.id.endsWith(':free'));
                 
                 const getModelScore = (m) => {
@@ -2441,7 +2458,7 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
                 });
 
             } else {
-                // LÓGICA DINÁMICA PARA PREMIUM (Filtro anti-versiones recortadas)
+                // LÓGICA PARA PREMIUM (Filtro anti-versiones recortadas)
                 const budgetTerms = /(mini|lite|flash|haiku|nano|small|(?<!\d)[1-9]b|1[0-4]b)/i;
                 
                 models = models.filter(m => 
@@ -2466,7 +2483,7 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
                 if (selectedModels.length === 6) break;
             }
             
-            // Relleno de seguridad si no hay 6 proveedores
+            // Relleno si no hay 6 proveedores (común cuando se filtra por un solo nombre como "Google")
             if (selectedModels.length < 6) {
                 for (const m of models) {
                     if (!selectedModels.find(sm => sm.id === m.id)) {
@@ -2476,13 +2493,12 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
                 }
             }
 
-            // 3. Formateo de la descripción (Precios In/Out y Contexto)
+            // 3. Formateo descriptivo detallado (Precios y Contexto)
             const finalFormattedList = selectedModels.map(m => {
                 const contextK = Math.floor(m.context_length / 1024);
                 if (type === 'free') {
                     return `${m.id} | 🎁 FREE (${contextK}k)`;
                 } else {
-                    // Convertimos precio por token a precio por Millón de tokens para lectura humana
                     const costIn = (parseFloat(m.pricing.prompt) * 1000000).toFixed(2);
                     const costOut = (parseFloat(m.pricing.completion) * 1000000).toFixed(2);
                     return `${m.id} | 💎 In:$${costIn} - Out:$${costOut}/M (${contextK}k)`;
@@ -2493,7 +2509,7 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
             setAvailableModels(combinedList);
             setAiModel(finalFormattedList[0]); 
             
-            alert(`✅ Localizados los 6 mejores modelos ${type === 'free' ? 'gratuitos' : 'Premium'} de proveedores distintos.`);
+            alert(`✅ Localizados ${finalFormattedList.length} modelos ${type === 'free' ? 'gratuitos' : 'Premium'} ${filterText ? 'filtrados por "' + filterText + '"' : ''}.`);
 
         } catch (e) {
             console.error(e);
@@ -2664,7 +2680,7 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
                             <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
                                  <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase flex items-center gap-2"><Icons.Settings size={12}/> Gestión de Modelos Personalizados</label>
                                  <p className="text-[9px] text-slate-400 mb-3 leading-relaxed">
-                                     Añade nuevos modelos. Puedes usar el separador <strong>|</strong> para añadir una descripción visible en los menús (Ej: <code className="text-blue-300">moonshotai/kimi-k2.5 | Modelo finanzas</code>). El sistema solo usará el ID previo a la barra para conectar.
+                                     Añade nuevos modelos. Puedes usar el separador <strong>|</strong> para añadir una descripción visible en los menús (Ej: <code className="text-blue-300">moonshotai/kimi-k2.5 | Modelo finanzas</code>). El sistema solo usará el ID previo a la barra para conectar. Si teclea en ese campo un literal y luego usa los botones de buscar los 6 mejores modelos se filtrarán por esa palabra.
                                  </p>
 
                                  {/* NUEVA BOTONERA DINÁMICA DE OPENROUTER */}
