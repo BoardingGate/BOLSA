@@ -2413,6 +2413,7 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
             const res = await fetch('https://openrouter.ai/api/v1/models');
             const data = await res.json();
 
+            // 1. Limpieza base: Quitar modelos multimedia o experimentales
             let models = data.data.filter(m => 
                 !m.id.includes('vision') && 
                 !m.id.includes('moderation') && 
@@ -2421,28 +2422,43 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
             );
 
             if (type === 'free') {
-                models = models.filter(m => m.pricing.prompt === "0" && m.pricing.completion === "0" || m.id.endsWith(':free'));
+                // LÓGICA PARA MODELOS GRATUITOS
+                models = models.filter(m => m.pricing.prompt === "0" || m.id.endsWith(':free'));
                 
-                models.sort((a, b) => {
-                    const scoreA = (a.id.includes('r1') ? 100 : 0) + (a.id.includes('70b') || a.id.includes('72b') ? 50 : 0);
-                    const scoreB = (b.id.includes('r1') ? 100 : 0) + (b.id.includes('70b') || b.id.includes('72b') ? 50 : 0);
-                    if (scoreA !== scoreB) return scoreB - scoreA;
-                    return b.context_length - a.context_length;
-                });
-            } else {
-                models = models.filter(m => parseFloat(m.pricing.prompt) > 0 && !m.id.endsWith(':free'));
-                
-                const flagships = ['o1', 'o3', 'claude-3.5', 'deepseek-r1', 'gpt-4o', 'grok'];
-                
-                models.sort((a, b) => {
-                    const aIsFlag = flagships.some(f => a.id.includes(f)) ? 1 : 0;
-                    const bIsFlag = flagships.some(f => b.id.includes(f)) ? 1 : 0;
+                const getModelScore = (m) => {
+                    // Extraer número de parámetros (ej: de "70b" extrae 70)
+                    const match = m.id.toLowerCase().match(/(\d+)b/);
+                    let weight = match ? parseInt(match[1]) : 0;
                     
-                    if (aIsFlag !== bIsFlag) return bIsFlag - aIsFlag;
-                    return b.context_length - a.context_length;
+                    // Bonus por razonamiento (R1 es tendencia actual y futura)
+                    if (m.id.toLowerCase().includes('r1')) weight += 1000; 
+                    
+                    return weight;
+                };
+
+                models.sort((a, b) => {
+                    const scoreA = getModelScore(a);
+                    const scoreB = getModelScore(b);
+                    if (scoreA !== scoreB) return scoreB - scoreA; // Más pesado primero
+                    return b.context_length - a.context_length; // Desempate por memoria
                 });
+
+            } else {
+                // LÓGICA PARA MODELOS DE PAGO (PREMIUM)
+                // Filtro Negativo: Excluimos versiones recortadas/baratas para quedarnos con los buques insignia
+                const budgetTerms = /(mini|lite|flash|haiku|nano|small|(?<!\d)[1-9]b|1[0-4]b)/i;
+                
+                models = models.filter(m => 
+                    !budgetTerms.test(m.id) && 
+                    !budgetTerms.test(m.name) &&
+                    parseFloat(m.pricing.prompt) > 0
+                );
+
+                // Ordenamos por Ventana de Contexto (Músculo de procesamiento)
+                models.sort((a, b) => b.context_length - a.context_length);
             }
 
+            // 2. Diversidad: Seleccionar 1 modelo por cada proveedor diferente
             const selectedModels = [];
             const seenProviders = new Set();
             
@@ -2455,6 +2471,7 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
                 if (selectedModels.length === 6) break;
             }
             
+            // Si no hay 6 proveedores distintos, rellenamos con los siguientes mejores
             if (selectedModels.length < 6) {
                 for (const m of models) {
                     if (!selectedModels.find(sm => sm.id === m.id)) {
@@ -2464,26 +2481,26 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
                 }
             }
 
-           const top6 = selectedModels.map(m => {
+            // 3. Formateo final para la lista de la aplicación
+            const finalFormattedList = selectedModels.map(m => {
                 if (type === 'free') {
-                    return `${m.id} | 🎁 FREE`;
+                    return `${m.id} | 🎁 FREE (${Math.floor(m.context_length/1024)}k)`;
                 } else {
-                    // OpenRouter da el precio por 1 token. Lo pasamos a 1 Millón de tokens para que sea legible.
                     const costIn = (parseFloat(m.pricing.prompt) * 1000000).toFixed(2);
-                    const costOut = (parseFloat(m.pricing.completion) * 1000000).toFixed(2);
-                    return `${m.id} | 💎 In:$${costIn}/M - Out:$${costOut}/M`;
+                    return `${m.id} | 💎 $${costIn}/M (${Math.floor(m.context_length/1024)}k)`;
                 }
             });
 
-            const uniqueModels = [...new Set([...top6, ...availableModels])];
+            // Actualizar estado preservando los modelos que el usuario haya añadido a mano
+            const combinedList = [...new Set([...finalFormattedList, ...availableModels])];
+            setAvailableModels(combinedList);
+            setAiModel(finalFormattedList[0]); // Seleccionar el mejor automáticamente
             
-            setAvailableModels(uniqueModels);
-            setAiModel(top6[0]); 
-            
-            alert(`✅ Se han añadido los 6 modelos ${type === 'free' ? 'GRATUITOS' : 'PREMIUM'} de los 6 mejores proveedores actuales.`);
+            alert(`✅ Se han localizado los 6 mejores modelos ${type === 'free' ? 'gratuitos por peso/razonamiento' : 'Premium (Flagships)'} de proveedores distintos.`);
 
         } catch (e) {
-            alert("❌ Error: No se pudo conectar con el repositorio de OpenRouter para obtener la lista.");
+            console.error(e);
+            alert("❌ Error al conectar con OpenRouter.");
         } finally {
             setIoStatus('idle');
         }
