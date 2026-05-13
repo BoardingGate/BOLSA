@@ -2860,6 +2860,9 @@ function doPost(e) {
 }
 
 function doGet(e) {
+   if (e.parameter.screener === "true") {
+    return executeScreener(e.parameter);
+  }
   if (e.parameter.tickers) { return fetchStockData(e.parameter.tickers); }
   try {
     var fileName = e.parameter.restoreBak === "true" ? "BOARDINGGATE_DB.json.bak" : "BOARDINGGATE_DB.json";
@@ -2867,6 +2870,111 @@ function doGet(e) {
     if (files.hasNext()) { return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON); }
     return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
   } catch(err) { return ContentService.createTextOutput(JSON.stringify({error:err.toString()})).setMimeType(ContentService.MimeType.JSON); }
+}
+
+
+function executeScreener(params) {
+  var regionMap = {
+    'USA': 'us', 'SPAIN': 'es', 'UK': 'gb', 'GERMANY': 'de',
+    'FRANCE': 'fr', 'JAPAN': 'jp', 'CHINA_HK': 'hk', 'CANADA': 'ca',
+    'AUSTRALIA': 'au', 'ITALY': 'it', 'SWITZERLAND': 'ch', 'NETHERLANDS': 'nl'
+  };
+  
+  var region = regionMap[params.region] || 'us';
+  var limit = parseInt(params.limit) || 20;
+  
+  var operands = [
+    { "operator": "eq", "operands": [ "region", region ] }
+  ];
+  
+  if (params.per) {
+    operands.push({ "operator": "lt", "operands": [ "trailingPE", parseFloat(params.per) ] });
+    operands.push({ "operator": "gt", "operands": [ "trailingPE", 0 ] }); // Excluir empresas con pérdidas
+  }
+  if (params.divYield) {
+    operands.push({ "operator": "gt", "operands": [ "dividendYield", parseFloat(params.divYield) ] });
+  }
+  if (params.pb) {
+    operands.push({ "operator": "lt", "operands": [ "priceToBook", parseFloat(params.pb) ] });
+  }
+  
+  if (params.trend === 'ath') {
+     operands.push({ "operator": "gt", "operands": [ "percentChangeFrom52WeekHigh", -0.02 ] });
+  } else if (params.trend === 'drop') {
+     var dropPct = (parseFloat(params.dropPct) || 20) / 100;
+     operands.push({ "operator": "lt", "operands": [ "percentChangeFrom52WeekHigh", -dropPct ] });
+  }
+
+  var payload = {
+    "offset": 0,
+    "size": 250, // Traemos más resultados para luego filtrarlos internamente
+    "sortField": "marketcap",
+    "sortType": "DESC",
+    "quoteType": "EQUITY",
+    "query": {
+      "operator": "AND",
+      "operands": operands
+    }
+  };
+
+  var options = {
+    "method": "POST",
+    "headers": {
+      "User-Agent": "Mozilla/5.0",
+      "Content-Type": "application/json"
+    },
+    "payload": JSON.stringify(payload),
+    "muteHttpExceptions": true
+  };
+
+  try {
+    var res = UrlFetchApp.fetch("https://query2.finance.yahoo.com/v1/finance/screener", options);
+    var json = JSON.parse(res.getContentText());
+    
+    if (!json.finance || !json.finance.result || json.finance.result.length === 0) {
+        return ContentService.createTextOutput(JSON.stringify({error: "No se encontraron resultados en el mercado."})).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    var quotes = json.finance.result[0].quotes;
+    var results = [];
+    
+    for (var i = 0; i < quotes.length; i++) {
+      var q = quotes[i];
+      
+      var peg = q.pegRatio || 0;
+      var roi = q.returnOnEquity || q.returnOnAssets || 0;
+      var de = q.totalDebtToEquity || 0; 
+      
+      if (params.peg) { if (peg <= 0 || peg > parseFloat(params.peg)) continue; }
+      if (params.roi) { if (roi < parseFloat(params.roi)) continue; }
+      if (params.debtEquity) { if (de > parseFloat(params.debtEquity) * 100) continue; }
+
+      var trendStr = "-";
+      if (params.trend === 'ath') trendStr = "En Máximos (ATH)";
+      else if (params.trend === 'drop') trendStr = "Desplome desde pico";
+
+      results.push({
+        ticker: q.symbol,
+        name: q.shortName || q.longName || q.symbol,
+        price: q.regularMarketPrice || 0,
+        trendStatus: trendStr,
+        per: q.trailingPE ? parseFloat(q.trailingPE.toFixed(2)) : "N/A",
+        peg: peg ? parseFloat(peg.toFixed(2)) : "N/A",
+        roi: roi ? parseFloat(roi.toFixed(2)) : "N/A",
+        divYield: q.dividendYield ? parseFloat(q.dividendYield.toFixed(2)) : "N/A",
+        pb: q.priceToBook ? parseFloat(q.priceToBook.toFixed(2)) : "N/A",
+        debtEquity: de ? parseFloat((de / 100).toFixed(2)) : "N/A",
+        fcf: "N/A" // FCF Yield no está disponible en este endpoint
+      });
+      
+      if (results.length >= limit) break;
+    }
+    
+    return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
+    
+  } catch(err) {
+    return ContentService.createTextOutput(JSON.stringify({error: "Error interno: " + err.toString()})).setMimeType(ContentService.MimeType.JSON);
+  }
 }
 
 
@@ -9879,175 +9987,48 @@ const handleFixedAnalysis = async (promptId) => {
         w.document.close(); w.print();
     };
 
-    const runScreener = async () => {
-        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
-        
-        setSelectedScreenerTickers([]); // Limpia la selección anterior al iniciar un nuevo rastreo
+const runScreener = async () => {
+        const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
+        if (!scriptUrl) return setStatusModal({ isOpen: true, title: 'Requisito', msg: 'Para usar el rastreador profesional, debes configurar la URL de tu Google Script en la pestaña Ajustes.', type: 'error' });
 
-        const marketObj = EXCHANGES.find(e => e.id === exchange);
-        const marketDesc = marketObj ? marketObj.name : exchange;
+        setSelectedScreenerTickers([]); // Limpia la selección anterior
+
+         const queryParams = new URLSearchParams();
+        queryParams.append('screener', 'true');
+        queryParams.append('region', exchange);
+        queryParams.append('limit', maxResults);
         
-        let trendFilterStr = '';
-        if (screenerTrend === 'ath') {
-            trendFilterStr = "Cotizando actualmente (hoy) a menos de un 2% de su máximo histórico o máximo de 52 semanas.";
-        } else if (screenerTrend === 'drop') {
-            trendFilterStr = `Haber sufrido una caída (drawdown) de al menos un ${screenerDropConfig.pct}% desde su precio máximo alcanzado en los últimos ${screenerDropConfig.months} meses, y mantenerse cotizando a esos niveles bajos en la actualidad.`;
+        if (screenerTrend !== 'none') {
+            queryParams.append('trend', screenerTrend);
+            if (screenerTrend === 'drop') queryParams.append('dropPct', screenerDropConfig.pct);
         }
 
-        const activeFiltersArr = Object.entries(params).filter(([_, p]) => p.active)
-            .map(([k, p]) => {
-                if (k === 'roi') return `ROI > ${p.val}%`;
-                if (k === 'divYield') return `Dividend Yield > ${p.val}%`;
-                if (k === 'per') return `PER < ${p.val}`;
-                if (k === 'peg') return `PEG < ${p.val}`;
-                if (k === 'pb') return `P/B < ${p.val}`;
-                if (k === 'debtEquity') return `Debt/Equity < ${p.val}`;
-                if (k === 'fcf') return `FCF Yield > ${p.val}%`;
-                return '';
-            }).filter(Boolean);
-            
-        const activeFilters = activeFiltersArr.join(' AND ');
+        let hasActiveFilters = false;
+        Object.entries(params).forEach(([k, p]) => {
+            if (p.active) {
+                queryParams.append(k, p.val);
+                hasActiveFilters = true;
+            }
+        });
 
-        if (!activeFilters && !trendFilterStr) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Activa al menos un parámetro fundamental o de tendencia.', type: 'info' });
+        if (!hasActiveFilters && screenerTrend === 'none') {
+            return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Activa al menos un parámetro fundamental o de tendencia.', type: 'info' });
+        }
         
         setLoading(true);
+        setStatusModal({ isOpen: true, title: 'Rastreo Profesional', msg: 'Interrogando a la base de datos de mercado en tiempo real...\nEsto tomará solo unos segundos.', type: 'info', isProgress: true });
+
         try {
-            const today = new Date().toLocaleString('es-ES'); 
-            let finalResults = [];
+             const res = await fetch(`${scriptUrl}?${queryParams.toString()}&_t=${Date.now()}`);
+            const data = await res.json();
 
-            if (screenerTrend !== 'none') {
-                setStatusModal({ isOpen: true, title: 'Rastreo Fase 1/3', msg: 'Buscando valores que cumplan la condición técnica de precio en el mercado...', type: 'info', isProgress: true });
-                
-                const promptPhase1 = `ROL: Experto en Mercados Financieros. FECHA ACTUAL: ${today}.
-                TAREA: Identificar empresas en el mercado "${marketDesc}" que cumplan ESTRICTAMENTE esta condición técnica de precio HOY:
-                ${trendFilterStr}
-                ACCION: Usa tu herramienta de búsqueda web para verificar cotizaciones recientes y picos máximos.
-                SALIDA: Devuelve ÚNICAMENTE un array JSON plano con los Tickers de hasta ${maxResults * 2} empresas que cumplan la condición. Ejemplo exacto: ["TICKER1", "TICKER2"]. SIN TEXTO EXTRA.`;
-
-                const res1 = await askAI(apiKey, secondaryApiKey, promptPhase1, aiModel);
-                const tickers = extractJSON(res1);
-
-                if (!tickers || !Array.isArray(tickers) || tickers.length === 0) {
-                    throw new Error("No se encontraron valores que cumplan la condición técnica de precio en este mercado.");
-                }
-
-                setStatusModal({ isOpen: true, title: 'Rastreo Fase 2/3', msg: `Analizando fundamentales de los ${tickers.length} valores pre-seleccionados...`, type: 'info', isProgress: true });
-
-                const promptPhase2 = `ROL: Analista Cuantitativo. FECHA ACTUAL: ${today}.
-                TAREA: Analizar detalladamente la siguiente lista de empresas: ${tickers.join(', ')}.
-                INSTRUCCIONES:
-                1. Obtén su Precio de cotización ACTUAL REAL (HOY) mediante búsqueda web y sus ratios fundamentales actuales (PER, PEG, ROI, etc.).
-                2. ${activeFilters ? 'APLICA LOS SIGUIENTES FILTROS ESTRICTOS y descarta las que no cumplan: ' + activeFilters : 'Obtén sus datos fundamentales sin aplicar filtros.'}
-                3. Para las que pasen el filtro (máximo ${maxResults}), devuelve los datos en el siguiente formato JSON exacto:
-                [{"ticker":"SYM","name":"Nombre Corto","price":1.0,"trendStatus":"${screenerTrend === 'ath' ? 'En Máximos (ATH)' : 'Desplomada desde pico'}","per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0,"fcf":1.0}]
-                REGLA CRÍTICA: La propiedad "price" DEBE ser el precio REAL de cotización actual (el de HOY), NUNCA el precio del pico histórico.
-                RESPONDE SOLO EL JSON. SIN EXPLICACIONES.`;
-
-                const res2 = await askAI(apiKey, secondaryApiKey, promptPhase2, aiModel);
-                finalResults = extractJSON(res2);
-
-            } else {
-                setStatusModal({ isOpen: true, title: 'Rastreo Fase 1/2', msg: 'Analizando mercado y filtrando fundamentales...', type: 'info', isProgress: true });
-                
-                const prompt = `YOU ARE A JSON GENERATOR MACHINE. YOU DO NOT SPEAK. YOU ONLY OUTPUT DATA.
-                TODAY'S DATE IS: ${today}. Use this as reference for current prices.
-                TASK: Generate a JSON Array of ${maxResults} stocks in "${marketDesc}" matching ALL these fundamental conditions: ${activeFilters}.
-                STRICT RULES:
-                1. Use google_search to verify REAL CURRENT data.
-                2. "price" MUST be the CURRENT market price of the stock TODAY.
-                3. "trendStatus" MUST be a short dash "-".
-                4. OUTPUT MUST START WITH '[' AND END WITH ']'.
-                OUTPUT FORMAT:
-                [{"ticker":"SYM","name":"Nombre Corto","price":1.0,"trendStatus":"-","per":1.0,"peg":1.0,"roi":1.0,"divYield":1.0,"pb":1.0,"debtEquity":1.0,"fcf":1.0}]`;
-                
-                const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
-                finalResults = extractJSON(res);
+            if (data.error) throw new Error(data.error);
+            if (!Array.isArray(data) || data.length === 0) {
+                throw new Error("Ninguna empresa en el mercado cumple con todos estos filtros a la vez.");
             }
 
-            if (!finalResults || !Array.isArray(finalResults) || finalResults.length === 0) {
-                throw new Error("Ningún valor ha superado la criba fundamental.");
-            }
-
-            // FASE 3: VERIFICACIÓN ESTRICTA DE PRECIO (VÍA SCRIPT DE GOOGLE O IA)
-           // FASE 3 (O Fase 2): VERIFICACIÓN ESTRICTA DE PRECIO (VÍA SCRIPT DE GOOGLE O IA)
-            const stepNum = screenerTrend !== 'none' ? '3/3' : '2/2';
-            
-            let realPrices = {};
-            let usedGoogleScript = false;
-            
-            // INTENTO 1: Usar Google Finance Script (Rápido y 100% fiable)
-            const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
-            
-            if (scriptUrl) {
-                setStatusModal({ isOpen: true, title: `Rastreo Fase ${stepNum}`, msg: 'Verificando precisión de cotizaciones en tiempo real vía Google Finance...', type: 'info', isProgress: true });
-                try {
-                    const prefixMap = {
-                        'USA': '', 'SPAIN': 'BME:', 'UK': 'LSE:', 'GERMANY': 'XETRA:',
-                        'FRANCE': 'EPA:', 'JAPAN': 'TYO:', 'CHINA_HK': 'HKG:', 'CANADA': 'TSE:',
-                        'AUSTRALIA': 'ASX:', 'ITALY': 'BIT:', 'SWITZERLAND': 'SWX:', 'NETHERLANDS': 'AMS:'
-                    };
-                    const prefix = prefixMap[exchange] || '';
-                    const tickersToFetch = finalResults.map(r => r.ticker.includes(':') ? r.ticker : `${prefix}${r.ticker}`).join(',');
-                    
-                    const res = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(tickersToFetch)}&_t=${Date.now()}`);
-                    const data = await res.json();
-                    
-                    finalResults.forEach(r => {
-                        const searchTicker = r.ticker.includes(':') ? r.ticker : `${prefix}${r.ticker}`;
-                        if (data[searchTicker] && data[searchTicker].success) {
-                            realPrices[r.ticker] = data[searchTicker].p;
-                        } else if (data[r.ticker] && data[r.ticker].success) {
-                            realPrices[r.ticker] = data[r.ticker].p;
-                        }
-                    });
-                    
-                    if (Object.keys(realPrices).length > 0) {
-                        usedGoogleScript = true;
-                    }
-                } catch (e) {
-                    console.warn("Fallo al contactar con Google Script. Recurriendo a IA como plan B...", e);
-                }
-            }
-
-            // INTENTO 2: Si el script falló o no estaba configurado, usamos IA
-            if (!usedGoogleScript) {
-                const msgTexto = scriptUrl 
-                    ? 'Fallo al contactar con Google Finance. Verificando precios vía IA (Plan B)...' 
-                    : 'Google Finance no configurado en Ajustes. Verificando precios vía IA...';
-                
-                setStatusModal({ isOpen: true, title: `Rastreo Fase ${stepNum}`, msg: msgTexto, type: 'info', isProgress: true });
-
-                const tickersToVerify = finalResults.map(r => r.ticker);
-                const promptPhase3 = `ROL: API de Cotizaciones. FECHA ACTUAL: ${today}.
-                TAREA: Obtén el PRECIO EXACTO DE COTIZACIÓN HOY de estos tickers: ${tickersToVerify.join(', ')}.
-                Usa tu herramienta google_search obligatoriamente para ver cotizaciones reales de hoy.
-                RESPONDE ÚNICAMENTE un JSON con el ticker como clave y el precio numérico como valor. Ejemplo exacto: {"AAPL": 150.50, "SAN.MC": 3.20}`;
-                
-                const res3 = await askAI(apiKey, secondaryApiKey, promptPhase3, aiModel);
-                realPrices = extractJSON(res3) || {};
-            }
-
-            // APLICAMOS LA CRIBA FINAL DE DESCARTES
-            finalResults = finalResults.filter(r => {
-                const verifiedPrice = realPrices[r.ticker] || realPrices[r.ticker.split(':')[1]];
-                if (!verifiedPrice) return false; // Si no logra verificarlo en ningún sitio, se descarta por seguridad
-                
-                const diff = Math.abs(r.price - verifiedPrice) / verifiedPrice;
-                if (diff > 0.05) {
-                    console.warn(`Descartado ${r.ticker}: Falso precio reportado en Fase previa (${r.price}) vs Real Verificado (${verifiedPrice})`);
-                    return false; // Descartamos si hay más de un 5% de diferencia
-                }
-                
-                r.price = verifiedPrice; // Sobrescribimos con el precio verificado más exacto
-                return true;
-            });
-
-            if (finalResults.length === 0) {
-                throw new Error("Los valores fueron descartados en la fase final de verificación por discrepancia en sus precios. Inténtalo de nuevo.");
-            }
-            
             setStatusModal({ isOpen: false, title: '', msg: '', type: 'info' }); 
-            setScreenerResults(finalResults);
+            setScreenerResults(data);
         } catch (e) {
             setStatusModal({ isOpen: true, title: 'Rastreo Finalizado', msg: e.message, type: 'error', buttonText: 'CERRAR' });
         } finally { 
