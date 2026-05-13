@@ -2860,8 +2860,8 @@ function doPost(e) {
 }
 
 function doGet(e) {
-   if (e.parameter.screener === "true") {
-    return executeScreener(e.parameter);
+ if (e.parameter.screener === "true") {
+    return executeTradingViewScreener(e.parameter);
   }
   if (e.parameter.tickers) { return fetchStockData(e.parameter.tickers); }
   try {
@@ -2873,107 +2873,108 @@ function doGet(e) {
 }
 
 
-function executeScreener(params) {
+function executeTradingViewScreener(params) {
   var regionMap = {
-    'USA': 'us', 'SPAIN': 'es', 'UK': 'gb', 'GERMANY': 'de',
-    'FRANCE': 'fr', 'JAPAN': 'jp', 'CHINA_HK': 'hk', 'CANADA': 'ca',
-    'AUSTRALIA': 'au', 'ITALY': 'it', 'SWITZERLAND': 'ch', 'NETHERLANDS': 'nl'
+    'USA': 'america', 'SPAIN': 'spain', 'UK': 'uk', 'GERMANY': 'germany',
+    'FRANCE': 'france', 'JAPAN': 'japan', 'CHINA_HK': 'hongkong', 'CANADA': 'canada',
+    'AUSTRALIA': 'australia', 'ITALY': 'italy', 'SWITZERLAND': 'switzerland', 'NETHERLANDS': 'netherlands'
   };
   
-  var region = regionMap[params.region] || 'us';
+  var market = regionMap[params.region] || 'america';
   var limit = parseInt(params.limit) || 20;
   
-  var operands = [
-    { "operator": "eq", "operands": [ "region", region ] }
-  ];
-  
-  if (params.per) {
-    operands.push({ "operator": "lt", "operands": [ "trailingPE", parseFloat(params.per) ] });
-    operands.push({ "operator": "gt", "operands": [ "trailingPE", 0 ] }); // Excluir empresas con pérdidas
-  }
-  if (params.divYield) {
-    operands.push({ "operator": "gt", "operands": [ "dividendYield", parseFloat(params.divYield) ] });
-  }
-  if (params.pb) {
-    operands.push({ "operator": "lt", "operands": [ "priceToBook", parseFloat(params.pb) ] });
-  }
-  
-  if (params.trend === 'ath') {
-     operands.push({ "operator": "gt", "operands": [ "percentChangeFrom52WeekHigh", -0.02 ] });
-  } else if (params.trend === 'drop') {
-     var dropPct = (parseFloat(params.dropPct) || 20) / 100;
-     operands.push({ "operator": "lt", "operands": [ "percentChangeFrom52WeekHigh", -dropPct ] });
-  }
-
+  // 1. Petición base simplificada (Solo pedimos que sean acciones)
+  // No filtramos por fundamentales en la API para evitar que Yahoo/TradingView nos bloquee
   var payload = {
-    "offset": 0,
-    "size": 250, // Traemos más resultados para luego filtrarlos internamente
-    "sortField": "marketcap",
-    "sortType": "DESC",
-    "quoteType": "EQUITY",
-    "query": {
-      "operator": "AND",
-      "operands": operands
-    }
-  };
-
-  var options = {
-    "method": "POST",
-    "headers": {
-      "User-Agent": "Mozilla/5.0",
-      "Content-Type": "application/json"
-    },
-    "payload": JSON.stringify(payload),
-    "muteHttpExceptions": true
+    "filter": [
+      { "left": "type", "operation": "in_range", "right": ["stock", "dr"] }
+    ],
+    "options": { "lang": "es" },
+    "markets": [market],
+    "columns": [
+      "name", 
+      "description", 
+      "close", 
+      "high_52week", 
+      "price_earnings_ttm", 
+      "peg_ratio_ttm", 
+      "return_on_equity", 
+      "dividend_yield_recent", 
+      "price_book_ratio", 
+      "total_debt_to_equity", 
+      "free_cash_flow_margin_ttm"
+    ],
+    "sort": { "sortBy": "market_cap_basic", "sortOrder": "desc" },
+    "range": [0, 150] // Analizamos el TOP 150 del mercado seleccionado
   };
 
   try {
-    var res = UrlFetchApp.fetch("https://query2.finance.yahoo.com/v1/finance/screener", options);
-    var json = JSON.parse(res.getContentText());
+    var res = UrlFetchApp.fetch("https://scanner.tradingview.com/global/scan", {
+      "method": "POST",
+      "contentType": "application/json",
+      "payload": JSON.stringify(payload),
+      "muteHttpExceptions": true
+    });
     
-    if (!json.finance || !json.finance.result || json.finance.result.length === 0) {
-        return ContentService.createTextOutput(JSON.stringify({error: "No se encontraron resultados en el mercado."})).setMimeType(ContentService.MimeType.JSON);
-    }
+    var json = JSON.parse(res.getContentText());
+    if (!json.data) throw new Error("Respuesta de red vacía");
 
-    var quotes = json.finance.result[0].quotes;
     var results = [];
     
-    for (var i = 0; i < quotes.length; i++) {
-      var q = quotes[i];
+    for (var i = 0; i < json.data.length; i++) {
+      var d = json.data[i].d;
       
-      var peg = q.pegRatio || 0;
-      var roi = q.returnOnEquity || q.returnOnAssets || 0;
-      var de = q.totalDebtToEquity || 0; 
-      
-      if (params.peg) { if (peg <= 0 || peg > parseFloat(params.peg)) continue; }
-      if (params.roi) { if (roi < parseFloat(params.roi)) continue; }
-      if (params.debtEquity) { if (de > parseFloat(params.debtEquity) * 100) continue; }
+      // Mapeo de datos para legibilidad
+      var row = {
+        ticker: d[0], name: d[1], price: d[2], high52: d[3],
+        per: d[4], peg: d[5], roi: d[6], divYield: d[7],
+        pb: d[8], de: d[9], fcf: d[10]
+      };
 
+      // 2. FILTRADO MANUAL (Hecho por el Script, no por la API)
+      if (params.per && (row.per === null || row.per <= 0 || row.per > parseFloat(params.per))) continue;
+      if (params.divYield && (row.divYield === null || row.divYield < parseFloat(params.divYield))) continue;
+      if (params.roi && (row.roi === null || row.roi < parseFloat(params.roi))) continue;
+      if (params.peg && (row.peg === null || row.peg > parseFloat(params.peg))) continue;
+      if (params.pb && (row.pb === null || row.pb > parseFloat(params.pb))) continue;
+      if (params.debtEquity && (row.de === null || row.de > parseFloat(params.debtEquity) * 100)) continue;
+
+      // Filtro de Tendencia
       var trendStr = "-";
-      if (params.trend === 'ath') trendStr = "En Máximos (ATH)";
-      else if (params.trend === 'drop') trendStr = "Desplome desde pico";
+      var dropFromHigh = row.high52 > 0 ? (row.price - row.high52) / row.high52 : 0; 
+      if (params.trend === 'ath') {
+         if (dropFromHigh < -0.05) continue; 
+         trendStr = "Máximos (ATH)";
+      } else if (params.trend === 'drop') {
+         var limitDrop = - (parseFloat(params.dropPct) || 20) / 100;
+         if (dropFromHigh > limitDrop) continue; 
+         trendStr = "Desplome";
+      }
 
+      // Añadir resultado limpio
       results.push({
-        ticker: q.symbol,
-        name: q.shortName || q.longName || q.symbol,
-        price: q.regularMarketPrice || 0,
+        ticker: row.ticker,
+        name: row.name,
+        price: parseFloat(row.price.toFixed(2)),
         trendStatus: trendStr,
-        per: q.trailingPE ? parseFloat(q.trailingPE.toFixed(2)) : "N/A",
-        peg: peg ? parseFloat(peg.toFixed(2)) : "N/A",
-        roi: roi ? parseFloat(roi.toFixed(2)) : "N/A",
-        divYield: q.dividendYield ? parseFloat(q.dividendYield.toFixed(2)) : "N/A",
-        pb: q.priceToBook ? parseFloat(q.priceToBook.toFixed(2)) : "N/A",
-        debtEquity: de ? parseFloat((de / 100).toFixed(2)) : "N/A",
-        fcf: "N/A" // FCF Yield no está disponible en este endpoint
+        per: row.per ? parseFloat(row.per.toFixed(2)) : "N/A",
+        peg: row.peg ? parseFloat(row.peg.toFixed(2)) : "N/A",
+        roi: row.roi ? parseFloat(row.roi.toFixed(2)) : "N/A",
+        divYield: row.divYield ? parseFloat(row.divYield.toFixed(2)) : "N/A",
+        pb: row.pb ? parseFloat(row.pb.toFixed(2)) : "N/A",
+        debtEquity: row.de ? parseFloat((row.de/100).toFixed(2)) : "N/A",
+        fcf: row.fcf ? parseFloat(row.fcf.toFixed(2)) : "N/A"
       });
       
       if (results.length >= limit) break;
     }
     
+    if (results.length === 0) return ContentService.createTextOutput(JSON.stringify({error: "Ningún valor de los 150 más grandes de " + market.toUpperCase() + " cumple tus filtros."})).setMimeType(ContentService.MimeType.JSON);
+    
     return ContentService.createTextOutput(JSON.stringify(results)).setMimeType(ContentService.MimeType.JSON);
     
   } catch(err) {
-    return ContentService.createTextOutput(JSON.stringify({error: "Error interno: " + err.toString()})).setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({error: err.toString()})).setMimeType(ContentService.MimeType.JSON);
   }
 }
 
@@ -9988,38 +9989,40 @@ const handleFixedAnalysis = async (promptId) => {
     };
 
 const runScreener = async () => {
+        // Obligamos a que el Script esté configurado, ya que es quien hace el trabajo pesado
         const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
-        if (!scriptUrl) return setStatusModal({ isOpen: true, title: 'Requisito', msg: 'Para usar el rastreador profesional, debes configurar la URL de tu Google Script en la pestaña Ajustes.', type: 'error' });
+        if (!scriptUrl) return setStatusModal({ isOpen: true, title: 'Requisito', msg: 'Para usar este rastreador matemático ultra-rápido, debes tener configurada la URL de tu Google Script en la pestaña Ajustes.', type: 'error' });
 
         setSelectedScreenerTickers([]); // Limpia la selección anterior
 
-         const queryParams = new URLSearchParams();
-        queryParams.append('screener', 'true');
-        queryParams.append('region', exchange);
-        queryParams.append('limit', maxResults);
-        
-        if (screenerTrend !== 'none') {
-            queryParams.append('trend', screenerTrend);
-            if (screenerTrend === 'drop') queryParams.append('dropPct', screenerDropConfig.pct);
-        }
-
         let hasActiveFilters = false;
-        Object.entries(params).forEach(([k, p]) => {
-            if (p.active) {
-                queryParams.append(k, p.val);
-                hasActiveFilters = true;
-            }
-        });
+        Object.values(params).forEach(p => { if (p.active) hasActiveFilters = true; });
 
         if (!hasActiveFilters && screenerTrend === 'none') {
             return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Activa al menos un parámetro fundamental o de tendencia.', type: 'info' });
         }
         
         setLoading(true);
-        setStatusModal({ isOpen: true, title: 'Rastreo Profesional', msg: 'Interrogando a la base de datos de mercado en tiempo real...\nEsto tomará solo unos segundos.', type: 'info', isProgress: true });
+        setStatusModal({ isOpen: true, title: 'Rastreo Profesional', msg: 'Interrogando a la base de datos de mercado en tiempo real...\nEsto tomará solo 1 o 2 segundos.', type: 'info', isProgress: true });
 
         try {
-             const res = await fetch(`${scriptUrl}?${queryParams.toString()}&_t=${Date.now()}`);
+            // Construimos la petición a tu Google Script
+            const queryParams = new URLSearchParams();
+            queryParams.append('screener', 'true');
+            queryParams.append('region', exchange);
+            queryParams.append('limit', maxResults);
+            
+            if (screenerTrend !== 'none') {
+                queryParams.append('trend', screenerTrend);
+                if (screenerTrend === 'drop') queryParams.append('dropPct', screenerDropConfig.pct);
+            }
+
+            Object.entries(params).forEach(([k, p]) => {
+                if (p.active) queryParams.append(k, p.val);
+            });
+
+            // Disparamos la petición al Script (que se conecta a TradingView por detrás)
+            const res = await fetch(`${scriptUrl}?${queryParams.toString()}&_t=${Date.now()}`);
             const data = await res.json();
 
             if (data.error) throw new Error(data.error);
@@ -10027,8 +10030,24 @@ const runScreener = async () => {
                 throw new Error("Ninguna empresa en el mercado cumple con todos estos filtros a la vez.");
             }
 
+            // TradingView devuelve los tickers con la bolsa delante (ej. NASDAQ:AAPL). 
+            // Limpiamos los más comunes para que funcionen bien en tu app.
+            const cleanData = data.map(item => {
+                let cleanTicker = item.ticker;
+                if (cleanTicker.includes(':')) {
+                    const [exch, sym] = cleanTicker.split(':');
+                    // Mantenemos el formato original de tu app (BME:, FRA:, EPA:, etc)
+                    if (['NASDAQ', 'NYSE', 'AMEX'].includes(exch)) cleanTicker = sym;
+                    else if (exch === 'BME' || exch === 'XETR' || exch === 'MIL' || exch === 'EURONEXT') {
+                        // Lo dejamos como viene, el buscador ya se encarga
+                    }
+                }
+                return { ...item, ticker: cleanTicker };
+            });
+
             setStatusModal({ isOpen: false, title: '', msg: '', type: 'info' }); 
-            setScreenerResults(data);
+            setScreenerResults(cleanData);
+
         } catch (e) {
             setStatusModal({ isOpen: true, title: 'Rastreo Finalizado', msg: e.message, type: 'error', buttonText: 'CERRAR' });
         } finally { 
@@ -10524,7 +10543,7 @@ const runScreener = async () => {
                                     {[5, 10, 15, 20, 30, 40, 50, 60, 80, 100].map(v => <option key={v} value={v}>{v} Registros</option>)}
                                 </select>
                             </div>
-                            <div className="flex items-end pb-1"><button onClick={runScreener} className="w-full h-12 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-2xl shadow-blue-900/40 border border-blue-400/20">Iniciar Rastreo (Yahoo Finance)</button></div>
+                            <div className="flex items-end pb-1"><button onClick={runScreener} className="w-full h-12 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-2xl shadow-blue-900/40 border border-blue-400/20">Iniciar Rastreo (TradingView)</button></div>
                         </div>
 
                         {/* --- NUEVO BLOQUE UI: Filtros de Acción del Precio --- */}
