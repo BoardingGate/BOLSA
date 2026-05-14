@@ -2406,7 +2406,51 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
         } 
     };
 
-   
+
+const handleSortModels = () => {
+        setIoStatus('processing');
+        try {
+            const sorted = [...availableModels].sort((a, b) => {
+                // Función auxiliar para extraer el proveedor (ej: "google/gemini-2.5-pro" -> "google")
+                // Si no tiene "/", asumimos que es directo (ej: "gemini-2.5-pro" es de "google")
+                const getProvider = (str) => {
+                    const rawId = str.split('|')[0].trim().toLowerCase();
+                    if (rawId.includes('/')) return rawId.split('/')[0];
+                    if (rawId.startsWith('gemini')) return 'google';
+                    if (rawId.startsWith('gpt')) return 'openai';
+                    if (rawId.startsWith('claude')) return 'anthropic';
+                    return 'z_otros'; // Los que no reconocemos van al final
+                };
+
+                // Función auxiliar para detectar si es gratis
+                const isFree = (str) => {
+                    const rawId = str.split('|')[0].trim().toLowerCase();
+                    return rawId.endsWith(':free') || str.toLowerCase().includes('gratuita') || str.toLowerCase().includes('free');
+                };
+
+                const provA = getProvider(a);
+                const provB = getProvider(b);
+                const freeA = isFree(a);
+                const freeB = isFree(b);
+
+                // 1. Agrupar por proveedor (Alfabético)
+                if (provA !== provB) return provA.localeCompare(provB);
+
+                // 2. Dentro del proveedor, separar de Pago vs Gratis (Primero los de pago)
+                if (freeA !== freeB) return freeA ? 1 : -1;
+
+                // 3. Orden alfabético por nombre del modelo
+                return a.localeCompare(b);
+            });
+
+            setAvailableModels(sorted);
+        } catch (e) {
+            console.error("Error ordenando modelos:", e);
+        } finally {
+            setTimeout(() => setIoStatus('idle'), 500);
+        }
+    };
+
 
 const fetchDynamicModels = async (type) => {
         try {
@@ -2684,24 +2728,33 @@ const fetchDynamicModels = async (type) => {
                                      Añade nuevos modelos. Puedes usar el separador <strong>|</strong> para añadir una descripción visible en los menús (Ej: <code className="text-blue-300">moonshotai/kimi-k2.5 | Modelo finanzas</code>). El sistema solo usará el ID previo a la barra para conectar. Si teclea en ese campo un literal y luego usa los botones de buscar los 6 mejores modelos se filtrarán por esa palabra.
                                  </p>
 
-                                 {/* NUEVA BOTONERA DINÁMICA DE OPENROUTER */}
+                                 {/* BOTONERA DINÁMICA DE MODELOS */}
                                  <div className="flex flex-col sm:flex-row gap-2 mb-4 p-3 bg-slate-900 border border-slate-700/50 rounded-lg">
                                      <button 
                                          onClick={() => fetchDynamicModels('paid')}
-                                         className="flex-1 bg-gradient-to-r from-blue-700 to-indigo-800 hover:from-blue-600 hover:to-indigo-700 text-white px-3 py-2 rounded-lg text-[10px] font-bold uppercase transition-colors shadow-lg flex items-center justify-center gap-2"
+                                         className="flex-1 bg-gradient-to-r from-blue-700 to-indigo-800 hover:from-blue-600 hover:to-indigo-700 text-white px-3 py-2 rounded-lg text-[9px] font-bold uppercase transition-colors shadow-lg flex items-center justify-center gap-1.5"
                                      >
-                                         <Icons.TrendingUp size={14} className="text-blue-300"/>
-                                         Añadir Top 6 Premium (De Pago Openrouter)
+                                         <Icons.TrendingUp size={12} className="text-blue-300"/>
+                                         Añadir Top 6 (Pago) de Openrouter
                                      </button>
                                      <button 
                                          onClick={() => fetchDynamicModels('free')}
-                                         className="flex-1 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-600 hover:to-teal-700 text-white px-3 py-2 rounded-lg text-[10px] font-bold uppercase transition-colors shadow-lg flex items-center justify-center gap-2"
+                                         className="flex-1 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-600 hover:to-teal-700 text-white px-3 py-2 rounded-lg text-[9px] font-bold uppercase transition-colors shadow-lg flex items-center justify-center gap-1.5"
                                      >
-                                          <Icons.Wand size={14} className="text-emerald-300"/>
-                                         Añadir Top 6 Gratuitos de Openrouter
+                                          <Icons.Wand size={12} className="text-emerald-300"/>
+                                         Añadir Top 6 (Gratis)
+                                     </button>
+                                     <button 
+                                         onClick={handleSortModels}
+                                         className="flex-1 bg-gradient-to-r from-slate-700 to-slate-800 hover:from-slate-600 hover:to-slate-700 text-white px-3 py-2 rounded-lg text-[9px] font-bold uppercase transition-colors shadow-lg flex items-center justify-center gap-1.5 border border-slate-600"
+                                         title="Agrupar por Empresa y separar de pago/gratuitos"
+                                     >
+                                         <Icons.Grid size={12} className="text-slate-300"/>
+                                         ORDENAR LISTA 
                                      </button>
                                  </div>
 
+                                
                                  <div className="flex gap-2 mb-3">
                                      <input type="text" id="newModelInput" placeholder="ID (Ej: gemini-1.5-pro | Descripción opcional)" className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-blue-500"/>
                                      <button onClick={() => {
