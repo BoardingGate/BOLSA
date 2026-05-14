@@ -9988,12 +9988,12 @@ const handleFixedAnalysis = async (promptId) => {
         w.document.close(); w.print();
     };
 
-const runScreener = async () => {
-        // Obligamos a que el Script esté configurado, ya que es quien hace el trabajo pesado
-        const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
-        if (!scriptUrl) return setStatusModal({ isOpen: true, title: 'Requisito', msg: 'Para usar este rastreador matemático ultra-rápido, debes tener configurada la URL de tu Google Script en la pestaña Ajustes.', type: 'error' });
 
-        setSelectedScreenerTickers([]); // Limpia la selección anterior
+    const runScreener = async () => {
+        const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
+        if (!scriptUrl) return setStatusModal({ isOpen: true, title: 'Requisito', msg: 'Para usar este rastreador matemático, debes tener configurada la URL de tu Google Script en Ajustes.', type: 'error' });
+
+        setSelectedScreenerTickers([]);
 
         let hasActiveFilters = false;
         Object.values(params).forEach(p => { if (p.active) hasActiveFilters = true; });
@@ -10003,10 +10003,9 @@ const runScreener = async () => {
         }
         
         setLoading(true);
-        setStatusModal({ isOpen: true, title: 'Rastreo Profesional', msg: 'Interrogando a la base de datos de mercado en tiempo real...\nEsto tomará solo 1 o 2 segundos.', type: 'info', isProgress: true });
+        setStatusModal({ isOpen: true, title: 'Rastreo en Curso', msg: 'Interrogando a la base de datos bursátil. Se están evaluando hasta 3.000 acciones en tiempo real...', type: 'info', isProgress: true });
 
         try {
-            // Construimos la petición a tu Google Script
             const queryParams = new URLSearchParams();
             queryParams.append('screener', 'true');
             queryParams.append('region', exchange);
@@ -10021,26 +10020,28 @@ const runScreener = async () => {
                 if (p.active) queryParams.append(k, p.val);
             });
 
-            // Disparamos la petición al Script (que se conecta a TradingView por detrás)
             const res = await fetch(`${scriptUrl}?${queryParams.toString()}&_t=${Date.now()}`);
-            const data = await res.json();
+            
+          const rawText = await res.text();
+            
+            let data;
+            try {
+                data = JSON.parse(rawText);
+            } catch (parseError) {
+               throw new Error("El servidor no respondió correctamente. Posible error de red o timeout.");
+            }
 
             if (data.error) throw new Error(data.error);
+            
             if (!Array.isArray(data) || data.length === 0) {
                 throw new Error("Ninguna empresa en el mercado cumple con todos estos filtros a la vez.");
             }
 
-            // TradingView devuelve los tickers con la bolsa delante (ej. NASDAQ:AAPL). 
-            // Limpiamos los más comunes para que funcionen bien en tu app.
             const cleanData = data.map(item => {
                 let cleanTicker = item.ticker;
                 if (cleanTicker.includes(':')) {
                     const [exch, sym] = cleanTicker.split(':');
-                    // Mantenemos el formato original de tu app (BME:, FRA:, EPA:, etc)
                     if (['NASDAQ', 'NYSE', 'AMEX'].includes(exch)) cleanTicker = sym;
-                    else if (exch === 'BME' || exch === 'XETR' || exch === 'MIL' || exch === 'EURONEXT') {
-                        // Lo dejamos como viene, el buscador ya se encarga
-                    }
                 }
                 return { ...item, ticker: cleanTicker };
             });
