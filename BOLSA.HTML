@@ -2449,32 +2449,88 @@ const handleSortModels = () => {
         } finally {
             setTimeout(() => setIoStatus('idle'), 500);
         }
-    };
+};
 
+const handleSortByPrice = () => {
+        setIoStatus('processing');
+        try {
+            const getModelStats = (str) => {
+                let isFree = false;
+                let isPaid = false;
+                let cost = 0;
+                let kValue = 0;
+
+                const lowerStr = str.toLowerCase();
+                
+                 if (lowerStr.includes('free') || lowerStr.includes('gratuita') || str.split('|')[0].trim().endsWith(':free')) {
+                    isFree = true;
+                }
+
+               if (str.includes('💎') || str.includes('In:$') || lowerStr.includes('pago')) {
+                    isPaid = true;
+                    const inMatch = str.match(/In:\$([\d.]+)/);
+                    const outMatch = str.match(/Out:\$([\d.]+)/);
+                    const inCost = inMatch ? parseFloat(inMatch[1]) : 0;
+                    const outCost = outMatch ? parseFloat(outMatch[1]) : 0;
+                    cost = inCost + outCost;
+                }
+
+               const kMatch = str.match(/\((\d+)k\)/i);
+                if (kMatch) {
+                    kValue = parseInt(kMatch[1], 10);
+                }
+
+               let group = 2; 
+                if (isPaid || cost > 0) group = 1;
+                else if (isFree) group = 3;
+
+                return { group, cost, kValue };
+            };
+
+            const sorted = [...availableModels].sort((a, b) => {
+                const statsA = getModelStats(a);
+                const statsB = getModelStats(b);
+
+                if (statsA.group !== statsB.group) return statsA.group - statsB.group;
+                
+                if (statsA.group === 1 && statsB.cost !== statsA.cost) {
+                    return statsB.cost - statsA.cost;
+                }
+                
+                 if (statsB.kValue !== statsA.kValue) {
+                    return statsB.kValue - statsA.kValue;
+                }
+
+                return a.localeCompare(b);
+            });
+
+            setAvailableModels(sorted);
+        } catch (e) {
+            console.error("Error ordenando modelos por precio:", e);
+        } finally {
+            setTimeout(() => setIoStatus('idle'), 500);
+        }
+};
 
 const fetchDynamicModels = async (type) => {
         try {
             setIoStatus('processing'); 
             
-            // 1. Capturar filtro manual e IDs ya existentes para no repetirlos
             const filterInput = document.getElementById('newModelInput');
             const filterText = filterInput ? filterInput.value.trim().toLowerCase() : '';
             
-            // Extraemos solo el ID (lo que está antes del |) de los modelos que ya tiene el usuario
-            const existingIds = new Set(availableModels.map(am => am.split('|')[0].trim()));
+          const existingIds = new Set(availableModels.map(am => am.split('|')[0].trim()));
 
             const res = await fetch('https://openrouter.ai/api/v1/models');
             const data = await res.json();
 
-            // 2. Limpieza base
-            let models = data.data.filter(m => 
+           let models = data.data.filter(m => 
                 !m.id.includes('vision') && 
                 !m.id.includes('moderation') && 
                 !m.name.toLowerCase().includes('image') &&
                 !m.name.toLowerCase().includes('beta')
             );
 
-            // 3. Aplicar filtro por literal si existe
             if (filterText) {
                 models = models.filter(m => 
                     m.id.toLowerCase().includes(filterText) || 
@@ -2482,7 +2538,6 @@ const fetchDynamicModels = async (type) => {
                 );
             }
 
-            // 4. Lógica de ordenación (Free vs Premium)
             if (type === 'free') {
                 models = models.filter(m => m.pricing.prompt === "0" || m.id.endsWith(':free'));
                 const getModelScore = (m) => {
@@ -2507,12 +2562,10 @@ const fetchDynamicModels = async (type) => {
                 models.sort((a, b) => b.context_length - a.context_length);
             }
 
-            // 5. SELECCIÓN DE NOVEDADES (Diversidad + No Repetidos)
             const selectedModels = [];
             const seenProviders = new Set();
             
-            // Intento 1: Proveedores nuevos que no estén ya en la lista del usuario
-            for (const m of models) {
+           for (const m of models) {
                 const provider = m.id.split('/')[0];
                 if (!seenProviders.has(provider) && !existingIds.has(m.id)) {
                     selectedModels.push(m);
@@ -2521,9 +2574,7 @@ const fetchDynamicModels = async (type) => {
                 if (selectedModels.length === 6) break;
             }
             
-            // Intento 2: Si aún faltan (porque el usuario ya tiene mucho o hay pocos proveedores), 
-            // rellenamos con cualquier modelo que no esté repetido
-            if (selectedModels.length < 6) {
+          if (selectedModels.length < 6) {
                 for (const m of models) {
                     if (!existingIds.has(m.id) && !selectedModels.find(sm => sm.id === m.id)) {
                         selectedModels.push(m);
@@ -2537,7 +2588,6 @@ const fetchDynamicModels = async (type) => {
                 return;
             }
 
-            // 6. Formateo descriptivo
             const newFormattedModels = selectedModels.map(m => {
                 const contextK = Math.floor(m.context_length / 1024);
                 if (type === 'free') {
@@ -2549,8 +2599,7 @@ const fetchDynamicModels = async (type) => {
                 }
             });
 
-            // 7. Actualizar listas
-            setAvailableModels([...newFormattedModels, ...availableModels]);
+           setAvailableModels([...newFormattedModels, ...availableModels]);
             setAiModel(newFormattedModels[0]); 
             
             alert(`✅ Se han añadido ${newFormattedModels.length} modelos nuevos.`);
@@ -2752,6 +2801,15 @@ const fetchDynamicModels = async (type) => {
                                          <Icons.Grid size={12} className="text-slate-300"/>
                                          ORDENAR LISTA 
                                      </button>
+                                     <button 
+                                        onClick={handleSortByPrice}
+                                           className="flex-1 bg-gradient-to-r from-amber-700 to-orange-800 hover:from-amber-600 hover:to-orange-700 text-white px-3 py-2 rounded-lg text-[9px] font-bold uppercase transition-colors shadow-lg flex items-center justify-center gap-1.5 border border-orange-600/50"
+                                           title="Ordenar por Precio (Pago -> Medios -> Gratis) y Capacidad de Contexto (K)"
+                                       >
+                                           <Icons.DollarSign size={12} className="text-amber-300"/>
+                                           POR PRECIO 
+                                     </button>
+
                                  </div>
 
                                 
