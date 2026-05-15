@@ -2449,8 +2449,76 @@ const handleSortModels = () => {
         } finally {
             setTimeout(() => setIoStatus('idle'), 500);
         }
-    };
+};
 
+const handleSortByPrice = () => {
+        setIoStatus('processing');
+        try {
+            const getModelStats = (str) => {
+                let isFree = false;
+                let isPaid = false;
+                let cost = 0;
+                let kValue = 0;
+
+                const lowerStr = str.toLowerCase();
+                
+                // Detectar gratuitos
+                if (lowerStr.includes('free') || lowerStr.includes('gratuita') || str.split('|')[0].trim().endsWith(':free')) {
+                    isFree = true;
+                }
+
+                // Detectar de pago y extraer precio
+                if (str.includes('💎') || str.includes('In:$') || lowerStr.includes('pago')) {
+                    isPaid = true;
+                    const inMatch = str.match(/In:\$([\d.]+)/);
+                    const outMatch = str.match(/Out:\$([\d.]+)/);
+                    const inCost = inMatch ? parseFloat(inMatch[1]) : 0;
+                    const outCost = outMatch ? parseFloat(outMatch[1]) : 0;
+                    cost = inCost + outCost;
+                }
+
+                // Extraer valor 'k' (contexto)
+                const kMatch = str.match(/\((\d+)k\)/i);
+                if (kMatch) {
+                    kValue = parseInt(kMatch[1], 10);
+                }
+
+                // Agrupar: 1 = Pago, 2 = Sin info/Medio, 3 = Gratis
+                let group = 2; 
+                if (isPaid || cost > 0) group = 1;
+                else if (isFree) group = 3;
+
+                return { group, cost, kValue };
+            };
+
+            const sorted = [...availableModels].sort((a, b) => {
+                const statsA = getModelStats(a);
+                const statsB = getModelStats(b);
+
+                // 1. Agrupar por tipo (Pago -> Sin info -> Gratis)
+                if (statsA.group !== statsB.group) return statsA.group - statsB.group;
+                
+                // 2. Si son de pago, ordenar de mayor a menor coste medio
+                if (statsA.group === 1 && statsB.cost !== statsA.cost) {
+                    return statsB.cost - statsA.cost;
+                }
+                
+                // 3. Dentro del mismo grupo y precio, ordenar de mayor a menor "K"
+                if (statsB.kValue !== statsA.kValue) {
+                    return statsB.kValue - statsA.kValue;
+                }
+
+                // 4. Por orden alfabético si hay empate
+                return a.localeCompare(b);
+            });
+
+            setAvailableModels(sorted);
+        } catch (e) {
+            console.error("Error ordenando modelos por precio:", e);
+        } finally {
+            setTimeout(() => setIoStatus('idle'), 500);
+        }
+};
 
 const fetchDynamicModels = async (type) => {
         try {
@@ -2752,6 +2820,15 @@ const fetchDynamicModels = async (type) => {
                                          <Icons.Grid size={12} className="text-slate-300"/>
                                          ORDENAR LISTA 
                                      </button>
+
+                                      onClick={handleSortByPrice}
+                                         className="flex-1 bg-gradient-to-r from-amber-700 to-orange-800 hover:from-amber-600 hover:to-orange-700 text-white px-3 py-2 rounded-lg text-[9px] font-bold uppercase transition-colors shadow-lg flex items-center justify-center gap-1.5 border border-orange-600/50"
+                                         title="Ordenar por Precio (Pago -> Medios -> Gratis) y Capacidad de Contexto (K)"
+                                     >
+                                         <Icons.DollarSign size={12} className="text-amber-300"/>
+                                         POR PRECIO 
+                                     </button>
+
                                  </div>
 
                                 
