@@ -5232,7 +5232,7 @@ const getMarketStatus = (p) => {
     const [customNewsTopic, setCustomNewsTopic] = useState('');
 
 
-     const fetchNews = async (type) => {
+const fetchNews = async (type) => {
         const isAuto = type === 'portfolio_auto';
 
         if (!apiKey) {
@@ -5248,35 +5248,71 @@ const getMarketStatus = (p) => {
         }
 
         try {
-            let prompt = "";
+            let finalHtml = "";
             const today = new Date().toLocaleString('es-ES');
 
             if (type === 'portfolio' || isAuto) {
                 const sourcePortfolio = isAuto ? portfolio.filter(p => !p.sellDate) : visiblePortfolio;
-                const uniqueAssets = Array.from(new Set(sourcePortfolio.map(p => `${p.name} (${p.ticker})`))).slice(0, 15);
+                const uniqueAssets = Array.from(new Set(sourcePortfolio.map(p => `${p.name} (${p.ticker})`)));
                 
                 if (uniqueAssets.length === 0) {
                     if (isAuto) return;
                     throw new Error("No hay activos para analizar.");
                 }
                 
-                prompt = `Actúa como un analista jefe de Bloomberg. FECHA ACTUAL: ${today}. Realiza una búsqueda activa en internet de EVENTOS CLAVE Y NOTICIAS de los ÚLTIMOS 7 DÍAS y PRÓXIMAS SEMANAS para las empresas: ${uniqueAssets.join(', ')}. 
-                REGLA CRÍTICA: Debes buscar e indicar EXPLÍCITAMENTE LAS FECHAS EXACTAS (día y mes) de la próxima presentación de resultados (Earnings) y el próximo Ex-Dividend o pago de dividendos.
-                Agrupa los eventos por empresa usando <h3>. Descarta las empresas que no tengan eventos relevantes a la vista. Usa listas <ul> y <li>, destacando SIEMPRE las fechas en negrita. Incluye la URL de la fuente (<a href="..." target="_blank">Leer fuente</a>). Usa SOLO HTML limpio. Responde en Español.`;
+                // SISTEMA DE BLOQUES (CHUNKS): Dividimos la cartera en grupos de 5
+                const CHUNK_SIZE = 3;
+                
+                for (let i = 0; i < uniqueAssets.length; i += CHUNK_SIZE) {
+                    const chunk = uniqueAssets.slice(i, i + CHUNK_SIZE);
+                    
+                    const prompt = `SISTEMA: MODO AUDITORÍA FINANCIERA ESTRICTA (ANTI-ALUCINACIONES).
+                    FECHA ACTUAL DE REFERENCIA: ${today}.
+                    ACTIVOS A RASTREAR: ${chunk.join(', ')}.
+
+                    REGLAS DE SEGURIDAD CRÍTICAS OBLIGATORIAS:
+                    1. DEBES utilizar tu herramienta de búsqueda web (google_search) para consultar eventos de los ÚLTIMOS 7 DÍAS y próximas fechas clave.
+                    2. PROHIBIDO INVENTAR: Si no encuentras una noticia real, reciente y verificable para una empresa, DESCÁRTALA y no la menciones.
+                    3. FUENTES REALES: Para cada noticia, indica el dominio (Ej: Bloomberg, Reuters) y crea un enlace real: <a href="URL_REAL" target="_blank">Leer en [Medio]</a>. NUNCA inventes URLs ni mezcles enlaces.
+                    4. FECHAS CLAVE: Busca EXPLÍCITAMENTE la próxima presentación de resultados (Earnings) o pago de dividendos. Si no estás 100% seguro con una fuente verificada, omite el dato.
+
+                    FORMATO DE SALIDA (Solo HTML limpio, usa <h3> para la empresa, <ul> y <li> para noticias). No uses markdown (\`\`\`html). Si ninguna empresa de esta lista tiene noticias reales, no devuelvas nada.`;
+
+                    const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
+                    
+                    let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
+                    const startIdx = cleanHtml.indexOf('<');
+                    if (startIdx !== -1) cleanHtml = cleanHtml.substring(startIdx);
+                    
+                    finalHtml += cleanHtml + "<br/>";
+                }
+
+                if (!finalHtml.trim() || finalHtml.length < 20) {
+                    finalHtml = "<p class='text-center p-4 italic text-slate-400'>No se han encontrado eventos verificados o relevantes en los últimos 7 días para los activos de tu cartera.</p>";
+                }
+
             } else if (type === 'general') {
-                prompt = `Actúa como un analista jefe de Bloomberg. FECHA ACTUAL: ${today}. Realiza una búsqueda activa en internet del panorama MACROECONÓMICO Y BURSÁTIL MUNDIAL de las ÚLTIMAS 48 HORAS. Céntrate en: Decisiones de bancos centrales, inflación, datos de empleo importantes, y grandes movimientos de índices mundiales. Estructura por temas usando <h3>. Usa listas <ul> y <li>. Incluye la URL de la fuente original. Usa SOLO formato HTML limpio. Responde en Español.`;
+                const prompt = `SISTEMA: MODO AUDITORÍA MACRO (ANTI-ALUCINACIONES). Fecha: ${today}.
+                Usa tu herramienta de búsqueda web. Busca noticias macroeconómicas GLOBALES de las ÚLTIMAS 48 HORAS.
+                REGLA: Solo eventos reales sucedidos (bancos centrales, inflación, empleo). Prohibido predecir o inventar. Cita la fuente real con URL clicable HTML. Formato HTML limpio.`;
+                
+                const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
+                let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
+                finalHtml = cleanHtml.substring(cleanHtml.indexOf('<') !== -1 ? cleanHtml.indexOf('<') : 0);
+
             } else if (type === 'custom') {
                 if (!customNewsTopic.trim()) throw new Error("Escribe un tema en el cajón de texto antes de buscar.");
-                prompt = `Actúa como un investigador de noticias financieras. FECHA ACTUAL: ${today}. Realiza una búsqueda exhaustiva en internet de las noticias de los ÚLTIMOS 7 DÍAS sobre este tema específico: "${customNewsTopic}". Estructura las noticias cronológicamente o por impacto usando <h3>. Usa listas <ul> y <li>. Incluye la URL de la fuente original. Usa SOLO formato HTML limpio. Responde en Español.`;
+                const prompt = `SISTEMA: BÚSQUEDA DE NOTICIAS ESTRICTA. Fecha: ${today}. TEMA: "${customNewsTopic}".
+                Usa búsqueda web. Devuelve solo noticias de los ÚLTIMOS 7 DÍAS reales sobre este tema. 
+                Si no encuentras nada, responde: "No hay noticias recientes y verificadas sobre este tema."
+                Si encuentras, incluye: título, URL real clicable HTML, fecha y resumen. Formato HTML limpio.`;
+                
+                const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
+                let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
+                finalHtml = cleanHtml.substring(cleanHtml.indexOf('<') !== -1 ? cleanHtml.indexOf('<') : 0);
             }
 
-            const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
-            let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
-            const startIdx = cleanHtml.indexOf('<');
-            if (startIdx !== -1) cleanHtml = cleanHtml.substring(startIdx);
-            if (!cleanHtml || cleanHtml.length < 20) throw new Error("Sin resultados relevantes.");
-            
-            setNewsResult(cleanHtml);
+            setNewsResult(finalHtml);
             setIsNewsModalOpen(true); 
         } catch (e) {
             if (!isAuto) {
@@ -10097,17 +10133,39 @@ const handleFixedAnalysis = async (promptId) => {
         setIsNewsSelectionModalOpen(false);
         setAnalyzingNews(true);
         try {
+            let finalHtml = "";
             const today = new Date().toLocaleString('es-ES');
-            let newsPrompt = '';
+
             if (type === 'portfolio') {
-                newsPrompt = `Busca activamente en internet las noticias más importantes de los ÚLTIMOS 7 DÍAS para los siguientes valores. Para cada noticia incluye: título real, fuente con URL clicable HTML (<a href="..." target="_blank">Leer</a>), fecha, y valoración del impacto (🟢 Positivo / 🔴 Negativo / ⚪ Neutral). Fecha actual: ${today}.`;
+                const activePortfolio = portfolio.filter(p => !p.sellDate && p.isActive !== false);
+                const uniqueAssets = Array.from(new Set(activePortfolio.map(p => `${p.name} (${p.ticker})`)));
+                
+                if (uniqueAssets.length === 0) throw new Error("No hay activos en cartera para analizar.");
+
+                const CHUNK_SIZE = 5;
+                for (let i = 0; i < uniqueAssets.length; i += CHUNK_SIZE) {
+                    const chunk = uniqueAssets.slice(i, i + CHUNK_SIZE);
+                    const prompt = `SISTEMA: MODO AUDITORÍA FINANCIERA ESTRICTA (ANTI-ALUCINACIONES). Fecha: ${today}. ACTIVOS: ${chunk.join(', ')}. 
+                    REGLAS OBLIGATORIAS: 1. Usa google_search para noticias de los ÚLTIMOS 7 DÍAS. 2. PROHIBIDO INVENTAR. Si no hay noticia real para un activo, no lo menciones. 3. Para cada noticia incluye URL real clicable HTML, fecha y valoración (🟢 Positivo / 🔴 Negativo / ⚪ Neutral). Formato HTML limpio.`;
+                    
+                    const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
+                    finalHtml += cleanAIResponse(res) + "<br/>";
+                }
+                
+                if (!finalHtml.trim() || finalHtml.length < 50) {
+                    finalHtml = "<p style='text-align:center; padding:20px; color:#94a3b8; font-style:italic;'>No se han encontrado noticias recientes verificadas para los activos de tu cartera.</p>";
+                }
             } else if (type === 'general') {
-                newsPrompt = `Busca activamente en internet las noticias de mercado y macro más importantes de las ÚLTIMAS 48 HORAS. Para cada noticia incluye: título, fuente con URL clicable HTML, fecha y impacto en mercados. Fecha actual: ${today}. Formato HTML.`;
+                const prompt = `SISTEMA: MODO AUDITORÍA MACRO. Fecha: ${today}. Busca activamente en internet las noticias de mercado y macro más importantes de las ÚLTIMAS 48 HORAS. PROHIBIDO INVENTAR. Incluye: título, fuente con URL clicable HTML, fecha e impacto en mercados. Formato HTML limpio.`;
+                const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
+                finalHtml = cleanAIResponse(res);
             } else {
-                newsPrompt = `Busca activamente en internet las noticias más recientes sobre: "${customNewsTopic}". Incluye: título, fuente con URL clicable HTML, fecha y resumen. Fecha actual: ${today}. Formato HTML.`;
+                const prompt = `SISTEMA: BÚSQUEDA ESTRICTA. Fecha: ${today}. Tema: "${customNewsTopic}". Busca noticias recientes. PROHIBIDO INVENTAR. Si no encuentras, indícalo. Si encuentras, incluye: título, URL clicable HTML, fecha y resumen. Formato HTML limpio.`;
+                const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
+                finalHtml = cleanAIResponse(res);
             }
-            const res = await askAI(apiKey, secondaryApiKey, newsPrompt, aiModel);
-            setNewsResult(cleanAIResponse(res));
+            
+            setNewsResult(finalHtml);
             setIsNewsModalOpen(true);
         } catch (e) {
             setStatusModal({ isOpen: true, title: 'Error Noticias', msg: e.message, type: 'error' });
