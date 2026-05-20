@@ -2396,6 +2396,7 @@ const SettingsTab = ({ apiKey, setApiKey, secondaryApiKey, setSecondaryApiKey, _
             if (data.globalNotes !== undefined) setGlobalNotes(data.globalNotes); 
             if (data.hideInactive !== undefined) setHideInactive(data.hideInactive);
             if (data.customConsultas !== undefined) setCustomConsultas(data.customConsultas);
+            if (data.customGeneralConsultas !== undefined) setCustomGeneralConsultas(data.customGeneralConsultas); 
             
             setIoStatus('success'); 
             alert("✅ Copia anterior (.bak) restaurada correctamente."); 
@@ -8870,11 +8871,91 @@ const AnalysisButton = ({ icon, title, desc, color, onClick }) => {
 };
 
 
-const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, portfolio, setPortfolio, initialTicker, aiModel, setAiModel, availableModels, gScriptUrl }) => {
+const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, portfolio, setPortfolio, initialTicker, aiModel, setAiModel, availableModels, gScriptUrl, customGeneralConsultas, setCustomGeneralConsultas }) => {
     const [activeSubTab, setActiveSubTab] = useState('estudio');
+
     const [isGraphModalOpen, setIsGraphModalOpen] = useState(false);
 
     const [selectedScreenerTickers, setSelectedScreenerTickers] = useState([]);
+
+    const [freeQueryText, setFreeQueryText] = useState('');
+    const [isFreeQueryLoading, setIsFreeQueryLoading] = useState(false);
+    const [freeQueryResult, setFreeQueryResult] = useState('');
+    const [showFreeQueryManager, setShowFreeQueryManager] = useState(false);
+    const [newFreeQuery, setNewFreeQuery] = useState('');
+    const [editingFreeQuery, setEditingFreeQuery] = useState(null);
+
+        const handleFreeQuerySubmit = async () => {
+        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+        if (!freeQueryText.trim()) return;
+
+        setIsFreeQueryLoading(true);
+        setFreeQueryResult('');
+
+        try {
+            const today = new Date().toLocaleString('es-ES');
+            const prompt = `
+            Eres un Analista Cuantitativo y experto bursátil/macroeconómico de Wall Street.
+            FECHA ACTUAL: ${today}.
+
+            PETICIÓN DEL USUARIO:
+            "${freeQueryText}"
+
+            INSTRUCCIONES ESTRICTAS:
+            1. Usa tu herramienta de búsqueda web (google_search) para encontrar datos actualizados y precisos si la consulta lo requiere.
+            2. Redacta la respuesta en formato HTML limpio (usando <h3>, <ul>, <li>, <p>, <strong>, <a> para enlaces de fuentes).
+            3. Responde en Español de forma profesional, clara y didáctica. Prohibido usar markdown de código (\`\`\`html).
+            `;
+
+            const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
+            setFreeQueryResult(cleanAIResponse(res));
+        } catch (e) {
+            setStatusModal({ isOpen: true, title: 'Error en Consulta', msg: e.message, type: 'error' });
+        } finally {
+            setIsFreeQueryLoading(false);
+        }
+    };
+
+    const handlePrintFreeQuery = () => {
+        const printWindow = window.open('', '', 'height=800,width=800');
+        let html = `<html><head><title>Consulta Libre iA</title><style>
+        body { font-family: sans-serif; padding: 40px; font-size: 13px; line-height: 1.6; color: #000; -webkit-print-color-adjust: exact; }
+        h1 { border-bottom: 4px solid #8b5cf6; color: #8b5cf6; text-transform: uppercase; padding-bottom: 10px; margin-bottom: 5px; }
+        h3 { color: #7c3aed; border-bottom: 1px solid #ccc; margin-top: 30px; padding-bottom: 5px; text-transform: uppercase; font-size: 16px; }
+        ul { padding-left: 20px; } li { margin-bottom: 6px; }
+        .meta { font-size: 11px; color: #555; margin-bottom: 30px; border-left: 3px solid #8b5cf6; padding-left: 10px; background: #f5f3ff; padding: 10px; }
+        b, strong { color: #111827; }
+        </style></head><body>
+        <h1>RESPUESTA A CONSULTA LIBRE (iA)</h1>
+        <div class="meta">
+            <b>EMISIÓN:</b> ${new Date().toLocaleString()}<br/>
+            <b>CONSULTA:</b> "${freeQueryText}"
+        </div>
+        <div>${freeQueryResult}</div>
+        </body></html>`;
+        printWindow.document.write(html); printWindow.document.close();
+        setTimeout(() => { printWindow.focus(); printWindow.print(); }, 500);
+    };
+
+    const handleAddFreeQuery = () => {
+        const trimmed = newFreeQuery.trim();
+        if (!trimmed || trimmed.length < 3) return;
+        if (customGeneralConsultas.includes(trimmed)) return;
+        setCustomGeneralConsultas([...customGeneralConsultas, trimmed]);
+        setNewFreeQuery('');
+    };
+
+    const handleDeleteFreeQuery = (index) => {
+        setCustomGeneralConsultas(customGeneralConsultas.filter((_, i) => i !== index));
+    };
+
+    const handleSaveEditFreeQuery = () => {
+        if (!editingFreeQuery) return;
+        const trimmed = editingFreeQuery.text.trim();
+        if (!trimmed || trimmed.length < 3) return;
+        setCustomGeneralConsultas(customGeneralConsultas.map((q, i) => i === editingFreeQuery.index ? trimmed : q));
+        setEditingFreeQuery(null);
+    };
 
     const handleScreenerCheckbox = (ticker, e) => {
         e.stopPropagation(); // Evita que se dispare el clic de la fila (que lleva a 'Estudio')
@@ -10419,6 +10500,7 @@ const handleFixedAnalysis = async (promptId) => {
                     <button onClick={() => setActiveSubTab('estudio')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'estudio' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Estudio Individual</button>
                     <button onClick={() => setActiveSubTab('rastreo')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'rastreo' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Rastreo de Mercado</button>
                     <button onClick={() => setActiveSubTab('cribado')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'cribado' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Cribado</button>
+                    <button onClick={() => setActiveSubTab('consulta')} className={`px-8 py-2.5 rounded-lg text-xs font-bold uppercase transition-all ${activeSubTab === 'consulta' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>Consulta Libre</button>
             </div>
 
                 <div className="bg-slate-900 px-4 h-[44px] rounded-xl border border-purple-500/30 flex items-center gap-3 shadow-lg shrink-0 md:ml-auto" title="Modelo Inteligencia Artificial">
@@ -11093,6 +11175,108 @@ const handleFixedAnalysis = async (promptId) => {
                 </div>
             )}
 
+
+            {activeSubTab === 'consulta' && (
+                <div className="flex flex-col gap-6 fade-in max-w-6xl mx-auto w-full pb-10">
+                    <div className="bg-slate-900/50 p-6 rounded-2xl border border-slate-800 shadow-xl">
+                        <h3 className="text-lg font-bold text-purple-400 uppercase tracking-widest flex items-center gap-2 mb-4 border-b border-slate-800 pb-2">
+                            <Icons.MessageCircle size={20}/> Consulta Libre a la Inteligencia Artificial
+                        </h3>
+                        
+                        <div className="bg-purple-900/20 p-4 rounded-xl border border-purple-500/30 text-purple-200 text-xs leading-relaxed mb-4">
+                            <b>💡 ¿Para qué sirve esta opción?</b><br/>
+                            A diferencia del estudio individual, aquí puedes hacer preguntas abiertas sobre macroeconomía, tendencias de mercado, comparar sectores, pedir resúmenes de noticias o solicitar explicaciones financieras.
+                        </div>
+                        
+                        <textarea 
+                            value={freeQueryText} 
+                            onChange={e => setFreeQueryText(e.target.value)} 
+                            placeholder="Escribe aquí tu pregunta o petición abierta al analista iA..." 
+                            className="w-full h-24 bg-slate-950 border border-slate-700 rounded-xl p-4 text-sm text-slate-200 focus:border-purple-500 outline-none custom-scrollbar"
+                        />
+
+                        {/* GESTOR DE PREGUNTAS GUARDADAS */}
+                        <div className="border-t border-slate-700 pt-3 mt-4">
+                            <div className="flex justify-between items-center mb-3">
+                                <h4 className="text-[10px] font-black text-purple-400 uppercase tracking-widest flex items-center gap-2">
+                                    <Icons.Copy size={12} /> Mis Consultas Guardadas
+                                </h4>
+                                <button onClick={() => setShowFreeQueryManager(!showFreeQueryManager)} className="text-[9px] text-purple-400 hover:text-purple-300 font-bold flex items-center gap-1 bg-purple-900/20 border border-purple-500/30 px-2 py-1 rounded-lg transition-colors">
+                                    {showFreeQueryManager ? '▲ Cerrar gestor' : '⚙️ Gestionar'}
+                                </button>
+                            </div>
+
+                            {customGeneralConsultas.length > 0 && !showFreeQueryManager && (
+                                <div className="flex flex-wrap gap-2 mb-2">
+                                    {customGeneralConsultas.map((q, i) => (
+                                        <button key={i} onClick={() => setFreeQueryText(q)} className="px-3 py-2 bg-purple-900/30 border border-purple-500/40 rounded-xl text-[10px] text-purple-200 hover:text-white hover:bg-purple-800/50 transition-colors font-medium text-left line-clamp-2 leading-tight">
+                                            {q}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+
+                            {showFreeQueryManager && (
+                                <div className="bg-slate-950 border border-purple-500/30 rounded-xl p-4 space-y-3 fade-in mt-2">
+                                    <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-2">
+                                        Gestionar Consultas Libres
+                                        <span className="text-slate-600 font-normal normal-case ml-2">— Se guardan en local y nube</span>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <input type="text" value={newFreeQuery} onChange={e => setNewFreeQuery(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddFreeQuery()} placeholder="Escribe tu nueva consulta habitual..." className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:border-purple-500 outline-none" />
+                                        <button onClick={handleAddFreeQuery} disabled={!newFreeQuery.trim() || newFreeQuery.trim().length < 3} className="bg-purple-600 hover:bg-purple-500 disabled:bg-slate-700 disabled:text-slate-500 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors flex items-center gap-1"><Icons.Plus size={14} /> Añadir</button>
+                                    </div>
+                                    <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar">
+                                        {customGeneralConsultas.map((q, i) => (
+                                            <div key={i} className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-lg p-2">
+                                                {editingFreeQuery?.index === i ? (
+                                                    <>
+                                                        <input type="text" value={editingFreeQuery.text} onChange={e => setEditingFreeQuery({ ...editingFreeQuery, text: e.target.value })} className="flex-1 bg-slate-800 border border-purple-500 rounded px-2 py-1 text-xs text-white outline-none" autoFocus />
+                                                        <button onClick={handleSaveEditFreeQuery} className="text-green-400 text-[10px] font-bold hover:text-green-300 px-2">✓ Guardar</button>
+                                                        <button onClick={() => setEditingFreeQuery(null)} className="text-slate-500 text-[10px] hover:text-white px-1">✗</button>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <span className="flex-1 text-[11px] text-slate-300 line-clamp-1" title={q}>{q}</span>
+                                                        <button onClick={() => { setFreeQueryText(q); setShowFreeQueryManager(false); }} className="text-[9px] text-blue-400 hover:text-blue-300 font-bold border border-blue-500/30 px-2 py-0.5 rounded transition-colors">Usar</button>
+                                                        <button onClick={() => setEditingFreeQuery({ index: i, text: q })} className="text-slate-400 hover:text-white p-1 rounded transition-colors"><Icons.Edit size={12} /></button>
+                                                        <button onClick={() => handleDeleteFreeQuery(i)} className="text-red-400 hover:text-red-300 p-1 rounded transition-colors"><Icons.Trash2 size={12} /></button>
+                                                    </>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <button onClick={handleFreeQuerySubmit} disabled={isFreeQueryLoading || !freeQueryText.trim()} className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white py-3 rounded-xl font-black uppercase text-xs tracking-widest shadow-lg flex items-center justify-center gap-2 transition-colors mt-4">
+                            {isFreeQueryLoading ? <Icons.Loader size={16} className="animate-spin" /> : <Icons.Wand size={16}/>}
+                            {isFreeQueryLoading ? 'Buscando y Redactando...' : 'Consultar a la iA'}
+                        </button>
+                    </div>
+
+                    {freeQueryResult && (
+                        <div className="mt-2 shadow-2xl rounded-2xl overflow-hidden fade-in relative border border-purple-500/30">
+                            <div className="bg-slate-800 p-4 flex justify-between items-center border-b border-purple-500/30">
+                                <span className="text-white text-xs font-black uppercase tracking-widest flex items-center gap-2">
+                                    <Icons.MessageCircle size={16} className="text-purple-400" />
+                                    Respuesta de la Inteligencia Artificial
+                                </span>
+                                <button onClick={handlePrintFreeQuery} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg text-xs font-bold flex gap-2 items-center transition-colors shadow-lg">
+                                    <Icons.ExternalLink size={14} /> IMPRIMIR / PDF
+                                </button>
+                            </div>
+                            
+                            <div className="bg-slate-900 p-6 md:p-10 max-h-[60vh] overflow-y-auto custom-scrollbar">
+                                <div className="prose-content text-sm text-slate-200 [&_h3]:text-purple-400 [&_h3]:mt-4 [&_h3]:border-slate-700 [&_strong]:text-white" dangerouslySetInnerHTML={{ __html: freeQueryResult }}></div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+                )}
+
+
             <Modal isOpen={isProjModalOpen} title={`Proyección: ${ticker}`} onClose={() => setIsProjModalOpen(false)} size="sm">
                 <div className="space-y-4 p-2">
                     <div className="bg-cyan-900/10 border border-cyan-500/30 p-3 rounded-xl text-[10px] text-cyan-200 mb-4">
@@ -11705,6 +11889,7 @@ const App = () => {
 
     const DEFAULT_CONSULTA = "Quiero que me des un listado con las acciones vendidas comparando el precio de venta con el precio actual dando la diferencia, sumando al final el resultado, para poder así comprobar qué resultados tendría de no haber vendido";
     const [customConsultas, setCustomConsultas] = usePersistentState('bg_custom_consultas', [DEFAULT_CONSULTA]); 
+    const [customGeneralConsultas, setCustomGeneralConsultas] = usePersistentState('bg_custom_general_consultas', []);
     
     const [analysisTicker, setAnalysisTicker] = useState(null);
     const [openConsultasOnLoad, setOpenConsultasOnLoad] = useState(false);
@@ -11789,11 +11974,12 @@ const App = () => {
             setSyncMessage('Subiendo datos...');
             const now = Date.now(); 
            
-           const payload = { 
+            const payload = { 
                 timestamp: now, portfolio, resultsData, apiKey,secondaryApiKey, baseCurrency, 
                 refreshInterval, version: 3, appPin, globalNotes, 
-                aiModel, availableModels, gScriptUrl, hideInactive, customConsultas 
-            }; 
+                aiModel, availableModels, gScriptUrl, hideInactive, customConsultas,
+                customGeneralConsultas 
+            };
 
             await fetch(url, { 
                 method: 'POST', mode: 'no-cors', 
@@ -11832,6 +12018,8 @@ const App = () => {
         if (data.globalNotes !== undefined) setGlobalNotes(data.globalNotes); 
         if (data.hideInactive !== undefined) setHideInactive(data.hideInactive); 
         if (data.customConsultas !== undefined) setCustomConsultas(data.customConsultas);
+        if (data.customGeneralConsultas !== undefined) setCustomGeneralConsultas(data.customGeneralConsultas); 
+
         
         setLocalTimestamp(data.timestamp); 
         setConflictModal({ isOpen: false, cloudData: null }); 
@@ -12229,6 +12417,8 @@ const App = () => {
                         setAiModel={(val) => updateConfig(setAiModel, val)} 
                         availableModels={availableModels} 
                         gScriptUrl={gScriptUrl}
+                        customGeneralConsultas={customGeneralConsultas} 
+                        setCustomGeneralConsultas={(val) => updateConfig(setCustomGeneralConsultas, val)}                  
                     />
                 )}
 
