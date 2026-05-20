@@ -9701,6 +9701,7 @@ const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, portfolio, setPort
         return clean;
     };
 
+
  const handleCribado = async () => {
         const validTickers = cribadoTickers.filter(t => t.trim() !== '');
         if (validTickers.length < 2) {
@@ -9714,49 +9715,102 @@ const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, portfolio, setPort
         try {
             const today = new Date().toLocaleString('es-ES');
             
+            // 1. RESCATE DE DATOS EN TIEMPO REAL (Vía Google Script)
+            let liveData = {};
+            const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
+            if (scriptUrl) {
+                try {
+                    const res = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(validTickers.join(','))}&_t=${Date.now()}`);
+                    liveData = await res.json();
+                } catch (e) {
+                    console.warn("No se pudieron obtener datos en tiempo real del script para el cribado.");
+                }
+            }
+
+            // 2. EXTRACCIÓN Y FUSIÓN DE FUNDAMENTALES (Script en vivo + Datos previos del Rastreador/Screener)
+            const contextData = validTickers.map(ticker => {
+                const upTicker = ticker.toUpperCase();
+                const screenerInfo = screenerResults.find(r => r.ticker.toUpperCase() === upTicker) || {};
+                const scriptInfo = liveData[upTicker] || {};
+                
+                // Prioridad: 1. Script en vivo, 2. Screener
+                const currentPrice = scriptInfo.p || screenerInfo.price || 'N/D';
+                const marketCap = scriptInfo.mc || 'N/D';
+                const per = scriptInfo.pe || screenerInfo.per || 'N/D';
+                const eps = scriptInfo.eps || 'N/D';
+                const div = scriptInfo.div || screenerInfo.divYield || 'N/D';
+                const beta = scriptInfo.beta || 'N/D';
+                
+                // Datos exclusivos del screener (si el valor viene de la tabla de rastreo)
+                const peg = screenerInfo.peg || 'N/D';
+                const roi = screenerInfo.roi || 'N/D';
+                const de = screenerInfo.debtEquity || 'N/D';
+                const fcf = screenerInfo.fcf || 'N/D';
+                const pb = screenerInfo.pb || 'N/D';
+
+                return `- TICKER: ${upTicker}
+  * Precio Cotización Actual: ${currentPrice}
+  * Market Cap: ${marketCap}
+  * PER: ${per}
+  * BPA (EPS): ${eps}
+  * PEG: ${peg}
+  * Precio/Valor Contable (P/B): ${pb}
+  * ROI: ${roi}${roi !== 'N/D' ? '%' : ''}
+  * Deuda/Equity: ${de}
+  * Div Yield: ${div}${div !== 'N/D' ? '%' : ''}
+  * FCF Yield: ${fcf}${fcf !== 'N/D' ? '%' : ''}
+  * Beta: ${beta}`;
+            }).join('\n\n');
+
+            // 3. BLOQUE DE VERDAD ABSOLUTA PARA LA IA
+            const hardDataBlock = `
+╔════════════════════════════════════════════════════════════════════╗
+  DATOS TÉCNICOS Y FINANCIEROS DE REFERENCIA (VERIFICADOS POR SISTEMA)
+╚════════════════════════════════════════════════════════════════════╝
+ESTOS SON LOS DATOS EXACTOS QUE DEBES UTILIZAR OBLIGATORIAMENTE EN TU ANÁLISIS Y TABLAS:
+${contextData}
+
+REGLA DE ORO BÚSQUEDA WEB:
+Si algún dato anterior dice "N/D", ESTÁS OBLIGADO a usar tu herramienta de búsqueda web (google_search) para encontrarlo e incorporarlo al análisis. PROHIBIDO INVENTAR DATOS.
+`;
+
             const prompt = `ROL: ANALISTA SENIOR BURSÁTIL DE WALL STREET.
-            FECHA ACTUAL: ${today}. 
-            REGLA CRÍTICA: Debes utilizar esta fecha exacta para forzar a tu motor de búsqueda a obtener las cotizaciones y fundamentales de HOY.
+FECHA ACTUAL: ${today}. 
 
-            TAREA: Realiza un "Cribado Comparativo" exhaustivo entre las siguientes empresas: ${validTickers.join(', ')}.
+${hardDataBlock}
 
-            PROTOCOLO DE FIABILIDAD OBLIGATORIO:
-            1. Usa google_search para buscar datos ACTUALIZADOS DE HOY para cada ticker.
-            2. Cada dato numérico DEBE ir con su fuente y fecha como enlace HTML clicable: [Fuente: <a href="..." target="_blank">Nombre</a>].
-            3. Añade SIEMPRE breves explicaciones didácticas de cualquier concepto técnico bursátil (<span style="font-size:10px; font-style:italic; color:#666;">explicación</span>).
-            4. MANTÉN UNA ESTRUCTURA IDÉNTICA para cada empresa, para facilitar la comparación cruzada visual por parte del usuario.
+TAREA: Realiza un "Cribado Comparativo" exhaustivo entre las siguientes empresas: ${validTickers.join(', ')}.
 
-            ESTRUCTURA DEL INFORME (En formato HTML limpio, usando <h3>, <h4>, <table>, <ul>, <li>, <p>, <strong>):
-            
-            1. ANÁLISIS INDIVIDUAL POR EMPRESA (Aplica esta misma estructura exacta, en este mismo orden, para CADA UNA de las empresas analizadas):
-               <h3 style="color:#1e3a8a; border-bottom: 2px solid #ccc; text-transform: uppercase;">[NOMBRE DE LA EMPRESA] ([TICKER])</h3>
-               <ul>
-                   <li><strong>A. Perfil y Mercado:</strong> Descripción a qué se dedica, cuál es su producto estrella y su Capitalización Bursátil (Market Cap) actual.</li>
-                   <li><strong>B. Precio y Valoración:</strong> 
-                       - Precio de cotización HOY (Dato crítico para que el usuario verifique la exactitud).
-                       - Valor Intrínseco estimado (Fair Value / DCF).
-                       - Margen de Seguridad %.
-                   </li>
-                   <li><strong>C. Fundamentales y Salud Financiera:</strong> 
-                       - Ratios de precio: PER y PEG.
-                       - Solvencia: Deuda/Equity y Flujo de Caja Libre (FCF).
-                       - Calidad del negocio: Rentabilidad (ROI / ROIC) y Crecimiento de Beneficios (EPS Growth).
-                   </li>
-                   <li><strong>D. Momentum y Análisis Técnico:</strong> Tendencia actual, distancia a Soportes/Resistencias clave, y situación respecto a sus Medias Móviles (ej. SMA 50 y SMA 200).</li>
-                   <li><strong>E. Riesgos (Cisnes Negros):</strong> Principal vulnerabilidad macroeconómica, impacto de tipos de interés o riesgo específico de su sector.</li>
-               </ul>
+PROTOCOLO DE FIABILIDAD OBLIGATORIO:
+1. BASA TU ANÁLISIS EN LOS DATOS VERIFICADOS PROPORCIONADOS ARRIBA.
+2. Si requieres más datos (como el Valor Intrínseco DCF, Márgenes, Tendencias o los marcados como "N/D"), usa google_search para buscar datos ACTUALIZADOS DE HOY.
+3. Cada dato numérico ajeno a la tabla verificada DEBE ir con su fuente y fecha como enlace HTML clicable: [Fuente: <a href="..." target="_blank">Nombre</a>].
+4. Añade SIEMPRE breves explicaciones didácticas de cualquier concepto técnico bursátil (<span style="font-size:10px; font-style:italic; color:#666;">explicación</span>).
+5. MANTÉN UNA ESTRUCTURA IDÉNTICA para cada empresa, para facilitar la comparación cruzada visual.
 
-            2. EVALUACIÓN Y PUNTUACIÓN (Sobre 100):
-               Otorga una puntuación final de 1 a 100 para cada empresa y justifica brevemente en 2 líneas por qué le das esa nota basándote en los datos anteriores.
+ESTRUCTURA DEL INFORME (En formato HTML limpio, usando <h3>, <h4>, <table>, <ul>, <li>, <p>, <strong>):
 
-            3. TABLA RESUMEN COMPARATIVA: 
-               Crea una tabla HTML cruzando los datos clave recabados (Columnas: Métrica, Empresa 1, Empresa 2...). 
-               Filas obligatorias: Precio Actual, PER, Deuda/Eq, ROI, Margen de Seguridad %, Tendencia Técnica, Puntuación Final.
+1. ANÁLISIS INDIVIDUAL POR EMPRESA (Aplica esta estructura para CADA UNA de las empresas):
+   <h3 style="color:#1e3a8a; border-bottom: 2px solid #ccc; text-transform: uppercase;">[NOMBRE DE LA EMPRESA] ([TICKER])</h3>
+   <ul>
+       <li><strong>A. Perfil y Mercado:</strong> Descripción a qué se dedica y su Capitalización Bursátil (Market Cap).</li>
+       <li><strong>B. Precio y Valoración:</strong> Precio de cotización HOY, Valor Intrínseco estimado (DCF), y Margen de Seguridad %.</li>
+       <li><strong>C. Fundamentales y Salud Financiera:</strong> Ratios de precio (PER, PEG, P/B), Solvencia (Deuda/Equity y FCF), Rentabilidad (ROI/ROIC). (Prioriza los datos proporcionados).</li>
+       <li><strong>D. Momentum y Análisis Técnico:</strong> Tendencia actual, Beta y situación respecto a Medias Móviles.</li>
+       <li><strong>E. Riesgos (Cisnes Negros):</strong> Principal vulnerabilidad macroeconómica o del sector.</li>
+   </ul>
 
-            4. CONCLUSIÓN Y GANADOR: 
-               Un veredicto fuertemente razonado indicando cuál es la MEJOR OPCIÓN para invertir hoy de las opciones presentadas. Debes "mojarte" y elegir una, destacando qué factor ha decantado la balanza.
+2. EVALUACIÓN Y PUNTUACIÓN (Sobre 100):
+   Otorga una puntuación final de 1 a 100 para cada empresa y justifica brevemente tu decisión.
 
-            IMPORTANTE: Responde ÚNICAMENTE con el código HTML del análisis. Sin bloques de markdown (\`\`\`html) ni comillas triples al inicio o al final.`;
+3. TABLA RESUMEN COMPARATIVA: 
+   Crea una tabla HTML cruzando los datos. 
+   Filas obligatorias: Precio Actual, Market Cap, PER, PEG, Deuda/Eq, ROI, Div Yield, Puntuación Final.
+
+4. CONCLUSIÓN Y GANADOR: 
+   Un veredicto fuertemente razonado indicando cuál es la MEJOR OPCIÓN para invertir hoy. Destaca qué factor ha decantado la balanza.
+
+IMPORTANTE: Responde ÚNICAMENTE con el código HTML del análisis. Sin bloques de markdown (\`\`\`html) ni comillas.`;
 
             const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
             setCribadoResult(cleanAIResponse(res));
