@@ -3883,6 +3883,7 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
     const [showActive, setShowActive] = useState(true);
     const [showDividends, setShowDividends] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
+    const [yearQuery, setYearQuery] = useState(''); 
     const [scale, setScale] = useState(1);
 
     const fDate = (d) => {
@@ -3902,6 +3903,10 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
             const d = new Date(dateStr);
             if (isNaN(d.getTime())) return;
             const year = d.getFullYear().toString();
+            
+            const targetYears = yearQuery.trim().split(/\s+/).filter(Boolean);
+            if (targetYears.length > 0 && !targetYears.includes(year)) return; // Salta el registro si no está en los años solicitados
+         
             const month = (d.getMonth() + 1).toString().padStart(2, '0');
             const yId = `Y-${year}`;
             const mId = `M-${year}-${month}`;
@@ -3983,7 +3988,9 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
 
         Object.keys(tree.children).forEach(yId => { if (Object.keys(tree.children[yId].children).length === 0) delete tree.children[yId]; });
         return tree;
-    }, [portfolio, showActive, showDividends, searchQuery]);
+    }, [portfolio, showActive, showDividends, searchQuery, yearQuery]); 
+
+      
 
     const toggleNode = (id) => { setExpandedNodes(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; }); };
 
@@ -4258,12 +4265,14 @@ const TimelineGraphModal = ({ isOpen, onClose, portfolio, baseCurrency, onEditIt
             <div className="flex justify-between items-center p-5 bg-slate-900 border-b border-slate-800 z-50">
                 <div><h2 className="text-2xl font-bold text-emerald-400 font-display">TIMELINE</h2>
                     <div className="flex gap-4 items-center bg-slate-800/50 p-2 rounded-xl mt-2 border border-slate-700">
-                        <div className="relative"><input type="text" placeholder="Buscar..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} className="bg-black/30 border border-slate-700 rounded px-2 py-1 text-[10px] w-24 text-white"/><button onClick={()=>setSearchQuery('')} className="absolute right-1 top-1 text-slate-500">×</button></div>
-                        <label className="flex items-center gap-2 cursor-pointer text-[9px] font-bold text-slate-300 uppercase"><input type="checkbox" checked={showActive} onChange={e => setShowActive(e.target.checked)}/> Acciones Activas</label>
-                        <label className="flex items-center gap-2 cursor-pointer text-[9px] font-bold text-slate-300 uppercase"><input type="checkbox" checked={showDividends} onChange={e => setShowDividends(e.target.checked)}/> Incluir Dividendos</label>
+                        <div className="relative"><input type="text" placeholder="Buscar Ticker..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} className="bg-black/30 border border-slate-700 rounded px-2 py-1 text-[10px] w-24 text-white"/><button onClick={()=>setSearchQuery('')} className="absolute right-1 top-1 text-slate-500">×</button></div>
+                        
+                        <div className="relative"><input type="text" placeholder="Años (ej: 2023 2024)" value={yearQuery} onChange={e=>setYearQuery(e.target.value)} className="bg-black/30 border border-slate-700 rounded px-2 py-1 text-[10px] w-[115px] text-white"/><button onClick={()=>setYearQuery('')} className="absolute right-1 top-1 text-slate-500">×</button></div>
+                        
+                        <label className="flex items-center gap-1.5 cursor-pointer text-[9px] font-bold text-slate-300 uppercase"><input type="checkbox" checked={showActive} onChange={e => setShowActive(e.target.checked)}/> Activas</label>
+                        <label className="flex items-center gap-1.5 cursor-pointer text-[9px] font-bold text-slate-300 uppercase"><input type="checkbox" checked={showDividends} onChange={e => setShowDividends(e.target.checked)}/> Dividendos</label>
                     </div>
                 </div>
-
                 
                 <div className="flex gap-2">
                     <button onClick={handlePrintVisible} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-[10px] uppercase flex items-center gap-2 transition-colors shadow-lg"><Icons.ExternalLink size={14}/> IMPRIMIR DATOS DESPLEGADOS</button>
@@ -6715,52 +6724,65 @@ const handleSellSubmit = () => {
                                   return <>{renderAggRow(winners, true)}{renderAggRow(losers, false)}</>;
                               })()
                           ) : ( 
-                              filteredPortfolio.map(p => { 
-                                  const isS = !!p.sellDate;
-                                  const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
-                                  const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
-                                  const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
-                                  const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
-                                  const ds = (p.dividends || []).reduce((a,b)=>a+b.net,0); 
-                                  const capitalGain = vF - cost; 
-                                  const days = calculateDays(p.buyDate, p.sellDate || new Date()); 
-                                  const rs = calcReturns(cost, vF + ds, days); 
-                                  const percentToBreakEven = (vF + ds) > 0 ? ((cost - (vF + ds)) / (vF + ds)) * 100 : 0;
-                      
-                                  let intraVal = 0, intraPct = 0, intraUnit = 0, hasIntra = false;
-                                  const mStatus = getMarketStatus(p); 
-                                  const isValidForTotal = mStatus.status === 'OPEN' || mStatus.status === 'CLOSED_TODAY';
-                      
-                                  if (!isS && p.previousClose) {
-                                      const rawCurP = p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice;
-                                      const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
-                                      const curF = p.isIndex ? p.buyFx : p.currentFx;
-                                      intraUnit = rawCurP - prevP; 
-                                      intraVal = intraUnit * p.shares * curF;
-                                      intraPct = prevP !== 0 ? (intraUnit / prevP) * 100 : 0;
-                                      hasIntra = true;
-                                  } 
-                      
-                                  const totalAbsIntra = visiblePortfolio.reduce((sum, item) => {
-                                      if (!item.sellDate && item.previousClose) {
-                                          const st = getMarketStatus(item);
-                                          if (st.status === 'OPEN' || st.status === 'CLOSED_TODAY') {
-                                              const cP = item.isIndex ? item.currentPrice / (item.indexDivisor || 1) : item.currentPrice;
-                                              const pP = item.isIndex ? item.previousClose / (item.indexDivisor || 1) : item.previousClose;
-                                              const f = item.isIndex ? item.buyFx : item.currentFx;
-                                              return sum + Math.abs((cP - pP) * item.shares * f);
-                                          }
-                                      }
+                              (() => {
+                                     const totalValWinners = visiblePortfolio.reduce((sum, p) => {
+                                      const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+                                      const isS = !!p.sellDate;
+                                      const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
+                                      const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
+                                      const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+                                      if (vF - cost >= 0) return sum + vF; // Suma solo si está en positivo
                                       return sum;
-                                  }, 0);    
-                      
-                                  const wIntra = (isValidForTotal && totalAbsIntra > 0) ? (Math.abs(intraVal) / totalAbsIntra) * 100 : 0;
-                                  const ratio = cost !== 0 ? ((vF - cost) / cost) : 0;
-                                  const wC = gridTotals.tCost > 0 ? (cost / gridTotals.tCost) * 100 : 0;
-                                  const wV = gridTotals.tVal > 0 ? (vF / gridTotals.tVal) * 100 : 0;
-                      
-                                  return ( 
-                                      <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''} ${selectedTicker === p.ticker ? 'bg-blue-600/10 border-l-4 border-blue-500' : ''}`} onClick={() => setSelectedTicker(p.ticker)}>
+                                  }, 0);
+
+                                  return filteredPortfolio.map(p => { 
+                                      const isS = !!p.sellDate;
+                                      const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
+                                      const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
+                                      const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+                                      const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+                                      const ds = (p.dividends || []).reduce((a,b)=>a+b.net,0); 
+                                      const capitalGain = vF - cost; 
+                                      const days = calculateDays(p.buyDate, p.sellDate || new Date()); 
+                                      const rs = calcReturns(cost, vF + ds, days); 
+                                      const percentToBreakEven = (vF + ds) > 0 ? ((cost - (vF + ds)) / (vF + ds)) * 100 : 0;
+                          
+                                      let intraVal = 0, intraPct = 0, intraUnit = 0, hasIntra = false;
+                                      const mStatus = getMarketStatus(p); 
+                                      const isValidForTotal = mStatus.status === 'OPEN' || mStatus.status === 'CLOSED_TODAY';
+                          
+                                      if (!isS && p.previousClose) {
+                                          const rawCurP = p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice;
+                                          const prevP = p.isIndex ? p.previousClose / (p.indexDivisor || 1) : p.previousClose;
+                                          const curF = p.isIndex ? p.buyFx : p.currentFx;
+                                          intraUnit = rawCurP - prevP; 
+                                          intraVal = intraUnit * p.shares * curF;
+                                          intraPct = prevP !== 0 ? (intraUnit / prevP) * 100 : 0;
+                                          hasIntra = true;
+                                      } 
+                          
+                                      const totalAbsIntra = visiblePortfolio.reduce((sum, item) => {
+                                          if (!item.sellDate && item.previousClose) {
+                                              const st = getMarketStatus(item);
+                                              if (st.status === 'OPEN' || st.status === 'CLOSED_TODAY') {
+                                                  const cP = item.isIndex ? item.currentPrice / (item.indexDivisor || 1) : item.currentPrice;
+                                                  const pP = item.isIndex ? item.previousClose / (item.indexDivisor || 1) : item.previousClose;
+                                                  const f = item.isIndex ? item.buyFx : item.currentFx;
+                                                  return sum + Math.abs((cP - pP) * item.shares * f);
+                                              }
+                                          }
+                                          return sum;
+                                      }, 0);    
+                          
+                                      const wIntra = (isValidForTotal && totalAbsIntra > 0) ? (Math.abs(intraVal) / totalAbsIntra) * 100 : 0;
+                                      const ratio = cost !== 0 ? ((vF - cost) / cost) : 0;
+                                      const wC = gridTotals.tCost > 0 ? (cost / gridTotals.tCost) * 100 : 0;
+                                      
+                                     const wV = (capitalGain >= 0 && totalValWinners > 0) ? (vF / totalValWinners) * 100 : 0;
+                          
+                                      return ( 
+                                          <tr key={p.id} className={`table-row-hover ${p.isActive===false ? 'opacity-40 grayscale' : ''} ${selectedTicker === p.ticker ? 'bg-blue-600/10 border-l-4 border-blue-500' : ''}`} onClick={() => setSelectedTicker(p.ticker)}>
+                  
                                           <td className="py-1.5 px-2 text-center sticky left-0 z-[10] bg-slate-900 border-r border-slate-800" onClick={(e) => { e.stopPropagation(); setPortfolio(prev => prev.map(x => x.id === p.id ? {...x, isActive: !x.isActive} : x)); }}><input type="checkbox" checked={p.isActive!==false} readOnly className="custom-checkbox" /></td>
                       
                                           <td 
@@ -6935,11 +6957,11 @@ const handleSellSubmit = () => {
                                           {simplifiedMode && <td></td>}
                                       </tr> 
                                   );
-                              }) 
+                              }); 
+                          })()
                           )}
-    
-
-                            
+                                      
+                               
                            {filteredPortfolio.length > 0 && (() => {
                                 const footerDenom = filterType === 'active' ? gridTotals.tCost : (filterType === 'sold' ? historicalStats.closed.avgCap : historicalStats.consolidated.avgCap);
                                 return (
