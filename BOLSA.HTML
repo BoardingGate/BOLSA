@@ -2516,31 +2516,42 @@ const handleSortByPrice = () => {
 const fetchDynamicModels = async (type) => {
         try {
             setIoStatus('processing'); 
-            
+
             const filterInput = document.getElementById('newModelInput');
-            const filterText = filterInput ? filterInput.value.trim().toLowerCase() : '';
+            const filterTextRaw = filterInput ? filterInput.value.trim().toLowerCase() : '';
+            const filterTextClean = filterTextRaw.replace(/[\s\-_/]/g, ''); // Normaliza quitando espacios y símbolos
             
-          const existingIds = new Set(availableModels.map(am => am.split('|')[0].trim()));
+            const existingIds = new Set(availableModels.map(am => am.split('|')[0].trim()));
 
             const res = await fetch('https://openrouter.ai/api/v1/models');
             const data = await res.json();
 
-           let models = data.data.filter(m => 
-                !m.id.includes('vision') && 
-                !m.id.includes('moderation') && 
-                !m.name.toLowerCase().includes('image') &&
-                !m.name.toLowerCase().includes('beta')
-            );
+            let models = data.data;
 
-            if (filterText) {
+            if (filterTextClean) {
+                // Si el usuario busca algo específico, comparamos las cadenas limpias
+                models = models.filter(m => {
+                    const cleanId = m.id.toLowerCase().replace(/[\s\-_/]/g, '');
+                    const cleanName = m.name.toLowerCase().replace(/[\s\-_/]/g, '');
+                    return cleanId.includes(filterTextClean) || cleanName.includes(filterTextClean);
+                });
+            } else {
+                // Si no hay búsqueda manual, filtramos morralla por defecto
                 models = models.filter(m => 
-                    m.id.toLowerCase().includes(filterText) || 
-                    m.name.toLowerCase().includes(filterText)
+                    !m.id.includes('vision') && 
+                    !m.id.includes('moderation') && 
+                    !m.name.toLowerCase().includes('image') &&
+                    !m.name.toLowerCase().includes('beta')
                 );
             }
-
+        
             if (type === 'free') {
-                models = models.filter(m => m.pricing.prompt === "0" || m.id.endsWith(':free'));
+                models = models.filter(m => {
+                    const costP = m.pricing && m.pricing.prompt ? parseFloat(m.pricing.prompt) : 0;
+                    const costC = m.pricing && m.pricing.completion ? parseFloat(m.pricing.completion) : 0;
+                    return (costP === 0 && costC === 0) || m.id.endsWith(':free');
+                });
+                
                 const getModelScore = (m) => {
                     const match = m.id.toLowerCase().match(/(\d+)b/);
                     let weight = match ? parseInt(match[1]) : 0;
@@ -2554,12 +2565,18 @@ const fetchDynamicModels = async (type) => {
                     return b.context_length - a.context_length;
                 });
             } else {
-                const budgetTerms = /(mini|lite|flash|haiku|nano|small|(?<!\d)[1-9]b|1[0-4]b)/i;
-                models = models.filter(m => 
-                    !budgetTerms.test(m.id) && 
-                    !budgetTerms.test(m.name) &&
-                    parseFloat(m.pricing.prompt) > 0
-                );
+               models = models.filter(m => {
+                    const costP = m.pricing && m.pricing.prompt ? parseFloat(m.pricing.prompt) : 0;
+                    return costP > 0 && !m.id.endsWith(':free');
+                });
+
+              if (!filterTextClean) {
+                    const budgetTerms = /(mini|lite|flash|haiku|nano|small|(?<!\d)[1-9]b|1[0-4]b)/i;
+                    models = models.filter(m => 
+                        !budgetTerms.test(m.id) && 
+                        !budgetTerms.test(m.name)
+                    );
+                }
                 models.sort((a, b) => b.context_length - a.context_length);
             }
 
@@ -2585,7 +2602,7 @@ const fetchDynamicModels = async (type) => {
             }
 
             if (selectedModels.length === 0) {
-                alert(filterText ? `No hay modelos nuevos que coincidan con "${filterText}"` : "No se han encontrado modelos nuevos.");
+                alert(filterTextRaw ? `No hay modelos nuevos que coincidan con "${filterTextRaw}"` : "No se han encontrado modelos nuevos.");
                 return;
             }
 
