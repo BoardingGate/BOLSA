@@ -11503,7 +11503,7 @@ const handleFixedAnalysis = async (promptId) => {
 const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
     const [activeSubTab, setActiveSubTab] = useState('compound');
 
-    // --- 1. CALCULADORA DE INTERÉS COMPUESTO (Modificado con hitos Bagger) ---
+   // --- 1. CALCULADORA DE INTERÉS COMPUESTO (Corregido con lógica Bagger de Retorno) ---
     const CompoundCalculator = () => {
         const [compState, setCompState] = usePersistentState('bg_compoundCalc', {
             principal: 10000, annualAddition: 6000, years: 20, rate: 10, inflationRate: 2.5, compoundsPerYear: 1, addAtStart: true
@@ -11520,9 +11520,7 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
             const n = compState.compoundsPerYear;
             const effectiveAnnualRate = Math.pow(1 + (r/n), n) - 1;
 
-            // Base para calcular los baggers (doblar, triplicar, etc. el capital inicial)
-            const baseCapital = compState.principal > 0 ? compState.principal : (compState.annualAddition > 0 ? compState.annualAddition : 1);
-            let lastBagger = 1;
+            let lastBagger = 0; // Iniciamos en 0 (menos del 100% de retorno)
             const baggers = [];
 
             for(let i = 1; i <= compState.years; i++) {
@@ -11537,8 +11535,10 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                     crossoverYear = i;
                 }
 
-                // Cálculo de hitos Bagger (multiplicadores de capital)
-                const currentBagger = Math.floor(balance / baseCapital);
+                // Un Bagger se produce cada vez que el interés acumulado supera múltiplos enteros del capital invertido (totalPrincipal)
+                // 1 Bagger = +100% de rendimiento (Interés >= Capital invertido)
+                // 2 Bagger = +200% de rendimiento (Interés >= 2x Capital invertido)
+                const currentBagger = totalPrincipal > 0 ? Math.floor(currentInterest / totalPrincipal) : 0;
                 const yearBaggers = [];
                 if (currentBagger > lastBagger) {
                     for (let b = lastBagger + 1; b <= currentBagger; b++) {
@@ -11555,7 +11555,7 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                     interest: currentInterest, 
                     balance: balance, 
                     realBalance: realBalance,
-                    yearBaggers: yearBaggers // Hitos conseguidos en este año concreto
+                    yearBaggers: yearBaggers 
                 });
             }
             const finalRealBalance = balance / Math.pow(1 + inf, compState.years);
@@ -11609,7 +11609,7 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                                 {compResult.baggers && compResult.baggers.length > 0 && (
                                     <div className="text-[10px] font-bold text-green-300 bg-green-900/20 border border-green-500/30 px-3 py-1.5 rounded-lg font-sans">
                                         <Icons.Zap size={12} className="inline mr-1 -mt-0.5"/>
-                                        Multiplicadores de Capital: {compResult.baggers.map(b => `Año ${b.year} (${b.level}x)`).join(', ')}
+                                        Hitos Multiplicadores: {compResult.baggers.map(b => `Año ${b.year} (${b.level}-Bagger: +${b.level * 100}% de retorno)`).join(', ')}
                                     </div>
                                 )}
                             </div>
@@ -11645,7 +11645,7 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                                                         <span className={isCrossover ? 'text-blue-400' : yearBaggers.length > 0 ? 'text-green-400' : 'text-slate-400'}>{row.year}</span>
                                                         {isCrossover && <div className="text-[7px] text-blue-400 uppercase tracking-tighter mt-0.5 font-sans leading-none">Inflexión</div>}
                                                         {yearBaggers.map(b => (
-                                                            <div key={b} className="text-[7px] text-green-400 uppercase tracking-tighter mt-0.5 font-sans leading-none font-black">{b}x Bagger</div>
+                                                            <div key={b} className="text-[7px] text-green-400 uppercase tracking-tighter mt-0.5 font-sans leading-none font-black">{b}-Bagger (+{b * 100}%)</div>
                                                         ))}
                                                     </td>
                                                     <td className="p-3 text-slate-300">{formatMoney(row.principal)}</td>
