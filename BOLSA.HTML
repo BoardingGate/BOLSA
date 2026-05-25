@@ -11503,7 +11503,7 @@ const handleFixedAnalysis = async (promptId) => {
 const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
     const [activeSubTab, setActiveSubTab] = useState('compound');
 
-    // --- 1. CALCULADORA DE INTERÉS COMPUESTO (Mantenido intacto) ---
+   // --- 1. CALCULADORA DE INTERÉS COMPUESTO (Corregido con lógica Bagger de Retorno) ---
     const CompoundCalculator = () => {
         const [compState, setCompState] = usePersistentState('bg_compoundCalc', {
             principal: 10000, annualAddition: 6000, years: 20, rate: 10, inflationRate: 2.5, compoundsPerYear: 1, addAtStart: true
@@ -11520,6 +11520,9 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
             const n = compState.compoundsPerYear;
             const effectiveAnnualRate = Math.pow(1 + (r/n), n) - 1;
 
+            let lastBagger = 0; // Iniciamos en 0 (menos del 100% de retorno)
+            const baggers = [];
+
             for(let i = 1; i <= compState.years; i++) {
                 let contribution = compState.annualAddition;
                 if(compState.addAtStart) { balance += contribution; totalPrincipal += contribution; }
@@ -11532,11 +11535,31 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                     crossoverYear = i;
                 }
 
+                // Un Bagger se produce cada vez que el interés acumulado supera múltiplos enteros del capital invertido (totalPrincipal)
+                // 1 Bagger = +100% de rendimiento (Interés >= Capital invertido)
+                // 2 Bagger = +200% de rendimiento (Interés >= 2x Capital invertido)
+                const currentBagger = totalPrincipal > 0 ? Math.floor(currentInterest / totalPrincipal) : 0;
+                const yearBaggers = [];
+                if (currentBagger > lastBagger) {
+                    for (let b = lastBagger + 1; b <= currentBagger; b++) {
+                        baggers.push({ year: i, level: b });
+                        yearBaggers.push(b);
+                    }
+                    lastBagger = currentBagger;
+                }
+
                 const realBalance = balance / Math.pow(1 + inf, i);
-                history.push({ year: i, principal: totalPrincipal, interest: currentInterest, balance: balance, realBalance: realBalance });
+                history.push({ 
+                    year: i, 
+                    principal: totalPrincipal, 
+                    interest: currentInterest, 
+                    balance: balance, 
+                    realBalance: realBalance,
+                    yearBaggers: yearBaggers 
+                });
             }
             const finalRealBalance = balance / Math.pow(1 + inf, compState.years);
-            return { finalBalance: balance, finalRealBalance, totalPrincipal, history, crossoverYear }; 
+            return { finalBalance: balance, finalRealBalance, totalPrincipal, history, crossoverYear, baggers }; 
         };
   
         const compResult = calculateCompound();
@@ -11571,17 +11594,25 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                     </div>
 
                     <div className="bg-gradient-to-r from-green-900/30 to-slate-900 rounded-xl p-6 border border-green-500/30 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 shadow-lg">
-                        <div className="text-center md:text-left flex-1">
+                        <div className="text-center md:text-left flex-grow">
                             <div className="text-xs font-bold text-green-400 uppercase tracking-widest mb-1">Valor Futuro (Poder Adquisitivo Real)</div>
                             <div className="text-3xl font-display font-bold text-white">{formatMoney(compResult.finalRealBalance)} {baseCurrency}</div>
                             <div className="text-sm font-bold text-slate-500 mt-1">{formatMoney(compResult.finalBalance)} {baseCurrency} <span className="text-xs font-normal">(Nominal sin restar inflación)</span></div>
                             
-                            {compResult.crossoverYear && (
-                                <div className="mt-3 text-[10px] font-bold text-blue-300 bg-blue-900/20 border border-blue-500/30 px-3 py-1.5 rounded-lg inline-block font-sans">
-                                    <Icons.TrendingUp size={12} className="inline mr-1 -mt-0.5"/>
-                                    Punto de Inflexión: En el Año {compResult.crossoverYear} los intereses acumulados superan al capital total aportado.
-                                </div>
-                            )}
+                            <div className="flex flex-wrap gap-2 mt-3">
+                                {compResult.crossoverYear && (
+                                    <div className="text-[10px] font-bold text-blue-300 bg-blue-900/20 border border-blue-500/30 px-3 py-1.5 rounded-lg font-sans">
+                                        <Icons.TrendingUp size={12} className="inline mr-1 -mt-0.5"/>
+                                        Punto de Inflexión: En el Año {compResult.crossoverYear} los intereses acumulados superan al capital total aportado.
+                                    </div>
+                                )}
+                                {compResult.baggers && compResult.baggers.length > 0 && (
+                                    <div className="text-[10px] font-bold text-green-300 bg-green-900/20 border border-green-500/30 px-3 py-1.5 rounded-lg font-sans">
+                                        <Icons.Zap size={12} className="inline mr-1 -mt-0.5"/>
+                                        Hitos Multiplicadores: {compResult.baggers.map(b => `Año ${b.year} (${b.level}-Bagger: +${b.level * 100}% de retorno)`).join(', ')}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                         <div className="flex gap-6 text-right shrink-0">
                             <div><div className="text-[10px] font-bold text-slate-400 uppercase">Total Aportado</div><div className="text-lg font-bold text-slate-200">{formatMoney(compResult.totalPrincipal)} {baseCurrency}</div></div>
@@ -11598,6 +11629,7 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                                     <tbody className="bg-slate-900/50 divide-y divide-slate-800 font-mono">
                                         {compResult.history.map((row, idx) => {
                                             const isCrossover = compResult.crossoverYear === row.year;
+                                            const yearBaggers = row.yearBaggers || [];
                                             const pctAcum = row.principal > 0 ? (row.interest / row.principal) * 100 : 0;
                                             
                                             let prevPctAcum = 0;
@@ -11608,10 +11640,13 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                                             const incrementPct = pctAcum - prevPctAcum;
                                             
                                             return (
-                                                <tr key={row.year} className={`${isCrossover ? 'bg-blue-900/20 border-l-4 border-l-blue-500 shadow-inner' : 'hover:bg-slate-800/50'} transition-colors`}>
+                                                <tr key={row.year} className={`${isCrossover ? 'bg-blue-900/20 border-l-4 border-l-blue-500 shadow-inner' : yearBaggers.length > 0 ? 'bg-green-900/10 border-l-4 border-l-green-500 shadow-inner' : 'hover:bg-slate-800/50'} transition-colors`}>
                                                     <td className="p-3 font-bold text-center relative">
-                                                        <span className={isCrossover ? 'text-blue-400' : 'text-slate-400'}>{row.year}</span>
+                                                        <span className={isCrossover ? 'text-blue-400' : yearBaggers.length > 0 ? 'text-green-400' : 'text-slate-400'}>{row.year}</span>
                                                         {isCrossover && <div className="text-[7px] text-blue-400 uppercase tracking-tighter mt-0.5 font-sans leading-none">Inflexión</div>}
+                                                        {yearBaggers.map(b => (
+                                                            <div key={b} className="text-[7px] text-green-400 uppercase tracking-tighter mt-0.5 font-sans leading-none font-black">{b}-Bagger (+{b * 100}%)</div>
+                                                        ))}
                                                     </td>
                                                     <td className="p-3 text-slate-300">{formatMoney(row.principal)}</td>
                                                     <td className="p-3 text-green-400 text-right">
