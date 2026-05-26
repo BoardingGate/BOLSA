@@ -1541,8 +1541,8 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
 
 
 // --- COMPONENTE: DASHBOARD ESTADÍSTICO (CORREGIDO) ---
-     const StatsDashboard = ({ portfolio, baseCurrency, taxTotal }) => {
-          const [view, setView] = useState(0); 
+     const StatsDashboard = ({ portfolio, baseCurrency, taxTotal, onEditItem }) => {
+          const [view, setView] = useState(0);
           const [buyIndex, setBuyIndex] = useState(0);
           const [sellIndex, setSellIndex] = useState(0);
 
@@ -1604,9 +1604,10 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
               const closedList = closed.map(processItem).sort((a,b) => b.plTotal - a.plTotal);
 
            const allValid = portfolio.filter(p => p.isActive !== false);
-              
+
               let buyEvents = [];
               allValid.forEach(p => {
+                  const isItemOpen = !p.sellDate;
                   if (p.lots && p.lots.length > 0) {
                       p.lots.forEach(l => {
                           if (!l.date) return;
@@ -1617,14 +1618,16 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                           const lAdj = parseFloat(l.adj) || 0;
                           const cost = (lShares * lPrice * lFx) + (p.feesIncludedInPrice ? 0 : lFees) + lAdj;
                           
-                          buyEvents.push({ ticker: p.ticker, name: p.name, date: l.date, amount: cost, isLot: true });
+                          // Se añade id del activo (p.id)
+                          buyEvents.push({ id: p.id, ticker: p.ticker, name: p.name, date: l.date, amount: cost, isLot: true, isOpen: isItemOpen });
                       });
                   } else if (p.buyDate) {
                       const cost = (p.shares * p.buyPrice * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
-                      buyEvents.push({ ticker: p.ticker, name: p.name, date: p.buyDate, amount: cost, isLot: false });
+                      // Se añade id del activo (p.id)
+                      buyEvents.push({ id: p.id, ticker: p.ticker, name: p.name, date: p.buyDate, amount: cost, isLot: false, isOpen: isItemOpen });
                   }
               });
-
+              
             buyEvents.sort((a, b) => new Date(b.date) - new Date(a.date));
               const buyEventsMapped = buyEvents.map(e => {
                   const days = Math.max(0, Math.floor((new Date() - new Date(e.date)) / (1000 * 60 * 60 * 24)));
@@ -1632,12 +1635,13 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
               });
 
               // Mapear todas las ventas con sus propiedades de visualización
-              const sellEventsMapped = [];
+               const sellEventsMapped = [];
               portfolio.filter(p => !!p.sellDate && p.isActive !== false).forEach(p => {
                   const rev = r2((p.sellPrice * p.shares * p.sellFx) - (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) - (p.sellAdjustments || 0));
                   const days = Math.max(0, Math.floor((new Date() - new Date(p.sellDate)) / (1000 * 60 * 60 * 24)));
-                  sellEventsMapped.push({ ticker: p.ticker, name: p.name, date: p.sellDate, amount: rev, days });
+                  sellEventsMapped.push({ id: p.id, ticker: p.ticker, name: p.name, date: p.sellDate, amount: rev, days });
               });
+             
               sellEventsMapped.sort((a, b) => new Date(b.date) - new Date(a.date));
 
               // Función auxiliar para calcular el intervalo medio en días
@@ -1708,14 +1712,31 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
 
           return (
               <div className="w-full bg-slate-900 border border-slate-700 rounded-sm mb-6 shadow-2xl overflow-hidden font-sans relative group">
+                 
                   <div className="bg-gray-600 text-white text-[10px] font-bold p-1 px-2 uppercase tracking-wider flex justify-between items-center">
                       <span>Estadísticas sobre operaciones abiertas y cerradas</span>
-                      <div className="flex gap-4 items-center">
-                          <button onClick={()=>setView(prev => Math.max(0, prev-1))} disabled={view===0} className={`text-white hover:text-blue-400 disabled:opacity-30 transition-colors font-bold text-lg`}>{'◄'}</button>
-                          <span className="text-[9px] text-slate-300">{view===0?'Resumen':'Ranking'}</span>
-                          <button onClick={()=>setView(prev => Math.min(1, prev+1))} disabled={view===1} className={`text-white hover:text-blue-400 disabled:opacity-30 transition-colors font-bold text-lg`}>{'►'}</button>
+                      <div className="flex gap-1 bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+                          <button 
+                              onClick={() => setView(0)} 
+                              className={`px-3 py-1 rounded text-[9px] font-bold uppercase transition-all ${view === 0 ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                          >
+                              Resumen
+                          </button>
+                          <button 
+                              onClick={() => setView(1)} 
+                              className={`px-3 py-1 rounded text-[9px] font-bold uppercase transition-all ${view === 1 ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                          >
+                              Ranking
+                          </button>
+                          <button 
+                              onClick={() => setView(2)} 
+                              className={`px-3 py-1 rounded text-[9px] font-bold uppercase transition-all ${view === 2 ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                          >
+                              Operaciones
+                          </button>
                       </div>
                   </div>
+                 
                   <div className="flex transition-transform duration-500 ease-in-out" style={{ transform: `translateX(-${view * 100}%)` }}>
                       <div className="min-w-full">
                           <div className="flex flex-col lg:flex-row"><div className="flex-1">
@@ -1875,9 +1896,82 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                                   <h4 className="text-[10px] uppercase font-bold text-red-400 mb-3 border-b border-red-500/30 pb-1 flex justify-between"><span>Menor Rentabilidad</span> <span className="bg-orange-600 text-white px-1.5 rounded text-[8px]">CERRADAS</span></h4>
                                   <div className="space-y-2">{metrics.closedBottom4.map((item, i) => <RankRow key={i} item={item} />)}</div>
                               </div>
+
+                        </div>
+                    </div>
+
+                    {/* SLIDE 3: HISTORIAL CRONOLÓGICO DE OPERACIONES (COMPRA / VENTA) */}
+                      <div className="min-w-full p-4 bg-slate-900 grid grid-cols-2 gap-4 h-[550px] max-h-[550px]">
+                          {/* Columna Compras */}
+                          <div className="flex flex-col h-full overflow-hidden">
+                              <h4 className="text-[10px] uppercase font-bold text-blue-400 mb-2 border-b border-blue-500/30 pb-1 flex justify-between shrink-0">
+                                  <span>Compras Recientes</span>
+                                  <span className="text-[8px] text-slate-500 font-normal font-mono">({buyEvents.length} ops)</span>
+                              </h4>
+                              <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1.5 pr-1">
+                                  {buyEvents.map((item, idx) => (
+                                      <div 
+                                          key={idx} 
+                                          onClick={() => onEditItem && onEditItem(item)}
+                                          className={`p-2 rounded-lg border transition-all flex justify-between items-center text-[10px] cursor-pointer hover:scale-[1.01] ${
+                                              item.isOpen 
+                                              ? 'bg-green-950/25 border-green-500/40 hover:bg-green-950/40' 
+                                              : 'bg-slate-800/40 border-slate-700/50 hover:bg-slate-800/60'
+                                          }`}
+                                          title="Haz clic para abrir esta operación"
+                                      >
+                                          <div className="flex flex-col min-w-0 flex-1 pr-2">
+                                              <span className="font-bold text-white flex items-center gap-1.5 truncate">
+                                                  {item.ticker} 
+                                                  {item.isOpen && (
+                                                      <span className="w-1.5 h-1.5 bg-green-400 rounded-full inline-block shrink-0 animate-pulse" title="Activa en cartera"></span>
+                                                  )}
+                                                  {item.isLot && (
+                                                      <span className="text-cyan-400 font-black text-[7px] bg-cyan-900/30 px-1 rounded border border-cyan-500/30 shrink-0">LOTE</span>
+                                                  )}
+                                              </span>
+                                              <span className="text-[8px] text-slate-400 truncate w-full">{item.name}</span>
+                                          </div>
+                                          <div className="text-right flex flex-col items-end shrink-0">
+                                              <span className="font-mono font-bold text-slate-200">{formatMoney(item.amount, baseCurrency)}</span>
+                                              <span className="text-[10px] text-slate-300 font-mono mt-0.5">{item.date.split('-').reverse().join('/')}</span>
+                                          </div>
+                                      </div>
+                                  ))}
+                                  {buyEvents.length === 0 && <div className="text-center text-[10px] text-slate-500 italic py-8">Sin compras registradas</div>}
+                              </div>
+                          </div>
+
+                          {/* Columna Ventas */}
+                          <div className="flex flex-col h-full overflow-hidden">
+                              <h4 className="text-[10px] uppercase font-bold text-orange-400 mb-2 border-b border-orange-500/30 pb-1 flex justify-between shrink-0">
+                                  <span>Ventas Recientes</span>
+                                  <span className="text-[8px] text-slate-500 font-normal font-mono">({sellEvents.length} ops)</span>
+                              </h4>
+                              <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1.5 pr-1">
+                                  {sellEvents.map((item, idx) => (
+                                      <div 
+                                          key={idx} 
+                                          onClick={() => onEditItem && onEditItem(item)}
+                                          className="p-2 rounded-lg border border-orange-500/20 bg-orange-950/10 hover:bg-orange-950/20 transition-all flex justify-between items-center text-[10px] cursor-pointer hover:scale-[1.01]"
+                                          title="Haz clic para abrir esta operación"
+                                      >
+                                          <div className="flex flex-col min-w-0 flex-1 pr-2">
+                                              <span className="font-bold text-white truncate">{item.ticker}</span>
+                                              <span className="text-[8px] text-slate-400 truncate w-full">{item.name}</span>
+                                          </div>
+                                          <div className="text-right flex flex-col items-end shrink-0">
+                                              <span className="font-mono font-bold text-slate-200">{formatMoney(item.amount, baseCurrency)}</span>
+                                              <span className="text-[10px] text-slate-300 font-mono mt-0.5">{item.date.split('-').reverse().join('/')}</span>
+                                          </div>
+                                      </div>
+                                  ))}
+                                  {sellEvents.length === 0 && <div className="text-center text-[10px] text-slate-500 italic py-8">Sin ventas registradas</div>}
+                              </div>
                           </div>
                       </div>
-                  </div>
+                </div>
+                        
               </div>
           );
       };
@@ -7115,9 +7209,24 @@ const handleSellSubmit = () => {
 
             {visibleSections.stats && (
                 <div className="fade-in max-w-[800px] mx-auto w-full px-4">
-                    <StatsDashboard portfolio={effectivePortfolio} baseCurrency={baseCurrency} taxTotal={taxSum} />
+                    <StatsDashboard 
+                        portfolio={effectivePortfolio} 
+                        baseCurrency={baseCurrency} 
+                        taxTotal={taxSum} 
+                        onEditItem={(item) => {
+                            const realItem = portfolio.find(x => x.id === item.id);
+                            if (realItem) {
+                                setForm(realItem);
+                                setShowDivBreakdown(false);
+                                setEditingId(realItem.id);
+                                setIsModalOpen(true);
+                                setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
+                            }
+                        }}
+                    />
                 </div>
             )}
+        
             {visibleSections.charts && (<div className="fade-in"><CarouselCharts chartsData={chartsData} baseCurrency={baseCurrency} /></div>)}
 
             <Modal isOpen={isModalOpen} title={editingId ? `Ficha de Inversión: ${form.ticker}` : "Apertura de Posición"} onClose={()=>setIsModalOpen(false)} size="850px">
