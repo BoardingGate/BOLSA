@@ -1604,9 +1604,10 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
               const closedList = closed.map(processItem).sort((a,b) => b.plTotal - a.plTotal);
 
            const allValid = portfolio.filter(p => p.isActive !== false);
-              
+
               let buyEvents = [];
               allValid.forEach(p => {
+                  const isItemOpen = !p.sellDate; // Identifica si la posición sigue abierta en cartera
                   if (p.lots && p.lots.length > 0) {
                       p.lots.forEach(l => {
                           if (!l.date) return;
@@ -1617,14 +1618,15 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                           const lAdj = parseFloat(l.adj) || 0;
                           const cost = (lShares * lPrice * lFx) + (p.feesIncludedInPrice ? 0 : lFees) + lAdj;
                           
-                          buyEvents.push({ ticker: p.ticker, name: p.name, date: l.date, amount: cost, isLot: true });
+                          buyEvents.push({ ticker: p.ticker, name: p.name, date: l.date, amount: cost, isLot: true, isOpen: isItemOpen });
                       });
                   } else if (p.buyDate) {
                       const cost = (p.shares * p.buyPrice * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
-                      buyEvents.push({ ticker: p.ticker, name: p.name, date: p.buyDate, amount: cost, isLot: false });
+                      buyEvents.push({ ticker: p.ticker, name: p.name, date: p.buyDate, amount: cost, isLot: false, isOpen: isItemOpen });
                   }
               });
 
+              
             buyEvents.sort((a, b) => new Date(b.date) - new Date(a.date));
               const buyEventsMapped = buyEvents.map(e => {
                   const days = Math.max(0, Math.floor((new Date() - new Date(e.date)) / (1000 * 60 * 60 * 24)));
@@ -1712,10 +1714,13 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                       <span>Estadísticas sobre operaciones abiertas y cerradas</span>
                       <div className="flex gap-4 items-center">
                           <button onClick={()=>setView(prev => Math.max(0, prev-1))} disabled={view===0} className={`text-white hover:text-blue-400 disabled:opacity-30 transition-colors font-bold text-lg`}>{'◄'}</button>
-                          <span className="text-[9px] text-slate-300">{view===0?'Resumen':'Ranking'}</span>
-                          <button onClick={()=>setView(prev => Math.min(1, prev+1))} disabled={view===1} className={`text-white hover:text-blue-400 disabled:opacity-30 transition-colors font-bold text-lg`}>{'►'}</button>
+                          <span className="text-[9px] text-slate-300 w-16 text-center">
+                              {view === 0 ? 'Resumen' : view === 1 ? 'Ranking' : 'Operaciones'}
+                          </span>
+                          <button onClick={()=>setView(prev => Math.min(2, prev+1))} disabled={view===2} className={`text-white hover:text-blue-400 disabled:opacity-30 transition-colors font-bold text-lg`}>{'►'}</button>
                       </div>
                   </div>
+                 
                   <div className="flex transition-transform duration-500 ease-in-out" style={{ transform: `translateX(-${view * 100}%)` }}>
                       <div className="min-w-full">
                           <div className="flex flex-col lg:flex-row"><div className="flex-1">
@@ -1875,9 +1880,75 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                                   <h4 className="text-[10px] uppercase font-bold text-red-400 mb-3 border-b border-red-500/30 pb-1 flex justify-between"><span>Menor Rentabilidad</span> <span className="bg-orange-600 text-white px-1.5 rounded text-[8px]">CERRADAS</span></h4>
                                   <div className="space-y-2">{metrics.closedBottom4.map((item, i) => <RankRow key={i} item={item} />)}</div>
                               </div>
-                          </div>
-                      </div>
-                  </div>
+
+                        </div>
+                    </div>
+
+                    {/* SLIDE 3: HISTORIAL CRONOLÓGICO DE OPERACIONES (COMPRA / VENTA) */}
+                    <div className="min-w-full p-4 bg-slate-900 grid grid-cols-2 gap-4 h-[550px] max-h-[550px]">
+                        {/* Columna Compras */}
+                        <div className="flex flex-col h-full overflow-hidden">
+                            <h4 className="text-[10px] uppercase font-bold text-blue-400 mb-2 border-b border-blue-500/30 pb-1 flex justify-between shrink-0">
+                                <span>Compras Recientes</span>
+                                <span className="text-[8px] text-slate-500 font-normal font-mono">({buyEvents.length} ops)</span>
+                            </h4>
+                            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1.5 pr-1">
+                                {buyEvents.map((item, idx) => (
+                                    <div 
+                                        key={idx} 
+                                        className={`p-2 rounded-lg border transition-colors flex justify-between items-center text-[10px] ${
+                                            item.isOpen 
+                                            ? 'bg-green-950/25 border-green-500/40 hover:bg-green-950/40' 
+                                            : 'bg-slate-800/40 border-slate-700/50 hover:bg-slate-800/60'
+                                        }`}
+                                    >
+                                        <div className="flex flex-col min-w-0 flex-1 pr-2">
+                                            <span className="font-bold text-white flex items-center gap-1.5 truncate">
+                                                {item.ticker} 
+                                                {item.isOpen && (
+                                                    <span className="w-1.5 h-1.5 bg-green-400 rounded-full inline-block shrink-0 animate-pulse" title="Activa en cartera"></span>
+                                                )}
+                                            </span>
+                                            <span className="text-[8px] text-slate-400 truncate w-full">{item.name}</span>
+                                        </div>
+                                        <div className="text-right flex flex-col items-end shrink-0">
+                                            <span className="font-mono font-bold text-slate-200">{formatMoney(item.amount, baseCurrency)}</span>
+                                            <span className="text-[8px] text-slate-500 font-mono mt-0.5">{item.date.split('-').reverse().join('/')}</span>
+                                        </div>
+                                    </div>
+                                ))}
+                                {buyEvents.length === 0 && <div className="text-center text-[10px] text-slate-500 italic py-8">Sin compras registradas</div>}
+                            </div>
+                        </div>
+
+                        {/* Columna Ventas */}
+                        <div className="flex flex-col h-full overflow-hidden">
+                            <h4 className="text-[10px] uppercase font-bold text-orange-400 mb-2 border-b border-orange-500/30 pb-1 flex justify-between shrink-0">
+                                <span>Ventas Recientes</span>
+                                <span className="text-[8px] text-slate-500 font-normal font-mono">({sellEvents.length} ops)</span>
+                            </h4>
+                            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1.5 pr-1">
+                                {sellEvents.map((item, idx) => (
+                                    <div 
+                                        key={idx} 
+                                        className="p-2 rounded-lg border bg-orange-950/10 border-orange-500/20 hover:bg-orange-950/20 transition-colors flex justify-between items-center text-[10px]"
+                                    >
+                                        <div className="flex flex-col min-w-0 flex-1 pr-2">
+                                            <span className="font-bold text-white truncate">{item.ticker}</span>
+                                            <span className="text-[8px] text-slate-400 truncate w-full">{item.name}</span>
+                                        </div>
+                                        <div className="text-right flex flex-col items-end shrink-0">
+                                            <span className="font-mono font-bold text-slate-200">{formatMoney(item.amount, baseCurrency)}</span>
+                                            <span className="text-[8px] text-slate-500 font-mono mt-0.5">{item.date.split('-').reverse().join('/')}</span>
+                                        </div>
+                                    </div>
+                                ))}
+                                {sellEvents.length === 0 && <div className="text-center text-[10px] text-slate-500 italic py-8">Sin ventas registradas</div>}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                        
               </div>
           );
       };
