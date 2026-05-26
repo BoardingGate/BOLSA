@@ -1541,10 +1541,12 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
 
 
 // --- COMPONENTE: DASHBOARD ESTADÍSTICO (CORREGIDO) ---
-      const StatsDashboard = ({ portfolio, baseCurrency, taxTotal }) => {
+     const StatsDashboard = ({ portfolio, baseCurrency, taxTotal }) => {
           const [view, setView] = useState(0); 
+          const [buyIndex, setBuyIndex] = useState(0);
+          const [sellIndex, setSellIndex] = useState(0);
 
-          const metrics = useMemo(() => {
+          const metrics = useMemo(() => {      
               // Filtrar solo los activos para los cálculos
               const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
               const closed = portfolio.filter(p => !!p.sellDate && p.isActive !== false);
@@ -1623,22 +1625,42 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                   }
               });
 
-              buyEvents.sort((a, b) => new Date(b.date) - new Date(a.date));
-              const lastBuy = buyEvents.length > 0 ? buyEvents[0] : null;
-              let lastBuyData = null;
-              if (lastBuy) {
-                  const days = Math.max(0, Math.floor((new Date() - new Date(lastBuy.date)) / (1000*60*60*24)));
-                  lastBuyData = { ...lastBuy, days };
-              }
+            buyEvents.sort((a, b) => new Date(b.date) - new Date(a.date));
+              const buyEventsMapped = buyEvents.map(e => {
+                  const days = Math.max(0, Math.floor((new Date() - new Date(e.date)) / (1000 * 60 * 60 * 24)));
+                  return { ...e, days };
+              });
 
-              const sortedBySell = [...closed].sort((a,b) => new Date(b.sellDate) - new Date(a.sellDate));
-              const lastSell = sortedBySell.length > 0 ? sortedBySell[0] : null;
-              let lastSellData = null;
-              if (lastSell) {
-                  const rev = r2((lastSell.sellPrice * lastSell.shares * lastSell.sellFx) - (lastSell.sellFeesIncludedInPrice?0:(lastSell.sellFees||0)) - (lastSell.sellAdjustments||0));
-                  const days = Math.max(0, Math.floor((new Date() - new Date(lastSell.sellDate)) / (1000*60*60*24)));
-                  lastSellData = { ticker: lastSell.ticker, name: lastSell.name, date: lastSell.sellDate, amount: rev, days };
-              }
+              // Mapear todas las ventas con sus propiedades de visualización
+              const sellEventsMapped = [];
+              portfolio.filter(p => !!p.sellDate && p.isActive !== false).forEach(p => {
+                  const rev = r2((p.sellPrice * p.shares * p.sellFx) - (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) - (p.sellAdjustments || 0));
+                  const days = Math.max(0, Math.floor((new Date() - new Date(p.sellDate)) / (1000 * 60 * 60 * 24)));
+                  sellEventsMapped.push({ ticker: p.ticker, name: p.name, date: p.sellDate, amount: rev, days });
+              });
+              sellEventsMapped.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+              // Función auxiliar para calcular el intervalo medio en días
+              const calcAvgInterval = (events) => {
+                  if (events.length < 2) return 0;
+                  const sorted = [...events].sort((a, b) => new Date(a.date) - new Date(b.date));
+                  let sumDiffs = 0;
+                  for (let i = 1; i < sorted.length; i++) {
+                      const diffTime = Math.abs(new Date(sorted[i].date) - new Date(sorted[i - 1].date));
+                      sumDiffs += diffTime / (1000 * 60 * 60 * 24);
+                  }
+                  return sumDiffs / (sorted.length - 1);
+              };
+
+              const avgBuyInterval = calcAvgInterval(buyEventsMapped);
+              const avgSellInterval = calcAvgInterval(sellEventsMapped);
+              
+              // Unificación de todas las operaciones (Compras y Ventas)
+              const allOpsEvents = [
+                  ...buyEventsMapped.map(e => ({ date: e.date })),
+                  ...sellEventsMapped.map(e => ({ date: e.date }))
+              ];
+              const avgGlobalInterval = calcAvgInterval(allOpsEvents);
 
               return { 
                   openM, closedM, totalRatio, globalInv, globalVal,
@@ -1646,11 +1668,22 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                   activeBottom4: activeList.slice(-4).reverse(),
                   closedTop4: closedList.slice(0, 4),
                   closedBottom4: closedList.slice(-4).reverse(),
-                  lastBuyData,
-                  lastSellData
+                  buyEvents: buyEventsMapped,
+                  sellEvents: sellEventsMapped,
+                  avgBuyInterval,
+                  avgSellInterval,
+                  avgGlobalInterval
               };
           }, [portfolio]);
- 
+
+          const buyEvents = metrics.buyEvents || [];
+          const sellEvents = metrics.sellEvents || [];
+
+          const safeBuyIndex = Math.min(buyIndex, Math.max(0, buyEvents.length - 1));
+          const safeSellIndex = Math.min(sellIndex, Math.max(0, sellEvents.length - 1));
+
+          const activeBuy = buyEvents[safeBuyIndex] || null;
+          const activeSell = sellEvents[safeSellIndex] || null; 
 
           const Row = ({ label, leftVal, rightVal, isHeader = false, highlight = false, heightClass = '' }) => ( <div className={`grid grid-cols-3 text-[10px] border-b border-slate-700/50 ${isHeader ? 'bg-slate-700/50 font-bold text-slate-300' : 'hover:bg-slate-800/30'} ${highlight ? 'bg-yellow-900/10' : ''} ${heightClass}`}> <div className="p-1 pl-2 text-slate-400 uppercase font-bold flex items-center">{label}</div> <div className="p-1 text-right border-l border-slate-800 pr-2 font-mono text-slate-200 flex flex-col justify-center">{leftVal}</div> <div className="p-1 text-right border-l border-slate-800 pr-2 font-mono text-slate-200 flex flex-col justify-center">{rightVal}</div> </div> );
           const fK = (v) => { if (Math.abs(v) >= 1000) return (v/1000).toFixed(1) + 'k'; return v.toFixed(0); };
@@ -1705,42 +1738,115 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                               <Row label="Acumulado Ventas" leftVal={<span className={metrics.openM.accum>=0?'text-green-400 font-bold':'text-red-400 font-bold'}>{formatMoney(metrics.openM.accum, baseCurrency)}</span>} rightVal={<span className={metrics.closedM.accum>=0?'text-green-400 font-bold':'text-red-400 font-bold'}>{formatMoney(metrics.closedM.accum, baseCurrency)}</span>} />
                               <div className="p-3 bg-slate-950 border-t border-slate-700 flex justify-between items-center"><div className="text-[10px] text-blue-300 font-bold uppercase">Saldo Histórico Cartera [Total]</div><div className="text-right flex items-baseline gap-3"><div className="text-xl font-black text-white">{formatMoney(metrics.openM.accum + metrics.closedM.accum, baseCurrency)}</div><div className="text-[9px] text-slate-500 font-mono">[ <span className="text-red-400">Imp: {formatMoney(taxTotal, baseCurrency)}</span> | <span className="text-green-400 font-bold">Neto: {formatMoney((metrics.openM.accum + metrics.closedM.accum) - taxTotal, baseCurrency)}</span> ]</div></div></div>
                           
-                              {/* NUEVO BLOQUE: ÚLTIMAS OPERACIONES */}
+                             
+                              {/* BLOQUE REESTRUCTURADO: HISTORIAL NAVEGABLE */}
                               <div className="grid grid-cols-2 bg-[#0f121a] border-t border-slate-700 text-[9px] divide-x divide-slate-700">
+                                  {/* SECCIÓN COMPRAS */}
                                   <div className="p-2">
-                                      <div className="text-slate-500 uppercase font-bold mb-1 flex justify-between"><span>Última Compra</span> {metrics.lastBuyData && <span className="text-blue-400">Hace {metrics.lastBuyData.days} días</span>}</div>
-                                      {metrics.lastBuyData ? (
+                                      <div className="text-slate-500 uppercase font-bold mb-1 flex justify-between items-center">
+                                          <span className="flex items-center gap-1.5">
+                                              Historial Compras 
+                                              {buyEvents.length > 0 && (
+                                                  <span className="text-slate-400 font-mono font-normal">({safeBuyIndex + 1}/{buyEvents.length})</span>
+                                              )}
+                                          </span>
+                                          {activeBuy && (
+                                              <div className="flex gap-1">
+                                                  <button 
+                                                      onClick={() => setBuyIndex(prev => Math.max(0, prev - 1))} 
+                                                      disabled={safeBuyIndex === 0} 
+                                                      className="px-1 bg-slate-800 text-white rounded hover:bg-slate-700 disabled:opacity-20 text-[8px] font-bold"
+                                                      title="Anterior"
+                                                  >▲</button>
+                                                  <button 
+                                                      onClick={() => setBuyIndex(prev => Math.min(buyEvents.length - 1, prev + 1))} 
+                                                      disabled={safeBuyIndex >= buyEvents.length - 1} 
+                                                      className="px-1 bg-slate-800 text-white rounded hover:bg-slate-700 disabled:opacity-20 text-[8px] font-bold"
+                                                      title="Siguiente"
+                                                  >▼</button>
+                                              </div>
+                                          )}
+                                      </div>
+                                      {activeBuy ? (
                                           <div className="flex justify-between items-center">
                                               <div className="truncate pr-2">
-                                                  <div className="text-white font-bold truncate max-w-[120px]">{metrics.lastBuyData.name}</div> 
+                                                  <div className="text-white font-bold truncate max-w-[120px]">{activeBuy.name}</div> 
                                                   <div className="text-slate-400 font-mono text-[8px] mt-0.5 flex items-center gap-1.5">
-                                                      {metrics.lastBuyData.ticker}
-                                                      {metrics.lastBuyData.isLot && <span className="text-cyan-400 font-normal text-[7px] bg-cyan-900/30 px-1 rounded border border-cyan-500/30">(*Lote)</span>}
+                                                      {activeBuy.ticker}
+                                                      {activeBuy.isLot && <span className="text-cyan-400 font-normal text-[7px] bg-cyan-900/30 px-1 rounded border border-cyan-500/30">(*Lote)</span>}
                                                   </div>
                                               </div>
                                               <div className="text-right flex flex-col items-end">
-                                                  <span className="text-white font-mono font-bold">{formatMoney(metrics.lastBuyData.amount, baseCurrency)}</span>
-                                                  <span className="text-slate-500 text-[8px] mt-0.5">{metrics.lastBuyData.date.split('-').reverse().join('/')}</span>
+                                                  <span className="text-white font-mono font-bold">{formatMoney(activeBuy.amount, baseCurrency)}</span>
+                                                  <span className="text-slate-500 text-[8px] mt-0.5">{activeBuy.date.split('-').reverse().join('/')} <span className="text-blue-400 font-sans ml-1">({activeBuy.days} d)</span></span>
                                               </div>
                                           </div>
                                       ) : <span className="text-slate-600 italic">Sin datos</span>}
                                   </div>
+
+                                  {/* SECCIÓN VENTAS */}
                                   <div className="p-2">
-                                      <div className="text-slate-500 uppercase font-bold mb-1 flex justify-between"><span>Última Venta</span> {metrics.lastSellData && <span className="text-orange-400">Hace {metrics.lastSellData.days} días</span>}</div>
-                                      {metrics.lastSellData ? (
+                                      <div className="text-slate-500 uppercase font-bold mb-1 flex justify-between items-center">
+                                          <span className="flex items-center gap-1.5">
+                                              Historial Ventas
+                                              {sellEvents.length > 0 && (
+                                                  <span className="text-slate-400 font-mono font-normal">({safeSellIndex + 1}/{sellEvents.length})</span>
+                                              )}
+                                          </span>
+                                          {activeSell && (
+                                              <div className="flex gap-1">
+                                                  <button 
+                                                      onClick={() => setSellIndex(prev => Math.max(0, prev - 1))} 
+                                                      disabled={safeSellIndex === 0} 
+                                                      className="px-1 bg-slate-800 text-white rounded hover:bg-slate-700 disabled:opacity-20 text-[8px] font-bold"
+                                                      title="Anterior"
+                                                  >▲</button>
+                                                  <button 
+                                                      onClick={() => setSellIndex(prev => Math.min(sellEvents.length - 1, prev + 1))} 
+                                                      disabled={safeSellIndex >= sellEvents.length - 1} 
+                                                      className="px-1 bg-slate-800 text-white rounded hover:bg-slate-700 disabled:opacity-20 text-[8px] font-bold"
+                                                      title="Siguiente"
+                                                  >▼</button>
+                                              </div>
+                                          )}
+                                      </div>
+                                      {activeSell ? (
                                           <div className="flex justify-between items-center">
                                               <div className="truncate pr-2">
-                                                  <div className="text-white font-bold truncate max-w-[120px]">{metrics.lastSellData.name}</div> 
-                                                  <div className="text-slate-400 font-mono text-[8px] mt-0.5">{metrics.lastSellData.ticker}</div>
+                                                  <div className="text-white font-bold truncate max-w-[120px]">{activeSell.name}</div> 
+                                                  <div className="text-slate-400 font-mono text-[8px] mt-0.5">{activeSell.ticker}</div>
                                               </div>
                                               <div className="text-right flex flex-col items-end">
-                                                  <span className="text-white font-mono font-bold">{formatMoney(metrics.lastSellData.amount, baseCurrency)}</span>
-                                                  <span className="text-slate-500 text-[8px] mt-0.5">{metrics.lastSellData.date.split('-').reverse().join('/')}</span>
+                                                  <span className="text-white font-mono font-bold">{formatMoney(activeSell.amount, baseCurrency)}</span>
+                                                  <span className="text-slate-500 text-[8px] mt-0.5">{activeSell.date.split('-').reverse().join('/')} <span className="text-orange-400 font-sans ml-1">({activeSell.days} d)</span></span>
                                               </div>
                                           </div>
                                       ) : <span className="text-slate-600 italic">Sin datos</span>}
                                   </div>
                               </div>
+
+                              {/* NUEVO SUBPANEL: MÓDULO DE INTERVALO DE OPERACIONES */}
+                              <div className="grid grid-cols-3 bg-[#0a0d14] border-t border-slate-700 text-[8px] divide-x divide-slate-800 text-center py-2 font-mono text-slate-400">
+                                  <div>
+                                      <span className="text-slate-500 uppercase block text-[7px] font-bold tracking-wider mb-0.5">Int. Medio Compras</span>
+                                      <span className="text-blue-400 font-bold">
+                                          {metrics.avgBuyInterval > 0 ? `${formatDecimal(metrics.avgBuyInterval, 1)} días` : 'N/D'}
+                                      </span>
+                                  </div>
+                                  <div>
+                                      <span className="text-slate-500 uppercase block text-[7px] font-bold tracking-wider mb-0.5">Int. Medio Ventas</span>
+                                      <span className="text-orange-400 font-bold">
+                                          {metrics.avgSellInterval > 0 ? `${formatDecimal(metrics.avgSellInterval, 1)} días` : 'N/D'}
+                                      </span>
+                                  </div>
+                                  <div>
+                                      <span className="text-slate-500 uppercase block text-[7px] font-bold tracking-wider mb-0.5">Frecuencia Global</span>
+                                      <span className="text-purple-400 font-bold">
+                                          {metrics.avgGlobalInterval > 0 ? `${formatDecimal(metrics.avgGlobalInterval, 1)} días` : 'N/D'}
+                                      </span>
+                                  </div>
+                              </div>  
+          
 
 
                             </div></div>
