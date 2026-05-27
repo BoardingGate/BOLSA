@@ -1605,9 +1605,13 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
 
               const allValid = portfolio.filter(p => p.isActive !== false);
 
-              let buyEvents = [];
+            let buyEvents = [];
               allValid.forEach(p => {
                   const isItemOpen = !p.sellDate;
+                  const curP = p.isIndex ? (p.currentPrice / (p.indexDivisor || 1)) : p.currentPrice;
+                  const curF = p.isIndex ? p.buyFx : p.currentFx;
+                  const divs = (p.dividends || []).reduce((acc, d) => acc + d.net, 0);
+
                   if (p.lots && p.lots.length > 0) {
                       p.lots.forEach(l => {
                           if (!l.date) return;
@@ -1618,18 +1622,26 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                           const lAdj = parseFloat(l.adj) || 0;
                           const cost = (lShares * lPrice * lFx) + (p.feesIncludedInPrice ? 0 : lFees) + lAdj;
                           
-                          buyEvents.push({ id: p.id, ticker: p.ticker, name: p.name, date: l.date, amount: cost, shares: lShares, price: lPrice, isLot: true, isOpen: isItemOpen });
+                          let profit = 0, profitPct = 0;
+                          if (isItemOpen) {
+                              const val = lShares * curP * curF;
+                              const propRatio = p.shares > 0 ? lShares / p.shares : 0;
+                              profit = (val - cost) + (divs * propRatio);
+                              profitPct = cost > 0 ? (profit / cost) * 100 : 0;
+                          }
+                          
+                          buyEvents.push({ id: p.id, ticker: p.ticker, name: p.name, date: l.date, amount: cost, shares: lShares, price: lPrice, isLot: true, isOpen: isItemOpen, profit, profitPct });
                       });
                   } else if (p.buyDate) {
                       const cost = (p.shares * p.buyPrice * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
-                      buyEvents.push({ id: p.id, ticker: p.ticker, name: p.name, date: p.buyDate, amount: cost, shares: p.shares, price: p.buyPrice, isLot: false, isOpen: isItemOpen });
+                      let profit = 0, profitPct = 0;
+                      if (isItemOpen) {
+                          const val = p.shares * curP * curF;
+                          profit = (val - cost) + divs;
+                          profitPct = cost > 0 ? (profit / cost) * 100 : 0;
+                      }
+                      buyEvents.push({ id: p.id, ticker: p.ticker, name: p.name, date: p.buyDate, amount: cost, shares: p.shares, price: p.buyPrice, isLot: false, isOpen: isItemOpen, profit, profitPct });
                   }
-              });
-              
-            buyEvents.sort((a, b) => new Date(b.date) - new Date(a.date));
-              const buyEventsMapped = buyEvents.map(e => {
-                  const days = Math.max(0, Math.floor((new Date() - new Date(e.date)) / (1000 * 60 * 60 * 24)));
-                  return { ...e, days };
               });
 
            const sellEventsMapped = [];
@@ -1797,10 +1809,17 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                                                       {activeBuy.isLot && <span className="text-cyan-400 font-normal text-[7px] bg-cyan-900/30 px-1 rounded border border-cyan-500/30">(*Lote)</span>}
                                                   </div>
                                               </div>
+
                                               <div className="text-right flex flex-col items-end">
                                                   <span className="text-white font-mono font-bold">{formatMoney(activeBuy.amount, baseCurrency)}</span>
+                                                  {activeBuy.isOpen && (
+                                                      <span className={`text-[9px] font-bold font-mono mt-0.5 tracking-tight ${activeBuy.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                          [{activeBuy.profit >= 0 ? '+' : ''}{formatMoney(activeBuy.profit, baseCurrency)} | {activeBuy.profit >= 0 ? '+' : ''}{formatN(activeBuy.profitPct)}%]
+                                                      </span>
+                                                  )}
+                                                  <span className="text-slate-400 font-mono text-[8px] mt-0.5">{formatN(activeBuy.shares)} acc @ {formatN(activeBuy.price)}</span>
                                                   <span className="text-slate-500 text-[8px] mt-0.5">{activeBuy.date.split('-').reverse().join('/')} <span className="text-blue-400 font-sans ml-1">({activeBuy.days} d)</span></span>
-                                              </div>
+                                              </div>                                            
                                           </div>
                                       ) : <span className="text-slate-600 italic">Sin datos</span>}
                                   </div>
@@ -1938,9 +1957,14 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                                           </div>
                                           <div className="text-right flex flex-col items-end shrink-0">
                                               <span className="font-mono font-bold text-slate-200">{formatMoney(item.amount, baseCurrency)}</span>
+                                              {item.isOpen && (
+                                                  <span className={`text-[8px] font-bold font-mono mt-0.5 tracking-tight ${item.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                      [{item.profit >= 0 ? '+' : ''}{formatMoney(item.profit, baseCurrency)} | {item.profit >= 0 ? '+' : ''}{formatN(item.profitPct)}%]
+                                                  </span>
+                                              )}
                                               <span className="text-[8px] text-slate-400 font-mono mt-0.5">{formatN(item.shares)} acc @ {formatN(item.price)}</span>
                                               <span className="text-[9px] text-slate-300 font-mono mt-0.5">{item.date.split('-').reverse().join('/')}</span>
-                                          </div>                                           
+                                          </div>                                                                                 
                                       </div>
                                   ))}
                                   {buyEvents.length === 0 && <div className="text-center text-[10px] text-slate-500 italic py-8">Sin compras registradas</div>}
