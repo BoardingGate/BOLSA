@@ -5509,6 +5509,34 @@ const getMarketStatus = (p) => {
         return dayCounts.length > 0 ? Math.max(...dayCounts) : 1;
     }, [filteredPortfolio]);
 
+    // Calcular las ganancias máximas y las pérdidas máximas de los activos visibles
+    const yieldExtremes = useMemo(() => {
+        let maxPos = 0;
+        let maxNeg = 0;
+        
+        filteredPortfolio.forEach(p => {
+            if (p.isActive === false) return;
+            const isS = !!p.sellDate;
+            const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
+            const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
+            const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+            const vF = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+            const capitalGain = vF - cost;
+            
+            if (capitalGain > 0) {
+                if (capitalGain > maxPos) maxPos = capitalGain;
+            } else if (capitalGain < 0) {
+                const absLoss = Math.abs(capitalGain);
+                if (absLoss > maxNeg) maxNeg = absLoss;
+            }
+        });
+        
+        return {
+            maxPositive: maxPos || 1,
+            maxNegative: maxNeg || 1
+        };
+    }, [filteredPortfolio]);
+    
     const [analyzingNews, setAnalyzingNews] = useState(false);
     const [newsResult, setNewsResult] = useState(null);
     const [isNewsModalOpen, setIsNewsModalOpen] = useState(false);
@@ -6995,6 +7023,10 @@ const handleSellSubmit = () => {
                                       const agePct = maxDays > 0 ? (days / maxDays) * 100 : 0;
                                       const rs = calcReturns(cost, vF + ds, days); 
                                       const percentToBreakEven = (vF + ds) > 0 ? ((cost - (vF + ds)) / (vF + ds)) * 100 : 0;
+
+                                      const yieldPctBar = capitalGain >= 0 
+                                          ? (yieldExtremes.maxPositive > 0 ? (capitalGain / yieldExtremes.maxPositive) * 100 : 0)
+                                          : (yieldExtremes.maxNegative > 0 ? (Math.abs(capitalGain) / yieldExtremes.maxNegative) * 100 : 0);
                           
                                       let intraVal = 0, intraPct = 0, intraUnit = 0, hasIntra = false;
                                       const mStatus = getMarketStatus(p); 
@@ -7181,7 +7213,7 @@ const handleSellSubmit = () => {
                                               <div className="text-[12px] font-bold text-white">{formatMoney(vF, baseCurrency)}</div>
                                           </td>
                       
-                                          <td className="p-2 text-right font-mono bg-blue-900/20 border-r border-blue-800/30 leading-tight"><div className={`font-bold text-[12px] ${capitalGain >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(capitalGain, baseCurrency)}</div>{ds > 0 && (<div className="text-[10px] text-blue-400 font-black mt-0"><span className="opacity-80">+</span> {formatMoney(ds, baseCurrency)} <span className="text-[7px] ml-0.5 uppercase opacity-60">Div</span></div>)}</td> 
+                                          <td  className="p-2 text-right font-mono border-r border-blue-800/30 leading-tight"                                               style={{                                                    background: capitalGain >= 0                                                       ? `linear-gradient(to left, rgba(34, 197, 94, 0.15) ${yieldPctBar}%, transparent ${yieldPctBar}%)`                                                       : `linear-gradient(to left, rgba(239, 68, 68, 0.15) ${yieldPctBar}%, transparent ${yieldPctBar}%)`                                               }}                                           >                                               <div className={`font-bold text-[12px] ${capitalGain >= 0 ? 'text-green-400' : 'text-red-400'}`}>                                                   {formatMoney(capitalGain, baseCurrency)}                                               </div>                                               {ds > 0 && (                                                   <div className="text-[10px] text-blue-400 font-black mt-0">                                                       <span className="opacity-80">+</span> {formatMoney(ds, baseCurrency)} <span className="text-[7px] ml-0.5 uppercase opacity-60">Div</span>                                                   </div>                                               )}                                           </td> 
                                                                               
                                           <td className="py-1.5 px-2 text-right">
                                               <div className="flex items-center justify-end gap-1.5">
