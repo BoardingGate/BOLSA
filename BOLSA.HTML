@@ -1545,6 +1545,7 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
           const [view, setView] = useState(0);
           const [buyIndex, setBuyIndex] = useState(0);
           const [sellIndex, setSellIndex] = useState(0);
+          const [rankingMetric, setRankingMetric] = useState('monetary'); // 'monetary', 'simple_pct', 'annual_pct'
 
           const metrics = useMemo(() => {      
               const active = portfolio.filter(p => !p.sellDate && p.isActive !== false);
@@ -1598,8 +1599,18 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                   return { ...p, cost, val, divs, plTotal, days, ret, isS };
               };
 
-              const activeList = active.map(processItem).sort((a,b) => b.plTotal - a.plTotal);
-              const closedList = closed.map(processItem).sort((a,b) => b.plTotal - a.plTotal);
+             const sortFn = (a, b) => {
+                  if (rankingMetric === 'simple_pct') {
+                      return b.ret.simple - a.ret.simple;
+                  } else if (rankingMetric === 'annual_pct') {
+                      return b.ret.annual - a.ret.annual;
+                  } else {
+                      return b.plTotal - a.plTotal;
+                  }
+              };
+
+              const activeList = active.map(processItem).sort(sortFn);
+              const closedList = closed.map(processItem).sort(sortFn);
 
               const allValid = portfolio.filter(p => p.isActive !== false);
 
@@ -1697,7 +1708,7 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                   avgSellInterval,
                   avgGlobalInterval
               };
-          }, [portfolio]);
+          }, [portfolio, rankingMetric]);
 
           const buyEvents = metrics.buyEvents || [];
           const sellEvents = metrics.sellEvents || [];
@@ -1905,6 +1916,28 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
 
 
                       <div className="min-w-full p-4 flex flex-col gap-4 bg-slate-900">
+                           {/* CONTROLES DE CRITERIO DE ORDENACIÓN DEL RANKING */}
+                          <div className="flex justify-center gap-1 bg-slate-950/80 p-1.5 rounded-xl border border-slate-800/80 max-w-md mx-auto mt-2 select-none">
+                              <button 
+                                  onClick={() => setRankingMetric('monetary')} 
+                                  className={`flex-1 py-1.5 px-3 rounded-lg text-[9px] font-black uppercase transition-all whitespace-nowrap ${rankingMetric === 'monetary' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                              >
+                                  Rendimiento Monetario
+                              </button>
+                              <button 
+                                  onClick={() => setRankingMetric('simple_pct')} 
+                                  className={`flex-1 py-1.5 px-3 rounded-lg text-[9px] font-black uppercase transition-all whitespace-nowrap ${rankingMetric === 'simple_pct' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                              >
+                                  % Rentabilidad
+                              </button>
+                              <button 
+                                  onClick={() => setRankingMetric('annual_pct')} 
+                                  className={`flex-1 py-1.5 px-3 rounded-lg text-[9px] font-black uppercase transition-all whitespace-nowrap ${rankingMetric === 'annual_pct' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                              >
+                                  % Anualizado
+                              </button>
+                          </div> 
+
                           {/* PANEL ABIERTAS */}
                           <div className="flex gap-4">
                               <div className="flex-1 bg-slate-800/40 border border-slate-700 rounded-xl p-3">
@@ -1926,8 +1959,8 @@ const DivergingBarChart = ({ data, baseCurrency }) => {
                                   <h4 className="text-[10px] uppercase font-bold text-red-400 mb-3 border-b border-red-500/30 pb-1 flex justify-between"><span>Menor Rentabilidad</span> <span className="bg-orange-600 text-white px-1.5 rounded text-[8px]">CERRADAS</span></h4>
                                   <div className="space-y-2">{metrics.closedBottom4.map((item, i) => <RankRow key={i} item={item} />)}</div>
                               </div>
-
-                        </div>
+                          </div>                      
+                         
                     </div>
 
                     {/* SLIDE 3: HISTORIAL CRONOLÓGICO DE OPERACIONES (COMPRA / VENTA) */}
@@ -9285,7 +9318,7 @@ const AnalysisButton = ({ icon, title, desc, color, onClick }) => {
 
 
 const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, portfolio, setPortfolio, initialTicker, aiModel, setAiModel, availableModels, gScriptUrl, customGeneralConsultas, setCustomGeneralConsultas }) => {
-    const [activeSubTab, setActiveSubTab] = useState('estudio');
+    const [activeSubTab, setActiveSubTab] = useState('compound');
     const [isManosFuertesModalOpen, setIsManosFuertesModalOpen] = useState(false); 
 
     const [isGraphModalOpen, setIsGraphModalOpen] = useState(false);
@@ -11915,7 +11948,7 @@ const handleFixedAnalysis = async (promptId) => {
 // PESTAÑA ÚTILES (Calculadoras y Herramientas del Autor)
 // =====================================================================
 const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
-    const [activeSubTab, setActiveSubTab] = useState('compound');
+    const [activeSubTab, setActiveSubTab] = useState('links');
 
    // --- 1. CALCULADORA DE INTERÉS COMPUESTO (Corregido con lógica Bagger de Retorno) ---
     const CompoundCalculator = () => {
@@ -12422,6 +12455,7 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
             { name: "GuruFocus", url: "https://www.gurufocus.com" },
             { name: "Stockcircle", url: "https://stockcircle.com" },
             { name: "Seeking Alpha", url: "https://seekingalpha.com" },
+            { name: "Simple Wall", url: "https://simplywall.st/" },    
             { name: "BuyBack (Recompras e inseders)", url: "https://buybackanalytics.com" },            
             { name: "QueFondos", url: "https://www.quefondos.com" }
         ];
@@ -12603,15 +12637,15 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
     return (
         <div className="w-full p-4 md:p-6 flex flex-col gap-6">
             <div className="flex gap-2 bg-slate-900 p-1 rounded-xl border border-slate-800 w-fit shadow-lg shrink-0 mx-auto md:mx-0 overflow-x-auto max-w-full custom-scrollbar">
+                <button onClick={() => setActiveSubTab('links')} className={`px-6 py-2.5 rounded-lg text-[10px] font-bold uppercase transition-all whitespace-nowrap ${activeSubTab === 'links' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>Links de Interés</button>
                 <button onClick={() => setActiveSubTab('compound')} className={`px-6 py-2.5 rounded-lg text-[10px] font-bold uppercase transition-all whitespace-nowrap ${activeSubTab === 'compound' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>Interés Compuesto</button>
                 <button onClick={() => setActiveSubTab('renting')} className={`px-6 py-2.5 rounded-lg text-[10px] font-bold uppercase transition-all whitespace-nowrap ${activeSubTab === 'renting' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>Renting vs Compra</button>
-                <button onClick={() => setActiveSubTab('links')} className={`px-6 py-2.5 rounded-lg text-[10px] font-bold uppercase transition-all whitespace-nowrap ${activeSubTab === 'links' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>Links de Interés</button>
                 <button onClick={() => setActiveSubTab('author')} className={`px-6 py-2.5 rounded-lg text-[10px] font-bold uppercase transition-all whitespace-nowrap ${activeSubTab === 'author' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>Más Herramientas</button>
             </div>
 
-            {activeSubTab === 'compound' && <CompoundCalculator />}
-            {activeSubTab === 'renting' && <RentingCalculator />}
             {activeSubTab === 'links' && <LinksTab />}
+            {activeSubTab === 'compound' && <CompoundCalculator />}
+            {activeSubTab === 'renting' && <RentingCalculator />}         
             {activeSubTab === 'author' && <AuthorTools />}
         </div>
     );
