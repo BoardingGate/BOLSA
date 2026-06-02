@@ -3271,7 +3271,11 @@ function doPost(e) {
 }
 
 function doGet(e) {
- if (e.parameter.screener === "true") {
+   if (e.parameter.intrinsic === "true" && e.parameter.ticker) {
+    return fetchFundamentalData(e.parameter.ticker);
+  }
+
+  if (e.parameter.screener === "true") {
     return executeTradingViewScreener(e.parameter);
   }
   if (e.parameter.tickers) { return fetchStockData(e.parameter.tickers); }
@@ -3305,12 +3309,12 @@ function executeTradingViewScreener(params) {
       "close", 
       "price_52_week_high", 
       "price_earnings_ttm", 
-      "price_earnings_growth_ttm",    
-      "return_on_equity_fq",          
+      "price_earnings_growth_ttm",    // PEG corregido
+      "return_on_equity_fq",          // ROI (trimestral es más común)
       "dividend_yield_recent", 
       "price_book_ratio", 
-      "debt_to_equity_fq",            
-      "free_cash_flow_margin_ttm"    
+      "debt_to_equity_fq",            // Deuda corregida
+      "free_cash_flow_margin_ttm"     // FCF% corregido
     ],
     "sort": { "sortBy": "market_cap_basic", "sortOrder": "desc" },
     "range": [0, 800] 
@@ -3336,7 +3340,7 @@ function executeTradingViewScreener(params) {
     for (var i = 0; i < json.data.length; i++) {
       var d = json.data[i].d;
       
-     var row = {
+      var row = {
         ticker: d[0], name: d[1], price: d[2], high52: d[3],
         per: d[4], peg: d[5], roi: d[6], divYield: d[7],
         pb: d[8], de: d[9], fcf: d[10]
@@ -3414,7 +3418,7 @@ function fetchStockData(tickersString) {
     if (code === 200) {
       try {
         var json = JSON.parse(responses[j].getContentText());
-        var meta = json.chart.result[0].meta;       
+        var meta = json.chart.result[0].meta;        
         var p = meta.preMarketPrice || meta.regularMarketPrice || meta.postMarketPrice || 0;
         var pc = meta.previousClose || meta.chartPreviousClose || 0;
         if (p > 0) {
@@ -3437,6 +3441,10 @@ function fetchStockData(tickersString) {
 }
 
 function convertToYahoo(rawTicker) {
+  if (!rawTicker || typeof rawTicker !== 'string') {
+    return "";
+  }
+  
   var indexMap = {
     "INDEXSP:.INX":     "^GSPC",
     "INDEXDJX:.DJI":    "^DJI", 
@@ -3474,6 +3482,135 @@ function convertToYahoo(rawTicker) {
 function testFetch() {
   var result = fetchStockData("BME:SAN,AAPL,USDEUR,INDEXSP:.INX,INDEXDJX:.DJI,INDEXNASDAQ:.IXIC");
   Logger.log(JSON.stringify(JSON.parse(result.getContent()), null, 2));
+}
+
+function fetchFundamentalData(rawTicker) {
+  if (!rawTicker) {
+    return ContentService.createTextOutput(JSON.stringify({
+      success: false, 
+      error: "Error: No se ha proporcionado un ticker válido para la consulta."
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+
+  var yahooTicker = convertToYahoo(rawTicker);
+   var baseUrl = "https://query1.finance.yahoo.com/v10/finance/quoteSummary/" + 
+                encodeURIComponent(yahooTicker) + 
+                "?modules=financialData,defaultKeyStatistics,cashflowStatementHistory";
+  
+  var result = {
+    success: false,
+    ticker: rawTicker,
+    freeCashFlow: 0,
+    totalCash: 0,
+    totalDebt: 0,
+    sharesOutstanding: 1,
+    beta: 1.0,
+    growthRate: 7.5,
+    error: ""
+  };
+  
+  try {
+    var response = fetchWithYahooAuth(baseUrl);
+    var responseCode = response.getResponseCode();
+    
+    if (responseCode === 200) {
+      var json = JSON.parse(response.getContentText());
+      if (json.quoteSummary && json.quoteSummary.result && json.quoteSummary.result.length > 0) {
+        var summary = json.quoteSummary.result[0];
+        
+        var financialData = summary.financialData || {};
+        var keyStats = summary.defaultKeyStatistics || {};
+        var cashflowHistory = summary.cashflowStatementHistory?.cashflowStatements || [];
+                
+        if (financialData.freeCashflow && financialData.freeCashflow.raw !== undefined) {
+          result.freeCashFlow = financialData.freeCashflow.raw;
+        } else if (cashflowHistory.length > 0) {         
+          var ocf = cashflowHistory[0].totalCashFromOperatingActivities?.raw || 0;
+          var capex = cashflowHistory[0].capitalExpenditures?.raw || 0;
+          result.freeCashFlow = ocf + capex; 
+        }        
+      
+        result.totalCash = financialData.totalCash?.raw || 0;
+        result.totalDebt = financialData.totalDebt?.raw || 0;
+      
+        result.sharesOutstanding = keyStats.sharesOutstanding?.raw || 1;        
+      
+        result.beta = keyStats.beta?.raw || 1.0;        
+        
+        var growth = financialData.earningsQuarterlyGrowth?.raw;
+        if (growth !== undefined && growth !== null) {
+          result.growthRate = Number((growth * 100).toFixed(2));
+        }
+        
+        if (result.growthRate <= 0 || result.growthRate > 35) {
+          result.growthRate = 7.5; 
+        }
+        
+        result.success = true;
+      } else {
+        result.error = "No se encontraron los módulos fundamentales solicitados.";
+      }
+    } else {
+      result.error = "Fallo de conexión autorizada. Yahoo devolvió código HTTP: " + responseCode;
+    }
+  } catch (e) {
+    result.error = e.toString();
+  }
+  
+  return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function fetchWithYahooAuth(targetUrl) {
+  var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+  
+  try {
+     var consentResponse = UrlFetchApp.fetch("https://fc.yahoo.com", {
+      "followRedirects": false,
+      "muteHttpExceptions": true,
+      "headers": { "User-Agent": userAgent }
+    });
+    
+    var headers = consentResponse.getHeaders();
+    var setCookie = headers["Set-Cookie"] || headers["set-cookie"];
+    
+    if (!setCookie) {
+      return UrlFetchApp.fetch(targetUrl, { "muteHttpExceptions": true, "headers": { "User-Agent": userAgent } });
+    }
+    
+     var cookie = Array.isArray(setCookie) ? setCookie.join("; ") : setCookie;
+    
+    var crumbResponse = UrlFetchApp.fetch("https://query1.finance.yahoo.com/v1/test/getcrumb", {
+      "method": "GET",
+      "headers": {
+        "Cookie": cookie,
+        "User-Agent": userAgent
+      },
+      "muteHttpExceptions": true
+    });
+    
+    var crumb = crumbResponse.getContentText().trim();
+    
+    if (!crumb || crumb.includes("Error") || crumbResponse.getResponseCode() !== 200) {
+       return UrlFetchApp.fetch(targetUrl, { "muteHttpExceptions": true, "headers": { "User-Agent": userAgent } });
+    }
+    
+    var finalUrl = targetUrl + "&crumb=" + encodeURIComponent(crumb);
+    
+    return UrlFetchApp.fetch(finalUrl, {
+      "method": "GET",
+      "headers": {
+        "Cookie": cookie,
+        "User-Agent": userAgent
+      },
+      "muteHttpExceptions": true
+    });
+    
+  } catch (e) {
+   return UrlFetchApp.fetch(targetUrl, { 
+      "muteHttpExceptions": true, 
+      "headers": { "User-Agent": userAgent } 
+    });
+  }
 }
 `}
 </pre>
