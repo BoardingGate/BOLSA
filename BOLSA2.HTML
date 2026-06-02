@@ -3493,9 +3493,10 @@ function fetchFundamentalData(rawTicker) {
   }
 
   var yahooTicker = convertToYahoo(rawTicker);
-   var baseUrl = "https://query1.finance.yahoo.com/v10/finance/quoteSummary/" + 
+  // Añadimos el módulo 'earningsTrend' para capturar las previsiones a futuro de los analistas
+  var baseUrl = "https://query1.finance.yahoo.com/v10/finance/quoteSummary/" + 
                 encodeURIComponent(yahooTicker) + 
-                "?modules=financialData,defaultKeyStatistics,cashflowStatementHistory";
+                "?modules=financialData,defaultKeyStatistics,cashflowStatementHistory,earningsTrend";
   
   var result = {
     success: false,
@@ -3505,7 +3506,8 @@ function fetchFundamentalData(rawTicker) {
     totalDebt: 0,
     sharesOutstanding: 1,
     beta: 1.0,
-    growthRate: 7.5,
+    growthRate: 7.5, // Valor base por defecto
+    growthSource: "Estimación conservadora (Por defecto)",
     error: ""
   };
   
@@ -3521,43 +3523,82 @@ function fetchFundamentalData(rawTicker) {
         var financialData = summary.financialData || {};
         var keyStats = summary.defaultKeyStatistics || {};
         var cashflowHistory = summary.cashflowStatementHistory?.cashflowStatements || [];
-                
+        var earningsTrend = summary.earningsTrend || {};
+        
+        // 1. Obtener Free Cash Flow (FCF) Actual
         if (financialData.freeCashflow && financialData.freeCashflow.raw !== undefined) {
           result.freeCashFlow = financialData.freeCashflow.raw;
-        } else if (cashflowHistory.length > 0) {         
-          var ocf = cashflowHistory[0].totalCashFromOperatingActivities?.raw || 0;
-          var capex = cashflowHistory[0].capitalExpenditures?.raw || 0;
-          result.freeCashFlow = ocf + capex; 
-        }        
-      
-        result.totalCash = financialData.totalCash?.raw || 0;
-        result.totalDebt = financialData.totalDebt?.raw || 0;
-      
-        result.sharesOutstanding = keyStats.sharesOutstanding?.raw || 1;        
-      
-        result.beta = keyStats.beta?.raw || 1.0;        
-        
-        var growth = financialData.earningsQuarterlyGrowth?.raw;
-        if (growth !== undefined && growth !== null) {
-          result.growthRate = Number((growth * 100).toFixed(2));
+        } else if (cashflowHistory.length > 0) {
+          result.freeCashFlow = getFCFFromStatement(cashflowHistory[0]);
         }
         
-        if (result.growthRate <= 0 || result.growthRate > 35) {
-          result.growthRate = 7.5; 
+        // 2. Liquidez y Deuda
+        result.totalCash = financialData.totalCash?.raw || 0;
+        result.totalDebt = financialData.totalDebt?.raw || 0;
+        
+        // 3. Acciones en circulación
+        result.sharesOutstanding = keyStats.sharesOutstanding?.raw || 1;
+        
+        // 4. Beta
+        result.beta = keyStats.beta?.raw || 1.0;
+        
+        // 5. DETERMINACIÓN PRECISA DE LA TASA DE CRECIMIENTO (GROWTH RATE)
+        var projectedGrowth = null;
+        
+        // Nivel 1: Intentar capturar la previsión de crecimiento de los analistas para los próximos 5 años (+5y)
+        var trends = earningsTrend.trend || [];
+        for (var i = 0; i < trends.length; i++) {
+          if (trends[i].period === "+5y" && trends[i].growth && trends[i].growth.raw !== undefined) {
+            projectedGrowth = trends[i].growth.raw * 100;
+            result.growthSource = "Consenso de Analistas (Previsión 5 años Wall Street)";
+            break;
+          }
+        }
+        
+        // Nivel 2: Si no hay previsión futura, calcular el CAGR histórico del Free Cash Flow (Últimos 3 años)
+        if ((projectedGrowth === null || isNaN(projectedGrowth)) && cashflowHistory.length >= 3) {
+          try {
+            var fcfLatest = getFCFFromStatement(cashflowHistory[0]);
+            var fcfOldest = getFCFFromStatement(cashflowHistory[cashflowHistory.length - 1]);
+            
+            if (fcfLatest > 0 && fcfOldest > 0) {
+              var nYears = cashflowHistory.length - 1;
+              // Fórmula CAGR: ((Valor_Final / Valor_Inicial) ^ (1 / n)) - 1
+              var cagr = (Math.pow(fcfLatest / fcfOldest, 1 / nYears) - 1) * 100;
+              
+              if (!isNaN(cagr) && cagr > 0 && cagr < 35) {
+                projectedGrowth = cagr;
+                result.growthSource = "Cálculo Matemático (CAGR histórico del FCF a 3 años)";
+              }
+            }
+          } catch(e) {
+            // Ignorar errores de cálculo y saltar a Nivel 3
+          }
+        }
+        
+        // Aplicar el crecimiento determinado o mantener el 7.5% por defecto como salvaguarda
+        if (projectedGrowth !== null && !isNaN(projectedGrowth)) {
+          result.growthRate = Number(projectedGrowth.toFixed(2));
         }
         
         result.success = true;
       } else {
-        result.error = "No se encontraron los módulos fundamentales solicitados.";
+        result.error = "Error al estructurar los datos fundamentales.";
       }
     } else {
-      result.error = "Fallo de conexión autorizada. Yahoo devolvió código HTTP: " + responseCode;
+      result.error = "Fallo de conexión autorizada. HTTP " + responseCode;
     }
   } catch (e) {
     result.error = e.toString();
   }
   
   return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function getFCFFromStatement(statement) {
+  var ocf = statement.totalCashFromOperatingActivities?.raw || 0;
+  var capex = statement.capitalExpenditures?.raw || 0;
+  return ocf + capex; // CapEx suele venir en formato negativo
 }
 
 function fetchWithYahooAuth(targetUrl) {
