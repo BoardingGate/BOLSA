@@ -4752,68 +4752,54 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCu
     const [isCalculatingDcf, setIsCalculatingDcf] = useState(false);
 
     const handleRecalculateIntrinsic = async () => {
-    if (!strategyItem) return;
-    const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
-    if (!scriptUrl) {
-        alert("⚠️ Es necesario configurar la URL del Google Script en la sección de Ajustes para importar fundamentales reales.");
-        return;
-    }
-    
-    setIsCalculatingDcf(true);
-    try {
-        const response = await fetch(`${scriptUrl}?intrinsic=true&ticker=${encodeURIComponent(strategyItem.ticker)}&_t=${Date.now()}`);
-        const result = await response.json();
-        
-        if (result.success) {
-            const estimatedWACC = result.beta ? Math.max(7.5, Math.min(14.0, 5.5 + (result.beta * 5.0))) : 9.5;
-            
-            const updatedInputs = {
-                fcf: result.freeCashFlow || 0,
-                cash: result.totalCash || 0,
-                debt: result.totalDebt || 0,
-                shares: result.sharesOutstanding || 1,
-                growth: result.growthRate || 7.5,
-                discountRate: Number(estimatedWACC.toFixed(2)),
-                terminalRate: 2.0
-            };
-            
-            setDcfInputs(updatedInputs);
-            
-            const intrinsic = calculateDeterministicDCF(
-                updatedInputs.fcf,
-                updatedInputs.cash,
-                updatedInputs.debt,
-                updatedInputs.shares,
-                updatedInputs.growth,
-                updatedInputs.discountRate,
-                updatedInputs.terminalRate
-            );
-            
-            setCalculatedIntrinsic(intrinsic);
-            
-            setPortfolio(prev => prev.map(item => 
-                item.id === strategyItem.id 
-                ? { 
-                    ...item, 
-                    strategyCache: { 
-                        ...(item.strategyCache || {}), 
-                        calculatedIntrinsic: intrinsic,
-                        dcfInputs: updatedInputs
-                    } 
-                  } 
-                : item
-            ));
-        } else {
-            throw new Error(result.error || "No se recibieron datos legibles.");
+        if (!strategyItem) return;
+        const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
+        if (!scriptUrl) {
+            alert("⚠️ Es necesario configurar la URL del Google Script en la sección de Ajustes para importar fundamentales reales.");
+            return;
         }
-    } catch (e) {
-        console.error("Error al obtener fundamentales:", e);
-        alert("No se pudo completar la extracción automática de datos. Puede introducir los datos de forma manual en los campos de edición.");
-    } finally {
-        setIsCalculatingDcf(false);
-    }
-};
-
+        
+        setIsCalculatingDcf(true);
+        try {
+            const response = await fetch(`${scriptUrl}?intrinsic=true&ticker=${encodeURIComponent(strategyItem.ticker)}&_t=${Date.now()}`);
+            const result = await response.json();
+            
+            if (result.success) {
+                const estimatedWACC = result.beta ? Math.max(7.5, Math.min(14.0, 5.5 + (result.beta * 5.0))) : 9.5;
+                
+                const updatedInputs = {
+                    fcf: result.freeCashFlow || 0,
+                    cash: result.totalCash || 0,
+                    debt: result.totalDebt || 0,
+                    shares: result.sharesOutstanding || 1,
+                    growth: result.growthRate || 7.5,
+                    discountRate: Number(estimatedWACC.toFixed(2)),
+                    terminalRate: 2.0
+                };
+                
+                const intrinsic = calculateDeterministicDCF(
+                    updatedInputs.fcf,
+                    updatedInputs.cash,
+                    updatedInputs.debt,
+                    updatedInputs.shares,
+                    updatedInputs.growth,
+                    updatedInputs.discountRate,
+                    updatedInputs.terminalRate
+                );
+                
+                setDcfInputs(updatedInputs);
+                setCalculatedIntrinsic(intrinsic);
+                
+            } else {
+                throw new Error(result.error || "No se recibieron datos legibles.");
+            }
+        } catch (e) {
+            console.error("Error al obtener fundamentales:", e);
+            alert("No se pudo completar la extracción automática de datos. Puede introducir los datos de forma manual en los campos de edición.");
+        } finally {
+            setIsCalculatingDcf(false);
+        }
+    };
     
     const [selectedTicker, setSelectedTicker] = React.useState(null);
     const [isNotesModalOpen, setIsNotesModalOpen] = useState(false);
@@ -5440,12 +5426,24 @@ useEffect(() => {
                 analystData: analystData, 
                 strategyNewsData: strategyNewsData, 
                 dividendsInfoData: dividendsInfoData,
+                
+                // NUEVO: Asegura que se guardan los datos DCF y el valor calculado
                 dcfInputs: dcfInputs,
                 calculatedIntrinsic: calculatedIntrinsic
             } 
         } : x));
     }
-}, [simLot, targetSim, analystData, strategyNewsData, dividendsInfoData, dcfInputs, calculatedIntrinsic]);
+}, [
+    simLot, 
+    targetSim, 
+    analystData, 
+    strategyNewsData, 
+    dividendsInfoData, 
+    dcfInputs, 
+    calculatedIntrinsic, 
+    isStrategyModalOpen, 
+    strategyItem
+]);
     
         
     const handleFetchAnalysts = async () => {
