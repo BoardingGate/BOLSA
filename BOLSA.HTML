@@ -700,9 +700,11 @@ const StackedWeightsChart = ({ data, baseCurrency }) => {
           const totalValNoDiv = finalData.reduce((sum, d) => sum + d.valNoDiv, 0);
           const totalDivs = finalData.reduce((sum, d) => sum + d.divs, 0);
 
+          const maxTotal = Math.max(totalCost, totalVal) || 1; // Factor de proporción para la altura real
+
           const sortedByCost = [...finalData].sort((a, b) => b.cost - a.cost).filter(d => d.cost > 0);
           const sortedByVal = [...finalData].sort((a, b) => b.val - a.val).filter(d => d.val > 0);
-
+          
           const uniqueTickers = Array.from(new Set(finalData.map(d => d.ticker)));
           const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#a855f7', '#06b6d4', '#f43f5e', '#eab308', '#14b8a6', '#f97316', '#6366f1', '#ef4444', '#84cc16'];
           const colorMap = {};
@@ -710,62 +712,71 @@ const StackedWeightsChart = ({ data, baseCurrency }) => {
 
           const chartHeight = Math.max(650, uniqueTickers.length * 28);
 
-          const renderColumn = (sortedData, total, isCost) => (
-              <div className="flex flex-col items-center w-1/2 max-w-[320px] h-full">
-                  <div className="text-center mb-4 shrink-0 h-[45px] flex flex-col justify-end">
-                      <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{isCost ? 'Capital Invertido' : 'Valor Actual'}</div>
-                      {isCost ? (
-                          <div className="text-sm font-bold text-white mb-1">{formatMoney(total, baseCurrency)}</div>
-                      ) : (
-                          <div className="flex flex-col items-center leading-none mt-1">
-                              <span className="text-[10px] font-bold text-slate-300">{formatMoney(totalValNoDiv, baseCurrency)}</span>
-                              <div className="flex items-baseline gap-1 mt-1">
-                                  <span className="text-[10px] text-blue-400 font-bold">+{formatMoney(totalDivs, baseCurrency)}</span>
-                                  <span className="text-slate-500 text-[10px] ml-0.5 mr-0.5">=</span>
-                                  <span className="text-[13px] font-black text-white">{formatMoney(total, baseCurrency)}</span>
+          const renderColumn = (sortedData, total, isCost) => {
+              const heightPct = (total / maxTotal) * 100; // Altura proporcional a la columna mayor
+              return (
+                  <div className="flex flex-col items-center w-1/2 max-w-[320px] h-full">
+                      <div className="text-center mb-4 shrink-0 h-[45px] flex flex-col justify-end">
+                          <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{isCost ? 'Capital Invertido' : 'Valor Actual'}</div>
+                          {isCost ? (
+                              <div className="text-sm font-bold text-white mb-1">{formatMoney(total, baseCurrency)}</div>
+                          ) : (
+                              <div className="flex flex-col items-center leading-none mt-1">
+                                  <span className="text-[10px] font-bold text-slate-300">{formatMoney(totalValNoDiv, baseCurrency)}</span>
+                                  <div className="flex items-baseline gap-1 mt-1">
+                                      <span className="text-[10px] text-blue-400 font-bold">+{formatMoney(totalDivs, baseCurrency)}</span>
+                                      <span className="text-slate-500 text-[10px] ml-0.5 mr-0.5">=</span>
+                                      <span className="text-[13px] font-black text-white">{formatMoney(total, baseCurrency)}</span>
+                                  </div>
                               </div>
+                          )}
+                      </div>
+                      
+                      {/* Contenedor flexible para alinear ambas barras sobre la base inferior */}
+                      <div className="w-full flex-1 flex flex-col justify-end">
+                          <div 
+                              className="w-full flex flex-col border border-slate-700 rounded-lg shadow-2xl bg-slate-800/50 overflow-hidden"
+                              style={{ height: `${heightPct}%` }}
+                          >
+                              {sortedData.map(d => {
+                                  const val = isCost ? d.cost : d.val;
+                                  const pct = (val / total) * 100;
+                                  
+                                  if (pct <= 0) return null;
+                                  
+                                  return (
+                                      <div 
+                                          key={d.ticker}
+                                          title={`${d.ticker}: ${formatMoney(val, baseCurrency)} (${pct.toFixed(2)}%)`}
+                                          className="w-full flex flex-col justify-center items-center text-center border-b border-black/20 hover:brightness-110 transition-all overflow-hidden relative"
+                                          style={{ height: `${pct}%`, backgroundColor: colorMap[d.ticker] }}
+                                      >
+                                          {pct >= 8 ? (
+                                              <div className="flex flex-col leading-none px-1 py-0.5">
+                                                  <span className="text-[10px] font-black text-white drop-shadow-md truncate">{d.ticker}</span>
+                                                  <span className="text-[9px] font-bold text-white/95 drop-shadow-md mt-1">{formatMoney(val, baseCurrency)}</span>
+                                                  <span className="text-[8px] font-black text-white/80 drop-shadow-md mt-0.5">{pct.toFixed(2)}%</span>
+                                              </div>
+                                          ) : pct >= 3 ? (
+                                              <div className="flex flex-row items-center gap-1.5 px-1 whitespace-nowrap">
+                                                  <span className="text-[9px] font-black text-white drop-shadow-md">{d.ticker}</span>
+                                                  <span className="text-[8px] font-bold text-white/95 drop-shadow-md">{formatMoney(val, baseCurrency)}</span>
+                                                  <span className="text-[8px] font-black text-white/80 drop-shadow-md">({pct.toFixed(1)}%)</span>
+                                              </div>
+                                          ) : pct >= 1 ? (
+                                              <div className="flex flex-row items-center gap-1 px-1 whitespace-nowrap">
+                                                  <span className="text-[7.5px] font-black text-white drop-shadow-md">{d.ticker}</span>
+                                                  <span className="text-[7.5px] font-bold text-white/90 drop-shadow-md">{pct.toFixed(1)}%</span>
+                                              </div>
+                                          ) : null}
+                                      </div>
+                                  );
+                              })}
                           </div>
-                      )}
+                      </div>
                   </div>
-                  
-                  <div className="w-full flex-1 flex flex-col border border-slate-700 rounded-lg shadow-2xl bg-slate-800/50 overflow-hidden">
-                      {sortedData.map(d => {
-                          const val = isCost ? d.cost : d.val;
-                          const pct = (val / total) * 100;
-                          
-                          if (pct <= 0) return null;
-                          
-                          return (
-                              <div 
-                                  key={d.ticker}
-                                  title={`${d.ticker}: ${formatMoney(val, baseCurrency)} (${pct.toFixed(2)}%)`}
-                                  className="w-full flex flex-col justify-center items-center text-center border-b border-black/20 hover:brightness-110 transition-all overflow-hidden relative"
-                                  style={{ height: `${pct}%`, backgroundColor: colorMap[d.ticker] }}
-                              >
-                                  {pct >= 8 ? (
-                                      <div className="flex flex-col leading-none px-1 py-0.5">
-                                          <span className="text-[10px] font-black text-white drop-shadow-md truncate">{d.ticker}</span>
-                                          <span className="text-[9px] font-bold text-white/95 drop-shadow-md mt-1">{formatMoney(val, baseCurrency)}</span>
-                                          <span className="text-[8px] font-black text-white/80 drop-shadow-md mt-0.5">{pct.toFixed(2)}%</span>
-                                      </div>
-                                  ) : pct >= 3 ? (
-                                      <div className="flex flex-row items-center gap-1.5 px-1 whitespace-nowrap">
-                                          <span className="text-[9px] font-black text-white drop-shadow-md">{d.ticker}</span>
-                                          <span className="text-[8px] font-bold text-white/95 drop-shadow-md">{formatMoney(val, baseCurrency)}</span>
-                                          <span className="text-[8px] font-black text-white/80 drop-shadow-md">({pct.toFixed(1)}%)</span>
-                                      </div>
-                                  ) : pct >= 1 ? (
-                                      <div className="flex flex-row items-center gap-1 px-1 whitespace-nowrap">
-                                          <span className="text-[7.5px] font-black text-white drop-shadow-md">{d.ticker}</span>
-                                          <span className="text-[7.5px] font-bold text-white/90 drop-shadow-md">{pct.toFixed(1)}%</span>
-                                      </div>
-                                  ) : null}
-                              </div>
-                          );
-                      })}
-                  </div>
-              </div>
-          );
+              );
+          };         
 
           return (
               <div className="bg-slate-900/50 p-6 rounded-xl border border-slate-800 flex flex-col w-full min-w-[600px]" style={{ height: `${chartHeight}px` }}>
@@ -7610,13 +7621,26 @@ const handleSellSubmit = () => {
                                                       r: {ratio >= 0 ? '+' : ''}{formatN(ratio, 2)}
                                                   </div>
                                               </div>
-                                          </td>}
-                                          
-                                          <td className="py-1.5 px-2 text-right font-mono bg-blue-900/20 border-l border-blue-800/30 leading-tight">
-                                              <div className="text-[9px] text-slate-500 mb-0.5">{formatMoney(cost, baseCurrency)}</div>
-                                              <div className="text-[12px] font-bold text-white">{formatMoney(vF, baseCurrency)}</div>
-                                          </td>
-                      
+                                          </td>}                                      
+
+
+                                          <td className="py-1.5 px-2 text-right font-mono border-l leading-tight"
+                                             style={{
+                                                 background: vF > 0 || cost > 0 
+                                                     ? (() => {
+                                                           const boundary = capitalGain >= 0 ? (cost / vF) * 100 : (vF / cost) * 100;
+                                                           const blueColor = idx % 2 === 0 ? 'rgba(37, 99, 235, 0.28)' : 'rgba(37, 99, 235, 0.20)';
+                                                           const targetColor = capitalGain >= 0 ? 'rgba(34, 197, 94, 0.22)' : 'rgba(239, 68, 68, 0.22)';
+                                                           return `linear-gradient(to right, ${blueColor} 0%, ${blueColor} ${boundary}%, #000000 ${boundary}%, #000000 calc(${boundary}% + 2.5px), ${targetColor} calc(${boundary}% + 2.5px), ${targetColor} 100%)`;
+                                                       })()
+                                                     : 'transparent',
+                                                 borderBottom: '1.5px solid rgba(0, 0, 0, 0.65)'
+                                             }}
+                                         >
+                                             <div className="text-[9px] text-slate-300 font-bold mb-0.5 drop-shadow-md">{formatMoney(cost, baseCurrency)}</div>
+                                             <div className="text-[12px] font-black text-white drop-shadow-md">{formatMoney(vF, baseCurrency)}</div>
+                                         </td>
+
                                           <td  className="p-2 text-right font-mono border-r border-blue-800/30 leading-tight"                                               style={{                                                    background: capitalGain >= 0                                                       ? `linear-gradient(to left, rgba(75, 148, 96, 0.30) ${yieldPctBar}%, transparent ${yieldPctBar}%)`    : `linear-gradient(to left, rgba(138, 86, 67, 0.30) ${yieldPctBar}%, transparent ${yieldPctBar}%)`                                               }}                                           >                                               <div className={`font-bold text-[12px] ${capitalGain >= 0 ? 'text-green-400' : 'text-red-400'}`}>                                                   {formatMoney(capitalGain, baseCurrency)}                                               </div>                                               {ds > 0 && (                                                   <div className="text-[10px] text-blue-400 font-black mt-0">                                                       <span className="opacity-80">+</span> {formatMoney(ds, baseCurrency)} <span className="text-[7px] ml-0.5 uppercase opacity-60">Div</span>                                                   </div>                                               )}                                           </td> 
                                                                               
                                           <td className="py-1.5 px-2 text-right">
