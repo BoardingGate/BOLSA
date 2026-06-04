@@ -351,17 +351,62 @@
           ];
 
 
+
+      // Función auxiliar para eliminar artefactos e instrucciones HTML de los prompts
+      const cleanPromptFromHtmlArtifacts = (text) => {
+          if (!text) return "";
+          let cleaned = text;
+          
+         cleaned = cleaned.replace(/código HTML limpio/gi, "Markdown estándar");
+          cleaned = cleaned.replace(/formato HTML limpio/gi, "formato Markdown");
+          cleaned = cleaned.replace(/código HTML/gi, "Markdown");
+          cleaned = cleaned.replace(/en formato HTML/gi, "en formato Markdown");
+          cleaned = cleaned.replace(/tabla HTML/gi, "tabla Markdown");
+          cleaned = cleaned.replace(/tablas HTML/gi, "tablas Markdown");
+          cleaned = cleaned.replace(/etiqueta HTML/gi, "sintaxis Markdown");
+          
+         cleaned = cleaned.replace(/<h3>/gi, "### ");
+          cleaned = cleaned.replace(/<\/h3>/gi, "\n");
+          cleaned = cleaned.replace(/<h4>/gi, "#### ");
+          cleaned = cleaned.replace(/<\/h4>/gi, "\n");
+          cleaned = cleaned.replace(/<li>/gi, "- ");
+          cleaned = cleaned.replace(/<\/li>/gi, "\n");
+          cleaned = cleaned.replace(/<ul>/gi, "");
+          cleaned = cleaned.replace(/<\/ul>/gi, "");
+          cleaned = cleaned.replace(/<p>/gi, "");
+          cleaned = cleaned.replace(/<\/p>/gi, "\n");
+          cleaned = cleaned.replace(/<strong>/gi, "**");
+          cleaned = cleaned.replace(/<\/strong>/gi, "**");
+          cleaned = cleaned.replace(/<b>/gi, "**");
+          cleaned = cleaned.replace(/<\/b>/gi, "**");
+          cleaned = cleaned.replace(/<br\s*\/?>/gi, "\n");
+          cleaned = cleaned.replace(/<table[^>]*>/gi, "\n[Tabla Markdown]\n");
+          cleaned = cleaned.replace(/<\/table>/gi, "\n");
+          cleaned = cleaned.replace(/<tr[^>]*>/gi, "");
+          cleaned = cleaned.replace(/<\/tr>/gi, "\n");
+          cleaned = cleaned.replace(/<th[^>]*>/gi, "| ");
+          cleaned = cleaned.replace(/<\/th>/gi, " ");
+          cleaned = cleaned.replace(/<td[^>]*>/gi, "| ");
+          cleaned = cleaned.replace(/<\/td>/gi, " ");
+          
+         cleaned = cleaned.replace(/<[^>]+>/g, "");
+          
+          return cleaned.trim();
+      };
+
       const askAI = async (geminiKey, secondaryApiKey, prompt, model) => {
+          if (typeof window !== 'undefined') {
+              window.lastBgPrompt = cleanPromptFromHtmlArtifacts(prompt);
+          }
+
           const rawModel = model || "gemini-3.1-flash-preview";
           let targetModel = rawModel.split('|')[0].replace(/\s+/g, '');
 
           let isGeminiDirect = targetModel.startsWith("gemini") && !targetModel.includes("/");
 
-          // --- NUEVA LÓGICA DE ENRUTAMIENTO ---
-          // Si es un modelo Gemini pero NO hay API de Gemini, lo derivamos a OpenRouter
-          if (isGeminiDirect && (!geminiKey || geminiKey.trim() === '')) {
+         if (isGeminiDirect && (!geminiKey || geminiKey.trim() === '')) {
               isGeminiDirect = false; 
-              targetModel = `google/${targetModel}`; // OpenRouter exige el prefijo "google/"
+              targetModel = `google/${targetModel}`; 
           }
 
           if (isGeminiDirect) {
@@ -400,8 +445,7 @@
               if (data.error) throw new Error(data.error.message);
               return data.choices?.[0]?.message?.content || "";
           }
-      };
-
+      };      
            
     
       const Modal = ({ isOpen, title, onClose, children, size = "md" }) => {
@@ -13541,6 +13585,8 @@ const App = () => {
     const [hideInactive, setHideInactive] = usePersistentState('bg_hide_inactive', false);
     const [noScroll, setNoScroll] = usePersistentState('bg_no_scroll', false);
 
+    const [isLastPromptModalOpen, setIsLastPromptModalOpen] = useState(false);
+
     const DEFAULT_CONSULTA = "Quiero que me des un listado con las acciones vendidas comparando el precio de venta con el precio actual dando la diferencia, sumando al final el resultado, para poder así comprobar qué resultados tendría de no haber vendido";
     const [customConsultas, setCustomConsultas] = usePersistentState('bg_custom_consultas', [DEFAULT_CONSULTA]); 
     const [customGeneralConsultas, setCustomGeneralConsultas] = usePersistentState('bg_custom_general_consultas', []);
@@ -14003,7 +14049,46 @@ const App = () => {
                 <div className="pt-4 border-t border-slate-700 flex justify-end mt-4">
                     <button onClick={() => setIsHelpModalOpen(false)} className="bg-yellow-600 hover:bg-yellow-500 text-white font-black py-3 px-8 rounded-xl shadow-lg transition-colors tracking-widest uppercase text-xs">He leído el manual</button>
                 </div>
-            </Modal>        
+            </Modal>       
+
+            {/* Modal de visualización y copia del último Prompt limpio */}
+            <Modal 
+                isOpen={isLastPromptModalOpen} 
+                title="Último Prompt Ejecutado (Sintaxis Limpia)" 
+                onClose={() => setIsLastPromptModalOpen(false)}
+                size="lg"
+            >
+                <div className="flex flex-col gap-4">
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                        A continuación se expone la última consulta enviada a la Inteligencia Artificial con los datos reales e históricos de tu cartera inyectados en el texto.
+                        <br/>
+                        <span className="text-emerald-400 font-semibold">Este bloque ha sido depurado de código y etiquetas HTML, haciéndolo 100% compatible para copiar y pegar directamente en las interfaces web de ChatGPT, Claude, Gemini o DeepSeek.</span>
+                    </p>
+                    <textarea 
+                        readOnly 
+                        value={window.lastBgPrompt || "Todavía no se ha ejecutado ninguna consulta a la IA en esta sesión de trabajo."} 
+                        className="w-full h-96 bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs font-mono text-slate-300 focus:outline-none custom-scrollbar shadow-inner select-all"
+                        onClick={(e) => e.target.select()}
+                    />
+                    <div className="flex justify-between items-center bg-slate-800/30 p-3 rounded-lg border border-slate-700">
+                        <span className="text-[9px] text-slate-500 italic">* Puedes hacer clic en el texto para seleccionarlo todo automáticamente.</span>
+                        <button 
+                            onClick={() => {
+                                const txt = window.lastBgPrompt;
+                                if (txt) {
+                                    navigator.clipboard.writeText(txt);
+                                    alert("✅ Prompt limpio copiado al portapapeles.");
+                                } else {
+                                    alert("No hay ningún prompt registrado para copiar.");
+                                }
+                            }} 
+                            className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-lg text-xs font-bold uppercase transition-colors flex items-center gap-2 shadow-lg"
+                        >
+                            <Icons.Copy size={14}/> Copiar al Portapapeles
+                        </button>
+                    </div>
+                </div>
+            </Modal>
           
 
 
@@ -14103,7 +14188,23 @@ const App = () => {
                 
                
        </main>
-            <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase"><div>BoardingGate v2026.6.1</div><div className="flex gap-4"><span>Estado: {syncStatus === 'synced' ? 'Sincronizado en gDrive' : syncStatus === 'unsaved' ? 'Cambios sin guardar en gDrive' : 'Comprobando...'}</span><span>Ult. Mod. Datos Local: {localTimestamp > 0 ? new Date(localTimestamp).toLocaleTimeString() : 'N/A'}</span></div></footer>
+             <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1.5 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase">
+                <div className="flex items-center gap-4">
+                    <span>BoardingGate v2026.6.1</span>
+                    <button 
+                        onClick={() => setIsLastPromptModalOpen(true)}
+                        className="text-blue-400 hover:text-blue-300 font-bold uppercase cursor-pointer border-l border-slate-800 pl-4 flex items-center gap-1.5 transition-colors"
+                        title="Ver último prompt limpio enviado a la iA"
+                    >
+                        <Icons.Copy size={10} className="inline"/> Último Prompt Ejecutado
+                    </button>
+                </div>
+                <div className="flex gap-4">
+                    <span>Estado: {syncStatus === 'synced' ? 'Sincronizado en gDrive' : syncStatus === 'unsaved' ? 'Cambios sin guardar en gDrive' : 'Comprobando...'}</span>
+                    <span>Ult. Mod. Datos Local: {localTimestamp > 0 ? new Date(localTimestamp).toLocaleTimeString() : 'N/A'}</span>
+                </div>
+            </footer>
+
         </div>
     );
 };
