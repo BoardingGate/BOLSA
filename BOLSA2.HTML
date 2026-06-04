@@ -6337,15 +6337,16 @@ const getMarketStatus = (p) => {
 
 const fetchNews = async (type) => {
         const isAuto = type === 'portfolio_auto';
+        const isBypass = aiModel && aiModel.toUpperCase().includes("USAR MODELO EXTERNO");
 
-        if (!apiKey) {
+        if (!apiKey && !isBypass) {
             if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key para consultar noticias.', type: 'error' });
             return;
         }
 
         setIsNewsSelectionModalOpen(false); 
         
-        if (!isAuto) {
+        if (!isAuto && !isBypass) {
             setAnalyzingNews(true); 
             setNewsResult(null);
         }
@@ -6362,9 +6363,32 @@ const fetchNews = async (type) => {
                     if (isAuto) return;
                     throw new Error("No hay activos para analizar.");
                 }
+
+                // NUEVO: Construimos un único prompt consolidado con el 100% de los activos
+                const fullPromptForBackup = `INSTRUCCIÓN OBLIGATORIA: USA TU HERRAMIENTA DE BÚSQUEDA WEB AHORA MISMO.
+                FECHA ACTUAL: ${today}.
+                ACTIVOS A RASTREAR: ${uniqueAssets.join(', ')}.
+
+                Busca noticias financieras de los ÚLTIMOS 15 DÍAS de estas empresas.
+                REGLAS CRÍTICAS:
+                1. Si una empresa no tiene noticias relevantes, IGNÓRALA por completo. No escribas "no hay noticias para X".
+                2. Para las que sí tengan, usa formato Markdown indicando el Título, URL real clicable, Fecha y Resumen de forma legible.`;
+
+                // Lo guardamos de manera global e íntegra antes de iniciar cualquier división en lotes
+                if (typeof window !== 'undefined') {
+                    window.lastBgPrompt = cleanPromptFromHtmlArtifacts(fullPromptForBackup);
+                }
+
+                // Si es bypass, abrimos el visor inmediatamente con el prompt completo y salimos de la función
+                if (isBypass && !isAuto) {
+                    if (typeof window !== 'undefined' && window.openPromptModal) {
+                        window.openPromptModal();
+                    }
+                    throw new Error("BYPASS_MODEL");
+                }
                 
+                // Si NO es bypass, procedemos con la división en lotes de 4 para la llamada API directa
                 const CHUNK_SIZE = 4;
-                
                 for (let i = 0; i < uniqueAssets.length; i += CHUNK_SIZE) {
                     const chunk = uniqueAssets.slice(i, i + CHUNK_SIZE);
                     
@@ -6376,13 +6400,11 @@ const fetchNews = async (type) => {
                     REGLAS CRÍTICAS:
                     1. Si una empresa no tiene noticias relevantes, IGNÓRALA por completo. No escribas "no hay noticias para X".
                     2. Si NINGUNA de las ${chunk.length} empresas tiene noticias, responde ÚNICA Y EXCLUSIVAMENTE con la palabra: VACIO.
-                    3. Para las que sí tengan, usa formato HTML (<h3>, <ul>, <li>) indicando el Título, URL real clicable (<a href="..." target="_blank">Leer</a>), Fecha y Resumen.
-                    4. NUNCA inventes datos. Sin markdown de código.`;
+                    3. Para las que sí tengan, usa formato HTML (<h3>, <ul>, <li>) indicando el Título, URL real clicable, Fecha y Resumen.`;
 
                     const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
-                    let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
                     
-                    // Solo lo añadimos si la IA no nos ha devuelto la palabra clave de "VACIO"
+                    let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
                     if (!cleanHtml.includes('VACIO') && cleanHtml.length > 20) {
                         const startIdx = cleanHtml.indexOf('<');
                         if (startIdx !== -1) cleanHtml = cleanHtml.substring(startIdx);
@@ -6399,6 +6421,14 @@ const fetchNews = async (type) => {
                 Usa tu herramienta de búsqueda web. Busca noticias macroeconómicas GLOBALES de las ÚLTIMAS 72 HORAS.
                 REGLA: Solo eventos reales sucedidos (bancos centrales, inflación, empleo). Prohibido predecir o inventar. Cita la fuente real con URL clicable HTML. Formato HTML limpio sin markdown.`;
                 
+                // Si es bypass de modelo externo para noticia macro
+                if (isBypass) {
+                    if (typeof window !== 'undefined' && window.openPromptModal) {
+                        window.openPromptModal();
+                    }
+                    throw new Error("BYPASS_MODEL");
+                }
+
                 const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
                 let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
                 finalHtml = cleanHtml.substring(cleanHtml.indexOf('<') !== -1 ? cleanHtml.indexOf('<') : 0);
@@ -6410,6 +6440,14 @@ const fetchNews = async (type) => {
                 Si no encuentras nada, responde: "No hay noticias recientes y verificadas sobre este tema."
                 Si encuentras, incluye: título, URL real clicable HTML, fecha y resumen. Formato HTML limpio sin markdown.`;
                 
+                // Si es bypass de modelo externo para noticia libre
+                if (isBypass) {
+                    if (typeof window !== 'undefined' && window.openPromptModal) {
+                        window.openPromptModal();
+                    }
+                    throw new Error("BYPASS_MODEL");
+                }
+
                 const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
                 let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
                 finalHtml = cleanHtml.substring(cleanHtml.indexOf('<') !== -1 ? cleanHtml.indexOf('<') : 0);
@@ -6418,7 +6456,7 @@ const fetchNews = async (type) => {
             setNewsResult(finalHtml);
             setIsNewsModalOpen(true); 
         } catch (e) {
-            if (!isAuto) {
+            if (!isAuto && e.message !== "BYPASS_MODEL") {
                 setInfoModal({ isOpen: true, title: 'Fallo en Búsqueda', msg: e.message, type: 'error' });
             }
         } finally {
@@ -6427,7 +6465,6 @@ const fetchNews = async (type) => {
             }
         }
     };
-
 
     useEffect(() => {
         if (showEventsCheck && apiKey && isAppReady && portfolio.length > 0) {
@@ -11843,10 +11880,16 @@ const handleFixedAnalysis = async (promptId) => {
         }
     };
 
-  const fetchNews = async (type) => {
-        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+ const fetchNews = async (type) => {
+        const isBypass = aiModel && aiModel.toUpperCase().includes("USAR MODELO EXTERNO");
+        if (!apiKey && !isBypass) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+        
         setIsNewsSelectionModalOpen(false);
-        setAnalyzingNews(true);
+        
+        if (!isBypass) {
+            setAnalyzingNews(true);
+        }
+        
         try {
             let finalHtml = "";
             const today = new Date().toLocaleString('es-ES');
@@ -11857,8 +11900,31 @@ const handleFixedAnalysis = async (promptId) => {
                 
                 if (uniqueAssets.length === 0) throw new Error("No hay activos en cartera para analizar.");
 
-               const CHUNK_SIZE = 4;
-                
+                // NUEVO: Construimos un único prompt consolidado con el 100% de los activos de la cartera
+                const fullPromptForBackup = `INSTRUCCIÓN OBLIGATORIA: USA TU HERRAMIENTA DE BÚSQUEDA WEB AHORA MISMO.
+                FECHA ACTUAL: ${today}.
+                ACTIVOS A RASTREAR: ${uniqueAssets.join(', ')}.
+
+                Busca noticias financieras de los ÚLTIMOS 15 DÍAS de estas empresas.
+                REGLAS CRÍTICAS:
+                1. Si una empresa no tiene noticias relevantes, IGNÓRALA por completo. No escribas "no hay noticias para X".
+                2. Para las que sí tengan, usa formato Markdown indicando el Título, URL real clicable, Fecha y Resumen de forma legible.`;
+
+                // Lo guardamos de manera global e íntegra en window.lastBgPrompt
+                if (typeof window !== 'undefined') {
+                    window.lastBgPrompt = cleanPromptFromHtmlArtifacts(fullPromptForBackup);
+                }
+
+                // Si es bypass, abrimos el visor con todos los activos y salimos
+                if (isBypass) {
+                    if (typeof window !== 'undefined' && window.openPromptModal) {
+                        window.openPromptModal();
+                    }
+                    throw new Error("BYPASS_MODEL");
+                }
+
+                // Si NO es bypass, procedemos con los lotes normales para la API
+                const CHUNK_SIZE = 4;
                 for (let i = 0; i < uniqueAssets.length; i += CHUNK_SIZE) {
                     const chunk = uniqueAssets.slice(i, i + CHUNK_SIZE);
                     const prompt = `INSTRUCCIÓN OBLIGATORIA: USA TU HERRAMIENTA DE BÚSQUEDA WEB AHORA MISMO.
@@ -11885,11 +11951,29 @@ const handleFixedAnalysis = async (promptId) => {
                     finalHtml = "<p style='text-align:center; padding:20px; color:#94a3b8; font-style:italic;'>No se han encontrado noticias recientes verificadas para los activos de tu cartera.</p>";
                 }
             } else if (type === 'general') {
-                const prompt = `SISTEMA: MODO AUDITORÍA MACRO. Fecha: ${today}. Busca activamente en internet las noticias de mercado y macro más importantes de las ÚLTIMAS 72 HORAS. PROHIBIDO INVENTAR. Incluye: título, fuente con URL clicable HTML, fecha e impacto en mercados. Formato HTML limpio.`;
+                const prompt = `SISTEMA: MODO AUDITORÍA MACRO. Fecha: ${today}. Busca activamente en internet las noticias de mercado y macro antes de redactar. PROHIBIDO INVENTAR. Incluye: título, fuente con URL clicable HTML, fecha e impacto en mercados. Formato HTML limpio.`;
+                
+                // Si es bypass de modelo externo para noticia macro
+                if (isBypass) {
+                    if (typeof window !== 'undefined' && window.openPromptModal) {
+                        window.openPromptModal();
+                    }
+                    throw new Error("BYPASS_MODEL");
+                }
+                
                 const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
                 finalHtml = cleanAIResponse(res);
             } else {
                 const prompt = `SISTEMA: BÚSQUEDA ESTRICTA. Fecha: ${today}. Tema: "${customNewsTopic}". Busca noticias de los últimos 15 días. PROHIBIDO INVENTAR. Si no encuentras, indícalo. Si encuentras, incluye: título, URL clicable HTML, fecha y resumen. Formato HTML limpio.`;
+                
+                // Si es bypass de modelo externo para noticia libre
+                if (isBypass) {
+                    if (typeof window !== 'undefined' && window.openPromptModal) {
+                        window.openPromptModal();
+                    }
+                    throw new Error("BYPASS_MODEL");
+                }
+
                 const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
                 finalHtml = cleanAIResponse(res);
             }
@@ -11897,7 +11981,9 @@ const handleFixedAnalysis = async (promptId) => {
             setNewsResult(finalHtml);
             setIsNewsModalOpen(true);
         } catch (e) {
-            setStatusModal({ isOpen: true, title: 'Error Noticias', msg: e.message, type: 'error' });
+            if (e.message !== "BYPASS_MODEL") {
+                setStatusModal({ isOpen: true, title: 'Error Noticias', msg: e.message, type: 'error' });
+            }
         } finally {
             setAnalyzingNews(false);
         }
