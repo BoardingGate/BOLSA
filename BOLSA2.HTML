@@ -351,17 +351,102 @@
           ];
 
 
-      const askAI = async (geminiKey, secondaryApiKey, prompt, model) => {
-          const rawModel = model || "gemini-3.1-flash-preview";
-          let targetModel = rawModel.split('|')[0].replace(/\s+/g, '');
+     const askAI = async (geminiKey, secondaryApiKey, prompt, model) => {
+          // Publicamos el prompt en una variable global para el visor manual
+          window.lastPromptGenerated = prompt;
+          if (window.setLastPromptExternalState) {
+              window.setLastPromptExternalState(prompt);
+          }
 
+          const rawModel = model || "gemini-3.1-flash-preview";
+
+          // Interceptación de modelos MANUALES
+          if (rawModel.startsWith("MANUAL:")) {
+              // Intentar copiar al portapapeles automáticamente
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                  navigator.clipboard.writeText(prompt).catch(err => console.warn("Fallo al copiar prompt:", err));
+              }
+
+              // Determinar URL de destino
+              let url = "https://gemini.google.com";
+              const mLower = rawModel.toLowerCase();
+              if (mLower.includes("grok")) url = "https://grok.com";
+              else if (mLower.includes("chatgpt")) url = "https://chatgpt.com";
+              else if (mLower.includes("claude")) url = "https://claude.ai";
+              else if (mLower.includes("deepseek")) url = "https://chat.deepseek.com";
+
+              window.open(url, "_blank");
+
+              // Respuestas simuladas para evitar roturas del flujo que espera JSON estructurado
+              const promptLower = prompt.toLowerCase();
+              if (promptLower.includes("json") || promptLower.includes("schema") || promptLower.includes("strict")) {
+                  if (promptLower.includes("entryzone")) {
+                      return JSON.stringify({
+                          "entryZone": 0,
+                          "stopLoss1": {"price": 0, "pct": 0, "lossMoney": 0},
+                          "stopLoss2": {"price": 0, "pct": 0, "lossMoney": 0},
+                          "target1": {"price": 0, "pct": 0},
+                          "target2": {"price": 0, "pct": 0},
+                          "target3": {"price": 0, "pct": 0},
+                          "optimalShares": 0,
+                          "successProb": "0%",
+                          "technicalContext": "Modo manual activo. El prompt se ha copiado al portapapeles y se ha abierto la pestaña de la IA. Pega el prompt allí para obtener el análisis.",
+                          "recommendation": "Modo manual activo."
+                      });
+                  }
+                  if (promptLower.includes("numanalysts")) {
+                      return JSON.stringify({
+                          "numAnalysts": 0, "low": 0, "mean": 0, "high": 0, "recommendation": "Modo Manual Activo"
+                      });
+                  }
+                  if (promptLower.includes("united states") && promptLower.includes("germany")) {
+                      return JSON.stringify({
+                          "United States": 0, "Germany": 0, "Spain": 0, "France": 0, "United Kingdom": 0, "Japan": 0, "China": 0
+                      });
+                  }
+                  if (promptLower.includes("results")) {
+                      return JSON.stringify({
+                          "results": []
+                      });
+                  }
+                  if (promptLower.includes("company")) {
+                      return JSON.stringify({
+                          "company": "Modo Manual", 
+                          "current_price": 0, 
+                          "intrinsic_value": 0, 
+                          "forecast_1y": 0, 
+                          "forecast_5y": 0,
+                          "valuation_status": "Modo Manual", 
+                          "investment_verdict": "El prompt de análisis ha sido copiado al portapapeles y se ha abierto la pestaña de la IA externa. Pégalo allí para ver la respuesta completa.",
+                          "data_sources": ["Modo Manual Activo"],
+                          "technical_analysis": { "trend_short": "Lateral", "trend_long": "Lateral", "supports": ["-"], "resistances": ["-"], "commentary": "Modo manual." },
+                          "dividend_data": { "yield_percent": "0%", "amount": "0", "payout_ratio": "0%", "ex_date": "-", "payment_date": "-", "growth_streak": "-", "safety": "N/A" },
+                          "financial_health": { "revenue_growth_3y": "0%", "net_margin": "0%", "roe": "0%", "debt_to_equity": 0, "free_cash_flow": "-" },
+                          "management": {"ceo": "Modo Manual", "ownership": "0%"},
+                          "capital": {"market_cap": "0", "shares_outstanding": "0"},
+                          "competitors": { "per": {"stock": 0, "industry": 0}, "yield": {"stock": 0, "industry": 0} },
+                          "fundamentals": {"per": 0, "eps": 0, "beta": 0},
+                          "pros_cons": { "pros": ["Prompt copiado automáticamente"], "cons": ["Pega el prompt en la IA externa"] },
+                          "peers": [], 
+                          "suggested_questions": []
+                      });
+                  }
+                  return "[]";
+              }
+
+              // Retorno amigable en formato HTML para las respuestas visuales de texto libre
+              return `<h3>📋 Modo Manual Activo</h3>
+              <p>El prompt ha sido copiado automáticamente al portapapeles de tu dispositivo y se ha abierto la pestaña de la IA seleccionada de forma segura.</p>
+              <p>Por favor, ve a la pestaña recién abierta (Gemini, ChatGPT, Claude, Grok o DeepSeek), haz clic en el cuadro de escritura, y selecciona <strong>Pegar</strong> (o presiona Ctrl+V / Cmd+V) para enviar tu solicitud.</p>
+              <p>Si necesitas volver a copiar el prompt generado o revisarlo manualmente, selecciona la opción <strong>"📄 VER ÚLTIMO PROMPT GENERADO"</strong> en el desplegable de modelos de IA de cualquier pantalla.</p>`;
+          }
+
+          let targetModel = rawModel.split('|')[0].replace(/\s+/g, '');
           let isGeminiDirect = targetModel.startsWith("gemini") && !targetModel.includes("/");
 
-          // --- NUEVA LÓGICA DE ENRUTAMIENTO ---
-          // Si es un modelo Gemini pero NO hay API de Gemini, lo derivamos a OpenRouter
           if (isGeminiDirect && (!geminiKey || geminiKey.trim() === '')) {
               isGeminiDirect = false; 
-              targetModel = `google/${targetModel}`; // OpenRouter exige el prefijo "google/"
+              targetModel = `google/${targetModel}`; 
           }
 
           if (isGeminiDirect) {
@@ -1091,11 +1176,12 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
     const chartData = useMemo(() => { return yearsToShow.map(y => ({ label: y.toString(), value: (resultsData[y]?.resWithDiv || 0) })); }, [resultsData, yearsToShow]);
 
     const handleGenerateRentaReport = async () => {
-        if (!apiKey) {
-            alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA.");
-            setIsRentaModalOpen(false);
-            return;
-        }
+    
+        if (!apiKey && !aiModel.startsWith("MANUAL:")) {
+             alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA (o selecciona un modelo MANUAL para operar de forma externa).");
+             setIsRentaModalOpen(false);
+             return;
+         }
 
         setIsGeneratingRenta(true);
         setIsRentaModalOpen(false);
@@ -1348,8 +1434,10 @@ const ResultsTab = ({ portfolio, resultsData, setResultsData, baseCurrency, sync
 
                     <div className="shrink-0 bg-slate-950 px-3 h-9 rounded-lg border border-purple-500/30 flex items-center gap-2 shadow-sm" title="Modelo Inteligencia Artificial">
                         <Icons.Wand size={14} className="text-purple-400"/>
-                        <select value={aiModel} onChange={(e) => setAiModel(e.target.value)} className="bg-transparent text-xs font-bold text-purple-300 focus:outline-none cursor-pointer w-48 md:w-64 truncate outline-none">
+                   
+                        <select value={aiModel} onChange={(e) => handleModelChange(e.target.value)} className="bg-transparent text-xs font-bold text-purple-300 focus:outline-none cursor-pointer w-48 md:w-64 truncate outline-none">
                             {availableModels.map(m => <option key={m} value={m} className="bg-slate-900 text-purple-300">{m}</option>)}
+                            <option value="SHOW_LAST_PROMPT_MODAL" className="bg-slate-900 text-yellow-400 font-bold">📄 VER ÚLTIMO PROMPT GENERADO</option>
                         </select>
                     </div>
 
@@ -2114,10 +2202,12 @@ const DividendTab = ({ portfolio, setPortfolio, baseCurrency, syncStatus, onManu
     }, []);    
 
     const handleFetchDivMonths = async (id, ticker) => {
-        if (!apiKey) {
-            alert("⚠️ Configura la API Key en la pestaña Ajustes para usar la IA.");
-            return;
-        }
+       
+        if (!apiKey && !aiModel.startsWith("MANUAL:")) {
+             alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA (o selecciona un modelo MANUAL para operar de forma externa).");
+             setIsRentaModalOpen(false);
+             return;
+         }
         setIsFetchingMonths(prev => ({ ...prev, [id]: true }));
         try {
             const prompt = `Busca en internet los meses exactos en los que la empresa con ticker "${ticker}" suele pagar sus dividendos anualmente. Responde ÚNICAMENTE con un JSON que sea un array de números enteros, donde 0 es Enero y 11 es Diciembre. Ejemplo si paga en Marzo, Junio, Septiembre y Diciembre: [2, 5, 8, 11]. Si no paga dividendos o no encuentras datos fiables, devuelve []. Sin texto adicional ni markdown.`;
@@ -2947,7 +3037,11 @@ const fetchDynamicModels = async (type) => {
 
 
     const handleAiImport = async () => { 
-        if (!apiKey) return alert("Falta API Key"); 
+        if (!apiKey && !aiModel.startsWith("MANUAL:")) {
+             alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA (o selecciona un modelo MANUAL para operar de forma externa).");
+             setIsRentaModalOpen(false);
+             return;
+         }
         if (importMethod === 'pdf' && !pdfFile) return alert("Selecciona un PDF");
         if (importMethod === 'text' && !rawTextData.trim()) return alert("Pega el texto de tus acciones");
 
@@ -3100,9 +3194,11 @@ const fetchDynamicModels = async (type) => {
                                  <label className="text-sm font-bold text-slate-300 uppercase tracking-wide">Modelo IA Activo</label>
                                  <span className="text-[10px] text-slate-500 font-mono">{aiModel}</span>
                             </div>
-                            <select value={aiModel} onChange={(e) => setAiModel(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded-xl p-3 text-white text-sm mb-4 font-mono shadow-inner focus:ring-1 focus:ring-blue-500">
-                                {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
-                            </select>
+                        
+                            <select value={aiModel} onChange={(e) => handleModelChange(e.target.value)} className="bg-transparent text-xs font-bold text-purple-300 focus:outline-none cursor-pointer w-48 md:w-64 truncate outline-none">
+                                {availableModels.map(m => <option key={m} value={m} className="bg-slate-900 text-purple-300">{m}</option>)}
+                                <option value="SHOW_LAST_PROMPT_MODAL" className="bg-slate-900 text-yellow-400 font-bold">📄 VER ÚLTIMO PROMPT GENERADO</option>
+                            </select> 
 
                             <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
                                  <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase flex items-center gap-2"><Icons.Settings size={12}/> Gestión de Modelos Personalizados</label>
@@ -5317,7 +5413,11 @@ const formatAbbreviated = (value, currency = "") => {
    
 
     const handleConsultaSubmit = async () => {
-        if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' });
+        if (!apiKey && !aiModel.startsWith("MANUAL:")) {
+             alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA (o selecciona un modelo MANUAL para operar de forma externa).");
+             setIsRentaModalOpen(false);
+             return;
+         }
         if (!consultasQuery.trim()) return;
 
         setIsConsulting(true);
@@ -5464,7 +5564,11 @@ const applyInferData = (date, price, fx) => {
 
 
 const handleRebuildHistory = async () => {
-        if (!apiKey) return alert("⚠️ Falta API Key. Configúrala en Ajustes.");
+        if (!apiKey && !aiModel.startsWith("MANUAL:")) {
+             alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA (o selecciona un modelo MANUAL para operar de forma externa).");
+             setIsRentaModalOpen(false);
+             return;
+         }
         
         const activeItems = portfolio.filter(p => !p.sellDate && p.isActive !== false);
         if (activeItems.length === 0) return;
@@ -5553,7 +5657,11 @@ useEffect(() => {
     // Función 1: Solo abre el Modal si están los datos correctos
 const handleOpenInferModal = (e) => {
         e.preventDefault();
-        if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' });
+        if (!apiKey && !aiModel.startsWith("MANUAL:")) {
+             alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA (o selecciona un modelo MANUAL para operar de forma externa).");
+             setIsRentaModalOpen(false);
+             return;
+         }
         if (!form.ticker || !form.shares || !form.currentPrice) {
             return setInfoModal({ isOpen: true, title: 'Faltan Datos', msg: 'Para inferir la compra necesitas indicar el Ticker, el Nº de Acciones y haber rescatado el Precio Actual (botón lupa).', type: 'warning' });
         }
@@ -5766,7 +5874,11 @@ useEffect(() => {
     
         
     const handleFetchAnalysts = async () => {
-        if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key. Configúrala en Ajustes.', type: 'error' });
+        if (!apiKey && !aiModel.startsWith("MANUAL:")) {
+             alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA (o selecciona un modelo MANUAL para operar de forma externa).");
+             setIsRentaModalOpen(false);
+             return;
+         }
         setIsFetchingAnalysts(true);
         try {
             const prompt = `Actúa como API financiera. Busca el consenso actual de analistas de Wall Street para el ticker ${strategyItem.ticker}. Devuelve UNICAMENTE un JSON estricto: {"numAnalysts": 25, "low": 120.5, "mean": 150.0, "high": 180.0, "recommendation": "Comprar"}. Si no hay datos, haz tu mejor estimación basándote en el sector. Usa SOLO números para los precios.`;
@@ -5782,7 +5894,11 @@ useEffect(() => {
     };
 
     const handleFetchStrategyNews = async () => {
-        if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key. Configúrala en Ajustes.', type: 'error' });
+       if (!apiKey && !aiModel.startsWith("MANUAL:")) {
+             alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA (o selecciona un modelo MANUAL para operar de forma externa).");
+             setIsRentaModalOpen(false);
+             return;
+         }
         setIsFetchingStrategyNews(true);
         try {
             const today = new Date().toLocaleString('es-ES');
@@ -5813,7 +5929,11 @@ useEffect(() => {
 
     
     const handleFetchDividendsInfo = async () => {
-        if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key. Configúrala en Ajustes.', type: 'error' });
+        if (!apiKey && !aiModel.startsWith("MANUAL:")) {
+             alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA (o selecciona un modelo MANUAL para operar de forma externa).");
+             setIsRentaModalOpen(false);
+             return;
+         }
         setIsFetchingDividendsInfo(true);
         try {
             const today = new Date().toLocaleString('es-ES');
@@ -5860,7 +5980,11 @@ useEffect(() => {
 
 
      const handleGenerateStrategy = async () => {
-        if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key. Configúrala en Ajustes.', type: 'error' });
+        if (!apiKey && !aiModel.startsWith("MANUAL:")) {
+             alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA (o selecciona un modelo MANUAL para operar de forma externa).");
+             setIsRentaModalOpen(false);
+             return;
+         }
         if (strategyInputs.capital <= 0 || strategyInputs.risk <= 0 || strategyInputs.marginOfSafety <= 0) return alert("El capital, riesgo y margen deben ser mayores a 0");
         
         setIsGeneratingStrategy(true);
@@ -6191,11 +6315,12 @@ const getMarketStatus = (p) => {
 
 const fetchNews = async (type) => {
         const isAuto = type === 'portfolio_auto';
-
-        if (!apiKey) {
-            if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key para consultar noticias.', type: 'error' });
-            return;
-        }
+      
+       if (!apiKey && !aiModel.startsWith("MANUAL:")) {
+             alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA (o selecciona un modelo MANUAL para operar de forma externa).");
+             setIsRentaModalOpen(false);
+             return;
+         }
 
         setIsNewsSelectionModalOpen(false); 
         
@@ -7238,8 +7363,10 @@ const handleSellSubmit = () => {
 
                     <div className="shrink-0 bg-slate-950 px-3 h-9 rounded-lg border border-purple-500/30 flex items-center gap-2 shadow-sm" title="Modelo Inteligencia Artificial">
                         <Icons.Wand size={14} className="text-purple-400"/>
-                        <select value={aiModel} onChange={(e) => setAiModel(e.target.value)} className="bg-transparent text-xs font-bold text-purple-300 focus:outline-none cursor-pointer w-48 md:w-64 truncate outline-none">
+                 
+                        <select value={aiModel} onChange={(e) => handleModelChange(e.target.value)} className="bg-transparent text-xs font-bold text-purple-300 focus:outline-none cursor-pointer w-48 md:w-64 truncate outline-none">
                             {availableModels.map(m => <option key={m} value={m} className="bg-slate-900 text-purple-300">{m}</option>)}
+                            <option value="SHOW_LAST_PROMPT_MODAL" className="bg-slate-900 text-yellow-400 font-bold">📄 VER ÚLTIMO PROMPT GENERADO</option>
                         </select>
                     </div>
                 </div>
@@ -9142,9 +9269,11 @@ const handleSellSubmit = () => {
                                     <span>Estrategia: {strategyItem.ticker}</span>
                                     <div className="shrink-0 bg-slate-950 px-2 h-8 rounded-lg border border-purple-500/30 flex items-center gap-2 shadow-sm font-sans" title="Modelo Inteligencia Artificial">
                                         <Icons.Wand size={14} className="text-purple-400"/>
-                                        <select value={aiModel} onChange={(e) => setAiModel(e.target.value)} className="bg-transparent text-xs font-bold text-purple-300 uppercase focus:outline-none cursor-pointer w-40 sm:w-56 truncate outline-none">
-                                            {availableModels.map(m => <option key={m} value={m} className="bg-slate-900 text-purple-300">{m}</option>)}
-                                        </select>
+                                     
+                                        <select value={aiModel} onChange={(e) => handleModelChange(e.target.value)} className="bg-transparent text-xs font-bold text-purple-300 focus:outline-none cursor-pointer w-48 md:w-64 truncate outline-none">
+                                           {availableModels.map(m => <option key={m} value={m} className="bg-slate-900 text-purple-300">{m}</option>)}
+                                           <option value="SHOW_LAST_PROMPT_MODAL" className="bg-slate-900 text-yellow-400 font-bold">📄 VER ÚLTIMO PROMPT GENERADO</option>
+                                       </select>
                                     </div>
                                 </div>
                                                              
@@ -10207,7 +10336,12 @@ const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, portfolio, setPort
     const [editingFreeQuery, setEditingFreeQuery] = useState(null);
 
         const handleFreeQuerySubmit = async () => {
-        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+        if (!apiKey && !aiModel.startsWith("MANUAL:")) {
+             alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA (o selecciona un modelo MANUAL para operar de forma externa).");
+             setIsRentaModalOpen(false);
+             return;
+         }
+
         if (!freeQueryText.trim()) return;
 
         setIsFreeQueryLoading(true);
@@ -11171,7 +11305,11 @@ ITEM_13: `
         if (validTickers.length < 2) {
             return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce al menos 2 tickers para comparar.', type: 'info' });
         }
-        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key. Configúrala en la pestaña Ajustes.', type: 'error' });
+        if (!apiKey && !aiModel.startsWith("MANUAL:")) {
+          alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA (o selecciona un modelo MANUAL para operar de forma externa).");
+          setIsRentaModalOpen(false);
+          return;
+         }
 
         setIsCribadoLoading(true);
         setCribadoResult(null);
@@ -11312,7 +11450,11 @@ IMPORTANTE: Responde ÚNICAMENTE con el código HTML del análisis. Sin bloques 
 
 
     const handleGenerateGraph = async () => {
-        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key para generar el grafo.', type: 'error' });
+        if (!apiKey && !aiModel.startsWith("MANUAL:")) {
+            alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA (o selecciona un modelo MANUAL para operar de forma externa).");
+            setIsRentaModalOpen(false);
+            return;
+        }
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker en el buscador superior.', type: 'info' });
 
         setGeneratingGraph(true);
@@ -11351,7 +11493,11 @@ IMPORTANTE: Responde ÚNICAMENTE con el código HTML del análisis. Sin bloques 
     };
 
      const handleRunProjection = async () => {
-        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+        if (!apiKey && !aiModel.startsWith("MANUAL:")) {
+            alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA (o selecciona un modelo MANUAL para operar de forma externa).");
+            setIsRentaModalOpen(false);
+            return;
+        }
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker primero', type: 'info' });
         if (projForm.buyPrice <= 0 || projForm.shares <= 0) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Revisa el precio y nº de acciones', type: 'warning' });
 
@@ -11413,7 +11559,11 @@ IMPORTANTE: Responde ÚNICAMENTE con el código HTML del análisis. Sin bloques 
     };
 
     const analyze = async () => {
-        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+        if (!apiKey && !aiModel.startsWith("MANUAL:")) {
+            alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA (o selecciona un modelo MANUAL para operar de forma externa).");
+            setIsRentaModalOpen(false);
+            return;
+        }
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' });
         setLoading(true); setSpecificAnswer(null); setData(null);
         try {
@@ -11551,7 +11701,11 @@ const handleManosFuertes = () => {
 
 
 const handleFixedAnalysis = async (promptId) => {
-        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+        if (!apiKey && !aiModel.startsWith("MANUAL:")) {
+            alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA (o selecciona un modelo MANUAL para operar de forma externa).");
+            setIsRentaModalOpen(false);
+            return;
+        } 
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' });
 
         setLoading(true); 
@@ -11676,7 +11830,11 @@ const handleFixedAnalysis = async (promptId) => {
     };
 
   const fetchNews = async (type) => {
-        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+        if (!apiKey && !aiModel.startsWith("MANUAL:")) {
+            alert("⚠️ API Key no configurada. Ve a 'Ajustes' para conectar la iA (o selecciona un modelo MANUAL para operar de forma externa).");
+            setIsRentaModalOpen(false);
+            return;
+        }
         setIsNewsSelectionModalOpen(false);
         setAnalyzingNews(true);
         try {
@@ -11908,8 +12066,10 @@ const handleFixedAnalysis = async (promptId) => {
 
                 <div className="bg-slate-900 px-4 h-[44px] rounded-xl border border-purple-500/30 flex items-center gap-3 shadow-lg shrink-0 md:ml-auto" title="Modelo Inteligencia Artificial">
                     <Icons.Wand size={16} className="text-purple-400"/>
-                    <select value={aiModel} onChange={(e) => setAiModel(e.target.value)} className="bg-transparent text-xs font-bold text-purple-300 uppercase focus:outline-none cursor-pointer w-48 md:w-64 truncate outline-none">
+            
+                    <select value={aiModel} onChange={(e) => handleModelChange(e.target.value)} className="bg-transparent text-xs font-bold text-purple-300 focus:outline-none cursor-pointer w-48 md:w-64 truncate outline-none">
                         {availableModels.map(m => <option key={m} value={m} className="bg-slate-900 text-purple-300">{m}</option>)}
+                        <option value="SHOW_LAST_PROMPT_MODAL" className="bg-slate-900 text-yellow-400 font-bold">📄 VER ÚLTIMO PROMPT GENERADO</option>
                     </select>
                 </div>               
             </div>
@@ -13541,6 +13701,46 @@ const App = () => {
     const [hideInactive, setHideInactive] = usePersistentState('bg_hide_inactive', false);
     const [noScroll, setNoScroll] = usePersistentState('bg_no_scroll', false);
 
+     const [lastPrompt, setLastPrompt] = useState('');
+    const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
+
+    useEffect(() => {
+        window.setLastPromptExternalState = (p) => setLastPrompt(p);
+    }, []);
+
+    useEffect(() => {
+        const manualModels = [
+            "MANUAL: GEMINI",
+            "MANUAL: GROK",
+            "MANUAL: CHATGPT",
+            "MANUAL: CLAUDE",
+            "MANUAL: DEEPSEEK"
+        ];
+        
+        let updated = [...availableModels];
+        let hasChanges = false;
+        
+        manualModels.forEach(m => {
+            if (!availableModels.some(existing => existing.startsWith(m))) {
+                updated.unshift(m); // Los añade al principio de la lista
+                hasChanges = true;
+            }
+        });
+        
+        if (hasChanges) {
+            setAvailableModels(updated);
+        }
+    }, [availableModels]);
+
+    const handleModelChange = (value) => {
+        if (value === "SHOW_LAST_PROMPT_MODAL") {
+            setLastPrompt(window.lastPromptGenerated || "");
+            setIsPromptModalOpen(true);
+        } else {
+            setAiModel(value);
+        }
+    };
+
     const DEFAULT_CONSULTA = "Quiero que me des un listado con las acciones vendidas comparando el precio de venta con el precio actual dando la diferencia, sumando al final el resultado, para poder así comprobar qué resultados tendría de no haber vendido";
     const [customConsultas, setCustomConsultas] = usePersistentState('bg_custom_consultas', [DEFAULT_CONSULTA]); 
     const [customGeneralConsultas, setCustomGeneralConsultas] = usePersistentState('bg_custom_general_consultas', []);
@@ -13780,6 +13980,48 @@ const App = () => {
                             {isLoadingExamples ? <Icons.Loader size={14} className="animate-spin" /> : <Icons.Upload size={14}/>}
                             Sí, Cargar Ejemplos
                         </button>
+                    </div>
+                </div>
+            </Modal>
+
+            {/* MODAL: VISOR DE ÚLTIMO PROMPT GENERADO */}
+            <Modal isOpen={isPromptModalOpen} title="📄 Último Prompt Generado por el Sistema" onClose={() => setIsPromptModalOpen(false)} size="lg">
+                <div className="flex flex-col gap-4">
+                    <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs text-slate-300 leading-relaxed">
+                        <p className="font-bold text-yellow-400 mb-1">💡 Portapapeles Manual:</p>
+                        Este cuadro de texto contiene la última solicitud exacta generada por el sistema. Si la copia automática al portapapeles falló en tu navegador o dispositivo, puedes seleccionarlo y copiarlo manualmente desde aquí para pegarlo en tu IA de preferencia.
+                    </div>
+                    
+                    <textarea 
+                        readOnly 
+                        value={lastPrompt || "Aún no se ha generado ningún prompt en esta sesión de trabajo. Realiza un análisis primero."} 
+                        onClick={(e) => e.target.select()}
+                        className="w-full h-96 bg-black text-green-400 border border-slate-700 rounded-xl p-4 text-xs font-mono leading-relaxed focus:outline-none custom-scrollbar shadow-inner"
+                    />
+
+                    <div className="flex justify-between items-center bg-slate-800/30 p-3 rounded-lg border border-slate-700">
+                        <span className="text-[10px] text-slate-500 italic">Haz clic dentro de la caja de texto negra para seleccionar todo automáticamente.</span>
+                        <div className="flex gap-2">
+                            <button 
+                                onClick={() => {
+                                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                                        navigator.clipboard.writeText(lastPrompt || "");
+                                        alert("✅ Prompt copiado al portapapeles.");
+                                    } else {
+                                        alert("Tu navegador no soporta el copiado automático. Hazlo manualmente dentro del recuadro negro.");
+                                    }
+                                }} 
+                                className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-lg font-bold text-xs uppercase transition-colors"
+                            >
+                                Copiar al Portapapeles
+                            </button>
+                            <button 
+                                onClick={() => setIsPromptModalOpen(false)} 
+                                className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg font-bold text-xs uppercase transition-colors"
+                            >
+                                Cerrar
+                            </button>
+                        </div>
                     </div>
                 </div>
             </Modal>
