@@ -79,7 +79,7 @@
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
             text-rendering: optimizeLegibility;
-        }
+        } 
               
         #root { 
             height: 100dvh; 
@@ -351,17 +351,86 @@
           ];
 
 
+
+      // Función auxiliar para eliminar artefactos e instrucciones HTML de los prompts
+      const cleanPromptFromHtmlArtifacts = (text) => {
+          if (!text) return "";
+          let cleaned = text;
+          
+         cleaned = cleaned.replace(/SISTEMA:\s*[^\n]*/gi, "");
+          cleaned = cleaned.replace(/MODELO\s*IA:\s*[^\n]*/gi, "");
+          cleaned = cleaned.replace(/Modelo:\s*[^\n]*/gi, "");
+          cleaned = cleaned.replace(/FECHA(\s*ACTUAL)?:\s*[^\n]*/gi, "");
+          cleaned = cleaned.replace(/Generado:\s*[^\n]*/gi, "");
+          cleaned = cleaned.replace(/EMISIÓN:\s*[^\n]*/gi, "");
+          cleaned = cleaned.replace(/ROL:\s*ANALISTA\s*SENIOR\s*BURSÁTIL\s*DE\s*WALL\s*STREET[^\n]*/gi, "");
+          cleaned = cleaned.replace(/ROLE:\s*Data\s*Extraction\s*Expert[^\n]*/gi, "");
+          cleaned = cleaned.replace(/ROLE:\s*Hedge\s*Fund\s*Manager[^\n]*/gi, "");
+          cleaned = cleaned.replace(/ROL:\s*GESTOR\s*DE\s*RIESGOS[^\n]*/gi, "");
+          cleaned = cleaned.replace(/ROL:\s*ANALISTA\s*SENIOR\s*DE\s*BOLSA[^\n]*/gi, "");
+          cleaned = cleaned.replace(/ROL:\s*Asesor\s*Fiscal[^\n]*/gi, "");
+          cleaned = cleaned.replace(/INSTRUCCIÓN\s*OBLIGATORIA:\s*USA\s*TU\s*HERRAMIENTA[^\n]*/gi, "");
+          
+         cleaned = cleaned.replace(/código HTML limpio/gi, "Markdown estándar");
+          cleaned = cleaned.replace(/formato HTML limpio/gi, "formato Markdown");
+          cleaned = cleaned.replace(/código HTML/gi, "Markdown");
+          cleaned = cleaned.replace(/en formato HTML/gi, "en formato Markdown");
+          cleaned = cleaned.replace(/tabla HTML/gi, "tabla Markdown");
+          cleaned = cleaned.replace(/tablas HTML/gi, "tablas Markdown");
+          cleaned = cleaned.replace(/etiqueta HTML/gi, "sintaxis Markdown");
+          
+          cleaned = cleaned.replace(/<h3>/gi, "### ");
+          cleaned = cleaned.replace(/<\/h3>/gi, "\n");
+          cleaned = cleaned.replace(/<h4>/gi, "#### ");
+          cleaned = cleaned.replace(/<\/h4>/gi, "\n");
+          cleaned = cleaned.replace(/<li>/gi, "- ");
+          cleaned = cleaned.replace(/<\/li>/gi, "\n");
+          cleaned = cleaned.replace(/<ul>/gi, "");
+          cleaned = cleaned.replace(/<\/ul>/gi, "");
+          cleaned = cleaned.replace(/<p>/gi, "");
+          cleaned = cleaned.replace(/<\/p>/gi, "\n");
+          cleaned = cleaned.replace(/<strong>/gi, "**");
+          cleaned = cleaned.replace(/<\/strong>/gi, "**");
+          cleaned = cleaned.replace(/<b>/gi, "**");
+          cleaned = cleaned.replace(/<\/b>/gi, "**");
+          cleaned = cleaned.replace(/<br\s*\/?>/gi, "\n");
+          cleaned = cleaned.replace(/<table[^>]*>/gi, "\n[Tabla Markdown]\n");
+          cleaned = cleaned.replace(/<\/table>/gi, "\n");
+          cleaned = cleaned.replace(/<tr[^>]*>/gi, "");
+          cleaned = cleaned.replace(/<\/tr>/gi, "\n");
+          cleaned = cleaned.replace(/<th[^>]*>/gi, "| ");
+          cleaned = cleaned.replace(/<\/th>/gi, " ");
+          cleaned = cleaned.replace(/<td[^>]*>/gi, "| ");
+          cleaned = cleaned.replace(/<\/td>/gi, " ");
+          
+         cleaned = cleaned.replace(/<[^>]+>/g, "");
+          
+          cleaned = cleaned.trim().replace(/\n{3,}/g, "\n\n");
+          
+          return "Actúa como un experto inversor y analista senior de Wall Street.\n\n" + cleaned;
+      };
+
+    
       const askAI = async (geminiKey, secondaryApiKey, prompt, model) => {
+          if (typeof window !== 'undefined') {
+              window.lastBgPrompt = cleanPromptFromHtmlArtifacts(prompt);
+          }
+
+           if (model && model.toUpperCase().includes("USAR MODELO EXTERNO")) {
+              if (typeof window !== 'undefined' && window.openPromptModal) {
+                  window.openPromptModal();
+              }
+              throw new Error("BYPASS_MODEL");
+          }
+
           const rawModel = model || "gemini-3.1-flash-preview";
           let targetModel = rawModel.split('|')[0].replace(/\s+/g, '');
 
           let isGeminiDirect = targetModel.startsWith("gemini") && !targetModel.includes("/");
 
-          // --- NUEVA LÓGICA DE ENRUTAMIENTO ---
-          // Si es un modelo Gemini pero NO hay API de Gemini, lo derivamos a OpenRouter
           if (isGeminiDirect && (!geminiKey || geminiKey.trim() === '')) {
               isGeminiDirect = false; 
-              targetModel = `google/${targetModel}`; // OpenRouter exige el prefijo "google/"
+              targetModel = `google/${targetModel}`; 
           }
 
           if (isGeminiDirect) {
@@ -401,7 +470,6 @@
               return data.choices?.[0]?.message?.content || "";
           }
       };
-
            
     
       const Modal = ({ isOpen, title, onClose, children, size = "md" }) => {
@@ -3307,6 +3375,10 @@ function doPost(e) {
 }
 
 function doGet(e) {
+   if (e.parameter.anchor === "true" && e.parameter.ticker) {
+    return fetchTradingViewAnchorData(e.parameter.ticker);
+  }
+
    if (e.parameter.intrinsic === "true" && e.parameter.ticker) {
     return fetchFundamentalData(e.parameter.ticker);
   }
@@ -3321,6 +3393,76 @@ function doGet(e) {
     if (files.hasNext()) { return ContentService.createTextOutput(files.next().getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON); }
     return ContentService.createTextOutput(JSON.stringify({timestamp:0})).setMimeType(ContentService.MimeType.JSON);
   } catch(err) { return ContentService.createTextOutput(JSON.stringify({error:err.toString()})).setMimeType(ContentService.MimeType.JSON); }
+}
+
+function fetchTradingViewAnchorData(rawTicker) {
+  var cleanSym = rawTicker.toUpperCase().trim();
+  if (cleanSym.includes(":")) {
+    cleanSym = cleanSym.split(":")[1];
+  } else if (cleanSym.includes(".")) {
+    cleanSym = cleanSym.split(".")[0];
+  }
+  
+  var payload = {
+    "filter": [
+      { "left": "name", "operation": "equal", "right": cleanSym }
+    ],
+    "options": { "lang": "es" },
+    "markets": ["america", "spain", "uk", "germany", "france", "japan", "hongkong", "canada", "australia", "italy", "switzerland", "netherlands"],
+    "columns": [
+      "name",                         // d[0]
+      "description",                  // d[1]
+      "close",                        // d[2]
+      "price_52_week_high",           // d[3]
+      "price_earnings_ttm",           // d[4]
+      "eps_ttm",                      // d[5]
+      "dividend_yield_recent",        // d[6]
+      "beta_1_year",                  // d[7]
+      "fifty_two_week_low",           // d[8]
+      "market_cap_basic"              // d[9]
+    ]
+  };
+
+  var options = {
+    "method": "post",
+    "contentType": "application/json",
+    "headers": { "User-Agent": "Mozilla/5.0" },
+    "payload": JSON.stringify(payload),
+    "muteHttpExceptions": true
+  };
+
+  var res = { success: false, ticker: rawTicker };
+  try {
+    var response = UrlFetchApp.fetch("https://scanner.tradingview.com/global/scan", options);
+    if (response.getResponseCode() === 200) {
+      var json = JSON.parse(response.getContentText());
+      if (json.data && json.data.length > 0) {
+        var d = json.data[0].d;
+        
+        // Conversión legible de la Capitalización Bursátil
+        var rawMc = d[9] || 0;
+        var formattedMc = "N/D";
+        if (rawMc >= 1e12) formattedMc = (rawMc / 1e12).toFixed(2) + " T";
+        else if (rawMc >= 1e9) formattedMc = (rawMc / 1e9).toFixed(2) + " B";
+        else if (rawMc >= 1e6) formattedMc = (rawMc / 1e6).toFixed(2) + " M";
+
+        res = {
+          success: true,
+          ticker: rawTicker,
+          p: d[2] ? d[2].toFixed(2) : "N/D",
+          mc: formattedMc,
+          pe: d[4] ? d[4].toFixed(2) : "N/D",
+          eps: d[5] ? d[5].toFixed(2) : "N/D",
+          div: d[6] ? d[6].toFixed(2) : "0.00",
+          beta: d[7] ? d[7].toFixed(2) : "1.00",
+          h52: d[8] && d[3] ? (d[8].toFixed(2) + " - " + d[3].toFixed(2)) : "N/D"
+        };
+      }
+    }
+  } catch (err) {
+    res.error = err.toString();
+  }
+  return ContentService.createTextOutput(JSON.stringify(res)).setMimeType(ContentService.MimeType.JSON);
 }
 
 function executeTradingViewScreener(params) {
@@ -6014,7 +6156,11 @@ const getMarketStatus = (p) => {
     const [isSellModalOpen, setIsSellModalOpen] = useState(false);
     const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
     const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', msg: '', onConfirm: null });
-    const [infoModal, setInfoModal] = useState({ isOpen: false, title: '', msg: '', type: 'info' });
+    const [infoModal, _setInfoModal] = useState({ isOpen: false, title: '', msg: '', type: 'info' });
+    const setInfoModal = (val) => {
+        if (val && val.msg && (val.msg.includes("BYPASS_MODEL") || val.msg.includes("error: BYPASS_MODEL") || val.msg.includes("Fallo: Error: BYPASS_MODEL"))) return;
+        _setInfoModal(val);
+    };
     const [noteToast, setNoteToast] = useState(null);
     const [editingId, setEditingId] = useState(null);
     const [sellItem, setSellItem] = useState(null);
@@ -6191,15 +6337,16 @@ const getMarketStatus = (p) => {
 
 const fetchNews = async (type) => {
         const isAuto = type === 'portfolio_auto';
+        const isBypass = aiModel && aiModel.toUpperCase().includes("USAR MODELO EXTERNO");
 
-        if (!apiKey) {
+        if (!apiKey && !isBypass) {
             if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key para consultar noticias.', type: 'error' });
             return;
         }
 
         setIsNewsSelectionModalOpen(false); 
         
-        if (!isAuto) {
+        if (!isAuto && !isBypass) {
             setAnalyzingNews(true); 
             setNewsResult(null);
         }
@@ -6216,9 +6363,32 @@ const fetchNews = async (type) => {
                     if (isAuto) return;
                     throw new Error("No hay activos para analizar.");
                 }
+
+                // NUEVO: Construimos un único prompt consolidado con el 100% de los activos
+                const fullPromptForBackup = `INSTRUCCIÓN OBLIGATORIA: USA TU HERRAMIENTA DE BÚSQUEDA WEB AHORA MISMO.
+                FECHA ACTUAL: ${today}.
+                ACTIVOS A RASTREAR: ${uniqueAssets.join(', ')}.
+
+                Busca noticias financieras de los ÚLTIMOS 15 DÍAS de estas empresas.
+                REGLAS CRÍTICAS:
+                1. Si una empresa no tiene noticias relevantes, IGNÓRALA por completo. No escribas "no hay noticias para X".
+                2. Para las que sí tengan, usa formato Markdown indicando el Título, URL real clicable, Fecha y Resumen de forma legible.`;
+
+                // Lo guardamos de manera global e íntegra antes de iniciar cualquier división en lotes
+                if (typeof window !== 'undefined') {
+                    window.lastBgPrompt = cleanPromptFromHtmlArtifacts(fullPromptForBackup);
+                }
+
+                // Si es bypass, abrimos el visor inmediatamente con el prompt completo y salimos de la función
+                if (isBypass && !isAuto) {
+                    if (typeof window !== 'undefined' && window.openPromptModal) {
+                        window.openPromptModal();
+                    }
+                    throw new Error("BYPASS_MODEL");
+                }
                 
+                // Si NO es bypass, procedemos con la división en lotes de 4 para la llamada API directa
                 const CHUNK_SIZE = 4;
-                
                 for (let i = 0; i < uniqueAssets.length; i += CHUNK_SIZE) {
                     const chunk = uniqueAssets.slice(i, i + CHUNK_SIZE);
                     
@@ -6230,13 +6400,11 @@ const fetchNews = async (type) => {
                     REGLAS CRÍTICAS:
                     1. Si una empresa no tiene noticias relevantes, IGNÓRALA por completo. No escribas "no hay noticias para X".
                     2. Si NINGUNA de las ${chunk.length} empresas tiene noticias, responde ÚNICA Y EXCLUSIVAMENTE con la palabra: VACIO.
-                    3. Para las que sí tengan, usa formato HTML (<h3>, <ul>, <li>) indicando el Título, URL real clicable (<a href="..." target="_blank">Leer</a>), Fecha y Resumen.
-                    4. NUNCA inventes datos. Sin markdown de código.`;
+                    3. Para las que sí tengan, usa formato HTML (<h3>, <ul>, <li>) indicando el Título, URL real clicable, Fecha y Resumen.`;
 
                     const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
-                    let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
                     
-                    // Solo lo añadimos si la IA no nos ha devuelto la palabra clave de "VACIO"
+                    let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
                     if (!cleanHtml.includes('VACIO') && cleanHtml.length > 20) {
                         const startIdx = cleanHtml.indexOf('<');
                         if (startIdx !== -1) cleanHtml = cleanHtml.substring(startIdx);
@@ -6253,6 +6421,14 @@ const fetchNews = async (type) => {
                 Usa tu herramienta de búsqueda web. Busca noticias macroeconómicas GLOBALES de las ÚLTIMAS 72 HORAS.
                 REGLA: Solo eventos reales sucedidos (bancos centrales, inflación, empleo). Prohibido predecir o inventar. Cita la fuente real con URL clicable HTML. Formato HTML limpio sin markdown.`;
                 
+                // Si es bypass de modelo externo para noticia macro
+                if (isBypass) {
+                    if (typeof window !== 'undefined' && window.openPromptModal) {
+                        window.openPromptModal();
+                    }
+                    throw new Error("BYPASS_MODEL");
+                }
+
                 const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
                 let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
                 finalHtml = cleanHtml.substring(cleanHtml.indexOf('<') !== -1 ? cleanHtml.indexOf('<') : 0);
@@ -6264,6 +6440,14 @@ const fetchNews = async (type) => {
                 Si no encuentras nada, responde: "No hay noticias recientes y verificadas sobre este tema."
                 Si encuentras, incluye: título, URL real clicable HTML, fecha y resumen. Formato HTML limpio sin markdown.`;
                 
+                // Si es bypass de modelo externo para noticia libre
+                if (isBypass) {
+                    if (typeof window !== 'undefined' && window.openPromptModal) {
+                        window.openPromptModal();
+                    }
+                    throw new Error("BYPASS_MODEL");
+                }
+
                 const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
                 let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
                 finalHtml = cleanHtml.substring(cleanHtml.indexOf('<') !== -1 ? cleanHtml.indexOf('<') : 0);
@@ -6272,7 +6456,7 @@ const fetchNews = async (type) => {
             setNewsResult(finalHtml);
             setIsNewsModalOpen(true); 
         } catch (e) {
-            if (!isAuto) {
+            if (!isAuto && e.message !== "BYPASS_MODEL") {
                 setInfoModal({ isOpen: true, title: 'Fallo en Búsqueda', msg: e.message, type: 'error' });
             }
         } finally {
@@ -6281,7 +6465,6 @@ const fetchNews = async (type) => {
             }
         }
     };
-
 
     useEffect(() => {
         if (showEventsCheck && apiKey && isAppReady && portfolio.length > 0) {
@@ -10364,7 +10547,11 @@ const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, portfolio, setPort
     const [maxResults, setMaxResults] = useState(10);
     const [screenerResults, setScreenerResults] = useState([]);
     const [screenerSort, setScreenerSort] = useState({ key: 'ticker', direction: 'asc' });
-    const [statusModal, setStatusModal] = useState({ isOpen: false, title: '', msg: '', type: 'info' });
+    const [statusModal, _setStatusModal] = useState({ isOpen: false, title: '', msg: '', type: 'info' });
+      const setStatusModal = (val) => {
+          if (val && val.msg && (val.msg.includes("BYPASS_MODEL") || val.msg.includes("error: BYPASS_MODEL") || val.msg.includes("Fallo: Error: BYPASS_MODEL"))) return;
+          _setStatusModal(val);
+      };
 
     const [isProjModalOpen, setIsProjModalOpen] = useState(false);
     const [projForm, setProjForm] = useState({ years: 5, shares: 100, buyPrice: 0 });
@@ -11551,7 +11738,8 @@ const handleManosFuertes = () => {
 
 
 const handleFixedAnalysis = async (promptId) => {
-        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+        const isBypass = aiModel && aiModel.toUpperCase().includes("USAR MODELO EXTERNO");
+        if (!apiKey && !isBypass) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' });
 
         setLoading(true); 
@@ -11569,28 +11757,47 @@ const handleFixedAnalysis = async (promptId) => {
             let multiEntityContext = "";
 
             const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
+            
             if (scriptUrl) {
                 try {
                     setLoadingText('Conectando con mercados (Precios en tiempo real)...');
                     setLoadingProgress(10);
-                    const res = await fetch(`${scriptUrl}?tickers=${encodeURIComponent(ticker)}&_t=${Date.now()}`);
+                    const res = await fetch(`${scriptUrl}?anchor=true&ticker=${encodeURIComponent(ticker)}&_t=${Date.now()}`);
                     const json = await res.json();
-                    hardData = json[ticker];
+                    hardData = json; 
                     if (hardData && hardData.success) {
                         anchorContext = `
                         ╔═══════════════════════════════════════════╗
                           DATOS ANCLA VERIFICADOS POR EL SISTEMA   
                         ╚═══════════════════════════════════════════╝
                         - PRECIO ACTUAL: ${hardData.p}
-                        - MARKET CAP: ${hardData.mc || 'N/D'}
-                        - PER (P/E): ${hardData.pe || 'N/D'}
-                        - BPA (EPS): ${hardData.eps || 'N/D'}
-                        - YIELD DIVIDENDO: ${hardData.div ? hardData.div + '%' : 'N/D'}
-                        - BETA: ${hardData.beta || 'N/D'}
-                        - RANGO 52 SEM: ${hardData.h52 || 'N/D'}
+                        - MARKET CAP: ${hardData.mc}
+                        - PER (P/E): ${hardData.pe}
+                        - BPA (EPS): ${hardData.eps}
+                        - YIELD DIVIDENDO: ${hardData.div}%
+                        - BETA: ${hardData.beta}
+                        - RANGO 52 SEM: ${hardData.h52}
                         `;
                     }
-                } catch (e) { console.warn("Script no disponible."); }
+                } catch (e) { console.warn("Script no disponible o error al recuperar datos ancla."); }
+            }
+
+            // FALLBACK LOCAL: Si no tienes el script de Google configurado o falla, usamos los datos locales de tu portafolio
+            if (!anchorContext) {
+                const localAsset = portfolio.find(p => p.ticker.toUpperCase() === ticker.toUpperCase());
+                if (localAsset) {
+                    const lPrice = localAsset.currentPrice || localAsset.buyPrice || 0;
+                    const lYield = lPrice > 0 ? ((localAsset.annualDividend / lPrice) * 100).toFixed(2) : "0.00";
+                    anchorContext = `
+                    ╔═══════════════════════════════════════════╗
+                      DATOS ANCLA (LOCALES DE TU CARTERA)      
+                    ╚═══════════════════════════════════════════╝
+                    - PRECIO ACTUAL: ${lPrice}
+                    - PER (P/E): ${localAsset.currentPE || 'N/D'}
+                    - YIELD DIVIDENDO: ${lYield}%
+                    - GRUPO/ESTRATEGIA: ${localAsset.group || 'N/D'}
+                    `;
+                }
             }
 
             if (MULTI_ENTITY_REPORTS.includes(promptId)) {
@@ -11612,7 +11819,6 @@ const handleFixedAnalysis = async (promptId) => {
                 } catch (e) { console.warn("Fase 0 multi-entidad no completada:", e.message); }
             }
 
-            // INDICADOR FASE FINAL
             setLoadingText('Fase Final: Analizando métricas y redactando el informe completo...');
             let currentPct = loadingProgress > 45 ? loadingProgress : 45;
             startProgressSimulation(currentPct, 98, 1500); 
@@ -11668,17 +11874,22 @@ const handleFixedAnalysis = async (promptId) => {
             stopProgressSimulation();
             setStatusModal({ isOpen: true, title: 'Fallo', msg: e.message, type: 'error' });
         } finally {
-            // Damos 500ms extra para que el usuario vea el 100% y el mensaje "¡Completado!" antes de que el modal desaparezca
             setTimeout(() => {
                 setLoading(false);
             }, 600);
         }
     };
 
-  const fetchNews = async (type) => {
-        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+ const fetchNews = async (type) => {
+        const isBypass = aiModel && aiModel.toUpperCase().includes("USAR MODELO EXTERNO");
+        if (!apiKey && !isBypass) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+        
         setIsNewsSelectionModalOpen(false);
-        setAnalyzingNews(true);
+        
+        if (!isBypass) {
+            setAnalyzingNews(true);
+        }
+        
         try {
             let finalHtml = "";
             const today = new Date().toLocaleString('es-ES');
@@ -11689,8 +11900,31 @@ const handleFixedAnalysis = async (promptId) => {
                 
                 if (uniqueAssets.length === 0) throw new Error("No hay activos en cartera para analizar.");
 
-               const CHUNK_SIZE = 4;
-                
+                // NUEVO: Construimos un único prompt consolidado con el 100% de los activos de la cartera
+                const fullPromptForBackup = `INSTRUCCIÓN OBLIGATORIA: USA TU HERRAMIENTA DE BÚSQUEDA WEB AHORA MISMO.
+                FECHA ACTUAL: ${today}.
+                ACTIVOS A RASTREAR: ${uniqueAssets.join(', ')}.
+
+                Busca noticias financieras de los ÚLTIMOS 15 DÍAS de estas empresas.
+                REGLAS CRÍTICAS:
+                1. Si una empresa no tiene noticias relevantes, IGNÓRALA por completo. No escribas "no hay noticias para X".
+                2. Para las que sí tengan, usa formato Markdown indicando el Título, URL real clicable, Fecha y Resumen de forma legible.`;
+
+                // Lo guardamos de manera global e íntegra en window.lastBgPrompt
+                if (typeof window !== 'undefined') {
+                    window.lastBgPrompt = cleanPromptFromHtmlArtifacts(fullPromptForBackup);
+                }
+
+                // Si es bypass, abrimos el visor con todos los activos y salimos
+                if (isBypass) {
+                    if (typeof window !== 'undefined' && window.openPromptModal) {
+                        window.openPromptModal();
+                    }
+                    throw new Error("BYPASS_MODEL");
+                }
+
+                // Si NO es bypass, procedemos con los lotes normales para la API
+                const CHUNK_SIZE = 4;
                 for (let i = 0; i < uniqueAssets.length; i += CHUNK_SIZE) {
                     const chunk = uniqueAssets.slice(i, i + CHUNK_SIZE);
                     const prompt = `INSTRUCCIÓN OBLIGATORIA: USA TU HERRAMIENTA DE BÚSQUEDA WEB AHORA MISMO.
@@ -11717,11 +11951,29 @@ const handleFixedAnalysis = async (promptId) => {
                     finalHtml = "<p style='text-align:center; padding:20px; color:#94a3b8; font-style:italic;'>No se han encontrado noticias recientes verificadas para los activos de tu cartera.</p>";
                 }
             } else if (type === 'general') {
-                const prompt = `SISTEMA: MODO AUDITORÍA MACRO. Fecha: ${today}. Busca activamente en internet las noticias de mercado y macro más importantes de las ÚLTIMAS 72 HORAS. PROHIBIDO INVENTAR. Incluye: título, fuente con URL clicable HTML, fecha e impacto en mercados. Formato HTML limpio.`;
+                const prompt = `SISTEMA: MODO AUDITORÍA MACRO. Fecha: ${today}. Busca activamente en internet las noticias de mercado y macro antes de redactar. PROHIBIDO INVENTAR. Incluye: título, fuente con URL clicable HTML, fecha e impacto en mercados. Formato HTML limpio.`;
+                
+                // Si es bypass de modelo externo para noticia macro
+                if (isBypass) {
+                    if (typeof window !== 'undefined' && window.openPromptModal) {
+                        window.openPromptModal();
+                    }
+                    throw new Error("BYPASS_MODEL");
+                }
+                
                 const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
                 finalHtml = cleanAIResponse(res);
             } else {
                 const prompt = `SISTEMA: BÚSQUEDA ESTRICTA. Fecha: ${today}. Tema: "${customNewsTopic}". Busca noticias de los últimos 15 días. PROHIBIDO INVENTAR. Si no encuentras, indícalo. Si encuentras, incluye: título, URL clicable HTML, fecha y resumen. Formato HTML limpio.`;
+                
+                // Si es bypass de modelo externo para noticia libre
+                if (isBypass) {
+                    if (typeof window !== 'undefined' && window.openPromptModal) {
+                        window.openPromptModal();
+                    }
+                    throw new Error("BYPASS_MODEL");
+                }
+
                 const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
                 finalHtml = cleanAIResponse(res);
             }
@@ -11729,7 +11981,9 @@ const handleFixedAnalysis = async (promptId) => {
             setNewsResult(finalHtml);
             setIsNewsModalOpen(true);
         } catch (e) {
-            setStatusModal({ isOpen: true, title: 'Error Noticias', msg: e.message, type: 'error' });
+            if (e.message !== "BYPASS_MODEL") {
+                setStatusModal({ isOpen: true, title: 'Error Noticias', msg: e.message, type: 'error' });
+            }
         } finally {
             setAnalyzingNews(false);
         }
@@ -13536,10 +13790,16 @@ const App = () => {
     const [resultsData, setResultsData] = usePersistentState('bg_results_data', {});
     const [lastUpdate, setLastUpdate] = usePersistentState('bg_last_update', null);
     const [gScriptUrl, setGScriptUrl] = usePersistentState('bg_g_script_url', '');
-    const [availableModels, setAvailableModels] = usePersistentState('bg_ai_models_list', DEFAULT_AI_MODELS);
+     const [availableModels, setAvailableModels] = usePersistentState('bg_ai_models_list', [
+        "USAR MODELO EXTERNO | Generar y copiar prompt sin API", 
+        ...DEFAULT_AI_MODELS
+    ]);
+    
     const [aiModel, setAiModel] = usePersistentState('bg_ai_model', DEFAULT_AI_MODELS[2]);
     const [hideInactive, setHideInactive] = usePersistentState('bg_hide_inactive', false);
     const [noScroll, setNoScroll] = usePersistentState('bg_no_scroll', false);
+
+    const [isLastPromptModalOpen, setIsLastPromptModalOpen] = useState(false);
 
     const DEFAULT_CONSULTA = "Quiero que me des un listado con las acciones vendidas comparando el precio de venta con el precio actual dando la diferencia, sumando al final el resultado, para poder así comprobar qué resultados tendría de no haber vendido";
     const [customConsultas, setCustomConsultas] = usePersistentState('bg_custom_consultas', [DEFAULT_CONSULTA]); 
@@ -13577,6 +13837,23 @@ const App = () => {
             alert("R-KEY: ERR."); 
         }
     };
+
+    useEffect(() => {
+        window.openPromptModal = () => setIsLastPromptModalOpen(true);
+        
+        const originalAlert = window.alert;
+        window.alert = function(msg) {
+            if (msg && (msg.includes("BYPASS_MODEL") || msg.includes("error"))) {
+                if (window.lastBgPrompt && window.lastBgPrompt.includes("Actúa como un experto")) return;
+            }
+            originalAlert.apply(this, arguments);
+        };
+
+        return () => { 
+            delete window.openPromptModal; 
+            window.alert = originalAlert;
+        };
+    }, []);
 
     useEffect(() => {
         if (blockAction) {
@@ -13691,7 +13968,7 @@ const App = () => {
         uploadToCloud(true); 
     }; 
 
-   useEffect(() => { if (gScriptUrl) { checkForCloudUpdates(); } else { setIsAppReady(true); } }, []);
+    useEffect(() => { if (gScriptUrl) { checkForCloudUpdates(); } else { setIsAppReady(true); } }, []);
 
     useEffect(() => { if (!gScriptUrl || refreshInterval < 1 || !isAppReady) return; const intervalMs = (refreshInterval + 1) * 60 * 1000; const timer = setInterval(() => { if (syncStatus === 'unsaved') { uploadToCloud(); } }, intervalMs); return () => clearInterval(timer); }, [refreshInterval, gScriptUrl, syncStatus, isAppReady]);
     useEffect(() => { if(appPin && appPin.length === 4) setIsPinLocked(true); else setIsPinLocked(false); }, []);
@@ -14003,7 +14280,52 @@ const App = () => {
                 <div className="pt-4 border-t border-slate-700 flex justify-end mt-4">
                     <button onClick={() => setIsHelpModalOpen(false)} className="bg-yellow-600 hover:bg-yellow-500 text-white font-black py-3 px-8 rounded-xl shadow-lg transition-colors tracking-widest uppercase text-xs">He leído el manual</button>
                 </div>
-            </Modal>        
+            </Modal>       
+
+           {/* Modal de visualización y copia del último Prompt limpio */}
+            <Modal 
+                isOpen={isLastPromptModalOpen} 
+                title="Último Prompt Ejecutado (Sintaxis Limpia)" 
+                onClose={() => setIsLastPromptModalOpen(false)}
+                size="lg"
+            >
+                <div className="flex flex-col gap-4">
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                        A continuación se expone la última consulta estructurada con los datos de tu cartera, optimizada para copiar al portapapeles.
+                    </p>
+                    
+                    <div className="bg-yellow-950/20 border border-yellow-600/30 p-3 rounded-xl text-[11px] text-yellow-300 leading-snug">
+                        💡 <strong>TIP DE INTEGRACIÓN (MODELO EXTERNO):</strong> Si quieres generar y copiar tus prompts 
+                        <strong> sin realizar ni esperar la petición de pago vía API</strong>, ve a Ajustes y añade/crea un modelo 
+                        llamado exactamente <span className="font-mono bg-slate-950 px-1.5 py-0.5 rounded text-white font-bold">USAR MODELO EXTERNO</span>. 
+                        Al tenerlo seleccionado, el sistema interceptará la llamada para abrirte este visor de forma instantánea, permitiéndote copiar el prompt sin esperas ni costes.
+                    </div>
+
+                    <textarea 
+                        readOnly 
+                        value={window.lastBgPrompt || "Todavía no se ha ejecutado ninguna consulta a la IA en esta sesión de trabajo."} 
+                        className="w-full h-80 bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs font-mono text-slate-300 focus:outline-none custom-scrollbar shadow-inner select-all"
+                        onClick={(e) => e.target.select()}
+                    />
+                    <div className="flex justify-between items-center bg-slate-800/30 p-3 rounded-lg border border-slate-700">
+                        <span className="text-[9px] text-slate-500 italic">* Puedes hacer clic en el texto para seleccionarlo todo automáticamente.</span>
+                        <button 
+                            onClick={() => {
+                                const txt = window.lastBgPrompt;
+                                if (txt) {
+                                    navigator.clipboard.writeText(txt);
+                                    alert("✅ Prompt limpio copiado al portapapeles.");
+                                } else {
+                                    alert("No hay ningún prompt registrado para copiar.");
+                                }
+                            }} 
+                            className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-lg text-xs font-bold uppercase transition-colors flex items-center gap-2 shadow-lg"
+                        >
+                            <Icons.Copy size={14}/> Copiar al Portapapeles
+                        </button>
+                    </div>
+                </div>
+            </Modal>
           
 
 
@@ -14103,7 +14425,23 @@ const App = () => {
                 
                
        </main>
-            <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase"><div>BoardingGate v2026.6.1</div><div className="flex gap-4"><span>Estado: {syncStatus === 'synced' ? 'Sincronizado en gDrive' : syncStatus === 'unsaved' ? 'Cambios sin guardar en gDrive' : 'Comprobando...'}</span><span>Ult. Mod. Datos Local: {localTimestamp > 0 ? new Date(localTimestamp).toLocaleTimeString() : 'N/A'}</span></div></footer>
+             <footer className="shrink-0 bg-slate-900 border-t border-slate-800 py-1.5 px-6 flex justify-between items-center text-[8px] text-slate-600 font-bold uppercase">
+                <div className="flex items-center gap-4">
+                    <span>BoardingGate v2026.6.1</span>
+                    <button 
+                        onClick={() => setIsLastPromptModalOpen(true)}
+                        className="text-blue-400 hover:text-blue-300 font-bold uppercase cursor-pointer border-l border-slate-800 pl-4 flex items-center gap-1.5 transition-colors"
+                        title="Ver último prompt limpio enviado a la iA"
+                    >
+                        <Icons.Copy size={10} className="inline"/> Último Prompt Ejecutado
+                    </button>
+                </div>
+                <div className="flex gap-4">
+                    <span>Estado: {syncStatus === 'synced' ? 'Sincronizado en gDrive' : syncStatus === 'unsaved' ? 'Cambios sin guardar en gDrive' : 'Comprobando...'}</span>
+                    <span>Ult. Mod. Datos Local: {localTimestamp > 0 ? new Date(localTimestamp).toLocaleTimeString() : 'N/A'}</span>
+                </div>
+            </footer>
+
         </div>
     );
 };
