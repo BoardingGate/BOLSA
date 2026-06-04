@@ -11701,7 +11701,8 @@ const handleManosFuertes = () => {
 
 
 const handleFixedAnalysis = async (promptId) => {
-        if (!apiKey) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
+        const isBypass = aiModel && aiModel.toUpperCase().includes("USAR MODELO EXTERNO");
+        if (!apiKey && !isBypass) return setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key', type: 'error' });
         if (!ticker) return setStatusModal({ isOpen: true, title: 'Aviso', msg: 'Introduce un Ticker', type: 'info' });
 
         setLoading(true); 
@@ -11719,29 +11720,47 @@ const handleFixedAnalysis = async (promptId) => {
             let multiEntityContext = "";
 
             const scriptUrl = typeof gScriptUrl !== 'undefined' ? simpleDecrypt(gScriptUrl) : null;
+            
             if (scriptUrl) {
                 try {
                     setLoadingText('Conectando con mercados (Precios en tiempo real)...');
                     setLoadingProgress(10);
                     const res = await fetch(`${scriptUrl}?anchor=true&ticker=${encodeURIComponent(ticker)}&_t=${Date.now()}`);
-                   
                     const json = await res.json();
-                    hardData = json[ticker];
+                    hardData = json; 
                     if (hardData && hardData.success) {
                         anchorContext = `
                         ╔═══════════════════════════════════════════╗
                           DATOS ANCLA VERIFICADOS POR EL SISTEMA   
                         ╚═══════════════════════════════════════════╝
                         - PRECIO ACTUAL: ${hardData.p}
-                        - MARKET CAP: ${hardData.mc || 'N/D'}
-                        - PER (P/E): ${hardData.pe || 'N/D'}
-                        - BPA (EPS): ${hardData.eps || 'N/D'}
-                        - YIELD DIVIDENDO: ${hardData.div ? hardData.div + '%' : 'N/D'}
-                        - BETA: ${hardData.beta || 'N/D'}
-                        - RANGO 52 SEM: ${hardData.h52 || 'N/D'}
+                        - MARKET CAP: ${hardData.mc}
+                        - PER (P/E): ${hardData.pe}
+                        - BPA (EPS): ${hardData.eps}
+                        - YIELD DIVIDENDO: ${hardData.div}%
+                        - BETA: ${hardData.beta}
+                        - RANGO 52 SEM: ${hardData.h52}
                         `;
                     }
-                } catch (e) { console.warn("Script no disponible."); }
+                } catch (e) { console.warn("Script no disponible o error al recuperar datos ancla."); }
+            }
+
+            // FALLBACK LOCAL: Si no tienes el script de Google configurado o falla, usamos los datos locales de tu portafolio
+            if (!anchorContext) {
+                const localAsset = portfolio.find(p => p.ticker.toUpperCase() === ticker.toUpperCase());
+                if (localAsset) {
+                    const lPrice = localAsset.currentPrice || localAsset.buyPrice || 0;
+                    const lYield = lPrice > 0 ? ((localAsset.annualDividend / lPrice) * 100).toFixed(2) : "0.00";
+                    anchorContext = `
+                    ╔═══════════════════════════════════════════╗
+                      DATOS ANCLA (LOCALES DE TU CARTERA)      
+                    ╚═══════════════════════════════════════════╝
+                    - PRECIO ACTUAL: ${lPrice}
+                    - PER (P/E): ${localAsset.currentPE || 'N/D'}
+                    - YIELD DIVIDENDO: ${lYield}%
+                    - GRUPO/ESTRATEGIA: ${localAsset.group || 'N/D'}
+                    `;
+                }
             }
 
             if (MULTI_ENTITY_REPORTS.includes(promptId)) {
@@ -11763,7 +11782,6 @@ const handleFixedAnalysis = async (promptId) => {
                 } catch (e) { console.warn("Fase 0 multi-entidad no completada:", e.message); }
             }
 
-            // INDICADOR FASE FINAL
             setLoadingText('Fase Final: Analizando métricas y redactando el informe completo...');
             let currentPct = loadingProgress > 45 ? loadingProgress : 45;
             startProgressSimulation(currentPct, 98, 1500); 
@@ -11819,7 +11837,6 @@ const handleFixedAnalysis = async (promptId) => {
             stopProgressSimulation();
             setStatusModal({ isOpen: true, title: 'Fallo', msg: e.message, type: 'error' });
         } finally {
-            // Damos 500ms extra para que el usuario vea el 100% y el mensaje "¡Completado!" antes de que el modal desaparezca
             setTimeout(() => {
                 setLoading(false);
             }, 600);
@@ -14191,9 +14208,9 @@ const App = () => {
                         A continuación se expone la última consulta estructurada con los datos de tu cartera, optimizada para copiar al portapapeles.
                     </p>
                     
-                    <div className="bg-yellow-950/20 border border-yellow-600/30 p-3 rounded-xl text-[10px] text-yellow-300 leading-snug">
+                    <div className="bg-yellow-950/20 border border-yellow-600/30 p-3 rounded-xl text-[11px] text-yellow-300 leading-snug">
                         💡 <strong>TIP DE INTEGRACIÓN (MODELO EXTERNO):</strong> Si quieres generar y copiar tus prompts 
-                        <strong>sin realizar ni esperar la petición de pago vía API</strong>, ve a Ajustes y añade/crea un modelo 
+                        <strong> sin realizar ni esperar la petición de pago vía API</strong>, ve a Ajustes y añade/crea un modelo 
                         llamado exactamente <span className="font-mono bg-slate-950 px-1.5 py-0.5 rounded text-white font-bold">USAR MODELO EXTERNO</span>. 
                         Al tenerlo seleccionado, el sistema interceptará la llamada para abrirte este visor de forma instantánea, permitiéndote copiar el prompt sin esperas ni costes.
                     </div>
