@@ -7473,8 +7473,7 @@ const handleSellSubmit = () => {
             // Retiramos el registro de la venta
             updatedPortfolio = updatedPortfolio.filter(p => p.id !== soldItem.id);
         } else {
-            // Fallback si por error se eliminó la original
-            const restoredActiveItem = {
+           const restoredActiveItem = {
                 ...soldItem,
                 id: originalId || Date.now(),
                 sellDate: '',
@@ -7488,11 +7487,44 @@ const handleSellSubmit = () => {
             updatedPortfolio = portfolio.filter(p => p.id !== soldItem.id).concat(restoredActiveItem);
         }
 
-        // updatePortfolio en App se ejecutará automáticamente guardando y sincronizando
         setPortfolio(updatedPortfolio);
         setInfoModal({ isOpen: true, title: 'Venta Anulada', msg: 'La venta ha sido anulada con éxito y el activo ha regresado a su estado original.', type: 'success' });
     };
 
+
+   const handleCalculateUnitSellPrice = (e) => {
+        e.preventDefault();
+        const totalValStr = prompt("Introduce el importe total NETO cobrado en tu cuenta (en tu divisa base, ej. €):");
+        if (totalValStr === null) return; // Cancelado por el usuario
+        
+        const totalVal = parseFloat(totalValStr.replace(',', '.'));
+        if (isNaN(totalVal) || totalVal <= 0) {
+            alert("Por favor, introduce un importe numérico válido mayor que 0.");
+            return;
+        }
+
+        const s = parseFloat(sellForm.sharesToSell) || 0;
+        const f = parseFloat(sellForm.sellFx) || 1;
+        const fees = parseFloat(sellForm.sellFees) || 0;
+        const adj = parseFloat(sellForm.sellAdjustments) || 0;
+
+        if (s <= 0) {
+            alert("Por favor, introduce primero el número de acciones a vender.");
+            return;
+        }
+        if (f <= 0) {
+            alert("El tipo de cambio (FX) debe ser mayor que 0.");
+            return;
+        }
+
+       const feesToSubtract = sellForm.sellFeesIncludedInPrice ? 0 : (fees + adj);
+        const calculatedPrice = (totalVal + feesToSubtract) / (s * f);
+
+        setSellForm({
+            ...sellForm,
+            sellPrice: Math.round(calculatedPrice * 1000000) / 1000000 // Redondeo de precisión a 6 decimales
+        });
+    };
 
     const handlePrintAI = () => { 
         const printWindow = window.open('', '', 'height=800,width=800'); 
@@ -9294,12 +9326,34 @@ const handleSellSubmit = () => {
                         <div><label className="text-[10px] uppercase font-bold text-slate-500">Fecha Venta</label><input type="date" value={sellForm.sellDate} onChange={e=>setSellForm({...sellForm, sellDate: e.target.value})} className="w-full font-bold text-sm bg-slate-900 border-slate-700 text-right" /></div>
                         <div><label className="text-[10px] uppercase font-bold text-slate-500">Nº Acciones a Vender</label><input type="text" inputMode="decimal" value={sellForm.sharesToSell === 0 ? '' : sellForm.sharesToSell} onChange={e => { let val = e.target.value.replace(',', '.'); let num = parseFloat(val); if (!isNaN(num) && num > sellItem.shares) { val = sellItem.shares.toString(); } setSellForm({...sellForm, sharesToSell: val}); }} className="w-full font-bold text-sm bg-slate-900 border-slate-700 text-right text-white" /></div>
                     </div>
-                    
+
                     <div className="grid grid-cols-2 gap-4">
-                        <div><label className="text-[10px] uppercase font-bold text-slate-500">Precio Venta</label><input type="text" inputMode="decimal" value={sellForm.sellPrice === 0 ? '' : sellForm.sellPrice} placeholder="0.000" onChange={e=>setSellForm({...sellForm, sellPrice: e.target.value.replace(',', '.')})} className="w-full font-mono text-white text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div>
-                        <div><label className="text-[10px] uppercase font-bold text-slate-500">FX Venta</label><input type="text" inputMode="decimal" value={sellForm.sellFx} onChange={e=>setSellForm({...sellForm, sellFx: e.target.value.replace(',', '.')})} className="w-full font-mono text-white text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div>
-                    </div>
-                    
+                        <div>
+                            <label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">Precio Venta</label>
+                            <div className="flex items-center gap-1">
+                                <input 
+                                    type="text" 
+                                    inputMode="decimal" 
+                                    value={sellForm.sellPrice === 0 ? '' : sellForm.sellPrice} 
+                                    placeholder="0.000" 
+                                    onChange={e=>setSellForm({...sellForm, sellPrice: e.target.value.replace(',', '.')})} 
+                                    className="flex-1 min-w-0 font-mono text-white text-sm font-bold bg-slate-900 border-slate-700 text-right rounded-lg p-2" 
+                                />
+                                <button 
+                                    onClick={handleCalculateUnitSellPrice} 
+                                    className="shrink-0 bg-purple-600 hover:bg-purple-500 text-white px-2.5 py-2 rounded-lg text-sm border border-purple-400 shadow shadow-purple-900/20 active:scale-95 transition-all"
+                                    title="Calcular precio unitario a partir del neto total cobrado"
+                                >
+                                    🪄
+                                </button>
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-[10px] uppercase font-bold text-slate-500 mb-1 block">FX Venta</label>
+                            <input type="text" inputMode="decimal" value={sellForm.sellFx} onChange={e=>setSellForm({...sellForm, sellFx: e.target.value.replace(',', '.')})} className="w-full font-mono text-white text-sm font-bold bg-slate-900 border-slate-700 text-right rounded-lg p-2" />
+                        </div>
+                    </div>                      
+                                      
                     <div className="grid grid-cols-2 gap-4">
                         <div><label className="text-[10px] uppercase font-bold text-slate-500">Gastos Broker</label><input type="text" inputMode="decimal" value={sellForm.sellFees === 0 ? '' : sellForm.sellFees} placeholder="0.00" onChange={e=>setSellForm({...sellForm, sellFees: e.target.value.replace(',', '.')})} className="w-full font-mono text-white text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div>
                         <div><label className="text-[10px] uppercase font-bold text-slate-500">Ajustes Venta</label><input type="text" inputMode="decimal" value={sellForm.sellAdjustments === 0 ? '' : sellForm.sellAdjustments} placeholder="0.00" onChange={e=>setSellForm({...sellForm, sellAdjustments: e.target.value.replace(',', '.')})} className="w-full font-mono text-white text-sm font-bold bg-slate-900 border-slate-700 text-right" /></div>
@@ -9365,7 +9419,20 @@ const handleSellSubmit = () => {
                         );
                     })()}
            
-                    <button onClick={handleSellSubmit} className="w-full bg-green-600 py-4 rounded-xl font-black uppercase shadow-lg text-xs tracking-widest border-t-2 border-white/10 hover:bg-green-500 transition-colors">Confirmar Operación</button>
+                  <div className="flex gap-4 pt-2">
+                        <button 
+                            onClick={(e) => { e.preventDefault(); setIsSellModalOpen(false); }} 
+                            className="w-1/3 bg-slate-800 hover:bg-slate-700 py-4 rounded-xl font-black uppercase shadow-lg transition-all text-xs tracking-widest border border-slate-700 text-slate-300 active:scale-95"
+                        >
+                            Cancelar
+                        </button>
+                        <button 
+                            onClick={handleSellSubmit} 
+                            className="w-2/3 bg-green-600 hover:bg-green-500 py-4 rounded-xl font-black uppercase shadow-lg text-xs tracking-widest border-t-2 border-white/10 hover:shadow-green-900/20 transition-all text-white active:scale-95"
+                        >
+                            Confirmar Operación
+                        </button>
+                    </div>
                 </div>
             </Modal>
 
