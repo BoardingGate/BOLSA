@@ -5229,6 +5229,7 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCu
     const [inflacionData, setInflacionData] = usePersistentState('bg_inflacion_data', { val: 0, sp500: 0, ibex: 0, lastCalc: 0 });  
     const [simulationMode, setSimulationMode] = usePersistentState('bg_sim_mode', 'off'); // 'off', 'target', 'stop'
     const [isTimelineModalOpen, setIsTimelineModalOpen] = useState(false);
+    const [showOrdMenu, setShowOrdMenu] = useState(false);
 
     const [liveUsdRate, setLiveUsdRate] = useState(null);
 
@@ -5256,7 +5257,10 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCu
    const [activeMenuId, setActiveMenuId] = useState(null);
 
     useEffect(() => {
-        const closeMenu = () => setActiveMenuId(null);
+        const closeMenu = () => {
+            setActiveMenuId(null);
+            setShowOrdMenu(false); 
+        };
         window.addEventListener('click', closeMenu);
         return () => window.removeEventListener('click', closeMenu);
     }, []);
@@ -5274,6 +5278,37 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCu
     const [calculatedIntrinsic, setCalculatedIntrinsic] = useState(0);
     const [isCalculatingDcf, setIsCalculatingDcf] = useState(false);
 
+const handleClearInactiveOrder = () => {
+        const updated = portfolio.map(p => {
+           if (p.sellDate || p.isActive === false) {
+                return { ...p, customOrder: '' };
+            }
+            return p;
+        });
+        setPortfolio(updated);
+        setInfoModal({ isOpen: true, title: 'Orden Limpiado', msg: 'Se ha eliminado el número de orden de todas las posiciones inactivas y vendidas.', type: 'success' });
+    };
+
+    const handleRemoveGaps = () => {
+        const activeDisplayed = filteredPortfolio.filter(p => !p.sellDate && p.isActive !== false);
+        
+       const orderMap = new Map();
+        activeDisplayed.forEach((p, idx) => {
+            const newSeq = String(idx + 1).padStart(2, '0');
+            orderMap.set(p.id, newSeq);
+        });
+
+        const updated = portfolio.map(p => {
+            if (orderMap.has(p.id)) {
+                return { ...p, customOrder: orderMap.get(p.id) };
+            }
+            return p;
+        });
+
+        setPortfolio(updated);
+        setInfoModal({ isOpen: true, title: 'Secuencia Aplicada', msg: 'Se han reenumerado secuencialmente todos tus activos en pantalla evitando huecos (01, 02, 03...).', type: 'success' });
+    };
+
 const formatAbbreviated = (value, currency = "") => {
     if (value === null || value === undefined || isNaN(value) || value === 0) return "0";
     const absVal = Math.abs(value);
@@ -5289,8 +5324,7 @@ const formatAbbreviated = (value, currency = "") => {
     } else if (absVal >= 1.0e6) {
         formatted = value / 1.0e6;
         suffix = " M"; // Millions (Millones)
-    }
-    
+    }    
     return `~ ${new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(formatted)}${suffix} ${currency}`.trim();
 };
 
@@ -7938,7 +7972,7 @@ const handleSellSubmit = () => {
                                         <button onClick={(e) => { e.stopPropagation(); setEditingId(null); setForm({ ticker:'', name:'', group: '', notes: '', customOrder:'', isIndex:false, indexDivisor:1, shares:0, buyPrice:0, buyDate:new Date().toISOString().slice(0,10), stockCurrency:baseCurrency, buyFx:1, fees:0, adjustments:0, feesIncludedInPrice: false, buyPE:0, annualDividend:0, sellPrice:0, sellDate:'', sellFx:1, sellFees:0, sellAdjustments:0, sellFeesIncludedInPrice: false, currentPE:0, dividends: [], custodyFees: [], lots:[], targetPrice: 0, stopLossPrice: 0 }); setShowDivBreakdown(false); setIsModalOpen(true); }} className="bg-blue-600 hover:bg-blue-500 text-white py-1 px-2 rounded border border-white/20 shadow-lg flex items-center gap-1 active:scale-95 transition-all"><Icons.Plus size={10}/><span className="text-[8px] font-black tracking-tighter">APUNTE</span></button> 
                                     </div>
                                 </th>
-                                <th className={`py-2 px-2 min-w-[20px] text-center cursor-pointer border-r border-slate-800 border-b border-b-slate-400 bg-slate-800 sticky top-0 z-[90] ${sortConfig.key==='customOrder'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('customOrder')}>Ord {sortConfig.key==='customOrder' && (sortConfig.direction==='asc'?'▲':'▼')}</th>
+                                <th className={`py-2 px-2 min-w-[65px] text-center border-r border-slate-800 border-b border-b-slate-400 bg-slate-800 sticky top-0 z-[90] ${sortConfig.key==='customOrder'?'bg-slate-700 text-white':''}`}>                                     <div className="flex items-center justify-center gap-1">                                         <span className="cursor-pointer" onClick={() => requestSort('customOrder')}>                                             Ord {sortConfig.key==='customOrder' && (sortConfig.direction==='asc'?'▲':'▼')}                                         </span>                                         <div className="relative inline-block text-left" onClick={e => e.stopPropagation()}>                                             <button                                                  onClick={() => setShowOrdMenu(!showOrdMenu)}                                                  className="text-slate-400 hover:text-white focus:outline-none p-0.5 rounded hover:bg-slate-700"                                                 title="Opciones de Ordenación"                                             >                                                 <svg viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5">                                                     <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" />                                                 </svg>                                             </button>                                             {showOrdMenu && (                                                 <div className="absolute left-1/2 -translate-x-1/2 mt-1 w-48 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl z-[120] p-1 flex flex-col gap-0.5 text-left font-sans">                                                     <button                                                          onClick={() => { setShowOrdMenu(false); handleClearInactiveOrder(); }}                                                          className="w-full px-2.5 py-2 text-[9px] font-bold text-slate-300 hover:bg-slate-800 rounded-lg transition-colors text-left whitespace-normal leading-tight"                                                     >                                                         🧹 Limpiar orden a no activos / vendidos                                                     </button>                                                     <button                                                          onClick={() => { setShowOrdMenu(false); handleRemoveGaps(); }}                                                          className="w-full px-2.5 py-2 text-[9px] font-bold text-slate-300 hover:bg-slate-800 rounded-lg transition-colors text-left whitespace-normal leading-tight"                                                     >                                                         🔢 Sacar huecos (Secuencial)                                                     </button>                                                 </div>                                             )}                                         </div>                                     </div>                                 </th>
                                 
                                 {!simplifiedMode && <th className={`py-2 px-2 text-center cursor-pointer group bg-slate-800 sticky top-0 z-[85] border-b border-b-slate-400 min-w-[93px] ${sortConfig.key==='date'?'bg-slate-700 text-white':''}`} onClick={()=>requestSort('date')}><div className="flex items-center justify-center gap-1"><Icons.CursorClick size={12} className={`text-blue-400 opacity-40 group-hover:opacity-100 ${sortConfig.key==='date'?'opacity-100':''}`}/> Fechas / Días {sortConfig.key==='date' && (sortConfig.direction==='asc'?'▲':'▼')}</div></th>}
 
