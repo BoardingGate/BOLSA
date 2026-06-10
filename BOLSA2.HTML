@@ -5230,6 +5230,8 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCu
     const [simulationMode, setSimulationMode] = usePersistentState('bg_sim_mode', 'off'); // 'off', 'target', 'stop'
     const [isTimelineModalOpen, setIsTimelineModalOpen] = useState(false);
     const [showOrdMenu, setShowOrdMenu] = useState(false);
+     const [isSellCalcModalOpen, setIsSellCalcModalOpen] = useState(false);
+    const [tempTotalSellValue, setTempTotalSellValue] = useState('');
 
     const [liveUsdRate, setLiveUsdRate] = useState(null);
 
@@ -7492,12 +7494,15 @@ const handleSellSubmit = () => {
     };
 
 
-   const handleCalculateUnitSellPrice = (e) => {
+  const handleOpenCalculateUnitSellPrice = (e) => {
         e.preventDefault();
-        const totalValStr = prompt("Introduce el importe total NETO cobrado en tu cuenta (en tu divisa base, ej. €):");
-        if (totalValStr === null) return; // Cancelado por el usuario
-        
-        const totalVal = parseFloat(totalValStr.replace(',', '.'));
+        setTempTotalSellValue('');
+        setIsSellCalcModalOpen(true);
+    };
+
+    const handleApplyTotalSellValue = (e) => {
+        e.preventDefault();
+        const totalVal = parseFloat(tempTotalSellValue.replace(',', '.'));
         if (isNaN(totalVal) || totalVal <= 0) {
             alert("Por favor, introduce un importe numérico válido mayor que 0.");
             return;
@@ -7517,13 +7522,15 @@ const handleSellSubmit = () => {
             return;
         }
 
-       const feesToSubtract = sellForm.sellFeesIncludedInPrice ? 0 : (fees + adj);
+        // Si los gastos no están incluidos en el precio, los sumamos al total neto para obtener el bruto necesario
+        const feesToSubtract = sellForm.sellFeesIncludedInPrice ? 0 : (fees + adj);
         const calculatedPrice = (totalVal + feesToSubtract) / (s * f);
 
         setSellForm({
             ...sellForm,
             sellPrice: Math.round(calculatedPrice * 1000000) / 1000000 // Redondeo de precisión a 6 decimales
         });
+        setIsSellCalcModalOpen(false); // Cierra el modal de cálculo
     };
 
     const handlePrintAI = () => { 
@@ -9339,8 +9346,8 @@ const handleSellSubmit = () => {
                                     onChange={e=>setSellForm({...sellForm, sellPrice: e.target.value.replace(',', '.')})} 
                                     className="flex-1 min-w-0 font-mono text-white text-sm font-bold bg-slate-900 border-slate-700 text-right rounded-lg p-2" 
                                 />
-                                <button 
-                                    onClick={handleCalculateUnitSellPrice} 
+                               <button 
+                                    onClick={handleOpenCalculateUnitSellPrice} 
                                     className="shrink-0 bg-purple-600 hover:bg-purple-500 text-white px-2.5 py-2 rounded-lg text-sm border border-purple-400 shadow shadow-purple-900/20 active:scale-95 transition-all"
                                     title="Calcular precio unitario a partir del neto total cobrado"
                                 >
@@ -9470,6 +9477,47 @@ const handleSellSubmit = () => {
                         className="w-full flex-grow min-h-[650px] bg-slate-950 border border-slate-700 rounded-xl p-4 text-sm text-slate-200 font-sans leading-relaxed focus:border-yellow-500/50 focus:outline-none custom-scrollbar shadow-inner"
                     />
                     <div className="flex justify-between items-center bg-slate-800/30 p-3 rounded-lg border border-slate-700"><span className="text-[9px] text-slate-500 italic">* Estas notas se sincronizan automáticamente con tu copia en la nube.</span><button onClick={() => { onManualSync(); setIsNotesModalOpen(false); }} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-bold text-[10px] uppercase transition-colors">Guardar y Sincronizar</button></div>
+                </div>
+            </Modal>
+
+            {/* MODAL INTEGRADO: CALCULADORA DE PRECIO DE VENTA UNITARIO */}
+            <Modal 
+                isOpen={isSellCalcModalOpen} 
+                title="Calcular Precio Unitario de Venta" 
+                onClose={() => setIsSellCalcModalOpen(false)} 
+                size="sm"
+            >
+                <div className="space-y-4 p-1">
+                    <div className="bg-purple-900/10 border border-purple-500/30 p-3 rounded-xl text-[10px] text-purple-200 leading-relaxed">
+                        Introduce el importe neto real que has recibido o vas a recibir en tu cuenta. El sistema descontará automáticamente las comisiones y ajustes configurados en el panel anterior para hallar el precio unitario exacto.
+                    </div>
+                    <div>
+                        <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1.5">Importe Neto Total Cobrado ({baseCurrency})</label>
+                        <input 
+                            type="text" 
+                            inputMode="decimal"
+                            value={tempTotalSellValue} 
+                            onChange={e => setTempTotalSellValue(e.target.value)} 
+                            placeholder="0.00" 
+                            className="w-full bg-slate-950 border-slate-700 rounded-lg p-3 text-white text-center font-mono font-black text-xl focus:border-purple-500 outline-none"
+                            autoFocus
+                        />
+                    </div>
+                    <div className="flex gap-2 pt-2">
+                        <button 
+                            onClick={() => setIsSellCalcModalOpen(false)} 
+                            className="flex-1 bg-slate-800 hover:bg-slate-700 py-3 rounded-xl font-bold uppercase text-[10px] text-slate-300 border border-slate-700 active:scale-95 transition-all"
+                        >
+                            Cancelar
+                        </button>
+                        <button 
+                            onClick={handleApplyTotalSellValue} 
+                            disabled={!tempTotalSellValue}
+                            className="flex-1 bg-purple-600 hover:bg-purple-500 disabled:opacity-40 py-3 rounded-xl font-bold text-white uppercase text-[10px] active:scale-95 transition-all"
+                        >
+                            Aplicar Cálculo
+                        </button>
+                    </div>
                 </div>
             </Modal>
 
