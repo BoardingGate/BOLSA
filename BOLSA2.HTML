@@ -7363,6 +7363,103 @@ const handleSellSubmit = () => {
         setInfoModal({ isOpen: true, title: 'Operación Registrada', msg: 'Venta procesada con éxito y cartera sincronizada.', type: 'success' });
     };
 
+    const handleUndoSell = (soldItem) => {
+        if (!soldItem || !soldItem.sellDate) return;
+        
+        if (!confirm(`¿Estás seguro de que deseas ANULAR la venta de ${soldItem.shares} acciones de ${soldItem.name}?\n\nEsta acción reintegrará los lotes y los dividendos a la posición activa original.`)) return;
+
+        const r2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
+        const r6 = (n) => Math.round((parseFloat(n) || 0) * 1000000) / 1000000;
+
+        const originalId = soldItem.originalId;
+        const originalExists = portfolio.some(p => p.id === originalId);
+
+        let updatedPortfolio = [];
+
+        if (originalExists) {
+            updatedPortfolio = portfolio.map(p => {
+                if (p.id === originalId) {
+                    if (soldItem.isPartialSale) {
+                        // Venta Parcial: Devolvemos lotes retirados y recalculamos el promedio ponderado
+                        const restoredLots = [...(p.lots || []), ...(soldItem.lots || [])];
+                        restoredLots.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+                        let tShares = 0, tCostStockCurr = 0, tCostBaseCurr = 0, tFees = 0, tAdj = 0, tPE = 0, oldestDate = null;
+                        restoredLots.forEach(l => { 
+                            const s = parseFloat(l.shares) || 0; 
+                            const pr = parseFloat(l.price) || 0; 
+                            const fx = parseFloat(l.fx) || 1; 
+                            tShares += s; 
+                            tCostStockCurr += (s * pr); 
+                            tCostBaseCurr += (s * pr * fx); 
+                            tFees += (parseFloat(l.fees) || 0); 
+                            tAdj += (parseFloat(l.adj) || 0); 
+                            tPE += (s * (parseFloat(l.pe) || 0)); 
+                            if (l.date && (!oldestDate || new Date(l.date) < new Date(oldestDate))) oldestDate = l.date; 
+                        });
+
+                        const newPrice = tShares > 0 ? tCostStockCurr / tShares : p.buyPrice;
+                        const newFx = tCostStockCurr > 0 ? tCostBaseCurr / tCostStockCurr : p.buyFx;
+                        const newPE = tShares > 0 ? tPE / tShares : p.buyPE;
+
+                        return {
+                            ...p,
+                            isActive: true,
+                            lots: restoredLots,
+                            shares: r6(tShares),
+                            buyPrice: r6(newPrice),
+                            buyFx: r6(newFx),
+                            buyPE: r2(newPE),
+                            fees: r2(tFees),
+                            adjustments: r2(tAdj),
+                            buyDate: oldestDate || p.buyDate,
+                            notes: (p.notes || '') + `\n\n--- Venta parcial de ${formatN(soldItem.shares)} acc. anulada el ${new Date().toLocaleDateString('es-ES')} ---`
+                        };
+                    } else {
+                        // Venta Completa: Reactivamos la ficha original (isActive: true)
+                        const combinedDividends = [...(p.dividends || []), ...(soldItem.dividends || [])];
+                        const uniqueDividendsMap = {};
+                        combinedDividends.forEach(d => {
+                            const key = `${d.year}-${d.month}-${d.net}`;
+                            uniqueDividendsMap[key] = d;
+                        });
+                        const restoredDividends = Object.values(uniqueDividendsMap);
+
+                        return {
+                            ...p,
+                            isActive: true,
+                            dividends: restoredDividends,
+                            notes: (p.notes || '') + `\n\n--- Venta completa anulada el ${new Date().toLocaleDateString('es-ES')} ---`
+                        };
+                    }
+                }
+                return p;
+            });
+
+            // Retiramos el registro de la venta
+            updatedPortfolio = updatedPortfolio.filter(p => p.id !== soldItem.id);
+        } else {
+            // Fallback si por error se eliminó la original
+            const restoredActiveItem = {
+                ...soldItem,
+                id: originalId || Date.now(),
+                sellDate: '',
+                sellPrice: 0,
+                sellFx: 1,
+                sellFees: 0,
+                sellAdjustments: 0,
+                isActive: true,
+                notes: (soldItem.notes || '') + `\n\n--- Venta de ${formatN(soldItem.shares)} acc. anulada (Ficha reconstruida) el ${new Date().toLocaleDateString('es-ES')} ---`
+            };
+            updatedPortfolio = portfolio.filter(p => p.id !== soldItem.id).concat(restoredActiveItem);
+        }
+
+        // updatePortfolio en App se ejecutará automáticamente guardando y sincronizando
+        setPortfolio(updatedPortfolio);
+        setInfoModal({ isOpen: true, title: 'Venta Anulada', msg: 'La venta ha sido anulada con éxito y el activo ha regresado a su estado original.', type: 'success' });
+    };
+
+
     const handlePrintAI = () => { 
         const printWindow = window.open('', '', 'height=800,width=800'); 
         const time = new Date().toLocaleString(); 
