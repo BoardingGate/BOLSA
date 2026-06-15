@@ -3630,7 +3630,7 @@ function fetchStockData(tickersString) {
     var yahooTicker = convertToYahoo(rawTicker);
     var url = "https://query1.finance.yahoo.com/v8/finance/chart/" + 
               encodeURIComponent(yahooTicker) + 
-              "?interval=1d&range=2d&includePrePost=true";
+              "?interval=1d&range=5d&includePrePost=true";
     requests.push({
       url: url,
       method: "GET",
@@ -3654,11 +3654,29 @@ function fetchStockData(tickersString) {
     if (code === 200) {
       try {
         var json = JSON.parse(responses[j].getContentText());
-        var meta = json.chart.result[0].meta;        
-        var p = meta.preMarketPrice || meta.regularMarketPrice || meta.postMarketPrice || 0;
+        var resultObj = json.chart.result[0];
+        var meta = resultObj.meta;        
         
-        // Se prioriza el cierre de la última sesión regular para evitar el desfase del rango de 2 días
+       var p = meta.preMarketPrice || meta.regularMarketPrice || meta.postMarketPrice || 0;
         var pc = meta.regularMarketPreviousClose || meta.previousClose || meta.chartPreviousClose || 0;
+        
+       try {
+          var quote = resultObj.indicators.quote[0];
+          if (quote && quote.close && quote.close.length > 0) {
+           var closes = quote.close.filter(function(v) { 
+              return v !== null && v !== undefined && typeof v === 'number' && v > 0; 
+            });
+            
+            if (closes.length >= 2) {
+              p = closes[closes.length - 1];   // Último precio real registrado
+              pc = closes[closes.length - 2];  // Cierre de la sesión de bolsa inmediatamente anterior
+            } else if (closes.length === 1) {
+              p = closes[0];
+            }
+          }
+        } catch (errQuote) {
+          Logger.log("Incapaz de extraer serie temporal para " + rawTicker + ": " + errQuote.toString());
+        }
 
         if (p > 0) {
           res.p = p;
