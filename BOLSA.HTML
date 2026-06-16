@@ -1,4 +1,4 @@
-<!DOCTYPE html>        
+<!DOCTYPE html>   
 <html lang="es">  
  
 <head> 
@@ -5289,6 +5289,48 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCu
     const [manualIntrinsicDate, setManualIntrinsicDate] = useState('');
     const [intrinsicPopupItem, setIntrinsicPopupItem] = useState(null);
 
+
+// NUEVO ESTADO Y CÁLCULO PARA LAS ALERTAS DE MARGEN DE SEGURIDAD MERMADO
+    const [isMarginAlertModalOpen, setIsMarginAlertModalOpen] = useState(false);
+
+    const marginAlertStocks = useMemo(() => {
+        return portfolio.filter(p => {
+            if (p.sellDate || p.isActive === false) return false;
+            
+            const mIntrinsic = parseFloat(p.manualIntrinsic) || 0;
+            if (mIntrinsic <= 0) return false;
+            
+            const curP = p.isIndex ? (p.currentPrice / (p.indexDivisor || 1)) : p.currentPrice;
+            const buyP = parseFloat(p.buyPrice) || 0;
+            
+            if (buyP <= 0 || curP <= 0) return false;
+            
+            const mOriginal = ((mIntrinsic - buyP) / mIntrinsic) * 100;
+            const mCurrent = ((mIntrinsic - curP) / mIntrinsic) * 100;
+            
+            // Considerar únicamente si compramos por debajo del valor intrínseco (margen de compra positivo)
+            if (mOriginal <= 0) return false;
+            
+            return mCurrent < (mOriginal / 4);
+        }).map(p => {
+            const mIntrinsic = parseFloat(p.manualIntrinsic) || 0;
+            const curP = p.isIndex ? (p.currentPrice / (p.indexDivisor || 1)) : p.currentPrice;
+            const buyP = parseFloat(p.buyPrice) || 0;
+            const mOriginal = ((mIntrinsic - buyP) / mIntrinsic) * 100;
+            const mCurrent = ((mIntrinsic - curP) / mIntrinsic) * 100;
+            const daysInPortfolio = calculateDays(p.buyDate, new Date());
+            
+            return {
+                ...p,
+                curP,
+                buyP,
+                mOriginal,
+                mCurrent,
+                daysInPortfolio
+            };
+        });
+    }, [portfolio]);
+
    const [activeMenuId, setActiveMenuId] = useState(null);
 
     useEffect(() => {
@@ -8670,22 +8712,40 @@ const handleSellSubmit = () => {
                                             const marginBuyPct = (sumIntrinsicValBase > 0) ? (diffBuyBase / sumIntrinsicValBase) * 100 : 0;
                                             
                                             const isUndervalued = diffBase >= 0;
-               
-                                            return (
-                                                <div className="flex flex-col items-center justify-center leading-none py-0.5">
-                                                    <div className={`text-[7px] font-black tracking-wider ${isUndervalued ? 'text-green-400' : 'text-red-400'}`}>
-                                                        {isUndervalued ? 'CARTERA INFRAVALORADA' : 'CARTERA SOBREVALORADA'} ({countWithIntrinsic})
-                                                    </div>
-                                                    <div className="text-[7px] font-mono font-bold text-white mt-0.5">
-                                                        {isUndervalued ? '+' : ''}{formatMoney(diffBase, baseCurrency)}
-                                                    </div>
-                                                    <div className="text-[9px] font-mono font-bold mt-1 text-slate-300">
-                                                        Margen Seg. Hoy: <span className={marginPct >= 0 ? 'text-green-400' : 'text-red-400'}>{marginPct >= 0 ? '+' : ''}{formatN(marginPct, 1)}%</span>
-                                                        <span className="mx-1.5 text-slate-600">|</span>
-                                                        Compra: <span className={marginBuyPct >= 0 ? 'text-green-400' : 'text-red-400'}>{marginBuyPct >= 0 ? '+' : ''}{formatN(marginBuyPct, 1)}%</span>
-                                                    </div>  
-                                                </div>
-                                            );
+
+                                           return (
+                                               <div className="flex flex-col items-center justify-center leading-none py-0.5">
+                                                   <div className={`text-[7px] font-black tracking-wider ${isUndervalued ? 'text-green-400' : 'text-red-400'} flex items-center gap-1.5`}>
+                                                       {isUndervalued ? 'CARTERA INFRAVALORADA' : 'CARTERA SOBREVALORADA'} ({countWithIntrinsic})
+                                                       
+                                                  <button 
+                                                      onClick={(e) => { e.stopPropagation(); setIsMarginAlertModalOpen(true); }}
+                                                      className={`inline-flex items-center justify-center p-1 rounded-lg transition-all relative ${
+                                                          marginAlertStocks.length > 0 
+                                                              ? 'hover:bg-amber-500/10 text-amber-400' 
+                                                              : 'opacity-40 hover:opacity-100 text-slate-500'
+                                                      }`}
+                                                      title="Ver alertas de consumo de margen"
+                                                  >
+                                                      <span className={`text-sm ${marginAlertStocks.length > 0 ? 'animate-pulse' : ''}`}>⚠️</span>
+                                                      {marginAlertStocks.length > 0 && (
+                                                          <span className="absolute -top-0.5 -right-1.5 bg-amber-500 text-slate-950 font-black text-[7px] w-3 h-3 rounded-full flex items-center justify-center leading-none border border-slate-900 shadow">
+                                                              {marginAlertStocks.length}
+                                                          </span>
+                                                      )}
+                                                  </button>
+                                                   </div>
+                                                   <div className="text-[7px] font-mono font-bold text-white mt-0.5">
+                                                       {isUndervalued ? '+' : ''}{formatMoney(diffBase, baseCurrency)}
+                                                   </div>
+                                                   <div className="text-[9px] font-mono font-bold mt-1 text-slate-300">
+                                                       Margen Seg. Hoy:<span className={marginPct >= 0 ? 'text-green-400' : 'text-red-400'}>{marginPct >= 0 ? '+' : ''}{formatN(marginPct, 1)}%</span>
+                                                       <span className="mx-1.5 text-slate-600">|</span>
+                                                       Compra:<span className={marginBuyPct >= 0 ? 'text-green-400' : 'text-red-400'}>{marginBuyPct >= 0 ? '+' : ''}{formatN(marginBuyPct, 1)}%</span>
+                                                   </div>  
+                                               </div>
+                                           );              
+                             
                                         })()}
                                           </td>
   
@@ -9530,6 +9590,92 @@ const handleSellSubmit = () => {
                         className="w-full flex-grow min-h-[650px] bg-slate-950 border border-slate-700 rounded-xl p-4 text-sm text-slate-200 font-sans leading-relaxed focus:border-yellow-500/50 focus:outline-none custom-scrollbar shadow-inner"
                     />
                     <div className="flex justify-between items-center bg-slate-800/30 p-3 rounded-lg border border-slate-700"><span className="text-[9px] text-slate-500 italic">* Estas notas se sincronizan automáticamente con tu copia en la nube.</span><button onClick={() => { onManualSync(); setIsNotesModalOpen(false); }} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-bold text-[10px] uppercase transition-colors">Guardar y Sincronizar</button></div>
+                </div>
+            </Modal>
+
+           <Modal isOpen={isMarginAlertModalOpen} title="Auditoría de Margen Consumido / Próximo" onClose={() => setIsMarginAlertModalOpen(false)} size="lg">
+                <div className="space-y-4 p-1">
+                    {/* Tarjeta de Recomendación Estratégica */}
+                    <div className="bg-amber-950/20 border-l-4 border-amber-500 p-4 rounded-r-xl text-amber-200 text-xs leading-relaxed font-sans shadow-md">
+                        <strong className="block text-amber-400 mb-1 uppercase tracking-wider text-[11px]">⚠️ RECOMENDACIÓN ESTRATÉGICA</strong>
+                        Las acciones listadas a continuación están próximas a llegar a su valor intrínseco estimado (su margen de seguridad actual ha descendido a menos de una cuarta parte del original). 
+                        Se aconseja encarecidamente:
+                        <ul className="list-disc list-inside mt-2 space-y-1 pl-1">
+                            <li><b>Recalcular el Valor Intrínseco:</b> Evaluar si la tesis de inversión ha mejorado o si existen nuevas proyecciones que justifiquen elevar la valoración.</li>
+                            <li><b>Valorar Rebalanceo:</b> Estudiar si es conveniente rotar los beneficios acumulados hacia otros activos infravalorados de la cartera con mayor margen de seguridad.</li>
+                        </ul>
+                    </div>
+
+                    {/* Tabla de Detalle de Alertas */}
+                    <div className="overflow-x-auto rounded-xl border border-slate-800">
+                        <table className="w-full text-xs text-right border-collapse min-w-[850px]">
+                            <thead className="bg-slate-900 text-[10px] uppercase font-bold text-slate-400">
+                                <tr>
+                                    <th className="p-3 text-left">Valor / Ticker</th>
+                                    <th className="p-3 text-center">Compra</th>
+                                    <th className="p-3 text-center">Días</th>
+                                    <th className="p-3">P. Compra</th>
+                                    <th className="p-3">P. Objetivo</th>
+                                    <th className="p-3">Valor Intrínseco</th>
+                                    <th className="p-3 text-center">Margen Compra</th>
+                                    <th className="p-3 text-center">F. Cálculo</th>
+                                    <th className="p-3 text-center bg-amber-900/25 text-amber-300">Margen Actual</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800 font-mono text-slate-300">
+                                {marginAlertStocks.map(item => (
+                                    <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
+                                        <td className="p-3 text-left font-sans">
+                                            <b className="text-white block text-xs">{item.name}</b>
+                                            <span className="text-[9px] text-slate-500 uppercase">{item.ticker}</span>
+                                        </td>
+                                        <td className="p-3 text-center text-slate-400">
+                                            {item.buyDate ? item.buyDate.split('-').reverse().join('/') : 'N/D'}
+                                        </td>
+                                        <td className="p-3 text-center text-slate-400">
+                                            {item.daysInPortfolio} d
+                                        </td>
+                                        <td className="p-3 font-bold">
+                                            {formatDecimal(item.buyP, 2)} {item.stockCurrency}
+                                        </td>
+                                        <td className="p-3 text-slate-400">
+                                            {parseFloat(item.targetPrice) > 0 
+                                                ? `${formatDecimal(parseFloat(item.targetPrice) / (item.isIndex ? (item.indexDivisor || 1) : 1), 2)} ${item.stockCurrency}` 
+                                                : 'N/D'}
+                                        </td>
+                                        <td className="p-3 text-blue-400 font-bold">
+                                            {formatDecimal(parseFloat(item.manualIntrinsic), 2)} {item.stockCurrency}
+                                        </td>
+                                        <td className="p-3 text-center text-green-400 font-bold">
+                                            +{formatN(item.mOriginal, 1)}%
+                                        </td>
+                                        <td className="p-3 text-center text-slate-500">
+                                            {item.manualIntrinsicDate ? item.manualIntrinsicDate.split('-').reverse().join('/') : 'N/D'}
+                                        </td>
+                                        <td className="p-3 text-center font-bold bg-amber-900/5 text-amber-300">
+                                            {item.mCurrent >= 0 ? '+' : ''}{formatN(item.mCurrent, 1)}%
+                                        </td>
+                                    </tr>
+                                ))}
+                                {marginAlertStocks.length === 0 && (
+                                    <tr>
+                                        <td colSpan="9" className="p-8 text-center text-slate-500 italic font-sans">
+                                            No se han localizado activos en cartera que cumplan con los criterios de alerta de margen de seguridad.
+                                        </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div className="flex justify-end pt-2">
+                        <button 
+                            onClick={() => setIsMarginAlertModalOpen(false)} 
+                            className="bg-slate-800 hover:bg-slate-700 py-2.5 px-6 rounded-xl font-bold uppercase text-xs text-white border border-slate-700 transition-colors shadow-lg active:scale-95"
+                        >
+                            Cerrar
+                        </button>
+                    </div>
                 </div>
             </Modal>
 
