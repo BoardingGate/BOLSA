@@ -479,10 +479,9 @@
               if (data.error) throw new Error(data.error.message);
               return data.choices?.[0]?.message?.content || "";
           }
-      };
-           
+      };           
     
-      const Modal = ({ isOpen, title, onClose, children, size = "md" }) => {
+     const Modal = ({ isOpen, title, onClose, children, size = "md", closeLabel = "" }) => {
           if (!isOpen) return null;
 
           let maxWidth = "max-w-xl"; // default
@@ -495,14 +494,19 @@
                   <div className={`bg-slate-900 border border-slate-700 w-full ${maxWidth} rounded-2xl flex flex-col max-h-[95vh] shadow-2xl fade-in`} onClick={e => e.stopPropagation()}>
                       <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50 rounded-t-2xl">
                           <h3 className="text-lg font-bold font-display text-white">{title}</h3>
-                          <button onClick={onClose} className="text-slate-400 hover:text-white"><Icons.X size={22}/></button>
+                          {closeLabel ? (
+                              <button onClick={onClose} className="bg-red-600 hover:bg-red-500 text-white font-black text-[10px] px-3.5 py-1.5 rounded-lg uppercase tracking-wider transition-colors shadow-lg shrink-0">
+                                  {closeLabel}
+                              </button>
+                          ) : (
+                              <button onClick={onClose} className="text-slate-400 hover:text-white"><Icons.X size={22}/></button>
+                          )}
                       </div>
                       <div className="p-6 overflow-y-auto custom-scrollbar flex-1">{children}</div>
                   </div>
               </div>
           );
-      };
-  
+      }; 
 
 
       const _0x8f = (k) => {
@@ -9552,7 +9556,7 @@ const handleSellSubmit = () => {
                 </div>
             </Modal>
 
-         {/* MODAL EMERGENTE: DETALLE DE MARGEN DE SEGURIDAD MANUAL */}
+            {/* MODAL EMERGENTE: DETALLE DE MARGEN DE SEGURIDAD MANUAL */}
             <Modal 
                 isOpen={!!intrinsicPopupItem} 
                 title={`Análisis de Margen: ${intrinsicPopupItem?.ticker}`} 
@@ -9564,6 +9568,7 @@ const handleSellSubmit = () => {
                     const mIntrinsic = parseFloat(p.manualIntrinsic) || 0;
                     const mDate = p.manualIntrinsicDate ? p.manualIntrinsicDate.split('-').reverse().join('/') : 'Sin fecha registrada';
                     const curP = p.isIndex ? (p.currentPrice / (p.indexDivisor || 1)) : p.currentPrice;
+                    const cP = parseFloat(p.buyPrice) || 0;
                     
                     if (mIntrinsic <= 0) {
                         return (
@@ -9577,13 +9582,14 @@ const handleSellSubmit = () => {
                         );
                     }
 
-                    // Comparación directa solicitada: cotización actual vs valor intrínseco manual
                     const isUndervalued = curP < mIntrinsic;
                     const badgeText = isUndervalued ? "INFRAVALORADA" : "SOBREVALORADA";
                     const badgeColorClass = isUndervalued ? "bg-green-500/20 text-green-400 border border-green-500/40" : "bg-red-500/20 text-red-400 border border-red-500/40";
 
-                    // Cálculos auxiliares para el margen y el impacto
+                    // Cálculos auxiliares para el margen de cotización y de compra
                     const marginPct = ((mIntrinsic - curP) / mIntrinsic) * 100;
+                    const marginBuyPct = ((mIntrinsic - cP) / mIntrinsic) * 100;
+                    
                     const marginAmountLocal = mIntrinsic - curP; 
                     const fx = parseFloat(p.currentFx) || 1;
                     const marginAmountBase = marginAmountLocal * fx; 
@@ -9602,6 +9608,10 @@ const handleSellSubmit = () => {
                                     <span className="text-slate-500 uppercase font-sans font-bold">Precio de Cotización:</span>
                                     <span className="text-white font-bold">{formatN(curP, 3)} {p.stockCurrency}</span>
                                 </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-slate-500 uppercase font-sans font-bold">Precio de Compra:</span>
+                                    <span className="text-white font-bold">{formatN(cP, 3)} {p.stockCurrency}</span>
+                                </div>
                                 <div className="flex justify-between items-center border-t border-slate-900 pt-2">
                                     <span className="text-slate-500 uppercase font-sans font-bold">Valor Intrínseco Manual:</span>
                                     <div className="text-right">
@@ -9611,19 +9621,36 @@ const handleSellSubmit = () => {
                                 </div>
                             </div>
 
-                            {/* Margen de seguridad */}
-                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-center space-y-1">
-                                <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Margen de Seguridad</span>
-                                <div className={`text-2xl font-black ${marginPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                    {marginPct >= 0 ? '+' : ''}{formatN(marginPct, 2)}%
+                            {/* Margen de seguridad (Cotización y Compra) */}
+                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-center space-y-3">
+                                <div>
+                                    <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest block mb-1">Margen s/ Cotización Actual</span>
+                                    <div className={`text-2xl font-black ${marginPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                        {marginPct >= 0 ? '+' : ''}{formatN(marginPct, 2)}%
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 font-mono">
+                                        {marginPct >= 0 ? '+' : ''}{formatDecimal(marginAmountLocal, 2)} {p.stockCurrency} / acción
+                                        {p.stockCurrency !== baseCurrency && (
+                                            <span className="block text-[9px] text-slate-500 mt-0.5 font-sans">
+                                                ({marginPct >= 0 ? '+' : ''}{formatMoney(marginAmountBase, baseCurrency)} / acción)
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
-                                <div className="text-[10px] text-slate-400 font-mono">
-                                    {marginPct >= 0 ? '+' : ''}{formatDecimal(marginAmountLocal, 2)} {p.stockCurrency} / acción
-                                    {p.stockCurrency !== baseCurrency && (
-                                        <span className="block text-[9px] text-slate-500 mt-0.5">
-                                            ({marginPct >= 0 ? '+' : ''}{formatMoney(marginAmountBase, baseCurrency)} / acción)
-                                        </span>
-                                    )}
+                                
+                                <div className="border-t border-slate-900 pt-3">
+                                    <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest block mb-1">Margen s/ Precio de Compra</span>
+                                    <div className={`text-xl font-bold ${marginBuyPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                        {marginBuyPct >= 0 ? '+' : ''}{formatN(marginBuyPct, 2)}%
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 font-mono">
+                                        {marginBuyPct >= 0 ? '+' : ''}{formatDecimal(mIntrinsic - cP, 2)} {p.stockCurrency} / acción
+                                        {p.stockCurrency !== baseCurrency && (
+                                            <span className="block text-[9px] text-slate-500 mt-0.5 font-sans">
+                                                ({marginBuyPct >= 0 ? '+' : ''}{formatMoney((mIntrinsic - cP) * (parseFloat(p.buyFx) || 1), baseCurrency)} / acción)
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
 
@@ -9650,7 +9677,7 @@ const handleSellSubmit = () => {
                         </div>
                     );
                 })()}
-            </Modal>   
+            </Modal>
 
             <Modal isOpen={isNewsModalOpen} title="Radar de Noticias (Últimos 15 días)" onClose={() => setIsNewsModalOpen(false)} size="lg">
                 <div className="space-y-4 p-2 max-h-[70vh] overflow-y-auto custom-scrollbar">
@@ -10024,6 +10051,7 @@ const handleSellSubmit = () => {
                 } 
                 onClose={() => setIsStrategyModalOpen(false)} 
                 size="lg"
+                closeLabel="SALIR"
             >
 
                 <div className="bg-[#1c2331] -m-6 p-6 space-y-10 rounded-b-2xl">
