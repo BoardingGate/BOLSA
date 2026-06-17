@@ -5294,10 +5294,9 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCu
     const [intrinsicPopupItem, setIntrinsicPopupItem] = useState(null);
 
 
-// NUEVO ESTADO Y CÁLCULO PARA LAS ALERTAS DE MARGEN DE SEGURIDAD MERMADO
     const [isMarginAlertModalOpen, setIsMarginAlertModalOpen] = useState(false);
 
-    const marginAlertStocks = useMemo(() => {
+   const marginAlertStocks = useMemo(() => {
         return portfolio.filter(p => {
             if (p.sellDate || p.isActive === false) return false;
             
@@ -5312,7 +5311,6 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCu
             const mOriginal = ((mIntrinsic - buyP) / mIntrinsic) * 100;
             const mCurrent = ((mIntrinsic - curP) / mIntrinsic) * 100;
             
-            // Considerar únicamente si compramos por debajo del valor intrínseco (margen de compra positivo)
             if (mOriginal <= 0) return false;
             
             return mCurrent < (mOriginal / 4);
@@ -5324,13 +5322,21 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCu
             const mCurrent = ((mIntrinsic - curP) / mIntrinsic) * 100;
             const daysInPortfolio = calculateDays(p.buyDate, new Date());
             
+           const curF = p.isIndex ? p.buyFx : p.currentFx;
+            const cost = (buyP * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+            const val = (curP * p.shares * curF);
+            const pl = val - cost;
+            const plPct = cost > 0 ? (pl / cost) * 100 : 0;
+            
             return {
                 ...p,
                 curP,
                 buyP,
                 mOriginal,
                 mCurrent,
-                daysInPortfolio
+                daysInPortfolio,
+                pl,
+                plPct
             };
         });
     }, [portfolio]);
@@ -9610,9 +9616,9 @@ const handleSellSubmit = () => {
                         </ul>
                     </div>
 
-                    {/* Tabla de Detalle de Alertas */}
+                   {/* Tabla de Detalle de Alertas */}
                     <div className="overflow-x-auto rounded-xl border border-slate-800">
-                        <table className="w-full text-xs text-right border-collapse min-w-[850px]">
+                        <table className="w-full text-xs text-right border-collapse min-w-[950px]">
                             <thead className="bg-slate-900 text-[10px] uppercase font-bold text-slate-400">
                                 <tr>
                                     <th className="p-3 text-left">Valor / Ticker</th>
@@ -9621,6 +9627,7 @@ const handleSellSubmit = () => {
                                     <th className="p-3">P. Compra</th>
                                     <th className="p-3">P. Objetivo</th>
                                     <th className="p-3">Valor Intrínseco</th>
+                                    <th className="p-3 text-center bg-blue-950/40 text-blue-300">Resultado (B/P)</th>
                                     <th className="p-3 text-center">Margen Compra</th>
                                     <th className="p-3 text-center">F. Cálculo</th>
                                     <th className="p-3 text-center bg-amber-900/25 text-amber-300">Margen Actual</th>
@@ -9639,16 +9646,56 @@ const handleSellSubmit = () => {
                                         <td className="p-3 text-center text-slate-400">
                                             {item.daysInPortfolio} d
                                         </td>
+
                                         <td className="p-3 font-bold">
-                                            {formatDecimal(item.buyP, 2)} {item.stockCurrency}
+                                             <div>{formatDecimal(item.buyP, 2)} {item.stockCurrency}</div>                                            
+                                             <span className="block text-[9.5px] font-normal text-slate-400 mt-0.5">
+                                                Hoy: {formatDecimal(item.curP, 2)} {item.stockCurrency}
+                                            </span>
                                         </td>
-                                        <td className="p-3 text-slate-400">
-                                            {parseFloat(item.targetPrice) > 0 
-                                                ? `${formatDecimal(parseFloat(item.targetPrice) / (item.isIndex ? (item.indexDivisor || 1) : 1), 2)} ${item.stockCurrency}` 
-                                                : 'N/D'}
+
+                                        <td className="p-3 font-semibold text-right">
+                                            {(() => {
+                                                const divisor = item.isIndex ? (item.indexDivisor || 1) : 1;
+                                                const targetAdj = parseFloat(item.targetPrice) > 0 ? parseFloat(item.targetPrice) / divisor : 0;
+                                                if (targetAdj > 0) {
+                                                    const pctToTarget = ((targetAdj - item.curP) / item.curP) * 100;
+                                                    return (
+                                                        <>
+                                                            <div className="text-white font-bold">{formatDecimal(targetAdj, 2)} {item.stockCurrency}</div>
+                                                            <span className={`block text-[9.5px] font-normal mt-0.5 ${pctToTarget >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                                Dist: {pctToTarget >= 0 ? '+' : ''}{formatN(pctToTarget, 1)}%
+                                                            </span>
+                                                        </>
+                                                    );
+                                                }
+                                                return <span className="text-slate-500">N/D</span>;
+                                            })()}
+                                        </td>       
+
+                                       <td className="p-3 text-blue-400 font-bold text-right">
+                                            {(() => {
+                                                const mIntrinsic = parseFloat(item.manualIntrinsic) || 0;
+                                                if (mIntrinsic > 0) {
+                                                     const pctToIntrinsic = ((mIntrinsic - item.curP) / item.curP) * 100;
+                                                    return (
+                                                        <>
+                                                            <div>{formatDecimal(mIntrinsic, 2)} {item.stockCurrency}</div>
+                                                            <span className={`block text-[9.5px] font-normal mt-0.5 ${pctToIntrinsic >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                                Dist: {pctToIntrinsic >= 0 ? '+' : ''}{formatN(pctToIntrinsic, 1)}%
+                                                            </span>
+                                                        </>
+                                                    );
+                                                }
+                                                return <span className="text-slate-500">N/D</span>;
+                                            })()}
                                         </td>
-                                        <td className="p-3 text-blue-400 font-bold">
-                                            {formatDecimal(parseFloat(item.manualIntrinsic), 2)} {item.stockCurrency}
+                                         
+                                         <td className={`p-3 text-center bg-blue-950/10 font-bold ${item.pl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                            {formatMoney(item.pl, baseCurrency)}
+                                            <span className="block text-[9.5px] font-semibold mt-0.5 opacity-90">
+                                                {item.plPct >= 0 ? '+' : ''}{formatN(item.plPct, 2)}%
+                                            </span>
                                         </td>
                                         <td className="p-3 text-center text-green-400 font-bold">
                                             +{formatN(item.mOriginal, 1)}%
@@ -9663,7 +9710,8 @@ const handleSellSubmit = () => {
                                 ))}
                                 {marginAlertStocks.length === 0 && (
                                     <tr>
-                                        <td colSpan="9" className="p-8 text-center text-slate-500 italic font-sans">
+                                        {/* colSpan ajustado de 9 a 10 por la nueva columna */}
+                                        <td colSpan="10" className="p-8 text-center text-slate-500 italic font-sans">
                                             No se han localizado activos en cartera que cumplan con los criterios de alerta de margen de seguridad.
                                         </td>
                                     </tr>
@@ -15530,27 +15578,29 @@ const App = () => {
 
       createRoot(document.getElementById('root')).render(<App />);
     </script>
-<script>
-  window.addEventListener('DOMContentLoaded', () => {
-    const code = document.getElementById('react-app').textContent;
-    try {
-      // Ajustamos el preset de react para usar el runtime clásico
-      const transformed = Babel.transform(code, { 
-        presets: [
-          ['react', { 
-            "runtime": "classic"  // <--- ESTO ELIMINA EL ERROR DE "runtime is automatic"
-          }],
-          ['env', { "modules": false }]
-        ]
-      }).code;
-      
-      eval(transformed);
-    } catch (err) {
-      console.error("Error al compilar React:", err);
-      document.getElementById('error-display').style.display = 'block';
-      document.getElementById('error-display').innerHTML = '<strong>Error de Transpilación:</strong><br>' + err.message;
-    }
-  });
-</script>
+
+    <script>
+      window.addEventListener('DOMContentLoaded', () => {
+        const code = document.getElementById('react-app').textContent;
+        try {
+          // Ajustamos el preset de react para usar el runtime clásico
+          const transformed = Babel.transform(code, { 
+            presets: [
+              ['react', { 
+                "runtime": "classic"  
+              }],
+              ['env', { "modules": false }]
+            ]
+          }).code;
+          
+          eval(transformed);
+        } catch (err) {
+          console.error("Error al compilar React:", err);
+          document.getElementById('error-display').style.display = 'block';
+          document.getElementById('error-display').innerHTML = '<strong>Error de Transpilación:</strong><br>' + err.message;
+        }
+      });
+    </script>
+
 </body>
 </html>
