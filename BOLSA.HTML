@@ -5212,6 +5212,8 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCu
     const [showOrdMenu, setShowOrdMenu] = useState(false);
     const [isSellCalcModalOpen, setIsSellCalcModalOpen] = useState(false);
     const [tempTotalSellValue, setTempTotalSellValue] = useState('');
+    const [popupIntrinsic, setPopupIntrinsic] = useState('');
+    const [popupIntrinsicDate, setPopupIntrinsicDate] = useState('');
 
     const [liveUsdRate, setLiveUsdRate] = useState(null);
 
@@ -8347,15 +8349,17 @@ const handleSellSubmit = () => {
                                             
                                             <div>{formatN(p.shares)}</div>    {simplifiedMode && (   <div className="text-[6px] text-slate-400 font-sans font-normal mt-0.5">  {formatDateES(p.buyDate)}         </div>     )} </td>
 
-
                                             <td 
                                                 className="p-2 text-right font-mono leading-tight bg-blue-900/20 border-r border-blue-800/30 cursor-pointer hover:bg-blue-800/50 transition-colors"
                                                 title="Clic para ver detalles del Margen de Seguridad Manual"
                                                 onClick={(e) => {
                                                     e.stopPropagation();
                                                     setIntrinsicPopupItem(p);
+                                                    setPopupIntrinsic(p.manualIntrinsic !== undefined && p.manualIntrinsic !== null ? p.manualIntrinsic.toString() : '');
+                                                    setPopupIntrinsicDate(p.manualIntrinsicDate || '');
                                                 }}
-                                            >
+                                            > 
+                                         
                                                <div className="text-[11px] font-bold text-slate-400 mb-0.5">
                                                     {p.isIndex 
                                                         ? formatN(p.buyPrice * (p.indexDivisor || 1)) 
@@ -9689,7 +9693,7 @@ const handleSellSubmit = () => {
                 </div>
             </Modal>
 
-            {/* MODAL EMERGENTE: DETALLE DE MARGEN DE SEGURIDAD MANUAL */}
+            {/* MODAL EMERGENTE: DETALLE DE MARGEN DE SEGURIDAD MANUAL EDITABLE */}
             <Modal 
                 isOpen={!!intrinsicPopupItem} 
                 title={`Análisis de Margen: ${intrinsicPopupItem?.ticker}`} 
@@ -9698,41 +9702,55 @@ const handleSellSubmit = () => {
             >
                 {intrinsicPopupItem && (() => {
                     const p = intrinsicPopupItem;
-                    const mIntrinsic = parseFloat(p.manualIntrinsic) || 0;
-                    const mDate = p.manualIntrinsicDate ? p.manualIntrinsicDate.split('-').reverse().join('/') : 'Sin fecha registrada';
+                    const mIntrinsic = parseFloat(popupIntrinsic) || 0;
                     const curP = p.isIndex ? (p.currentPrice / (p.indexDivisor || 1)) : p.currentPrice;
                     const cP = parseFloat(p.buyPrice) || 0;
-                    
-                    if (mIntrinsic <= 0) {
-                        return (
-                            <div className="text-center py-6">
-                                <Icons.AlertCircle className="mx-auto text-yellow-500 mb-3" size={36} />
-                                <p className="text-sm text-slate-300 font-bold">Sin Valor Intrínseco Manual</p>
-                                <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-                                    Ve al panel de Estrategias y Promedios (<span className="text-purple-400 font-bold">icono varita</span>) de este activo para configurar su valor intrínseco manual.
-                                </p>
-                            </div>
-                        );
-                    }
-
+            
                     const isUndervalued = curP < mIntrinsic;
                     const badgeText = isUndervalued ? "INFRAVALORADA" : "SOBREVALORADA";
                     const badgeColorClass = isUndervalued ? "bg-green-500/20 text-green-400 border border-green-500/40" : "bg-red-500/20 text-red-400 border border-red-500/40";
-
-                    const marginPct = ((mIntrinsic - curP) / mIntrinsic) * 100;
-                    const marginBuyPct = ((mIntrinsic - cP) / mIntrinsic) * 100;
+            
+                    const marginPct = mIntrinsic > 0 ? ((mIntrinsic - curP) / mIntrinsic) * 100 : 0;
+                    const marginBuyPct = mIntrinsic > 0 ? ((mIntrinsic - cP) / mIntrinsic) * 100 : 0;
                     
                     const marginAmountLocal = mIntrinsic - curP; 
                     const fx = parseFloat(p.currentFx) || 1;
                     const marginAmountBase = marginAmountLocal * fx; 
                     const totalMarginImpactBase = p.shares * marginAmountBase;
-
+            
                     return (
                         <div className="space-y-5">
-                           <div className={`text-center py-2 px-4 rounded-xl text-xs font-black tracking-widest ${badgeColorClass}`}>
+                            {/* Bloque de Edición Interactiva */}
+                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3 shadow-inner">
+                                <div className="text-[10px] font-black text-yellow-500 uppercase tracking-wider">Edición de Valoración Manual</div>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Valor ({p.stockCurrency})</label>
+                                        <input 
+                                            type="number" 
+                                            step="0.01" 
+                                            value={popupIntrinsic} 
+                                            onChange={e => setPopupIntrinsic(e.target.value)} 
+                                            className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono font-bold focus:outline-none focus:border-yellow-500"
+                                            placeholder="0.00"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Fecha Cálculo</label>
+                                        <input 
+                                            type="date" 
+                                            value={popupIntrinsicDate} 
+                                            onChange={e => setPopupIntrinsicDate(e.target.value)} 
+                                            className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white focus:outline-none focus:border-yellow-500"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+            
+                            <div className={`text-center py-2 px-4 rounded-xl text-xs font-black tracking-widest ${badgeColorClass}`}>
                                 {badgeText}
                             </div>
-
+            
                             <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2.5 font-mono text-xs">
                                 <div className="flex justify-between items-center">
                                     <span className="text-slate-500 uppercase font-sans font-bold">Precio de Cotización:</span>
@@ -9742,28 +9760,16 @@ const handleSellSubmit = () => {
                                     <span className="text-slate-500 uppercase font-sans font-bold">Precio de Compra:</span>
                                     <span className="text-white font-bold">{formatN(cP, 3)} {p.stockCurrency}</span>
                                 </div>
-                                <div className="flex justify-between items-center border-t border-slate-900 pt-2">
-                                    <span className="text-slate-500 uppercase font-sans font-bold">Valor Intrínseco Manual:</span>
-                                    <div className="text-right">
-                                        <span className="text-[11px] text-blue-400 font-bold">{formatN(mIntrinsic, 2)} {p.stockCurrency}</span>
-                                        <span className="text-[11px] text-slate-500 block font-sans mt-0.5">Calculado: {mDate}</span>
-                                    </div>
-                                </div>
                             </div>
-
+            
                             <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-center space-y-3">
                                 <div>
-                                    <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest block mb-1">Margen s/ Cotización Actual</span>
-                                    <div className={`text-2xl font-black ${marginPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                        {marginPct >= 0 ? '+' : ''}{formatN(marginPct, 2)}%
+                                    <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest block mb-1">Margen s/ Cotización Hoy</span>
+                                    <div className="text-2xl font-black text-white font-mono leading-none">
+                                        {formatDecimal(mIntrinsic, 2)} {p.stockCurrency}
                                     </div>
-                                    <div className="text-[10px] text-slate-400 font-mono">
-                                        {marginPct >= 0 ? '+' : ''}{formatDecimal(marginAmountLocal, 2)} {p.stockCurrency} / acción
-                                        {p.stockCurrency !== baseCurrency && (
-                                            <span className="block text-[9px] text-slate-500 mt-0.5 font-sans">
-                                                ({marginPct >= 0 ? '+' : ''}{formatMoney(marginAmountBase, baseCurrency)} / acción)
-                                            </span>
-                                        )}
+                                    <div className={`text-[10px] font-bold mt-1.5 ${marginPct >= 15 ? 'text-green-400' : 'text-yellow-500'}`}>
+                                        Margen de Seguridad: {formatN(marginPct)}%
                                     </div>
                                 </div>
                                 
@@ -9772,18 +9778,10 @@ const handleSellSubmit = () => {
                                     <div className={`text-xl font-bold ${marginBuyPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                                         {marginBuyPct >= 0 ? '+' : ''}{formatN(marginBuyPct, 2)}%
                                     </div>
-                                    <div className="text-[10px] text-slate-400 font-mono">
-                                        {marginBuyPct >= 0 ? '+' : ''}{formatDecimal(mIntrinsic - cP, 2)} {p.stockCurrency} / acción
-                                        {p.stockCurrency !== baseCurrency && (
-                                            <span className="block text-[9px] text-slate-500 mt-0.5 font-sans">
-                                                ({marginBuyPct >= 0 ? '+' : ''}{formatMoney((mIntrinsic - cP) * (parseFloat(p.buyFx) || 1), baseCurrency)} / acción)
-                                            </span>
-                                        )}
-                                    </div>
                                 </div>
                             </div>
-
-                           <div className="bg-blue-900/10 border border-blue-500/30 p-4 rounded-xl flex justify-between items-center shadow-lg">
+            
+                            <div className="bg-blue-900/10 border border-blue-500/30 p-4 rounded-xl flex justify-between items-center shadow-lg">
                                 <div className="text-[9px] uppercase font-bold text-blue-400 tracking-wider">
                                     Impacto Total<br/>
                                     <span className="text-[8px] text-slate-500 font-mono font-normal">({formatN(p.shares)} acc. x Margen)</span>
@@ -9795,18 +9793,38 @@ const handleSellSubmit = () => {
                                     <span className="text-[8px] text-slate-500 mt-1 block">Al cambio actual en Euros</span>
                                 </div>
                             </div>
-
-                            <button 
-                                onClick={() => setIntrinsicPopupItem(null)} 
-                                className="w-full bg-slate-800 hover:bg-slate-700 py-3 rounded-xl font-bold uppercase text-xs text-white border border-slate-700 transition-colors shadow-lg"
-                            >
-                                Cerrar
-                            </button>
+            
+                            {/* Botonera de Cancelación y Guardado */}
+                            <div className="flex gap-3">
+                                <button 
+                                    onClick={() => setIntrinsicPopupItem(null)} 
+                                    className="flex-1 bg-slate-800 hover:bg-slate-700 py-3 rounded-xl font-bold uppercase text-xs text-slate-300 border border-slate-700 transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                <button 
+                                    onClick={() => {
+                                        const finalVal = popupIntrinsic === '' ? 0 : parseFloat(popupIntrinsic);
+                                        setPortfolio(prev => prev.map(x => x.id === p.id ? { 
+                                            ...x, 
+                                            manualIntrinsic: isNaN(finalVal) ? 0 : finalVal,
+                                            manualIntrinsicDate: popupIntrinsicDate
+                                        } : x));
+                                        setIntrinsicPopupItem(null);
+                                        if (onManualSync) {
+                                            setTimeout(() => onManualSync(), 200);
+                                        }
+                                    }} 
+                                    className="flex-1 bg-blue-600 hover:bg-blue-500 py-3 rounded-xl font-bold uppercase text-xs text-white transition-colors"
+                                >
+                                    Guardar
+                                </button>
+                            </div>
                         </div>
                     );
                 })()}
             </Modal>
-
+            
             <Modal isOpen={isNewsModalOpen} title="Radar de Noticias (Últimos 15 días)" onClose={() => setIsNewsModalOpen(false)} size="lg">
                 <div className="space-y-4 p-2 max-h-[70vh] overflow-y-auto custom-scrollbar">
                     <div className="prose-content text-sm leading-relaxed font-sans text-slate-200 [&_h3]:text-blue-400 [&_h3]:mt-6 [&_h3]:border-slate-700 [&_a]:text-blue-400 [&_a]:underline" dangerouslySetInnerHTML={{__html: newsResult}}></div>
