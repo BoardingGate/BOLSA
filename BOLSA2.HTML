@@ -5247,49 +5247,45 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCu
     const [isMarginAlertModalOpen, setIsMarginAlertModalOpen] = useState(false);
 
    const marginAlertStocks = useMemo(() => {
-        return portfolio.filter(p => {
-            if (p.sellDate || p.isActive === false) return false;
-            
-            const mIntrinsic = parseFloat(p.manualIntrinsic) || 0;
-            if (mIntrinsic <= 0) return false;
-            
-            const curP = p.isIndex ? (p.currentPrice / (p.indexDivisor || 1)) : p.currentPrice;
-            const buyP = parseFloat(p.buyPrice) || 0;
-            
-            if (buyP <= 0 || curP <= 0) return false;
-            
-            const mOriginal = ((mIntrinsic - buyP) / mIntrinsic) * 100;
-            const mCurrent = ((mIntrinsic - curP) / mIntrinsic) * 100;
-            
-            if (mOriginal <= 0) return false;
-            
-            return mCurrent < (mOriginal / 4);
-        }).map(p => {
-            const mIntrinsic = parseFloat(p.manualIntrinsic) || 0;
-            const curP = p.isIndex ? (p.currentPrice / (p.indexDivisor || 1)) : p.currentPrice;
-            const buyP = parseFloat(p.buyPrice) || 0;
-            const mOriginal = ((mIntrinsic - buyP) / mIntrinsic) * 100;
-            const mCurrent = ((mIntrinsic - curP) / mIntrinsic) * 100;
-            const daysInPortfolio = calculateDays(p.buyDate, new Date());
-            
-           const curF = p.isIndex ? p.buyFx : p.currentFx;
-            const cost = (buyP * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
-            const val = (curP * p.shares * curF);
-            const pl = val - cost;
-            const plPct = cost > 0 ? (pl / cost) * 100 : 0;
-            
-            return {
-                ...p,
-                curP,
-                buyP,
-                mOriginal,
-                mCurrent,
-                daysInPortfolio,
-                pl,
-                plPct
-            };
-        });
-    }, [portfolio]);
+    return portfolio.filter(p => {
+        if (p.sellDate || p.isActive === false) return false;
+        
+        const mIntrinsic = parseFloat(p.manualIntrinsic) || 0;
+        return mIntrinsic > 0; // Mostrar todos los que tengan valor intrínseco
+    }).map(p => {
+        const mIntrinsic = parseFloat(p.manualIntrinsic) || 0;
+        const curP = p.isIndex ? (p.currentPrice / (p.indexDivisor || 1)) : p.currentPrice;
+        const buyP = parseFloat(p.buyPrice) || 0;
+        
+        const mOriginal = (mIntrinsic > 0 && buyP > 0) ? ((mIntrinsic - buyP) / mIntrinsic) * 100 : 0;
+        const mCurrent = (mIntrinsic > 0 && curP > 0) ? ((mIntrinsic - curP) / mIntrinsic) * 100 : 0;
+        
+        const isNearLimit = mOriginal > 0 && mCurrent < (mOriginal / 4);
+        const daysInPortfolio = calculateDays(p.buyDate, new Date());
+        
+        const curF = p.isIndex ? p.buyFx : p.currentFx;
+        const cost = (buyP * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+        const val = (curP * p.shares * curF);
+        const pl = val - cost;
+        const plPct = cost > 0 ? (pl / cost) * 100 : 0;
+        
+        return {
+            ...p,
+            curP,
+            buyP,
+            mOriginal,
+            mCurrent,
+            isNearLimit,
+            daysInPortfolio,
+            pl,
+            plPct
+        };
+    });
+}, [portfolio]);
+
+const nearLimitCount = useMemo(() => {
+    return marginAlertStocks.filter(s => s.isNearLimit).length;
+}, [marginAlertStocks]);
 
    const [activeMenuId, setActiveMenuId] = useState(null);
 
@@ -8656,23 +8652,24 @@ const handleSellSubmit = () => {
                                                <div className="flex flex-col items-center justify-center leading-none py-0.5">
                                                    <div className={`text-[7px] font-black tracking-wider ${isUndervalued ? 'text-green-400' : 'text-red-400'} flex items-center gap-1.5`}>
                                                        {isUndervalued ? 'CARTERA INFRAVALORADA' : 'CARTERA SOBREVALORADA'} ({countWithIntrinsic})
-                                                       
+
                                                    <button 
                                                         onClick={(e) => { e.stopPropagation(); setIsMarginAlertModalOpen(true); }}
                                                         className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md transition-all ${
-                                                            marginAlertStocks.length > 0 
-                                                                ? 'hover:bg-amber-500/10 text-amber-400' 
+                                                            nearLimitCount > 0 
+                                                                ? 'hover:bg-amber-500/10 text-amber-400 bg-amber-500/5 border border-amber-500/30' 
                                                                 : 'opacity-40 hover:opacity-100 text-slate-500'
                                                         }`}
-                                                        title="Ver alertas de consumo de margen"
+                                                        title="Ver auditoría de margen de seguridad"
                                                     >
-                                                        <span className={`text-xs ${marginAlertStocks.length > 0 ? 'animate-pulse' : ''}`}>⚠️</span>
-                                                        {marginAlertStocks.length > 0 && (
-                                                            <span className="bg-amber-500 text-slate-950 font-black text-[8px] px-1.5 rounded-full h-3 flex items-center justify-center font-mono">
-                                                                {marginAlertStocks.length}
+                                                        <span className={`text-xs ${nearLimitCount > 0 ? 'animate-pulse' : ''}`}>⚠️</span>
+                                                        {nearLimitCount > 0 && (
+                                                            <span className="bg-amber-500 text-slate-950 font-black text-[8px] px-1.5 rounded-full h-3 flex items-center justify-center font-mono animate-pulse">
+                                                                {nearLimitCount}
                                                             </span>
                                                         )}
                                                     </button>
+                                                  
                                                    </div>
                                                    <div className="text-[7px] font-mono font-bold text-white mt-0.5">
                                                        {isUndervalued ? '+' : ''}{formatMoney(diffBase, baseCurrency)}
@@ -9525,132 +9522,142 @@ const handleSellSubmit = () => {
                 </div>
             </Modal>
 
-           <Modal isOpen={isMarginAlertModalOpen} title="Auditoría de Margen Consumido / Próximo" onClose={() => setIsMarginAlertModalOpen(false)} size="lg">
-                <div className="space-y-4 p-1">
-                    {/* Tarjeta de Recomendación Estratégica */}
-                    <div className="bg-amber-950/20 border-l-4 border-amber-500 p-4 rounded-r-xl text-amber-200 text-xs leading-relaxed font-sans shadow-md">
-                        <strong className="block text-amber-400 mb-1 uppercase tracking-wider text-[11px]">⚠️ RECOMENDACIÓN ESTRATÉGICA</strong>
-                        Las acciones listadas a continuación están próximas a llegar a su valor intrínseco estimado (su margen de seguridad actual ha descendido a menos de una cuarta parte del original). 
-                        Se aconseja encarecidamente:
-                        <ul className="list-disc list-inside mt-2 space-y-1 pl-1">
-                            <li><b>Recalcular el Valor Intrínseco:</b> Evaluar si la tesis de inversión ha mejorado o si existen nuevas proyecciones que justifiquen elevar la valoración.</li>
-                            <li><b>Valorar Rebalanceo:</b> Estudiar si es conveniente rotar los beneficios acumulados hacia otros activos infravalorados de la cartera con mayor margen de seguridad.</li>
-                        </ul>
-                    </div>
+           <Modal isOpen={isMarginAlertModalOpen} title="Auditoría General de Margen de Seguridad" onClose={() => setIsMarginAlertModalOpen(false)} size="lg">
+    <div className="space-y-4 p-1">
+        {/* Banner informativo estratégico */}
+        <div className="bg-slate-950/80 border-l-4 border-blue-500 p-4 rounded-r-xl text-slate-300 text-xs leading-relaxed font-sans shadow-md">
+            <strong className="block text-blue-400 mb-1 uppercase tracking-wider text-[11px]">📋 Panel de Auditoría Activa</strong>
+            Se listan todos los activos que poseen una valoración intrínseca configurada. Aquellos registros marcados con <span className="text-amber-400 font-bold">⚠️</span> y fondo destacado están en zona crítica (su margen de seguridad actual ha descendido a menos de una cuarta parte del original).
+        </div>
 
-                   <div className="overflow-x-auto rounded-xl border border-slate-800">
-                        <table className="w-full text-xs text-right border-collapse min-w-[950px]">
-                            <thead className="bg-slate-900 text-[10px] uppercase font-bold text-slate-400">
-                                <tr>
-                                    <th className="p-3 text-left">Valor / Ticker</th>
-                                    <th className="p-3 text-center">Compra</th>
-                                    <th className="p-3 text-center">Días</th>
-                                    <th className="p-3">P. Compra</th>
-                                    <th className="p-3">P. Objetivo</th>
-                                    <th className="p-3">Valor Intrínseco</th>
-                                    <th className="p-3 text-center bg-blue-950/40 text-blue-300">Resultado (B/P)</th>
-                                    <th className="p-3 text-center">Margen Compra</th>
-                                    <th className="p-3 text-center">F. Cálculo</th>
-                                    <th className="p-3 text-center bg-amber-900/25 text-amber-300">Margen Actual</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-800 font-mono text-slate-300">
-                                {marginAlertStocks.map(item => (
-                                    <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
-                                        <td className="p-3 text-left font-sans">
-                                            <b className="text-white block text-xs">{item.name}</b>
-                                            <span className="text-[9px] text-slate-500 uppercase">{item.ticker}</span>
-                                        </td>
-                                        <td className="p-3 text-center text-slate-400">
-                                            {item.buyDate ? item.buyDate.split('-').reverse().join('/') : 'N/D'}
-                                        </td>
-                                        <td className="p-3 text-center text-slate-400">
-                                            {item.daysInPortfolio} d
-                                        </td>
-
-                                        <td className="p-3 font-bold">
-                                             <div>{formatDecimal(item.buyP, 2)} {item.stockCurrency}</div>                                            
-                                             <span className="block text-[9.5px] font-normal text-slate-400 mt-0.5">
-                                                Hoy: {formatDecimal(item.curP, 2)} {item.stockCurrency}
-                                            </span>
-                                        </td>
-
-                                        <td className="p-3 font-semibold text-right">
-                                            {(() => {
-                                                const divisor = item.isIndex ? (item.indexDivisor || 1) : 1;
-                                                const targetAdj = parseFloat(item.targetPrice) > 0 ? parseFloat(item.targetPrice) / divisor : 0;
-                                                if (targetAdj > 0) {
-                                                    const pctToTarget = ((targetAdj - item.curP) / item.curP) * 100;
-                                                    return (
-                                                        <>
-                                                            <div className="text-white font-bold">{formatDecimal(targetAdj, 2)} {item.stockCurrency}</div>
-                                                            <span className={`block text-[9.5px] font-normal mt-0.5 ${pctToTarget >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                                                Dist: {pctToTarget >= 0 ? '+' : ''}{formatN(pctToTarget, 1)}%
-                                                            </span>
-                                                        </>
-                                                    );
-                                                }
-                                                return <span className="text-slate-500">N/D</span>;
-                                            })()}
-                                        </td>       
-
-                                       <td className="p-3 text-blue-400 font-bold text-right">
-                                            {(() => {
-                                                const mIntrinsic = parseFloat(item.manualIntrinsic) || 0;
-                                                if (mIntrinsic > 0) {
-                                                     const pctToIntrinsic = ((mIntrinsic - item.curP) / item.curP) * 100;
-                                                    return (
-                                                        <>
-                                                            <div>{formatDecimal(mIntrinsic, 2)} {item.stockCurrency}</div>
-                                                            <span className={`block text-[9.5px] font-normal mt-0.5 ${pctToIntrinsic >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                                                Dist: {pctToIntrinsic >= 0 ? '+' : ''}{formatN(pctToIntrinsic, 1)}%
-                                                            </span>
-                                                        </>
-                                                    );
-                                                }
-                                                return <span className="text-slate-500">N/D</span>;
-                                            })()}
-                                        </td>
-                                         
-                                         <td className={`p-3 text-center bg-blue-950/10 font-bold ${item.pl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                            {formatMoney(item.pl, baseCurrency)}
-                                            <span className="block text-[9.5px] font-semibold mt-0.5 opacity-90">
-                                                {item.plPct >= 0 ? '+' : ''}{formatN(item.plPct, 2)}%
-                                            </span>
-                                        </td>
-                                        <td className="p-3 text-center text-green-400 font-bold">
-                                            +{formatN(item.mOriginal, 1)}%
-                                        </td>
-                                        <td className="p-3 text-center text-slate-500">
-                                            {item.manualIntrinsicDate ? item.manualIntrinsicDate.split('-').reverse().join('/') : 'N/D'}
-                                        </td>
-                                        <td className="p-3 text-center font-bold bg-amber-900/5 text-amber-300">
-                                            {item.mCurrent >= 0 ? '+' : ''}{formatN(item.mCurrent, 1)}%
-                                        </td>
-                                    </tr>
-                                ))}
-                                {marginAlertStocks.length === 0 && (
-                                    <tr>
-                                        {/* colSpan ajustado de 9 a 10 por la nueva columna */}
-                                        <td colSpan="10" className="p-8 text-center text-slate-500 italic font-sans">
-                                            No se han localizado activos en cartera que cumplan con los criterios de alerta de margen de seguridad.
-                                        </td>
-                                    </tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <div className="flex justify-end pt-2">
-                        <button 
-                            onClick={() => setIsMarginAlertModalOpen(false)} 
-                            className="bg-slate-800 hover:bg-slate-700 py-2.5 px-6 rounded-xl font-bold uppercase text-xs text-white border border-slate-700 transition-colors shadow-lg active:scale-95"
+        <div className="overflow-x-auto rounded-xl border border-slate-800">
+            <table className="w-full text-xs text-right border-collapse min-w-[950px]">
+                <thead className="bg-slate-900 text-[10px] uppercase font-bold text-slate-400">
+                    <tr>
+                        <th className="p-3 text-left">Valor / Ticker</th>
+                        <th className="p-3 text-center">Compra</th>
+                        <th className="p-3 text-center">Días</th>
+                        <th className="p-3">P. Compra</th>
+                        <th className="p-3">P. Objetivo</th>
+                        <th className="p-3">Valor Intrínseco</th>
+                        <th className="p-3 text-center bg-blue-950/40 text-blue-300">Resultado (B/P)</th>
+                        <th className="p-3 text-center">Margen Compra</th>
+                        <th className="p-3 text-center">F. Cálculo</th>
+                        <th className="p-3 text-center bg-slate-950 text-slate-400">Margen Actual</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800 font-mono text-slate-300">
+                    {marginAlertStocks.map(item => (
+                        <tr 
+                            key={item.id} 
+                            className={`transition-colors ${
+                                item.isNearLimit 
+                                    ? 'bg-amber-500/10 hover:bg-amber-500/15 border-l-4 border-l-amber-500' 
+                                    : 'hover:bg-slate-800/40'
+                            }`}
                         >
-                            Cerrar
-                        </button>
-                    </div>
-                </div>
-            </Modal>
+                            <td className="p-3 text-left font-sans">
+                                <b className="text-white block text-xs flex items-center gap-1.5">
+                                    {item.name}
+                                    {item.isNearLimit && (
+                                        <span className="text-amber-400 text-[10px] animate-pulse" title="Margen de seguridad crítico">⚠️</span>
+                                    )}
+                                </b>
+                                <span className="text-[9px] text-slate-500 uppercase">{item.ticker}</span>
+                            </td>
+                            <td className="p-3 text-center text-slate-400">
+                                {item.buyDate ? item.buyDate.split('-').reverse().join('/') : 'N/D'}
+                            </td>
+                            <td className="p-3 text-center text-slate-400">
+                                {item.daysInPortfolio} d
+                            </td>
+
+                            <td className="p-3 font-bold">
+                                 <div>{formatDecimal(item.buyP, 2)} {item.stockCurrency}</div>                                            
+                                 <span className="block text-[9.5px] font-normal text-slate-400 mt-0.5">
+                                    Hoy: {formatDecimal(item.curP, 2)} {item.stockCurrency}
+                                </span>
+                            </td>
+
+                            <td className="p-3 font-semibold text-right">
+                                {(() => {
+                                    const divisor = item.isIndex ? (item.indexDivisor || 1) : 1;
+                                    const targetAdj = parseFloat(item.targetPrice) > 0 ? parseFloat(item.targetPrice) / divisor : 0;
+                                    if (targetAdj > 0) {
+                                        const pctToTarget = ((targetAdj - item.curP) / item.curP) * 100;
+                                        return (
+                                            <>
+                                                <div className="text-white font-bold">{formatDecimal(targetAdj, 2)} {item.stockCurrency}</div>
+                                                <span className={`block text-[9.5px] font-normal mt-0.5 ${pctToTarget >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                    Dist: {pctToTarget >= 0 ? '+' : ''}{formatN(pctToTarget, 1)}%
+                                                </span>
+                                            </>
+                                        );
+                                    }
+                                    return <span className="text-slate-500">N/D</span>;
+                                })()}
+                            </td>       
+
+                           <td className="p-3 text-blue-400 font-bold text-right">
+                                {(() => {
+                                    const mIntrinsic = parseFloat(item.manualIntrinsic) || 0;
+                                    if (mIntrinsic > 0) {
+                                         const pctToIntrinsic = ((mIntrinsic - item.curP) / item.curP) * 100;
+                                        return (
+                                            <>
+                                                <div>{formatDecimal(mIntrinsic, 2)} {item.stockCurrency}</div>
+                                                <span className={`block text-[9.5px] font-normal mt-0.5 ${pctToIntrinsic >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                    Dist: {pctToIntrinsic >= 0 ? '+' : ''}{formatN(pctToIntrinsic, 1)}%
+                                                </span>
+                                            </>
+                                        );
+                                    }
+                                    return <span className="text-slate-500">N/D</span>;
+                                })()}
+                            </td>
+                             
+                             <td className={`p-3 text-center bg-blue-950/10 font-bold ${item.pl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                {formatMoney(item.pl, baseCurrency)}
+                                <span className="block text-[9.5px] font-semibold mt-0.5 opacity-90">
+                                    {item.plPct >= 0 ? '+' : ''}{formatN(item.plPct, 2)}%
+                                </span>
+                            </td>
+                            <td className="p-3 text-center text-green-400 font-bold">
+                                +{formatN(item.mOriginal, 1)}%
+                            </td>
+                            <td className="p-3 text-center text-slate-500">
+                                {item.manualIntrinsicDate ? item.manualIntrinsicDate.split('-').reverse().join('/') : 'N/D'}
+                            </td>
+                            <td className={`p-3 text-center font-bold ${
+                                item.isNearLimit 
+                                    ? 'bg-red-950/40 text-red-400 border border-red-500/20 font-black animate-pulse' 
+                                    : 'bg-slate-900 text-amber-300'
+                            }`}>
+                                {item.mCurrent >= 0 ? '+' : ''}{formatN(item.mCurrent, 1)}%
+                            </td>
+                        </tr>
+                    ))}
+                    {marginAlertStocks.length === 0 && (
+                        <tr>
+                            <td colSpan="10" className="p-8 text-center text-slate-500 italic font-sans">
+                                No se ha configurado un valor intrínseco para ningún activo activo de tu cartera.
+                            </td>
+                        </tr>
+                    )}
+                </tbody>
+            </table>
+        </div>
+
+        <div className="flex justify-end pt-2">
+            <button 
+                onClick={() => setIsMarginAlertModalOpen(false)} 
+                className="bg-slate-800 hover:bg-slate-700 py-2.5 px-6 rounded-xl font-bold uppercase text-xs text-white border border-slate-700 transition-colors shadow-lg active:scale-95"
+            >
+                Cerrar
+            </button>
+        </div>
+    </div>
+</Modal>
 
             {/* MODAL INTEGRADO: CALCULADORA DE PRECIO DE VENTA UNITARIO */}
             <Modal 
