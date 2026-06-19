@@ -7,6 +7,9 @@ on:
     paths:
       - 'BOLSA2.HTML'
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -18,7 +21,7 @@ jobs:
       - name: Instalar Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Instalar traductor (Babel)
         run: npm install @babel/core @babel/preset-react
@@ -29,30 +32,38 @@ jobs:
           const fs = require('fs');
           const babel = require('@babel/core');
 
-          let html = fs.readFileSync('BOLSA2.HTML', 'utf8');
-          const scriptRegex = /<script id="react-app" type="text\/plain">([\s\S]*?)<\/script>/;
-          const match = html.match(scriptRegex);
+          const inputFile = 'BOLSA2.HTML';
+          const outputFile = 'BOLSA.HTML';
 
-          if (match) {
-            const jsxCode = match[1];
-            const compiled = babel.transformSync(jsxCode, {
-              presets: ['@babel/preset-react']
-            }).code;
-            
-            // Reemplaza el bloque JSX por el codigo traducido y limpio
-            html = html.replace(scriptRegex, '<script>\n' + compiled + '\n</script>');
-            
-            // Elimina la libreria pesada de Babel Standalone
-            html = html.replace(/<script src="https:\/\/unpkg\.com\/@babel\/standalone\/babel\.min\.js"><\/script>/g, '');
-            
-            // Elimina el codigo que hacia la traduccion lenta en el navegador
-            const compileScriptRegex = /<script>([\s\S]*?Babel\.transform[\s\S]*?)<\/script>/g;
-            html = html.replace(compileScriptRegex, '');
-            
-            fs.writeFileSync('BOLSA.HTML', HTML);
-            console.log('✅ BOLSA.HTML generado e indoloro para el navegador.');
-          } else {
-            console.error('❌ No se encontro el bloque de codigo React.');
+          try {
+            let html = fs.readFileSync(inputFile, 'utf8');
+            const scriptRegex = /<script id="react-app" type="text\/plain">([\s\S]*?)<\/script>/;
+            const match = html.match(scriptRegex);
+
+            if (match) {
+              const jsxCode = match[1];
+              const compiled = babel.transformSync(jsxCode, {
+                presets: ['@babel/preset-react']
+              }).code;
+              
+              // Reemplaza el bloque JSX por el codigo compilado
+              html = html.replace(scriptRegex, '<script>\n' + compiled + '\n</script>');
+              
+              // Elimina la libreria pesada de Babel Standalone
+              html = html.replace(/<script src="https:\/\/unpkg\.com\/@babel\/standalone\/babel\.min\.js"><\/script>/g, '');
+              
+              // Elimina el codigo que hacia la traduccion lenta en el navegador
+              const compileScriptRegex = /<script>([\s\S]*?Babel\.transform[\s\S]*?)<\/script>/g;
+              html = html.replace(compileScriptRegex, '');
+              
+              fs.writeFileSync(outputFile, html);
+              console.log('Archivo precompilado con exito.');
+            } else {
+              console.error('No se encontro el bloque de codigo React.');
+              process.exit(1);
+            }
+          } catch (err) {
+            console.error('Error durante la lectura o escritura de archivos:', err.message);
             process.exit(1);
           }
           EOF
@@ -60,10 +71,10 @@ jobs:
       - name: Ejecutar traduccion
         run: node compile.js
 
-      - name: Guardar y subir index.html optimizado
+      - name: Guardar y subir BOLSA.HTML optimizado
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add BOLSA.HTML
-          git commit -m "style: precompilar React de forma automatica" || echo "Sin cambios que guardar"
+          git commit -m "style: precompilar React de forma automatica en BOLSA.HTML" || echo "Sin cambios que guardar"
           git push
