@@ -1,0 +1,69 @@
+name: Compilador de React Automático
+
+on:
+  push:
+    branches:
+      - main  # Cambia por "master" si tu rama principal se llama master
+    paths:
+      - 'BOLSA2.HTML'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar codigo
+        uses: actions/checkout@v3
+
+      - name: Instalar Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Instalar traductor (Babel)
+        run: npm install @babel/core @babel/preset-react
+
+      - name: Crear script de traduccion
+        run: |
+          cat << 'EOF' > compile.js
+          const fs = require('fs');
+          const babel = require('@babel/core');
+
+          let html = fs.readFileSync('BOLSA2.HTML', 'utf8');
+          const scriptRegex = /<script id="react-app" type="text\/plain">([\s\S]*?)<\/script>/;
+          const match = html.match(scriptRegex);
+
+          if (match) {
+            const jsxCode = match[1];
+            const compiled = babel.transformSync(jsxCode, {
+              presets: ['@babel/preset-react']
+            }).code;
+            
+            // Reemplaza el bloque JSX por el codigo traducido y limpio
+            html = html.replace(scriptRegex, '<script>\n' + compiled + '\n</script>');
+            
+            // Elimina la libreria pesada de Babel Standalone
+            html = html.replace(/<script src="https:\/\/unpkg\.com\/@babel\/standalone\/babel\.min\.js"><\/script>/g, '');
+            
+            // Elimina el codigo que hacia la traduccion lenta en el navegador
+            const compileScriptRegex = /<script>([\s\S]*?Babel\.transform[\s\S]*?)<\/script>/g;
+            html = html.replace(compileScriptRegex, '');
+            
+            fs.writeFileSync('BOLSA.HTML', HTML);
+            console.log('✅ BOLSA.HTML generado e indoloro para el navegador.');
+          } else {
+            console.error('❌ No se encontro el bloque de codigo React.');
+            process.exit(1);
+          }
+          EOF
+
+      - name: Ejecutar traduccion
+        run: node compile.js
+
+      - name: Guardar y subir index.html optimizado
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add BOLSA.HTML
+          git commit -m "style: precompilar React de forma automatica" || echo "Sin cambios que guardar"
+          git push
