@@ -1,4 +1,4 @@
-name: Compilador de React Automático   
+name: Compilador de React Automático
 
 on:
   push:
@@ -74,10 +74,33 @@ jobs:
           });
               `;
               
-              // CORRECCIÓN VITAL: Se pasa una función en lugar de un string en el replace.
-              // Esto evita que JavaScript interprete los caracteres "$1" o "$2" de tu formateador de moneda como grupos de captura.
+              // Reemplaza el bloque JSX por el codigo compilado envuelto (usando función para evitar problemas de colisión de $1, $2, etc.)
               html = html.replace(scriptRegex, () => '<script>\n' + wrappedCode + '\n</script>');
               
+              // Corregir window.onerror para ignorar "Script error." genéricos que provienen de CDNs o bloqueadores de publicidad (Adblockers)
+              const onerrorRegex = /window\.onerror\s*=\s*function\s*\(\s*message\s*,\s*source\s*,\s*lineno\s*,\s*colno\s*,\s*error\s*\)\s*\{[\s\S]*?return\s+false\s*;\s*\}/gi;
+              const newOnerror = `window.onerror = function(message, source, lineno, colno, error) {
+                  const msg = typeof message === 'string' ? message : (message && message.message ? message.message : "");
+                  if (msg.includes("Script error") || !source || message === "Script error.") {
+                      return false;
+                  }
+                  showErudaAndLog(error || message);
+                  return false;
+              }`;
+              html = html.replace(onerrorRegex, newOnerror);
+
+              // Corregir unhandledrejection para ignorar fallos de red por Adblockers
+              const unhandledRegex = /window\.onunhandledrejection\s*=\s*function\s*\(\s*event\s*\)\s*\{[\s\S]*?\};/gi;
+              const newUnhandled = `window.onunhandledrejection = function(event) {
+                  const reason = event.reason || "";
+                  const msg = typeof reason === 'string' ? reason : (reason.message || "");
+                  if (msg.includes("Failed to fetch") || msg.includes("Load failed") || msg.includes("Script error") || msg.includes("NetworkError")) {
+                      return;
+                  }
+                  showErudaAndLog(reason || "Promesa rechazada sin motivo detallado");
+              }`;
+              html = html.replace(unhandledRegex, newUnhandled);
+
               // Elimina la libreria de Babel Standalone de forma flexible
               html = html.replace(/<script\s+[^>]*src="[^"]*babel\.min\.js"[^>]*><\/script>/gi, '');
               
