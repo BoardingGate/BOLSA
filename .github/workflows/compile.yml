@@ -1,5 +1,5 @@
 name: Compilador de React Automático
- 
+
 on:
   push:
     branches:
@@ -59,7 +59,6 @@ jobs:
               }).code;
               
               // Envolver el código compilado en un listener DOMContentLoaded igual que hacía la versión original
-              // Esto garantiza que se ejecute solo cuando todo el HTML y las librerías diferidas (defer) estén cargadas
               const wrappedCode = `
           window.addEventListener('DOMContentLoaded', () => {
             try {
@@ -77,29 +76,50 @@ jobs:
               // Reemplaza el bloque JSX por el codigo compilado envuelto (usando función para evitar problemas de colisión de $1, $2, etc.)
               html = html.replace(scriptRegex, () => '<script>\n' + wrappedCode + '\n</script>');
               
-              // Corregir window.onerror para ignorar "Script error." genéricos que provienen de CDNs o bloqueadores de publicidad (Adblockers)
-              const onerrorRegex = /window\.onerror\s*=\s*function\s*\(\s*message\s*,\s*source\s*,\s*lineno\s*,\s*colno\s*,\s*error\s*\)\s*\{[\s\S]*?return\s+false\s*;\s*\}/gi;
-              const newOnerror = `window.onerror = function(message, source, lineno, colno, error) {
+              // Reemplazar TODO el bloque del manejador de errores de Eruda original con uno robusto que ignore los "Script error."
+              // Al buscar la firma del bloque completo desde <script> hasta </script> que contenga showErudaAndLog,
+              // evitamos fallos de detección debidos a diferencias de formato (CRLF / LF) o tabulaciones.
+              const erudaBlockRegex = /<script>[\s\S]*?showErudaAndLog[\s\S]*?<\/script>/i;
+              const newErudaBlock = `<script>
+          (function() {
+              function showErudaAndLog(errObj) {
+                  if (typeof eruda === 'undefined' || !window.eruda) return;
+                  if (!window.eruda._isInit) {
+                      eruda.init();
+                      eruda.show();
+                      console.warn("⚠️ BoardingGate: Se ha detectado un error. Eruda activado.");
+                  }
+                  if (errObj) {
+                      console.error("Detalle del error:", errObj);
+                  }
+              }
+
+              window.onerror = function(message, source, lineno, colno, error) {
                   const msg = typeof message === 'string' ? message : (message && message.message ? message.message : "");
-                  if (msg.includes("Script error") || !source || message === "Script error.") {
-                      return false;
+                  // Ignorar errores genéricos de origen cruzado de widgets (como TradingView) o bloqueos de extensiones/adblockers
+                  if (msg.includes("Script error") || !source || lineno === 0 || msg === "Script error.") {
+                      return false; 
                   }
                   showErudaAndLog(error || message);
-                  return false;
-              }`;
-              html = html.replace(onerrorRegex, newOnerror);
+                  return false; 
+              };
 
-              // Corregir unhandledrejection para ignorar fallos de red por Adblockers
-              const unhandledRegex = /window\.onunhandledrejection\s*=\s*function\s*\(\s*event\s*\)\s*\{[\s\S]*?\};/gi;
-              const newUnhandled = `window.onunhandledrejection = function(event) {
+              window.onunhandledrejection = function(event) {
                   const reason = event.reason || "";
                   const msg = typeof reason === 'string' ? reason : (reason.message || "");
+                  // Ignorar fallos de red causados por bloqueos de Adblockers en consultas de terceros
                   if (msg.includes("Failed to fetch") || msg.includes("Load failed") || msg.includes("Script error") || msg.includes("NetworkError")) {
                       return;
                   }
                   showErudaAndLog(reason || "Promesa rechazada sin motivo detallado");
-              }`;
-              html = html.replace(unhandledRegex, newUnhandled);
+              };
+          })();
+          </script>`;
+
+              html = html.replace(erudaBlockRegex, () => newErudaBlock);
+
+              // Forzar protocolo seguro HTTPS para la carga de Eruda (evita problemas locales con file://)
+              html = html.replace('src="//cdn.jsdelivr.net/npm/eruda"', 'src="https://cdn.jsdelivr.net/npm/eruda"');
 
               // Elimina la libreria de Babel Standalone de forma flexible
               html = html.replace(/<script\s+[^>]*src="[^"]*babel\.min\.js"[^>]*><\/script>/gi, '');
