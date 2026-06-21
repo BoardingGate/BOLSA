@@ -23,7 +23,7 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Instalar traductor (Babel)
+      - name: Instalar de forma local Babel y sus dependencias
         run: npm install @babel/core @babel/preset-react @babel/preset-env
 
       - name: Crear script de traduccion
@@ -37,31 +37,41 @@ jobs:
 
           try {
             let html = fs.readFileSync(inputFile, 'utf8');
-            const scriptRegex = /<script id="react-app" type="text\/plain">([\s\S]*?)<\/script>/;
+            
+            // Expresión regular robusta para encontrar el script de React, ignorando el orden o tipo de comillas de los atributos
+            const scriptRegex = /<script\s+[^>]*id="react-app"[^>]*>([\s\S]*?)<\/script>/i;
             const match = html.match(scriptRegex);
 
             if (match) {
               const jsxCode = match[1];
               
-              // Traducir forzando el modo clasico y preservando la compatibilidad de navegadores
+              // Traducir forzando el modo clásico y manteniendo async/await nativo para evitar regeneratorRuntime
               const compiled = babel.transformSync(jsxCode, {
                 presets: [
                   ['@babel/preset-react', { runtime: 'classic' }],
-                  ['@babel/preset-env', { modules: false }]
+                  ['@babel/preset-env', { 
+                    targets: {
+                      chrome: "80",
+                      safari: "13.1",
+                      firefox: "78",
+                      edge: "80"
+                    },
+                    modules: false 
+                  }]
                 ]
               }).code;
               
-              // Reemplaza el bloque JSX por el codigo compilado
+              // Reemplaza el bloque JSX por el codigo compilado dentro de una etiqueta script estándar
               html = html.replace(scriptRegex, '<script>\n' + compiled + '\n</script>');
               
-              // Elimina la libreria pesada de Babel Standalone
-              html = html.replace(/<script src="https:\/\/unpkg\.com\/@babel\/standalone\/babel\.min\.js"><\/script>/g, '');
+              // Elimina la libreria de Babel Standalone de forma flexible
+              html = html.replace(/<script\s+[^>]*src="[^"]*babel\.min\.js"[^>]*><\/script>/gi, '');
               
               // Limpia de forma segura el cargador de Babel inicial
-              html = html.replace(/<script>\s*window\.Babel\s*=\s*\{[\s\S]*?\};\s*<\/script>/g, '');
+              html = html.replace(/<script[^>]*>\s*window\.Babel\s*=\s*\{[\s\S]*?\};\s*<\/script>/gi, '');
               
-              // Expresión regular templada blindada: Evita tragarse otros scripts o el HTML intermedio
-              const compileScriptRegex = /<script>(?:(?!<script>)[\s\S])*?Babel\.transform[\s\S]*?<\/script>/g;
+              // Elimina el script que realizaba la autocompilacion en el navegador
+              const compileScriptRegex = /<script[^>]*>(?:(?!<script>)[\s\S])*?Babel\.transform[\s\S]*?<\/script>/gi;
               html = html.replace(compileScriptRegex, '');
               
               fs.writeFileSync(outputFile, html);
