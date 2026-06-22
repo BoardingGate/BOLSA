@@ -1,9 +1,9 @@
-name: Compilador de React Automático
+name: Compilador de React Automático 
 
 on:
   push:
     branches:
-      - main  # Cambia por "master" si tu rama principal se llama master
+      - main
     paths:
       - 'BOLSA2.HTML'
 
@@ -23,10 +23,10 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Instalar de forma local Babel y sus dependencias
+      - name: Instalar Babel y dependencias
         run: npm install @babel/core @babel/preset-react @babel/preset-env
 
-      - name: Crear script de traduccion
+      - name: Crear script de compilacion
         run: |
           cat << 'EOF' > compile.js
           const fs = require('fs');
@@ -38,126 +38,108 @@ jobs:
           try {
             let html = fs.readFileSync(inputFile, 'utf8');
             
-            // Expresión regular robusta para encontrar el bloque de React, ignorando el orden o tipo de comillas de los atributos
-            const scriptRegex = /<script\s+[^>]*id="react-app"[^>]*>([\s\S]*?)<\/script>/i;
-            const match = html.match(scriptRegex);
+            console.log('📄 HTML original cargado. Buscando bloque React...');
+            
+            // Buscar el bloque de React con id="react-app"
+            const reactScriptRegex = /<script\s+[^>]*id="react-app"[^>]*>([\s\S]*?)<\/script>/i;
+            const match = html.match(reactScriptRegex);
 
-            if (match) {
-              const jsxCode = match[1];
-              
-              // Traducir usando runtime AUTOMATIC (el estándar moderno para React 18+)
-              // Esto hace que Babel inyecte automáticamente las importaciones necesarias de React
-              const compiled = babel.transformSync(jsxCode, {
-                presets: [
-                  ['@babel/preset-react', { runtime: 'automatic' }], // ✅ CAMBIO CRÍTICO: automatic en lugar de classic
-                  ['@babel/preset-env', { 
-                    targets: {
-                      esmodules: true
-                    },
-                    modules: false 
-                  }]
-                ]
-              }).code;
-              
-              // Envolver el código compilado en un listener DOMContentLoaded igual que hacía la versión original
-              const wrappedCode = `
+            if (!match) {
+              console.error('❌ No se encontró bloque con id="react-app"');
+              process.exit(1);
+            }
+
+            console.log('✅ Bloque React encontrado');
+            const jsxCode = match[1];
+
+            // Compilar JSX con Babel
+            console.log('🔄 Compilando JSX...');
+            const compiled = babel.transformSync(jsxCode, {
+              presets: [
+                ['@babel/preset-react', { runtime: 'automatic' }],
+                ['@babel/preset-env', { 
+                  targets: { esmodules: true },
+                  modules: false 
+                }]
+              ]
+            }).code;
+
+            console.log('✅ Compilación exitosa');
+
+            // Envolver en DOMContentLoaded
+            const wrappedCode = `
           window.addEventListener('DOMContentLoaded', () => {
             try {
-              // inyectamos React en el scope global para que el código compilado funcione
-              const React = window.React;
-              const ReactDOM = window.ReactDOM;
-              const { createRoot } = ReactDOM;
           ${compiled}
             } catch (err) {
-              console.error("Error al ejecutar la aplicación React:", err);
+              console.error("❌ Error ejecutando React:", err);
               if (typeof eruda !== 'undefined') {
                 eruda.init();
                 eruda.show();
               }
             }
           });
-              `;
-              
-              // Reemplaza el bloque JSX por el codigo compilado envuelto (usando función para evitar problemas de colisión de $1, $2, etc.)
-              html = html.replace(scriptRegex, () => '<script>\n' + wrappedCode + '\n</script>');
-              
-              // Reemplazar TODO el bloque del manejador de errores de Eruda original con uno robusto que ignore los "Script error."
-              // Al buscar la firma del bloque completo desde <script> hasta </script> que contenga showErudaAndLog,
-              // evitamos fallos de detección debidos a diferencias de formato (CRLF / LF) o tabulaciones.
-              const erudaBlockRegex = /<script>[\s\S]*?showErudaAndLog[\s\S]*?<\/script>/i;
-              const newErudaBlock = `<script>
-          (function() {
-              function showErudaAndLog(errObj) {
-                  if (typeof eruda === 'undefined' || !window.eruda) return;
-                  if (!window.eruda._isInit) {
-                      eruda.init();
-                      eruda.show();
-                      console.warn("⚠️ BoardingGate: Se ha detectado un error. Eruda activado.");
-                  }
-                  if (errObj) {
-                      console.error("Detalle del error:", errObj);
-                  }
-              }
+            `;
 
-              window.onerror = function(message, source, lineno, colno, error) {
-                  const msg = typeof message === 'string' ? message : (message && message.message ? message.message : "");
-                  // Ignorar errores genéricos de origen cruzado de widgets (como TradingView) o bloqueos de extensiones/adblockers
-                  if (msg.includes("Script error") || !source || lineno === 0 || msg === "Script error.") {
-                      return false; 
-                  }
-                  showErudaAndLog(error || message);
-                  return false; 
-              };
+            // Reemplazar SOLO el script del react-app, mantener todo lo demás
+            html = html.replace(reactScriptRegex, () => '<script>\n' + wrappedCode + '\n</script>');
 
-              window.onunhandledrejection = function(event) {
-                  const reason = event.reason || "";
-                  const msg = typeof reason === 'string' ? reason : (reason.message || "");
-                  // Ignorar fallos de red causados por bloqueos de Adblockers en consultas de terceros
-                  if (msg.includes("Failed to fetch") || msg.includes("Load failed") || msg.includes("Script error") || msg.includes("NetworkError")) {
-                      return;
-                  }
-                  showErudaAndLog(reason || "Promesa rechazada sin motivo detallado");
-              };
-          })();
-          </script>`;
+            console.log('✅ Código compilado insertado');
 
-              html = html.replace(erudaBlockRegex, () => newErudaBlock);
-
-              // Forzar protocolo seguro HTTPS para la carga de Eruda (evita problemas locales con file://)
-              html = html.replace('src="//cdn.jsdelivr.net/npm/eruda"', 'src="https://cdn.jsdelivr.net/npm/eruda"');
-
-              // ✅ NO eliminar React y ReactDOM - son necesarios para que el código compilado funcione
-              // Mantenemos las líneas que cargan React desde CDN
-
-              // Elimina la libreria de Babel Standalone de forma flexible (ya no se necesita en runtime)
-              html = html.replace(/<script\s+[^>]*src="[^"]*babel\.min\.js"[^>]*><\/script>/gi, '');
-              
-              // Limpia de forma segura el cargador de Babel inicial
-              html = html.replace(/<script[^>]*>\s*window\.Babel\s*=\s*\{[\s\S]*?\};\s*<\/script>/gi, '');
-              
-              // Elimina el script que realizaba la autocompilacion en el navegador (ya no se necesita)
-              const compileScriptRegex = /<script[^>]*>[\s\S]*?window\.addEventListener\('DOMContentLoaded'[\s\S]*?Babel\.transform[\s\S]*?<\/script>/gi;
-              html = html.replace(compileScriptRegex, '');
-              
-              fs.writeFileSync(outputFile, html);
-              console.log('✅ Archivo precompilado con exito.');
-            } else {
-              console.error('❌ No se encontro el bloque de codigo React.');
-              process.exit(1);
+            // Eliminar el script de auto-compilación que estaba al final
+            // Este script buscaba un elemento con id="react-app" y lo transpilaba en el navegador
+            // Ya no lo necesitamos porque precompilamos
+            const autoCompileRegex = /<script>\s*window\.addEventListener\('DOMContentLoaded'[\s\S]*?Babel\.transform[\s\S]*?<\/script>/;
+            const beforeLength = html.length;
+            html = html.replace(autoCompileRegex, '');
+            const afterLength = html.length;
+            
+            if (beforeLength !== afterLength) {
+              console.log('✅ Script de auto-compilación removido');
             }
+
+            // Eliminar Babel Standalone ya que no lo necesitamos en runtime
+            html = html.replace(/<script\s+[^>]*src="[^"]*babel\.min\.js"[^>]*><\/script>/gi, '');
+            console.log('✅ Babel Standalone removido');
+
+            // Eliminar la inicialización de window.Babel
+            html = html.replace(/<script>\s*window\.Babel\s*=\s*\{[\s\S]*?\};\s*<\/script>/gi, '');
+            console.log('✅ Inicialización de Babel removida');
+
+            // MANTENER React y ReactDOM - son esenciales
+            // No eliminar nada más
+
+            fs.writeFileSync(outputFile, html);
+            console.log('\n✅ COMPILACIÓN COMPLETADA');
+            console.log(`   Entrada: ${inputFile}`);
+            console.log(`   Salida: ${outputFile}`);
+            console.log(`   Tamaño: ${(html.length / 1024).toFixed(2)} KB`);
+
           } catch (err) {
-            console.error('❌ Error durante la lectura o escritura de archivos:', err.message);
+            console.error('❌ Error:', err.message);
+            console.error(err.stack);
             process.exit(1);
           }
           EOF
 
-      - name: Ejecutar traduccion
+      - name: Ejecutar compilacion
         run: node compile.js
 
-      - name: Guardar y subir BOLSA.HTML optimizado
+      - name: Verificar que BOLSA.HTML tiene contenido
+        run: |
+          SIZE=$(wc -c < BOLSA.HTML)
+          echo "Tamaño de BOLSA.HTML: $SIZE bytes"
+          if [ $SIZE -lt 10000 ]; then
+            echo "❌ ADVERTENCIA: BOLSA.HTML parece vacío o muy pequeño"
+            head -c 500 BOLSA.HTML
+            exit 1
+          fi
+          echo "✅ BOLSA.HTML parece correcto"
+
+      - name: Guardar y subir BOLSA.HTML
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add BOLSA.HTML
-          git commit -m "style: precompilar React de forma automatica en BOLSA.HTML" || echo "Sin cambios que guardar"
+          git commit -m "style: precompilar React automáticamente" || echo "Sin cambios"
           git push
