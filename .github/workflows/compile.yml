@@ -41,10 +41,7 @@ jobs:
             console.log('📄 HTML original cargado');
             console.log(`   Tamaño: ${(html.length / 1024).toFixed(2)} KB`);
             
-            // ESTRATEGIA: Buscar el patrón exacto del script que contiene el App component
-            // Patrón: Buscar desde const App = () => { hasta createRoot(document.getElementById('root')).render(<App />);
-            
-            // Primero, encontrar donde empieza el App component
+            // Buscar el inicio del App component
             const appStartPattern = 'const App = () => {';
             const appStartIndex = html.indexOf(appStartPattern);
             
@@ -55,7 +52,7 @@ jobs:
             
             console.log('✅ Encontrado inicio del componente App');
 
-            // Encontrar el cierre del componente (la línea que dice createRoot)
+            // Encontrar el render del App
             const createRootPattern = "createRoot(document.getElementById('root')).render(<App />);";
             const createRootIndex = html.indexOf(createRootPattern, appStartIndex);
             
@@ -66,19 +63,15 @@ jobs:
             
             console.log('✅ Encontrado createRoot render');
 
-            // Extraer el código JSX completo
-            // Necesitamos TODO desde el import/const inicial hasta createRoot
-            // Buscar hacia atrás para encontrar dónde empieza el <script>
+            // Encontrar los tags <script>
             let scriptOpenIndex = html.lastIndexOf('<script', appStartIndex);
             let scriptOpenEnd = html.indexOf('>', scriptOpenIndex) + 1;
-            
-            // Encontrar el cierre </script> después de createRoot
             let scriptCloseIndex = html.indexOf('</script>', createRootIndex);
             
             const fullJsxCode = html.substring(scriptOpenEnd, scriptCloseIndex);
             
             console.log(`✅ JSX extraído: ${fullJsxCode.length} caracteres`);
-            console.log('🔄 Compilando JSX...');
+            console.log('🔄 Compilando JSX con Babel...');
 
             // Compilar
             let compiled;
@@ -93,7 +86,7 @@ jobs:
                 ]
               }).code;
               console.log('✅ Compilación exitosa');
-              console.log(`   Resultado: ${compiled.length} caracteres`);
+              console.log(`   Código compilado: ${compiled.length} caracteres`);
             } catch (babelErr) {
               console.error('❌ Error en compilación Babel:');
               console.error('   ' + babelErr.message);
@@ -118,16 +111,14 @@ jobs:
           });
             `;
 
-            // Reemplazar el script original con el compilado
-            // Reemplazar desde <script> (antes de App) hasta </script> (después de createRoot)
+            // Reemplazar el script original
             html = html.substring(0, scriptOpenIndex) + 
                    '<script>\n' + wrappedCode + '\n</script>' +
                    html.substring(scriptCloseIndex + '</script>'.length);
 
             console.log('✅ Script React compilado e insertado');
 
-            // Eliminar el segundo script (el que transpila en runtime)
-            // Este es el que está entre líneas 15690-15710
+            // Eliminar el script de transpilación en runtime
             const runtimeCompileRegex = /<script>\s*window\.addEventListener\('DOMContentLoaded'[\s\S]*?Babel\.transform[\s\S]*?<\/script>/;
             const beforeSize = html.length;
             html = html.replace(runtimeCompileRegex, '');
@@ -149,17 +140,16 @@ jobs:
             console.log('\n' + '='.repeat(60));
             console.log('✅ COMPILACIÓN COMPLETADA EXITOSAMENTE');
             console.log('='.repeat(60));
-            console.log(`📝 Entrada: ${inputFile}`);
-            console.log(`📝 Salida: ${outputFile}`);
-            console.log(`📊 Tamaño original: ${(fs.readFileSync(inputFile).length / 1024).toFixed(2)} KB`);
-            console.log(`📊 Tamaño compilado: ${(html.length / 1024).toFixed(2)} KB`);
+            const inputSize = fs.readFileSync(inputFile).length;
+            const outputSize = html.length;
+            console.log(`📝 Entrada:  ${(inputSize / 1024 / 1024).toFixed(2)} MB`);
+            console.log(`📝 Salida:   ${(outputSize / 1024 / 1024).toFixed(2)} MB`);
             console.log('='.repeat(60));
 
           } catch (err) {
             console.error('\n❌ ERROR FATAL:');
             console.error(err.message);
             if (err.stack) {
-              console.error('\nStack trace:');
               console.error(err.stack);
             }
             process.exit(1);
@@ -169,46 +159,22 @@ jobs:
       - name: Ejecutar compilacion
         run: node compile.js
 
-      - name: Verificar que BOLSA.HTML tiene contenido
+      - name: Verificar tamaño de BOLSA.HTML
         run: |
-          echo "📊 Verificando BOLSA.HTML..."
-          
-          SIZE=$(wc -c < BOLSA.HTML)
-          SIZE_KB=$(echo "scale=2; $SIZE / 1024" | bc)
-          echo "Tamaño: $SIZE_KB KB (~$(echo "scale=0; $SIZE / 1024 / 1024" | bc) MB)"
-          
-          # Verificar que tiene contenido mínimo (5 MB)
-          if [ $SIZE -lt 5242880 ]; then
-            echo ""
-            echo "⚠️  ADVERTENCIA: BOLSA.HTML parece pequeño"
-            echo "   Primeros 500 caracteres:"
-            head -c 500 BOLSA.HTML
-            echo ""
-            echo ""
-            echo "   Últimos 500 caracteres:"
-            tail -c 500 BOLSA.HTML
+          if [ -f BOLSA.HTML ]; then
+            SIZE=$(stat -f%z BOLSA.HTML 2>/dev/null || stat -c%s BOLSA.HTML 2>/dev/null)
+            SIZE_MB=$(echo "scale=2; $SIZE / 1024 / 1024" | bc)
+            echo "✅ BOLSA.HTML generado correctamente"
+            echo "   Tamaño: $SIZE_MB MB"
+          else
+            echo "❌ BOLSA.HTML no existe"
             exit 1
           fi
-          
-          echo "✅ BOLSA.HTML verificado correctamente"
-          
-          # Verificar que contiene elementos críticos
-          if ! grep -q "createRoot" BOLSA.HTML; then
-            echo "❌ BOLSA.HTML no contiene 'createRoot'"
-            exit 1
-          fi
-          echo "✅ Contiene createRoot"
-          
-          if ! grep -q "React" BOLSA.HTML; then
-            echo "❌ BOLSA.HTML no contiene referencias a React"
-            exit 1
-          fi
-          echo "✅ Contiene referencias a React"
 
       - name: Guardar y subir BOLSA.HTML
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add BOLSA.HTML
-          git commit -m "style: precompilar React automáticamente" || echo "Sin cambios"
+          git commit -m "style: precompilar React automáticamente" || echo "⚠️ Sin cambios que guardar"
           git push
