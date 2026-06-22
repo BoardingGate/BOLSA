@@ -45,10 +45,11 @@ jobs:
             if (match) {
               const jsxCode = match[1];
               
-              // Traducir forzando el modo clásico y manteniendo async/await nativo para evitar regeneratorRuntime
+              // Traducir usando runtime AUTOMATIC (el estándar moderno para React 18+)
+              // Esto hace que Babel inyecte automáticamente las importaciones necesarias de React
               const compiled = babel.transformSync(jsxCode, {
                 presets: [
-                  ['@babel/preset-react', { runtime: 'classic' }],
+                  ['@babel/preset-react', { runtime: 'automatic' }], // ✅ CAMBIO CRÍTICO: automatic en lugar de classic
                   ['@babel/preset-env', { 
                     targets: {
                       esmodules: true
@@ -62,6 +63,10 @@ jobs:
               const wrappedCode = `
           window.addEventListener('DOMContentLoaded', () => {
             try {
+              // inyectamos React en el scope global para que el código compilado funcione
+              const React = window.React;
+              const ReactDOM = window.ReactDOM;
+              const { createRoot } = ReactDOM;
           ${compiled}
             } catch (err) {
               console.error("Error al ejecutar la aplicación React:", err);
@@ -121,24 +126,27 @@ jobs:
               // Forzar protocolo seguro HTTPS para la carga de Eruda (evita problemas locales con file://)
               html = html.replace('src="//cdn.jsdelivr.net/npm/eruda"', 'src="https://cdn.jsdelivr.net/npm/eruda"');
 
-              // Elimina la libreria de Babel Standalone de forma flexible
+              // ✅ NO eliminar React y ReactDOM - son necesarios para que el código compilado funcione
+              // Mantenemos las líneas que cargan React desde CDN
+
+              // Elimina la libreria de Babel Standalone de forma flexible (ya no se necesita en runtime)
               html = html.replace(/<script\s+[^>]*src="[^"]*babel\.min\.js"[^>]*><\/script>/gi, '');
               
               // Limpia de forma segura el cargador de Babel inicial
               html = html.replace(/<script[^>]*>\s*window\.Babel\s*=\s*\{[\s\S]*?\};\s*<\/script>/gi, '');
               
-              // Elimina el script que realizaba la autocompilacion en el navegador
-              const compileScriptRegex = /<script[^>]*>(?:(?!<script>)[\s\S])*?Babel\.transform[\s\S]*?<\/script>/gi;
+              // Elimina el script que realizaba la autocompilacion en el navegador (ya no se necesita)
+              const compileScriptRegex = /<script[^>]*>[\s\S]*?window\.addEventListener\('DOMContentLoaded'[\s\S]*?Babel\.transform[\s\S]*?<\/script>/gi;
               html = html.replace(compileScriptRegex, '');
               
               fs.writeFileSync(outputFile, html);
-              console.log('Archivo precompilado con exito.');
+              console.log('✅ Archivo precompilado con exito.');
             } else {
-              console.error('No se encontro el bloque de codigo React.');
+              console.error('❌ No se encontro el bloque de codigo React.');
               process.exit(1);
             }
           } catch (err) {
-            console.error('Error durante la lectura o escritura de archivos:', err.message);
+            console.error('❌ Error durante la lectura o escritura de archivos:', err.message);
             process.exit(1);
           }
           EOF
