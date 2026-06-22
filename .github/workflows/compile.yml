@@ -23,12 +23,11 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Instalar Babel y dependencias
+      - name: Instalar Babel
         run: npm install @babel/core @babel/preset-react @babel/preset-env
 
-      - name: Crear script de compilacion
-        run: |
-          cat > compile.js << 'SCRIPT_END'
+      - name: Compilar React
+        run: node - << 'EOF'
 const fs = require('fs');
 const babel = require('@babel/core');
 
@@ -61,39 +60,29 @@ try {
   }
   
   if (scripts.length === 0) {
-    console.error('❌ No se encontró ningún script con código React');
+    console.error('❌ No se encontró código React');
     process.exit(1);
   }
 
   scripts.sort((a, b) => b.length - a.length);
   
   const mainScript = scripts[0];
-  console.log(`✅ Encontrado script React principal`);
-  console.log(`   Tamaño del código: ${(mainScript.length / 1024).toFixed(2)} KB`);
+  console.log('✅ Script React encontrado');
 
-  console.log('🔄 Compilando con Babel...');
-  let compiled;
-  try {
-    compiled = babel.transformSync(mainScript.content, {
-      presets: [
-        ['@babel/preset-react', { runtime: 'automatic' }],
-        ['@babel/preset-env', { 
-          targets: { esmodules: true },
-          modules: false 
-        }]
-      ]
-    }).code;
-    console.log('✅ Compilación exitosa');
-  } catch (babelErr) {
-    console.error('❌ Error en Babel:', babelErr.message);
-    process.exit(1);
-  }
+  console.log('🔄 Compilando...');
+  let compiled = babel.transformSync(mainScript.content, {
+    presets: [
+      ['@babel/preset-react', { runtime: 'automatic' }],
+      ['@babel/preset-env', { targets: { esmodules: true }, modules: false }]
+    ]
+  }).code;
+  console.log('✅ Compilación exitosa');
 
   const wrappedCode = `window.addEventListener('DOMContentLoaded', function() {
   try {
 ${compiled}
   } catch (err) {
-    console.error("Error ejecutando React:", err);
+    console.error('Error:', err);
     if (typeof eruda !== 'undefined' && eruda && eruda.init) {
       eruda.init();
       eruda.show();
@@ -101,51 +90,42 @@ ${compiled}
   }
 });`;
 
-  html = html.replace(mainScript.fullMatch, '<script>\\n' + wrappedCode + '\\n</script>');
-  console.log('✅ Script compilado e insertado');
+  html = html.replace(mainScript.fullMatch, '<script>\n' + wrappedCode + '\n</script>');
+  console.log('✅ Script insertado');
 
   html = html.replace(/<script\s+[^>]*src="[^"]*babel\.min\.js"[^>]*><\/script>/gi, '');
-  console.log('✅ Babel Standalone removido');
-
   html = html.replace(/<script>\s*window\.Babel\s*=\s*\{[^}]*\};\s*<\/script>/gi, '');
-  console.log('✅ Configuración de Babel removida');
-
   html = html.replace(/<script>\s*window\.addEventListener\('DOMContentLoaded'[\s\S]*?document\.getElementById\('react-app'\)[\s\S]*?<\/script>/gi, '');
-  console.log('✅ Script de transpilación en runtime removido');
 
   fs.writeFileSync(outputFile, html);
   
   const outputSize = html.length;
-  console.log('\\n' + '='.repeat(60));
+  console.log('\n' + '='.repeat(50));
   console.log('✅ COMPILACIÓN COMPLETADA');
-  console.log('='.repeat(60));
-  console.log(`📝 Entrada:  BOLSA2.HTML (${(inputSize / 1024 / 1024).toFixed(2)} MB)`);
-  console.log(`📝 Salida:   BOLSA.HTML  (${(outputSize / 1024 / 1024).toFixed(2)} MB)`);
-  console.log('='.repeat(60));
+  console.log('='.repeat(50));
+  console.log(`Entrada:  ${(inputSize / 1024 / 1024).toFixed(2)} MB`);
+  console.log(`Salida:   ${(outputSize / 1024 / 1024).toFixed(2)} MB`);
 
 } catch (err) {
-  console.error('\\n❌ ERROR FATAL:', err.message);
+  console.error('ERROR:', err.message);
   process.exit(1);
 }
-SCRIPT_END
-
-      - name: Ejecutar compilacion
-        run: node compile.js
+EOF
 
       - name: Verificar BOLSA.HTML
         run: |
           if [ ! -f BOLSA.HTML ]; then
-            echo "❌ BOLSA.HTML no fue creado"
+            echo "❌ No se generó BOLSA.HTML"
             exit 1
           fi
           SIZE=$(wc -c < BOLSA.HTML)
           SIZE_MB=$(echo "scale=2; $SIZE / 1024 / 1024" | bc)
-          echo "✅ BOLSA.HTML existe (${SIZE_MB} MB)"
+          echo "✅ BOLSA.HTML generado: ${SIZE_MB} MB"
 
-      - name: Guardar y subir BOLSA.HTML
+      - name: Push a repositorio
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add BOLSA.HTML
-          git commit -m "style: precompilar React automáticamente" || echo "⚠️ Sin cambios"
+          git commit -m "style: React precompilado" || echo "Sin cambios"
           git push
