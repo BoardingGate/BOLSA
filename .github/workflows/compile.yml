@@ -28,118 +28,106 @@ jobs:
 
       - name: Crear script de compilacion
         run: |
-          cat << 'EOF' > compile.js
-          const fs = require('fs');
-          const babel = require('@babel/core');
+          cat > compile.js << 'SCRIPT_END'
+const fs = require('fs');
+const babel = require('@babel/core');
 
-          const inputFile = 'BOLSA2.HTML';
-          const outputFile = 'BOLSA.HTML';
+const inputFile = 'BOLSA2.HTML';
+const outputFile = 'BOLSA.HTML';
 
-          try {
-            console.log('📄 Leyendo BOLSA2.HTML...');
-            let html = fs.readFileSync(inputFile, 'utf8');
-            
-            const inputSize = html.length;
-            console.log(`   Tamaño: ${(inputSize / 1024 / 1024).toFixed(2)} MB`);
-            
-            // Buscar TODOS los bloques <script> que contienen código React
-            const scriptRegex = /<script[^>]*>([\s\S]*?)<\/script>/gi;
-            const scripts = [];
-            let match;
-            
-            while ((match = scriptRegex.exec(html)) !== null) {
-              const content = match[1];
-              // Buscar scripts que contengan código React
-              if (content.includes('const App = ') || 
-                  content.includes('function App(') ||
-                  (content.includes('createRoot') && content.includes('const'))) {
-                scripts.push({
-                  fullMatch: match[0],
-                  content: content,
-                  length: content.length,
-                  index: match.index
-                });
-              }
-            }
-            
-            if (scripts.length === 0) {
-              console.error('❌ No se encontró ningún script con código React');
-              process.exit(1);
-            }
+try {
+  console.log('📄 Leyendo BOLSA2.HTML...');
+  let html = fs.readFileSync(inputFile, 'utf8');
+  
+  const inputSize = html.length;
+  console.log(`   Tamaño: ${(inputSize / 1024 / 1024).toFixed(2)} MB`);
+  
+  const scriptRegex = /<script[^>]*>([\s\S]*?)<\/script>/gi;
+  const scripts = [];
+  let match;
+  
+  while ((match = scriptRegex.exec(html)) !== null) {
+    const content = match[1];
+    if (content.includes('const App = ') || 
+        content.includes('function App(') ||
+        (content.includes('createRoot') && content.includes('const'))) {
+      scripts.push({
+        fullMatch: match[0],
+        content: content,
+        length: content.length,
+        index: match.index
+      });
+    }
+  }
+  
+  if (scripts.length === 0) {
+    console.error('❌ No se encontró ningún script con código React');
+    process.exit(1);
+  }
 
-            // Ordenar por longitud (el más largo es probablemente el principal)
-            scripts.sort((a, b) => b.length - a.length);
-            
-            const mainScript = scripts[0];
-            console.log(`✅ Encontrado script React principal`);
-            console.log(`   Tamaño del código: ${(mainScript.length / 1024).toFixed(2)} KB`);
+  scripts.sort((a, b) => b.length - a.length);
+  
+  const mainScript = scripts[0];
+  console.log(`✅ Encontrado script React principal`);
+  console.log(`   Tamaño del código: ${(mainScript.length / 1024).toFixed(2)} KB`);
 
-            // Compilar el código React principal
-            console.log('🔄 Compilando con Babel...');
-            let compiled;
-            try {
-              compiled = babel.transformSync(mainScript.content, {
-                presets: [
-                  ['@babel/preset-react', { runtime: 'automatic' }],
-                  ['@babel/preset-env', { 
-                    targets: { esmodules: true },
-                    modules: false 
-                  }]
-                ]
-              }).code;
-              console.log('✅ Compilación exitosa');
-            } catch (babelErr) {
-              console.error('❌ Error en Babel:', babelErr.message);
-              process.exit(1);
-            }
-
-            // PASO CRÍTICO: Envolver CORRECTAMENTE en DOMContentLoaded
-            // Esto asegura que el DOM está listo cuando React intenta renderizar
-            const wrappedCode = `
-window.addEventListener('DOMContentLoaded', function() {
+  console.log('🔄 Compilando con Babel...');
+  let compiled;
   try {
-    // El siguiente código fue compilado automáticamente de JSX
+    compiled = babel.transformSync(mainScript.content, {
+      presets: [
+        ['@babel/preset-react', { runtime: 'automatic' }],
+        ['@babel/preset-env', { 
+          targets: { esmodules: true },
+          modules: false 
+        }]
+      ]
+    }).code;
+    console.log('✅ Compilación exitosa');
+  } catch (babelErr) {
+    console.error('❌ Error en Babel:', babelErr.message);
+    process.exit(1);
+  }
+
+  const wrappedCode = `window.addEventListener('DOMContentLoaded', function() {
+  try {
 ${compiled}
   } catch (err) {
-    console.error("❌ Error ejecutando React:", err);
+    console.error("Error ejecutando React:", err);
     if (typeof eruda !== 'undefined' && eruda && eruda.init) {
       eruda.init();
       eruda.show();
     }
   }
-});
-            `;
+});`;
 
-            // Reemplazar el script original
-            html = html.replace(mainScript.fullMatch, `<script>\n${wrappedCode}\n</script>`);
-            console.log('✅ Script compilado e insertado');
+  html = html.replace(mainScript.fullMatch, '<script>\\n' + wrappedCode + '\\n</script>');
+  console.log('✅ Script compilado e insertado');
 
-            // Limpiar scripts innecesarios
-            html = html.replace(/<script\s+[^>]*src="[^"]*babel\.min\.js"[^>]*><\/script>/gi, '');
-            console.log('✅ Babel Standalone removido');
+  html = html.replace(/<script\s+[^>]*src="[^"]*babel\.min\.js"[^>]*><\/script>/gi, '');
+  console.log('✅ Babel Standalone removido');
 
-            html = html.replace(/<script>\s*window\.Babel\s*=\s*\{[^}]*\};\s*<\/script>/gi, '');
-            console.log('✅ Configuración de Babel removida');
+  html = html.replace(/<script>\s*window\.Babel\s*=\s*\{[^}]*\};\s*<\/script>/gi, '');
+  console.log('✅ Configuración de Babel removida');
 
-            html = html.replace(/<script>\s*window\.addEventListener\('DOMContentLoaded'[\s\S]*?document\.getElementById\('react-app'\)[\s\S]*?<\/script>/gi, '');
-            console.log('✅ Script de transpilación en runtime removido');
+  html = html.replace(/<script>\s*window\.addEventListener\('DOMContentLoaded'[\s\S]*?document\.getElementById\('react-app'\)[\s\S]*?<\/script>/gi, '');
+  console.log('✅ Script de transpilación en runtime removido');
 
-            // Guardar
-            fs.writeFileSync(outputFile, html);
-            
-            const outputSize = html.length;
-            console.log('\n' + '='.repeat(60));
-            console.log('✅ COMPILACIÓN COMPLETADA');
-            console.log('='.repeat(60));
-            console.log(`📝 Entrada:  BOLSA2.HTML (${(inputSize / 1024 / 1024).toFixed(2)} MB)`);
-            console.log(`📝 Salida:   BOLSA.HTML  (${(outputSize / 1024 / 1024).toFixed(2)} MB)`);
-            console.log('='.repeat(60));
+  fs.writeFileSync(outputFile, html);
+  
+  const outputSize = html.length;
+  console.log('\\n' + '='.repeat(60));
+  console.log('✅ COMPILACIÓN COMPLETADA');
+  console.log('='.repeat(60));
+  console.log(`📝 Entrada:  BOLSA2.HTML (${(inputSize / 1024 / 1024).toFixed(2)} MB)`);
+  console.log(`📝 Salida:   BOLSA.HTML  (${(outputSize / 1024 / 1024).toFixed(2)} MB)`);
+  console.log('='.repeat(60));
 
-          } catch (err) {
-            console.error('\n❌ ERROR FATAL:', err.message);
-            process.exit(1);
-          }
-          EOF
+} catch (err) {
+  console.error('\\n❌ ERROR FATAL:', err.message);
+  process.exit(1);
+}
+SCRIPT_END
 
       - name: Ejecutar compilacion
         run: node compile.js
