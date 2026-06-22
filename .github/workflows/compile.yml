@@ -38,35 +38,71 @@ jobs:
           try {
             let html = fs.readFileSync(inputFile, 'utf8');
             
-            console.log('📄 HTML original cargado. Buscando bloque React...');
+            console.log('📄 HTML original cargado');
+            console.log(`   Tamaño: ${(html.length / 1024).toFixed(2)} KB`);
             
-            // Buscar el bloque de React con id="react-app"
-            const reactScriptRegex = /<script\s+[^>]*id="react-app"[^>]*>([\s\S]*?)<\/script>/i;
-            const match = html.match(reactScriptRegex);
-
-            if (!match) {
-              console.error('❌ No se encontró bloque con id="react-app"');
+            // ESTRATEGIA: Buscar el script por su contenido característico
+            // El script de React tiene "createRoot" y "ReactDOM"
+            
+            // Buscar el bloque que contiene createRoot (el más característico)
+            const createRootIndex = html.indexOf('createRoot(document.getElementById');
+            
+            if (createRootIndex === -1) {
+              console.error('❌ No se encontró createRoot. El archivo no tiene estructura React válida');
               process.exit(1);
             }
 
-            console.log('✅ Bloque React encontrado');
-            const jsxCode = match[1];
+            console.log('✅ Encontrado createRoot en el archivo');
 
-            // Compilar JSX con Babel
+            // Retroceder para encontrar el <script> más cercano
+            let scriptStartIndex = html.lastIndexOf('<script', createRootIndex);
+            if (scriptStartIndex === -1) {
+              console.error('❌ No se encontró <script> antes de createRoot');
+              process.exit(1);
+            }
+
+            console.log('✅ Encontrado <script> de apertura');
+
+            // Avanzar para encontrar el > (cierre de la etiqueta de apertura)
+            let scriptTagEnd = html.indexOf('>', scriptStartIndex);
+            if (scriptTagEnd === -1) {
+              console.error('❌ No se encontró cierre de <script>');
+              process.exit(1);
+            }
+
+            // Ahora buscar el </script> más cercano DESPUÉS de createRoot
+            let scriptEndIndex = html.indexOf('</script>', createRootIndex);
+            if (scriptEndIndex === -1) {
+              console.error('❌ No se encontró </script>');
+              process.exit(1);
+            }
+
+            // Extraer el contenido entre <script> y </script>
+            const jsxCode = html.substring(scriptTagEnd + 1, scriptEndIndex);
+            console.log(`✅ JSX extraído: ${jsxCode.length} caracteres`);
+
+            // Compilar con Babel
             console.log('🔄 Compilando JSX...');
-            const compiled = babel.transformSync(jsxCode, {
-              presets: [
-                ['@babel/preset-react', { runtime: 'automatic' }],
-                ['@babel/preset-env', { 
-                  targets: { esmodules: true },
-                  modules: false 
-                }]
-              ]
-            }).code;
+            let compiled;
+            try {
+              compiled = babel.transformSync(jsxCode, {
+                presets: [
+                  ['@babel/preset-react', { runtime: 'automatic' }],
+                  ['@babel/preset-env', { 
+                    targets: { esmodules: true },
+                    modules: false 
+                  }]
+                ]
+              }).code;
+              console.log('✅ Compilación exitosa');
+              console.log(`   Código compilado: ${compiled.length} caracteres`);
+            } catch (babelErr) {
+              console.error('❌ Error en Babel:', babelErr.message);
+              console.error('   Línea:', babelErr.loc);
+              throw babelErr;
+            }
 
-            console.log('✅ Compilación exitosa');
-
-            // Envolver en DOMContentLoaded
+            // Reemplazar el script original con el compilado
             const wrappedCode = `
           window.addEventListener('DOMContentLoaded', () => {
             try {
@@ -81,43 +117,37 @@ jobs:
           });
             `;
 
-            // Reemplazar SOLO el script del react-app, mantener todo lo demás
-            html = html.replace(reactScriptRegex, () => '<script>\n' + wrappedCode + '\n</script>');
+            // Hacer el reemplazo
+            html = html.substring(0, scriptTagEnd + 1) + 
+                   wrappedCode + 
+                   html.substring(scriptEndIndex);
 
-            console.log('✅ Código compilado insertado');
+            console.log('✅ Script compilado insertado en HTML');
 
-            // Eliminar el script de auto-compilación que estaba al final
-            // Este script buscaba un elemento con id="react-app" y lo transpilaba en el navegador
-            // Ya no lo necesitamos porque precompilamos
-            const autoCompileRegex = /<script>\s*window\.addEventListener\('DOMContentLoaded'[\s\S]*?Babel\.transform[\s\S]*?<\/script>/;
-            const beforeLength = html.length;
-            html = html.replace(autoCompileRegex, '');
-            const afterLength = html.length;
-            
-            if (beforeLength !== afterLength) {
-              console.log('✅ Script de auto-compilación removido');
-            }
-
-            // Eliminar Babel Standalone ya que no lo necesitamos en runtime
+            // Limpiar Babel Standalone ya que no lo necesitamos
             html = html.replace(/<script\s+[^>]*src="[^"]*babel\.min\.js"[^>]*><\/script>/gi, '');
             console.log('✅ Babel Standalone removido');
 
-            // Eliminar la inicialización de window.Babel
-            html = html.replace(/<script>\s*window\.Babel\s*=\s*\{[\s\S]*?\};\s*<\/script>/gi, '');
+            // Limpiar la inicialización de window.Babel
+            html = html.replace(/<script>\s*window\.Babel\s*=\s*\{[^}]*\};\s*<\/script>/gi, '');
             console.log('✅ Inicialización de Babel removida');
 
-            // MANTENER React y ReactDOM - son esenciales
-            // No eliminar nada más
-
+            // Escribir el archivo
             fs.writeFileSync(outputFile, html);
-            console.log('\n✅ COMPILACIÓN COMPLETADA');
-            console.log(`   Entrada: ${inputFile}`);
-            console.log(`   Salida: ${outputFile}`);
-            console.log(`   Tamaño: ${(html.length / 1024).toFixed(2)} KB`);
+            
+            console.log('\n' + '='.repeat(50));
+            console.log('✅ COMPILACIÓN COMPLETADA EXITOSAMENTE');
+            console.log('='.repeat(50));
+            console.log(`📝 Entrada: ${inputFile}`);
+            console.log(`📝 Salida: ${outputFile}`);
+            console.log(`📊 Tamaño original: ${(fs.readFileSync(inputFile).length / 1024).toFixed(2)} KB`);
+            console.log(`📊 Tamaño compilado: ${(html.length / 1024).toFixed(2)} KB`);
 
           } catch (err) {
-            console.error('❌ Error:', err.message);
-            console.error(err.stack);
+            console.error('\n❌ ERROR FATAL:', err.message);
+            if (err.stack) {
+              console.error(err.stack);
+            }
             process.exit(1);
           }
           EOF
@@ -127,14 +157,24 @@ jobs:
 
       - name: Verificar que BOLSA.HTML tiene contenido
         run: |
+          echo "📊 Verificando BOLSA.HTML..."
+          
           SIZE=$(wc -c < BOLSA.HTML)
-          echo "Tamaño de BOLSA.HTML: $SIZE bytes"
-          if [ $SIZE -lt 10000 ]; then
-            echo "❌ ADVERTENCIA: BOLSA.HTML parece vacío o muy pequeño"
-            head -c 500 BOLSA.HTML
+          SIZE_KB=$(echo "scale=2; $SIZE / 1024" | bc)
+          echo "Tamaño: $SIZE_KB KB"
+          
+          # Verificar que tiene contenido mínimo
+          if [ $SIZE -lt 5000000 ]; then
+            echo "⚠️  BOLSA.HTML es pequeño (< 5 MB)"
+            echo "   Primeros 1000 caracteres:"
+            head -c 1000 BOLSA.HTML
+            echo ""
+            echo "   Últimos 500 caracteres:"
+            tail -c 500 BOLSA.HTML
             exit 1
           fi
-          echo "✅ BOLSA.HTML parece correcto"
+          
+          echo "✅ BOLSA.HTML tiene tamaño correcto (> 5 MB)"
 
       - name: Guardar y subir BOLSA.HTML
         run: |
