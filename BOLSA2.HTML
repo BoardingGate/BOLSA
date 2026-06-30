@@ -5355,14 +5355,19 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCu
    const marginAlertStocks = useMemo(() => {
     return portfolio.filter(p => {
         if (p.sellDate || p.isActive === false) return false;
-        
         const mIntrinsic = parseFloat(p.manualIntrinsic) || 0;
-        return mIntrinsic > 0; // Mostrar todos los que tengan valor intrínseco
+        return mIntrinsic > 0; 
     }).map(p => {
         const mIntrinsic = parseFloat(p.manualIntrinsic) || 0;
         const curP = p.isIndex ? (p.currentPrice / (p.indexDivisor || 1)) : p.currentPrice;
         const buyP = parseFloat(p.buyPrice) || 0;
         
+        // --- NUEVOS CÁLCULOS AQUÍ ---
+        const divisor = p.isIndex ? (p.indexDivisor || 1) : 1;
+        const targetAdj = parseFloat(p.targetPrice) > 0 ? parseFloat(p.targetPrice) / divisor : 0;
+        const isNearTarget = targetAdj > 0 && curP >= (targetAdj * 0.95); // Alerta 5%
+        // ----------------------------
+
         const mOriginal = (mIntrinsic > 0 && buyP > 0) ? ((mIntrinsic - buyP) / mIntrinsic) * 100 : 0;
         const mCurrent = (mIntrinsic > 0 && curP > 0) ? ((mIntrinsic - curP) / mIntrinsic) * 100 : 0;
         
@@ -5379,6 +5384,8 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCu
             ...p,
             curP,
             buyP,
+            targetAdj,    
+            isNearTarget,  
             mOriginal,
             mCurrent,
             isNearLimit,
@@ -9859,38 +9866,30 @@ const handleSellSubmit = () => {
                                {item.daysInPortfolio}
                            </td>
                            
-                          <td className={`p-3 font-black text-right transition-all ${
-                               item.isNearLimit 
-                                   ? 'bg-red-600/60 text-white shadow-[inset_0_0_12px_rgba(0,0,0,0.5)] animate-pulse' 
-                                   : 'text-blue-400'
+                           <td className={`p-3 font-bold transition-all ${
+                               item.isNearTarget 
+                                   ? 'bg-red-600/60 text-white shadow-[inset_0_0_12px_rgba(0,0,0,0.5)]' 
+                                   : ''
                            }`}>
-                               {formatDecimal(item.curP, 2)} {item.stockCurrency}
+                               <div>{formatDecimal(item.buyP, 2)} {item.stockCurrency}</div>
                            </td>
-                           
-                           <td className="p-3 font-bold">
-                                <div>{formatDecimal(item.buyP, 2)} {item.stockCurrency}</div>                                            
-                            </td>                      
 
-                            <td className="p-3 font-semibold text-right">
-                                {(() => {
-                                    const divisor = item.isIndex ? (item.indexDivisor || 1) : 1;
-                                    const targetAdj = parseFloat(item.targetPrice) > 0 ? parseFloat(item.targetPrice) / divisor : 0;
-                                    if (targetAdj > 0) {
-                                        const pctToTarget = ((targetAdj - item.curP) / item.curP) * 100;
-                                        return (
-                                            <>
-                                                <div className="text-white font-bold">{formatDecimal(targetAdj, 2)} {item.stockCurrency}</div>
-                                                <span className={`block text-[9.5px] font-normal mt-0.5 ${pctToTarget >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                                    {pctToTarget >= 0 ? '+' : ''}{formatN(pctToTarget, 1)}%
-                                                </span>
-                                            </>
-                                        );
-                                    }
-                                    return <span className="text-slate-500">N/D</span>;
-                                })()}
-                            </td>       
-                
-                            <td className={`p-3 text-right font-bold transition-all ${
+                           <td className={`p-3 font-semibold text-right transition-all ${
+                               item.isNearTarget 
+                                   ? 'bg-red-600/60 text-white shadow-[inset_0_0_12px_rgba(0,0,0,0.5)] animate-pulse' 
+                                   : ''
+                           }`}>
+                               {item.targetAdj > 0 ? (
+                                   <>
+                                       <div className="text-white font-bold">{formatDecimal(item.targetAdj, 2)} {item.stockCurrency}</div>
+                                       <span className={`block text-[9.5px] font-normal mt-0.5 ${item.isNearTarget ? 'text-white' : ( (item.targetAdj - item.curP) >= 0 ? 'text-green-400' : 'text-red-400')}`}>
+                                           {((item.targetAdj - item.curP) / item.curP * 100).toFixed(1)}%
+                                       </span>
+                                   </>
+                               ) : <span className="text-slate-500">N/D</span>}
+                           </td>                                            
+
+                           <td className={`p-3 text-right font-bold transition-all ${
                                 item.isNearLimit 
                                     ? 'bg-red-600/60 text-white shadow-[inset_0_0_12px_rgba(0,0,0,0.5)]' 
                                     : 'text-blue-400'
