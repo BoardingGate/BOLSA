@@ -5337,6 +5337,78 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCu
     const [manualIntrinsicDate, setManualIntrinsicDate] = useState('');
     const [intrinsicPopupItem, setIntrinsicPopupItem] = useState(null);
 
+const fetchNews = async (type) => {
+    const isAuto = type === 'portfolio_auto';
+    const isBypass = aiModel && aiModel.toUpperCase().includes("USAR MODELO EXTERNO");
+
+    if (!apiKey && !secondaryApiKey && !isBypass) {
+        if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key para buscar noticias.', type: 'error' });
+        return;
+    }
+
+    if (typeof setIsNewsSelectionModalOpen === 'function') setIsNewsSelectionModalOpen(false); 
+    if (!isAuto && !isBypass) { setAnalyzingNews(true); setNewsResult(null); }
+
+    try {
+        let finalHtml = "";
+        const today = new Date().toLocaleString('es-ES');
+
+        if (type === 'portfolio' || isAuto) {
+            const sourceList = isAuto ? portfolio.filter(p => !p.sellDate && p.isActive !== false) : visiblePortfolio;
+            const uniqueAssets = Array.from(new Set(sourceList.map(p => `${p.name} (${p.ticker})`)));
+            
+            if (uniqueAssets.length === 0) {
+                if (isAuto) return;
+                throw new Error("No hay activos visibles/filtrados para analizar.");
+            }
+
+            const CHUNK_SIZE = 6; 
+            for (let i = 0; i < uniqueAssets.length; i += CHUNK_SIZE) {
+                const chunk = uniqueAssets.slice(i, i + CHUNK_SIZE);
+                const prompt = `INSTRUCCIÓN OBLIGATORIA: USA TU HERRAMIENTA DE BÚSQUEDA WEB.
+                FECHA ACTUAL: ${today}.
+                ACTIVOS A RASTREAR: ${chunk.join(', ')}.
+
+                Busca noticias financieras relevantes, eventos de dividendos o reportes de beneficios de los ÚLTIMOS 15 DÍAS para estas empresas. 
+                FORMATO (HTML):
+                <h3>Nombre Empresa</h3>
+                <ul><li><strong>Título</strong>: Resumen. <a href="URL_REAL" target="_blank">[Fuente]</a></li></ul>
+                
+                REGLAS:
+                - Jamás inventes información. Omite empresas sin noticias recientes. 
+                - Proporciona el link a la información encontrada.
+                - No uses markdown (\`\`\`html). Escribe HTML directo.`;
+
+                const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
+                if (res && res.length > 40) finalHtml += res + "<br/>";
+            }
+
+            if (!finalHtml.trim()) {
+                finalHtml = `<p style='text-align:center; padding:20px; color:#94a3b8; font-style:italic;'>No se han encontrado eventos recientes para los ${uniqueAssets.length} activos filtrados en pantalla.</p>`;
+            }
+
+        } else if (type === 'general') {
+            const prompt = `REGLAS INQUEBRANTABLES: Jamás inventes información. Actúa como terminal Bloomberg. Busca noticias MACRO y de BOLSA MUNDIAL de las últimas 48-72 horas. Usa búsqueda web. HTML con h3, p y enlaces <a>.`;
+            finalHtml = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
+
+        } else if (type === 'custom') {
+            if (!customNewsTopic.trim()) throw new Error("Escribe un tema de búsqueda.");
+            const prompt = `Busca noticias de los últimos 15 días sobre: "${customNewsTopic}". Usa búsqueda web. Formato HTML limpio. REGLA INQUEBRANTABLE: Jamás inventes información y pon siempre los enlaces a la información.`;
+            finalHtml = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
+        }
+
+        setNewsResult(finalHtml);
+        setIsNewsModalOpen(true); 
+    } catch (e) {
+        if (!isAuto && e.message !== "BYPASS_MODEL") {
+            setInfoModal({ isOpen: true, title: 'Error Noticias', msg: e.message, type: 'error' });
+        }
+    } finally {
+        if (!isAuto) setAnalyzingNews(false); 
+    }
+};
+
+
 
 const [isMarginAlertModalOpen, setIsMarginAlertModalOpen] = useState(false);
 
@@ -12936,7 +13008,6 @@ const prefetchMultiEntityData = async (promptId, tickerRef) => {
         if (!phaseOnePrompts[promptId]) return null;
 
         try {
-            // INDICADOR FASE 1
             setLoadingText('Fase 1: Identificando competidores y mapeando el sector...');
             startProgressSimulation(15, 25, 800); 
 
@@ -13145,73 +13216,51 @@ const handleFixedAnalysis = async (promptId) => {
     };
 
 const fetchNews = async (type) => {
-    const isAuto = type === 'portfolio_auto';
     const isBypass = aiModel && aiModel.toUpperCase().includes("USAR MODELO EXTERNO");
-
     if (!apiKey && !secondaryApiKey && !isBypass) {
-        if (!isAuto) setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key para buscar noticias.', type: 'error' });
+        setStatusModal({ isOpen: true, title: 'Error', msg: 'Falta API Key.', type: 'error' });
         return;
     }
 
-    if (typeof setIsNewsSelectionModalOpen === 'function') setIsNewsSelectionModalOpen(false); 
-    if (!isAuto && !isBypass) { setAnalyzingNews(true); setNewsResult(null); }
-
+    setIsNewsSelectionModalOpen(false);
+    if (!isBypass) setAnalyzingNews(true);
+    
     try {
         let finalHtml = "";
         const today = new Date().toLocaleString('es-ES');
 
-        if (type === 'portfolio' || isAuto) {
-            const sourceList = isAuto ? portfolio.filter(p => !p.sellDate && p.isActive !== false) : visiblePortfolio;
-            const uniqueAssets = Array.from(new Set(sourceList.map(p => `${p.name} (${p.ticker})`)));
+        if (type === 'portfolio') {
+            const activePortfolio = portfolio.filter(p => !p.sellDate && p.isActive !== false);
+            const uniqueAssets = Array.from(new Set(activePortfolio.map(p => `${p.name} (${p.ticker})`)));
             
-            if (uniqueAssets.length === 0) {
-                if (isAuto) return;
-                throw new Error("No hay activos visibles/filtrados para analizar.");
-            }
+            if (uniqueAssets.length === 0) throw new Error("No hay activos activos en la cartera.");
 
-            const CHUNK_SIZE = 5; 
+            const CHUNK_SIZE = 6;
             for (let i = 0; i < uniqueAssets.length; i += CHUNK_SIZE) {
                 const chunk = uniqueAssets.slice(i, i + CHUNK_SIZE);
-                const prompt = `INSTRUCCIÓN OBLIGATORIA: USA TU HERRAMIENTA DE BÚSQUEDA WEB.
-                FECHA ACTUAL: ${today}.
-                ACTIVOS A RASTREAR: ${chunk.join(', ')}.
-
-                Busca noticias financieras relevantes, eventos de dividendos o reportes de beneficios de los ÚLTIMOS 15 DÍAS para estas empresas. 
-                FORMATO (HTML):
-                <h3>Nombre Empresa</h3>
-                <ul><li><strong>Título</strong>: Resumen. <a href="URL_REAL" target="_blank">[Fuente]</a></li></ul>
+                const prompt = `USA BÚSQUEDA WEB. Fecha: ${today}. 
+                Noticias financieras reales (últimos 15 días) de: ${chunk.join(', ')}.
+                Formato HTML (h3, ul, li, a). No uses markdown.
+                REGLAS: Jamás inventes información y siempre pon el enlace a la información`;
                 
-                REGLAS:
-                - Jamás inventes información. Omite empresas sin noticias recientes. 
-                - Proporciona el link a la información encontrada.
-                - No uses markdown (\`\`\`html). Escribe HTML directo.`;
-
                 const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
-                if (res && res.length > 40) finalHtml += res + "<br/>";
+                if (res && res.length > 50) finalHtml += res + "<br/>";
             }
-
-            if (!finalHtml.trim()) {
-                finalHtml = `<p style='text-align:center; padding:20px; color:#94a3b8; font-style:italic;'>No se han encontrado eventos recientes para los ${uniqueAssets.length} activos filtrados en pantalla.</p>`;
-            }
-
         } else if (type === 'general') {
-            const prompt = `REGLAS INQUEBRANTABLES: Jamás inventes información. Actúa como terminal Bloomberg. Busca noticias MACRO y de BOLSA MUNDIAL de las últimas 48-72 horas. Usa búsqueda web. HTML con h3, p y enlaces <a>.`;
+            const prompt = `Terminal Financiera. Noticias MACRO y BOLSA MUNDIAL (últimas 72h). Búsqueda web. HTML con h3, p y <a>. REGLAS: Jamás inventes información y siempre pon el enlace a la información`;
             finalHtml = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
-
-        } else if (type === 'custom') {
-            if (!customNewsTopic.trim()) throw new Error("Escribe un tema de búsqueda.");
-            const prompt = `Busca noticias de los últimos 15 días sobre: "${customNewsTopic}". Usa búsqueda web. Formato HTML limpio. REGLA INQUEBRANTABLE: Jamás inventes información y pon siempre los enlaces a la información.`;
+        } else {
+            if (!customNewsTopic.trim()) throw new Error("Escribe un tema.");
+            const prompt = `Noticias últimos 15 días sobre: "${customNewsTopic}". Búsqueda web. HTML limpio. REGLAS: Jamás inventes información y siempre pon el enlace a la información`;
             finalHtml = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
         }
-
+        
         setNewsResult(finalHtml);
-        setIsNewsModalOpen(true); 
+        setIsNewsModalOpen(true);
     } catch (e) {
-        if (!isAuto && e.message !== "BYPASS_MODEL") {
-            setInfoModal({ isOpen: true, title: 'Error Noticias', msg: e.message, type: 'error' });
-        }
+        if (e.message !== "BYPASS_MODEL") setStatusModal({ isOpen: true, title: 'Error', msg: e.message, type: 'error' });
     } finally {
-        if (!isAuto) setAnalyzingNews(false); 
+        setAnalyzingNews(false);
     }
 };
 
