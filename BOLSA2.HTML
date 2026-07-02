@@ -450,10 +450,16 @@ const askAI = async (geminiKey, secondaryApiKey, prompt, model) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
                 contents: [{ parts: [{ text: prompt }] }], 
-                tools: [{ google_search: {} }] 
-            })
-        });
-        
+                tools: [{ google_search: {} }],
+                tool_config: {
+                          dynamic_retrieval_config: {
+                            mode: "DYNAMIC",
+                            dynamic_threshold: 0.1 
+                          }
+                        }
+                    })
+                });
+     
         const data = await response.json();
         if (data.error) throw new Error(data.error.message);
         
@@ -5365,19 +5371,26 @@ const fetchNews = async (type) => {
             const CHUNK_SIZE = 6; 
             for (let i = 0; i < uniqueAssets.length; i += CHUNK_SIZE) {
                 const chunk = uniqueAssets.slice(i, i + CHUNK_SIZE);
-                const prompt = `INSTRUCCIÓN OBLIGATORIA: USA TU HERRAMIENTA DE BÚSQUEDA WEB.
-                FECHA ACTUAL: ${today}.
-                ACTIVOS A RASTREAR: ${chunk.join(', ')}.
-
-                Busca noticias financieras relevantes, eventos de dividendos o reportes de beneficios de los ÚLTIMOS 15 DÍAS para estas empresas. 
-                FORMATO (HTML):
-                <h3>Nombre Empresa</h3>
-                <ul><li><strong>Título</strong>: Resumen. <a href="URL_REAL" target="_blank">[Fuente]</a></li></ul>
+                const prompt = `
+                INSTRUCCIÓN OBLIGATORIA: USA TU HERRAMIENTA DE BÚSQUEDA WEB (GOOGLE SEARCH).
+                FECHA DE HOY (REFERENCIA): ${new Date().toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.
                 
-                REGLAS:
-                - Jamás inventes información. Omite empresas sin noticias recientes. 
-                - Proporciona el link a la información encontrada.
-                - No uses markdown (\`\`\`html). Escribe HTML directo.`;
+                TAREA: Busca noticias publicadas ESTRICTAMENTE entre el ${new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toLocaleDateString()} y HOY para: ${chunk.join(', ')}.
+                
+                REGLAS DE ORO PARA EVITAR DATOS ANTIGUOS:
+                1. Si la noticia no tiene fecha de los últimos 15 días, IGNÓRALA.
+                2. Si vas a usar datos de tu memoria interna (anteriores a 2024/2025), NO LO HAGAS. Solo quiero resultados del buscador en tiempo real.
+                3. Para cada noticia DEBES incluir la URL directa y real.
+                4. Si no encuentras nada reciente para una empresa, no menciones esa empresa.
+                
+                FORMATO HTML:
+                <h3>Nombre Empresa</h3>
+                <ul>
+                  <li>
+                    <strong>[FECHA REAL] - Título</strong>: Resumen muy corto. 
+                    <a href="URL_REAL" target="_blank">[Ver fuente original]</a>
+                  </li>
+                </ul>`;
 
                 const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
                 if (res && res.length > 40) finalHtml += res + "<br/>";
