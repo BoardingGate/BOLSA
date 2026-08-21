@@ -1,6 +1,3 @@
-Aquí tienes un README.md completo, profesional y estructurado con estética de
-terminal financiera para tu repositorio de GitHub:
-
 # 📈 BoardingGate — Terminal Financiera & Gestor de Cartera con IA
 
 <p align="center">
