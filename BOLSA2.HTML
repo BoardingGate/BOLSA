@@ -14408,7 +14408,7 @@ const handlePrintScreener = () => {
 const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
     const [activeSubTab, setActiveSubTab] = useState('links');
 
-// --- 1. CALCULADORA DE INTERÉS COMPUESTO CON RENTA, AÑO CALENDARIO Y EDAD ---
+// --- 1. CALCULADORA DE INTERÉS COMPUESTO CON DESACUMULACIÓN, AÑO CALENDARIO Y EDAD ---
     const CompoundCalculator = () => {
         const [compState, setCompState] = usePersistentState('bg_compoundCalc', {
             startYear: new Date().getFullYear(),
@@ -14422,6 +14422,7 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
             addAtStart: true
         });
         const [showCompTable, setShowCompTable] = useState(false);
+        const [showDrawdownTable, setShowDrawdownTable] = useState(false);
 
         const [drawdownState, setDrawdownState] = usePersistentState('bg_compoundDrawdown', {
             mode: 'byMonthly', // 'byMonthly' o 'byYears'
@@ -14492,6 +14493,91 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
         const sAge = parseInt(compState.currentAge) || 0;
         const endAccumYear = sYear + Math.round(compState.years);
         const endAccumAge = sAge > 0 ? sAge + Math.round(compState.years) : null;
+
+        // CÁLCULO GENERAL DE DESACUMULACIÓN (Fase de Retiro)
+        const startCapital = drawdownState.useRealBalance ? compResult.finalRealBalance : compResult.finalBalance;
+        const rAnual = (parseFloat(drawdownState.rate) || 0) / 100;
+        const rMes = rAnual / 12;
+        const wDesired = parseFloat(drawdownState.desiredMonthly) || 0;
+        const yDesired = Math.max(1, parseFloat(drawdownState.desiredYears) || 1);
+
+        // 1. Duración fijando cuota mensual
+        let durationMonths = 0;
+        let isPerpetual = false;
+        if (startCapital > 0 && wDesired > 0) {
+            if (rMes <= 0) {
+                durationMonths = startCapital / wDesired;
+            } else {
+                const interestMonthly = startCapital * rMes;
+                if (wDesired <= interestMonthly) {
+                    isPerpetual = true;
+                } else {
+                    durationMonths = -Math.log(1 - (startCapital * rMes) / wDesired) / Math.log(1 + rMes);
+                }
+            }
+        }
+        const durationYearsTotal = durationMonths / 12;
+        const exhaustYear = endAccumYear + Math.floor(durationYearsTotal);
+        const exhaustAge = endAccumAge ? endAccumAge + Math.floor(durationYearsTotal) : null;
+
+        // 2. Cuota mensual fijando años
+        const totalMonthsDesired = yDesired * 12;
+        let obtainableMonthly = 0;
+        if (startCapital > 0 && totalMonthsDesired > 0) {
+            if (rMes <= 0) {
+                obtainableMonthly = startCapital / totalMonthsDesired;
+            } else {
+                obtainableMonthly = startCapital * ( (rMes * Math.pow(1 + rMes, totalMonthsDesired)) / (Math.pow(1 + rMes, totalMonthsDesired) - 1) );
+            }
+        }
+        const fixedEndYear = endAccumYear + Math.round(yDesired);
+        const fixedEndAge = endAccumAge ? endAccumAge + Math.round(yDesired) : null;
+
+        const effectiveMonthlyPayout = drawdownState.mode === 'byMonthly' ? wDesired : obtainableMonthly;
+        const perpetualMonthlyInterest = startCapital * rMes;
+
+        // Simulación mes a mes agrupada por años para la tabla de desacumulación
+        const drawdownHistory = useMemo(() => {
+            if (startCapital <= 0 || effectiveMonthlyPayout <= 0) return [];
+            const rows = [];
+            let currentFund = startCapital;
+            let currentYearIndex = 1;
+            const maxSimulationYears = isPerpetual ? 50 : Math.min(60, Math.ceil(drawdownState.mode === 'byMonthly' ? durationYearsTotal : yDesired) + 1);
+
+            while (currentFund > 0.01 && currentYearIndex <= maxSimulationYears) {
+                const yearStartBalance = currentFund;
+                let yearInterestEarned = 0;
+                let yearWithdrawn = 0;
+
+                for (let m = 1; m <= 12; m++) {
+                    if (currentFund <= 0) break;
+                    const monthlyInterest = currentFund * rMes;
+                    yearInterestEarned += monthlyInterest;
+                    currentFund += monthlyInterest;
+
+                    const actualWithdrawal = Math.min(currentFund, effectiveMonthlyPayout);
+                    yearWithdrawn += actualWithdrawal;
+                    currentFund -= actualWithdrawal;
+                }
+
+                const cYear = endAccumYear + currentYearIndex;
+                const cAge = endAccumAge ? endAccumAge + currentYearIndex : null;
+
+                rows.push({
+                    yearIndex: currentYearIndex,
+                    calYear: cYear,
+                    age: cAge,
+                    startBalance: yearStartBalance,
+                    withdrawn: yearWithdrawn,
+                    interestEarned: yearInterestEarned,
+                    endBalance: Math.max(0, currentFund)
+                });
+
+                if (currentFund <= 0) break;
+                currentYearIndex++;
+            }
+            return rows;
+        }, [startCapital, effectiveMonthlyPayout, rMes, isPerpetual, durationYearsTotal, yDesired, drawdownState.mode, endAccumYear, endAccumAge]);
 
         return (
             <div className="max-w-5xl mx-auto space-y-6 fade-in pb-10">
@@ -14581,262 +14667,282 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                     </div>
 
                     {/* SUBPANEL: ESTIMACIÓN DE RENTA MENSUAL A FIN DE PERIODO Y DISPONIBILIDAD */}
-                    {(() => {
-                        const startCapital = drawdownState.useRealBalance ? compResult.finalRealBalance : compResult.finalBalance;
-                        const rAnual = (parseFloat(drawdownState.rate) || 0) / 100;
-                        const rMes = rAnual / 12;
-                        const wDesired = parseFloat(drawdownState.desiredMonthly) || 0;
-                        const yDesired = Math.max(1, parseFloat(drawdownState.desiredYears) || 1);
+                    <div className="mt-8 bg-slate-950/90 rounded-2xl p-6 border-2 border-cyan-500/40 shadow-2xl relative overflow-hidden space-y-6">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                            <div>
+                                <h4 className="text-base font-display font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-2">
+                                    <Icons.DollarSign className="w-5 h-5 text-cyan-400" />
+                                    ESTIMACIÓN DE RENTA MENSUAL A FIN DE PERIODO Y DISPONIBILIDAD
+                                </h4>
+                                <p className="text-[10px] text-slate-400 mt-1 font-sans">
+                                    Inicio de la desacumulación: <strong className="text-white">Año {endAccumYear}</strong> {endAccumAge ? `(a los ${endAccumAge} años de edad)` : ''}. Saldo vivo revalorizándose periódicamente en mercado.
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-2 bg-slate-900 p-1 rounded-xl border border-slate-700 shrink-0">
+                                <button 
+                                    onClick={() => setDrawdownState(p => ({ ...p, useRealBalance: true }))}
+                                    className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${drawdownState.useRealBalance ? 'bg-cyan-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                                    title="Usa el poder adquisitivo ajustado por la inflación simulada"
+                                >
+                                    Capital Real (Aj. Inflación)
+                                </button>
+                                <button 
+                                    onClick={() => setDrawdownState(p => ({ ...p, useRealBalance: false }))}
+                                    className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${!drawdownState.useRealBalance ? 'bg-cyan-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                                    title="Usa el valor total nominal"
+                                >
+                                    Capital Nominal
+                                </button>
+                            </div>
+                        </div>
 
-                        // 1. Cálculo por Renta Mensual fija -> Duración
-                        let durationMonths = 0;
-                        let isPerpetual = false;
-                        if (startCapital > 0 && wDesired > 0) {
-                            if (rMes <= 0) {
-                                durationMonths = startCapital / wDesired;
-                            } else {
-                                const interestMonthly = startCapital * rMes;
-                                if (wDesired <= interestMonthly) {
-                                    isPerpetual = true;
-                                } else {
-                                    durationMonths = -Math.log(1 - (startCapital * rMes) / wDesired) / Math.log(1 + rMes);
-                                }
-                            }
-                        }
-                        const durationYearsTotal = durationMonths / 12;
-                        const exhaustYear = endAccumYear + Math.floor(durationYearsTotal);
-                        const exhaustAge = endAccumAge ? endAccumAge + Math.floor(durationYearsTotal) : null;
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            {/* Parámetro: Capital Base */}
+                            <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 flex flex-col justify-between">
+                                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Capital Inicial al Retiro</span>
+                                <div className="text-2xl font-black text-white font-mono mt-2">
+                                    {formatMoney(startCapital)} {baseCurrency}
+                                </div>
+                                <span className="text-[8.5px] text-cyan-400 mt-1 block">
+                                    Año {endAccumYear} {endAccumAge ? `(Edad: ${endAccumAge} años)` : ''} · {drawdownState.useRealBalance ? 'Poder Adquisitivo Real' : 'Nominal'}
+                                </span>
+                            </div>
 
-                        // 2. Cálculo por Años fijos -> Renta Mensual obtenible
-                        const totalMonthsDesired = yDesired * 12;
-                        let obtainableMonthly = 0;
-                        if (startCapital > 0 && totalMonthsDesired > 0) {
-                            if (rMes <= 0) {
-                                obtainableMonthly = startCapital / totalMonthsDesired;
-                            } else {
-                                obtainableMonthly = startCapital * ( (rMes * Math.pow(1 + rMes, totalMonthsDesired)) / (Math.pow(1 + rMes, totalMonthsDesired) - 1) );
-                            }
-                        }
-                        const fixedEndYear = endAccumYear + Math.round(yDesired);
-                        const fixedEndAge = endAccumAge ? endAccumAge + Math.round(yDesired) : null;
+                            {/* Parámetro: Rentabilidad en fase de retiro */}
+                            <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 flex flex-col justify-between">
+                                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Rendimiento Anual en Retiro (%)</span>
+                                <div className="mt-2">
+                                    <FormattedInput 
+                                        value={drawdownState.rate} 
+                                        onChange={v => setDrawdownState(p => ({ ...p, rate: v }))} 
+                                        decimals={2} 
+                                    />
+                                </div>
+                                <span className="text-[8.5px] text-slate-500 mt-1 block">
+                                    Revalorización estimada del capital restante en mercado
+                                </span>
+                            </div>
 
-                        const perpetualMonthlyInterest = startCapital * rMes;
+                            {/* Selector de Enfoque */}
+                            <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 flex flex-col justify-between">
+                                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Modo de Cálculo</span>
+                                <div className="flex gap-2 mt-2">
+                                    <button 
+                                        onClick={() => setDrawdownState(p => ({ ...p, mode: 'byMonthly' }))}
+                                        className={`flex-1 py-2.5 px-2 rounded-lg text-[9px] font-black uppercase transition-all ${drawdownState.mode === 'byMonthly' ? 'bg-blue-600 text-white shadow' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
+                                    >
+                                        Fijar Renta Mensual
+                                    </button>
+                                    <button 
+                                        onClick={() => setDrawdownState(p => ({ ...p, mode: 'byYears' }))}
+                                        className={`flex-1 py-2.5 px-2 rounded-lg text-[9px] font-black uppercase transition-all ${drawdownState.mode === 'byYears' ? 'bg-blue-600 text-white shadow' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
+                                    >
+                                        Fijar Plazo en Años
+                                    </button>
+                                </div>
+                                <span className="text-[8.5px] text-slate-500 mt-1 block text-center">
+                                    {drawdownState.mode === 'byMonthly' ? 'Estima los años/meses de vida útil' : 'Calcula la renta exacta hasta agotar'}
+                                </span>
+                            </div>
+                        </div>
 
-                        return (
-                            <div className="mt-8 bg-slate-950/90 rounded-2xl p-6 border-2 border-cyan-500/40 shadow-2xl relative overflow-hidden space-y-6">
-                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-                                    <div>
-                                        <h4 className="text-base font-display font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-2">
-                                            <Icons.DollarSign className="w-5 h-5 text-cyan-400" />
-                                            ESTIMACIÓN DE RENTA MENSUAL A FIN DE PERIODO Y DISPONIBILIDAD
-                                        </h4>
-                                        <p className="text-[10px] text-slate-400 mt-1 font-sans">
-                                            Inicio de la desacumulación: <strong className="text-white">Año {endAccumYear}</strong> {endAccumAge ? `(a los ${endAccumAge} años de edad)` : ''}. Saldo vivo revalorizándose periódicamente en mercado.
-                                        </p>
-                                    </div>
-                                    <div className="flex items-center gap-2 bg-slate-900 p-1 rounded-xl border border-slate-700 shrink-0">
-                                        <button 
-                                            onClick={() => setDrawdownState(p => ({ ...p, useRealBalance: true }))}
-                                            className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${drawdownState.useRealBalance ? 'bg-cyan-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
-                                            title="Usa el poder adquisitivo ajustado por la inflación simulada"
-                                        >
-                                            Capital Real (Aj. Inflación)
-                                        </button>
-                                        <button 
-                                            onClick={() => setDrawdownState(p => ({ ...p, useRealBalance: false }))}
-                                            className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${!drawdownState.useRealBalance ? 'bg-cyan-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
-                                            title="Usa el valor total nominal"
-                                        >
-                                            Capital Nominal
-                                        </button>
+                        {/* Resultados según el modo activo */}
+                        {drawdownState.mode === 'byMonthly' ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center bg-gradient-to-r from-blue-950/40 to-slate-900 p-5 rounded-xl border border-blue-500/30">
+                                <div>
+                                    <label className="text-xs font-bold text-blue-300 uppercase block mb-2">Renta Mensual Deseada</label>
+                                    <FormattedInput 
+                                        value={drawdownState.desiredMonthly} 
+                                        onChange={v => setDrawdownState(p => ({ ...p, desiredMonthly: v }))} 
+                                        grouped={true} 
+                                    />
+                                    <div className="text-[10px] text-slate-400 mt-2">
+                                        Interés mensual que genera el capital: <span className="text-white font-mono font-bold">+{formatMoney(perpetualMonthlyInterest)} {baseCurrency}/mes</span>.
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                    {/* Parámetro: Capital Base */}
-                                    <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 flex flex-col justify-between">
-                                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Capital Inicial al Retiro</span>
-                                        <div className="text-2xl font-black text-white font-mono mt-2">
-                                            {formatMoney(startCapital)} {baseCurrency}
-                                        </div>
-                                        <span className="text-[8.5px] text-cyan-400 mt-1 block">
-                                            Año {endAccumYear} {endAccumAge ? `(Edad: ${endAccumAge} años)` : ''} · {drawdownState.useRealBalance ? 'Poder Adquisitivo Real' : 'Nominal'}
-                                        </span>
-                                    </div>
-
-                                    {/* Parámetro: Rentabilidad en fase de retiro */}
-                                    <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 flex flex-col justify-between">
-                                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Rendimiento Anual en Retiro (%)</span>
-                                        <div className="mt-2">
-                                            <FormattedInput 
-                                                value={drawdownState.rate} 
-                                                onChange={v => setDrawdownState(p => ({ ...p, rate: v }))} 
-                                                decimals={2} 
-                                            />
-                                        </div>
-                                        <span className="text-[8.5px] text-slate-500 mt-1 block">
-                                            Revalorización estimada del capital restante en mercado
-                                        </span>
-                                    </div>
-
-                                    {/* Selector de Enfoque */}
-                                    <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 flex flex-col justify-between">
-                                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Modo de Cálculo</span>
-                                        <div className="flex gap-2 mt-2">
-                                            <button 
-                                                onClick={() => setDrawdownState(p => ({ ...p, mode: 'byMonthly' }))}
-                                                className={`flex-1 py-2.5 px-2 rounded-lg text-[9px] font-black uppercase transition-all ${drawdownState.mode === 'byMonthly' ? 'bg-blue-600 text-white shadow' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
-                                            >
-                                                Fijar Renta Mensual
-                                            </button>
-                                            <button 
-                                                onClick={() => setDrawdownState(p => ({ ...p, mode: 'byYears' }))}
-                                                className={`flex-1 py-2.5 px-2 rounded-lg text-[9px] font-black uppercase transition-all ${drawdownState.mode === 'byYears' ? 'bg-blue-600 text-white shadow' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
-                                            >
-                                                Fijar Plazo en Años
-                                            </button>
-                                        </div>
-                                        <span className="text-[8.5px] text-slate-500 mt-1 block text-center">
-                                            {drawdownState.mode === 'byMonthly' ? 'Estima los años/meses de vida útil' : 'Calcula la renta exacta hasta agotar'}
-                                        </span>
-                                    </div>
-                                </div>
-
-                                {/* Resultados según el modo activo */}
-                                {drawdownState.mode === 'byMonthly' ? (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center bg-gradient-to-r from-blue-950/40 to-slate-900 p-5 rounded-xl border border-blue-500/30">
-                                        <div>
-                                            <label className="text-xs font-bold text-blue-300 uppercase block mb-2">Renta Mensual Deseada</label>
-                                            <FormattedInput 
-                                                value={drawdownState.desiredMonthly} 
-                                                onChange={v => setDrawdownState(p => ({ ...p, desiredMonthly: v }))} 
-                                                grouped={true} 
-                                            />
-                                            <div className="text-[10px] text-slate-400 mt-2">
-                                                Interés mensual que genera el capital: <span className="text-white font-mono font-bold">+{formatMoney(perpetualMonthlyInterest)} {baseCurrency}/mes</span>.
+                                <div className="text-center md:text-right border-t md:border-t-0 md:border-l border-slate-800 pt-4 md:pt-0 md:pl-6">
+                                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">Disponibilidad del Capital</span>
+                                    {isPerpetual ? (
+                                        <>
+                                            <div className="text-2xl font-black text-green-400 font-display">VITALICIA / INDEFINIDA</div>
+                                            <p className="text-[10px] text-green-300/80 mt-1 font-sans">
+                                                Los rendimientos mensuales ({formatMoney(perpetualMonthlyInterest)} {baseCurrency}) superan o igualan el retiro ({formatMoney(wDesired)} {baseCurrency}). <b>El capital principal no se agota jamás.</b>
+                                            </p>
+                                        </>
+                                    ) : durationMonths > 0 ? (
+                                        <>
+                                            <div className="text-3xl font-black text-white font-display">
+                                                {formatN(durationYearsTotal, 1)} Años
                                             </div>
-                                        </div>
-
-                                        <div className="text-center md:text-right border-t md:border-t-0 md:border-l border-slate-800 pt-4 md:pt-0 md:pl-6">
-                                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">Disponibilidad del Capital</span>
-                                            {isPerpetual ? (
-                                                <>
-                                                    <div className="text-2xl font-black text-green-400 font-display">VITALICIA / INDEFINIDA</div>
-                                                    <p className="text-[10px] text-green-300/80 mt-1 font-sans">
-                                                        Los rendimientos mensuales ({formatMoney(perpetualMonthlyInterest)} {baseCurrency}) superan o igualan el retiro ({formatMoney(wDesired)} {baseCurrency}). <b>El capital principal no se agota jamás.</b>
-                                                    </p>
-                                                </>
-                                            ) : durationMonths > 0 ? (
-                                                <>
-                                                    <div className="text-3xl font-black text-white font-display">
-                                                        {formatN(durationYearsTotal, 1)} Años
-                                                    </div>
-                                                    <span className="text-xs font-bold text-cyan-400 font-mono block mt-1">
-                                                        ~ {Math.floor(durationMonths)} meses (Cubre hasta el Año {exhaustYear}{exhaustAge ? ` · ${exhaustAge} años de edad` : ''})
-                                                    </span>
-                                                    <p className="text-[9px] text-slate-400 mt-2 font-sans">
-                                                        Desde el Año {endAccumYear} {endAccumAge ? `(${endAccumAge} años)` : ''} hasta el Año {exhaustYear} {exhaustAge ? `(${exhaustAge} años)` : ''} disponiendo de {formatMoney(wDesired)} al mes.
-                                                    </p>
-                                                </>
-                                            ) : (
-                                                <div className="text-sm font-bold text-slate-500">Introduce una renta mensual válida</div>
-                                            )}
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center bg-gradient-to-r from-purple-950/40 to-slate-900 p-5 rounded-xl border border-purple-500/30">
-                                        <div>
-                                            <label className="text-xs font-bold text-purple-300 uppercase block mb-2">Años Deseados de Cobertura (Retiro)</label>
-                                            <FormattedInput 
-                                                value={drawdownState.desiredYears} 
-                                                onChange={v => setDrawdownState(p => ({ ...p, desiredYears: v }))} 
-                                                decimals={0} 
-                                            />
-                                            <div className="text-[10px] text-slate-400 mt-2">
-                                                Cubre desde el Año {endAccumYear}{endAccumAge ? ` (${endAccumAge}a)` : ''} hasta el Año {fixedEndYear}{fixedEndAge ? ` (${fixedEndAge}a)` : ''} ({totalMonthsDesired} pagas).
-                                            </div>
-                                        </div>
-
-                                        <div className="text-center md:text-right border-t md:border-t-0 md:border-l border-slate-800 pt-4 md:pt-0 md:pl-6">
-                                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">Renta Mensual Disponible</span>
-                                            <div className="text-3xl font-black text-green-400 font-display font-mono">
-                                                {formatMoney(obtainableMonthly)} {baseCurrency}<span className="text-xs text-slate-400 font-normal">/mes</span>
-                                            </div>
-                                            <span className="text-xs font-bold text-purple-300 font-mono block mt-1">
-                                                {formatMoney(obtainableMonthly * 12)} {baseCurrency} anuales
+                                            <span className="text-xs font-bold text-cyan-400 font-mono block mt-1">
+                                                ~ {Math.floor(durationMonths)} meses (Cubre hasta el Año {exhaustYear}{exhaustAge ? ` · ${exhaustAge} años de edad` : ''})
                                             </span>
                                             <p className="text-[9px] text-slate-400 mt-2 font-sans">
-                                                Extrayendo esta cuota mensual durante {yDesired} años, el capital se consumirá de forma constante hasta los {fixedEndAge ? `${fixedEndAge} años de edad` : `finalizar en ${fixedEndYear}`}.
+                                                Desde el Año {endAccumYear} {endAccumAge ? `(${endAccumAge} años)` : ''} hasta el Año {exhaustYear} {exhaustAge ? `(${exhaustAge} años)` : ''} disponiendo de {formatMoney(wDesired)} al mes.
                                             </p>
-                                        </div>
-                                    </div>
-                                )}
+                                        </>
+                                    ) : (
+                                        <div className="text-sm font-bold text-slate-500">Introduce una renta mensual válida</div>
+                                    )}
+                                </div>
                             </div>
-                        );
-                    })()}
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center bg-gradient-to-r from-purple-950/40 to-slate-900 p-5 rounded-xl border border-purple-500/30">
+                                <div>
+                                    <label className="text-xs font-bold text-purple-300 uppercase block mb-2">Años Deseados de Cobertura (Retiro)</label>
+                                    <FormattedInput 
+                                        value={drawdownState.desiredYears} 
+                                        onChange={v => setDrawdownState(p => ({ ...p, desiredYears: v }))} 
+                                        decimals={0} 
+                                    />
+                                    <div className="text-[10px] text-slate-400 mt-2">
+                                        Cubre desde el Año {endAccumYear}{endAccumAge ? ` (${endAccumAge}a)` : ''} hasta el Año {fixedEndYear}{fixedEndAge ? ` (${fixedEndAge}a)` : ''} ({totalMonthsDesired} pagas).
+                                    </div>
+                                </div>
 
-                    {/* BOTÓN Y TABLA DE DESGLOSE ANUAL */}
-                    <div className="mt-8">
-                        <button onClick={() => setShowCompTable(!showCompTable)} className="w-full py-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-bold text-slate-300 uppercase tracking-widest transition-colors flex items-center justify-center gap-2">
-                            <Icons.Table size={16} /> {showCompTable ? 'Ocultar Desglose Anual' : 'Ver Desglose Año a Año (con Fechas y Edades)'}
-                        </button>
-                        {showCompTable && (
-                            <div className="mt-4 overflow-x-auto rounded-xl border border-slate-800 animate-fade-in max-h-[500px] overflow-y-auto custom-scrollbar">
-                                <table className="w-full text-sm border-collapse text-right">
-                                    <thead className="bg-slate-900 sticky top-0 z-10 text-[10px] uppercase font-bold text-slate-400">
-                                        <tr>
-                                            <th className="p-3 text-center">Periodo</th>
-                                            <th className="p-3 text-center text-cyan-300">Año / Edad</th>
-                                            <th className="p-3">Aportado</th>
-                                            <th className="p-3">Interés</th>
-                                            <th className="p-3 text-slate-300">Total Nominal</th>
-                                            <th className="p-3 text-white border-l border-slate-700">Valor Real (Aj. Inflación)</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="bg-slate-900/50 divide-y divide-slate-800 font-mono">
-                                        {compResult.history.map((row, idx) => {
-                                            const isCrossover = compResult.crossoverYear === row.year;
-                                            const yearBaggers = row.yearBaggers || [];
-                                            const pctAcum = row.principal > 0 ? (row.interest / row.principal) * 100 : 0;
-                                            
-                                            let prevPctAcum = 0;
-                                            if (idx > 0) {
-                                                const prevRow = compResult.history[idx - 1];
-                                                prevPctAcum = prevRow.principal > 0 ? (prevRow.interest / prevRow.principal) * 100 : 0;
-                                            }
-                                            const incrementPct = pctAcum - prevPctAcum;
-                                            
-                                            return (
-                                                <tr key={row.year} className={`${isCrossover ? 'bg-blue-900/20 border-l-4 border-l-blue-500 shadow-inner' : yearBaggers.length > 0 ? 'bg-green-900/10 border-l-4 border-l-green-500 shadow-inner' : 'hover:bg-slate-800/50'} transition-colors`}>
-                                                    <td className="p-3 font-bold text-center relative">
-                                                        <span className={isCrossover ? 'text-blue-400' : yearBaggers.length > 0 ? 'text-green-400' : 'text-slate-400'}>Año {row.year}</span>
-                                                        {isCrossover && <div className="text-[7px] text-blue-400 uppercase tracking-tighter mt-0.5 font-sans leading-none">Inflexión</div>}
-                                                        {yearBaggers.map(b => (
-                                                            <div key={b} className="text-[7px] text-green-400 uppercase tracking-tighter mt-0.5 font-sans leading-none font-black">{b}-Bagger (+{b * 100}%)</div>
-                                                        ))}
-                                                    </td>
-                                                    <td className="p-3 text-center font-sans font-bold text-cyan-300">
-                                                        <div>{row.calYear}</div>
-                                                        {row.age && <div className="text-[9px] text-slate-400 font-normal">{row.age} años</div>}
-                                                    </td>
-                                                    <td className="p-3 text-slate-300">{formatMoney(row.principal)}</td>
-                                                    <td className="p-3 text-green-400 text-right">
-                                                        <div className="font-bold">+{formatMoney(row.interest)}</div>
-                                                        <div className="text-[9px] text-slate-500 font-sans mt-0.5 leading-tight">
-                                                            Acumulado: <span className="text-slate-400 font-bold">{formatN(pctAcum)}%</span><br/>
-                                                            Incr. Anual: <span className="text-slate-400 font-bold">+{formatN(incrementPct)}%</span>
-                                                        </div>
-                                                    </td>
-                                                    <td className="p-3 font-bold text-slate-300">{formatMoney(row.balance)}</td>
-                                                    <td className="p-3 font-bold text-white text-base border-l border-slate-700">{formatMoney(row.realBalance)}</td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>                        
-                                </table>
+                                <div className="text-center md:text-right border-t md:border-t-0 md:border-l border-slate-800 pt-4 md:pt-0 md:pl-6">
+                                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">Renta Mensual Disponible</span>
+                                    <div className="text-3xl font-black text-green-400 font-display font-mono">
+                                        {formatMoney(obtainableMonthly)} {baseCurrency}<span className="text-xs text-slate-400 font-normal">/mes</span>
+                                    </div>
+                                    <span className="text-xs font-bold text-purple-300 font-mono block mt-1">
+                                        {formatMoney(obtainableMonthly * 12)} {baseCurrency} anuales
+                                    </span>
+                                    <p className="text-[9px] text-slate-400 mt-2 font-sans">
+                                        Extrayendo esta cuota mensual durante {yDesired} años, el capital se consumirá de forma constante hasta los {fixedEndAge ? `${fixedEndAge} años de edad` : `finalizar en ${fixedEndYear}`}.
+                                    </p>
+                                </div>
                             </div>
                         )}
                     </div>
+
+                    {/* BOTONERA DOBLE AL PIE: DESGLOSE ACUMULACIÓN Y DESGLOSE DESACUMULACIÓN */}
+                    <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <button 
+                            onClick={() => { setShowCompTable(!showCompTable); if(!showCompTable) setShowDrawdownTable(false); }} 
+                            className={`w-full py-4 rounded-xl text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 border shadow-lg ${
+                                showCompTable 
+                                    ? 'bg-blue-600 border-blue-400 text-white' 
+                                    : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300'
+                            }`}
+                        >
+                            <Icons.Table size={16} /> {showCompTable ? 'Ocultar Desglose Acumulación' : 'Ver Desglose Acumulación (Aportes)'}
+                        </button>
+
+                        <button 
+                            onClick={() => { setShowDrawdownTable(!showDrawdownTable); if(!showDrawdownTable) setShowCompTable(false); }} 
+                            className={`w-full py-4 rounded-xl text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 border shadow-lg ${
+                                showDrawdownTable 
+                                    ? 'bg-cyan-600 border-cyan-400 text-white' 
+                                    : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-cyan-300'
+                            }`}
+                        >
+                            <Icons.DollarSign size={16} /> {showDrawdownTable ? 'Ocultar Desglose Desacumulación' : 'Ver Desglose Desacumulación (Retiro)'}
+                        </button>
+                    </div>
+
+                    {/* TABLA 1: DESGLOSE DE ACUMULACIÓN */}
+                    {showCompTable && (
+                        <div className="mt-4 overflow-x-auto rounded-xl border border-slate-800 animate-fade-in max-h-[500px] overflow-y-auto custom-scrollbar">
+                            <div className="bg-slate-900 p-2.5 text-[10px] font-black uppercase tracking-wider text-blue-300 border-b border-slate-800 text-center">
+                                Plan de Acumulación y Creación de Patrimonio (Años {sYear} a {endAccumYear})
+                            </div>
+                            <table className="w-full text-sm border-collapse text-right">
+                                <thead className="bg-slate-900 sticky top-0 z-10 text-[10px] uppercase font-bold text-slate-400">
+                                    <tr>
+                                        <th className="p-3 text-center">Periodo</th>
+                                        <th className="p-3 text-center text-cyan-300">Año / Edad</th>
+                                        <th className="p-3">Aportado</th>
+                                        <th className="p-3">Interés</th>
+                                        <th className="p-3 text-slate-300">Total Nominal</th>
+                                        <th className="p-3 text-white border-l border-slate-700">Valor Real (Aj. Inflación)</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="bg-slate-900/50 divide-y divide-slate-800 font-mono">
+                                    {compResult.history.map((row, idx) => {
+                                        const isCrossover = compResult.crossoverYear === row.year;
+                                        const yearBaggers = row.yearBaggers || [];
+                                        const pctAcum = row.principal > 0 ? (row.interest / row.principal) * 100 : 0;
+                                        
+                                        let prevPctAcum = 0;
+                                        if (idx > 0) {
+                                            const prevRow = compResult.history[idx - 1];
+                                            prevPctAcum = prevRow.principal > 0 ? (prevRow.interest / prevRow.principal) * 100 : 0;
+                                        }
+                                        const incrementPct = pctAcum - prevPctAcum;
+                                        
+                                        return (
+                                            <tr key={row.year} className={`${isCrossover ? 'bg-blue-900/20 border-l-4 border-l-blue-500 shadow-inner' : yearBaggers.length > 0 ? 'bg-green-900/10 border-l-4 border-l-green-500 shadow-inner' : 'hover:bg-slate-800/50'} transition-colors`}>
+                                                <td className="p-3 font-bold text-center relative">
+                                                    <span className={isCrossover ? 'text-blue-400' : yearBaggers.length > 0 ? 'text-green-400' : 'text-slate-400'}>Año {row.year}</span>
+                                                    {isCrossover && <div className="text-[7px] text-blue-400 uppercase tracking-tighter mt-0.5 font-sans leading-none">Inflexión</div>}
+                                                    {yearBaggers.map(b => (
+                                                        <div key={b} className="text-[7px] text-green-400 uppercase tracking-tighter mt-0.5 font-sans leading-none font-black">{b}-Bagger (+{b * 100}%)</div>
+                                                    ))}
+                                                </td>
+                                                <td className="p-3 text-center font-sans font-bold text-cyan-300">
+                                                    <div>{row.calYear}</div>
+                                                    {row.age && <div className="text-[9px] text-slate-400 font-normal">{row.age} años</div>}
+                                                </td>
+                                                <td className="p-3 text-slate-300">{formatMoney(row.principal)}</td>
+                                                <td className="p-3 text-green-400 text-right">
+                                                    <div className="font-bold">+{formatMoney(row.interest)}</div>
+                                                    <div className="text-[9px] text-slate-500 font-sans mt-0.5 leading-tight">
+                                                        Acumulado: <span className="text-slate-400 font-bold">{formatN(pctAcum)}%</span><br/>
+                                                        Incr. Anual: <span className="text-slate-400 font-bold">+{formatN(incrementPct)}%</span>
+                                                    </div>
+                                                </td>
+                                                <td className="p-3 font-bold text-slate-300">{formatMoney(row.balance)}</td>
+                                                <td className="p-3 font-bold text-white text-base border-l border-slate-700">{formatMoney(row.realBalance)}</td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>                        
+                            </table>
+                        </div>
+                    )}
+
+                    {/* TABLA 2: DESGLOSE DE DESACUMULACIÓN (RETIRO) */}
+                    {showDrawdownTable && (
+                        <div className="mt-4 overflow-x-auto rounded-xl border border-slate-800 animate-fade-in max-h-[500px] overflow-y-auto custom-scrollbar">
+                            <div className="bg-slate-900 p-2.5 text-[10px] font-black uppercase tracking-wider text-cyan-300 border-b border-slate-800 text-center flex justify-between items-center px-4">
+                                <span>Cronograma de Consumo y Renta (Inicia en Año {endAccumYear})</span>
+                                <span className="text-slate-400 font-mono font-normal">Cuota simulada: {formatMoney(effectiveMonthlyPayout)}/mes ({formatMoney(effectiveMonthlyPayout * 12)}/año)</span>
+                            </div>
+                            <table className="w-full text-sm border-collapse text-right">
+                                <thead className="bg-slate-900 sticky top-0 z-10 text-[10px] uppercase font-bold text-slate-400">
+                                    <tr>
+                                        <th className="p-3 text-center">Año Retiro</th>
+                                        <th className="p-3 text-center text-cyan-300">Año / Edad</th>
+                                        <th className="p-3 text-slate-300">Saldo Inicial</th>
+                                        <th className="p-3 text-orange-400">Retiro Anual</th>
+                                        <th className="p-3 text-green-400">Rendimiento (+%)</th>
+                                        <th className="p-3 text-white border-l border-slate-700">Saldo Remanente</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="bg-slate-900/50 divide-y divide-slate-800 font-mono">
+                                    {drawdownHistory.map((row) => (
+                                        <tr key={row.yearIndex} className="hover:bg-slate-800/50 transition-colors">
+                                            <td className="p-3 font-bold text-center text-slate-400 font-sans">
+                                                Año {row.yearIndex}
+                                            </td>
+                                            <td className="p-3 text-center font-sans font-bold text-cyan-300">
+                                                <div>{row.calYear}</div>
+                                                {row.age && <div className="text-[9px] text-slate-400 font-normal">{row.age} años</div>}
+                                            </td>
+                                            <td className="p-3 text-slate-300 font-bold">{formatMoney(row.startBalance)}</td>
+                                            <td className="p-3 text-orange-400 font-bold">-{formatMoney(row.withdrawn)}</td>
+                                            <td className="p-3 text-green-400">+{formatMoney(row.interestEarned)}</td>
+                                            <td className={`p-3 font-bold border-l border-slate-700 text-base ${row.endBalance <= 0 ? 'text-red-400' : 'text-white'}`}>
+                                                {formatMoney(row.endBalance)}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
                 </div>
             </div>
         );
