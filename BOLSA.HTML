@@ -5274,6 +5274,31 @@ const calculateDeterministicDCF = (fcf, cash, debt, shares, growth, discountRate
 const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady, _x_lim, _x_trig, globalNotes, setGlobalNotes, onAnalyze, aiModel, setAiModel, availableModels, gScriptUrl, onGoToDividends, hideInactive, setHideInactive, noScroll, setNoScroll, customConsultas, setCustomConsultas, openConsultasOnLoad, setOpenConsultasOnLoad, showFilters, setShowFilters, handleAiModelChange, AIStatusIndicator, aiStatus }) => {
     const [showDivBreakdown, setShowDivBreakdown] = useState(false);
     const [recalcModal, setRecalcModal] = useState({ isOpen: false, isSell: false });
+    const portfolioTableContainerRef = useRef(null);
+    const [tableScrollState, setTableScrollState] = useState({ canScrollLeft: false, canScrollRight: false });
+
+    const checkTableScroll = () => {
+        const el = portfolioTableContainerRef.current;
+        if (!el) return;
+        const canScroll = el.scrollWidth > el.clientWidth + 10;
+        setTableScrollState({
+            canScrollLeft: canScroll && el.scrollLeft > 20,
+            canScrollRight: canScroll && el.scrollLeft < (el.scrollWidth - el.clientWidth - 20)
+        });
+    };
+
+    useEffect(() => {
+        checkTableScroll();
+        window.addEventListener('resize', checkTableScroll);
+        return () => window.removeEventListener('resize', checkTableScroll);
+    }, [filteredPortfolio, simplifiedMode, visibleSections.table]);
+
+    const handleHorizontalScroll = (direction) => {
+        const el = portfolioTableContainerRef.current;
+        if (!el) return;
+        const scrollAmount = direction === 'right' ? (el.scrollWidth - el.clientWidth) : -(el.scrollWidth - el.clientWidth);
+        el.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+    };
     const [inflacionData, setInflacionData] = usePersistentState('bg_inflacion_data', { val: 0, sp500: 0, ibex: 0, lastCalc: 0 });  
     const [simulationMode, setSimulationMode] = usePersistentState('bg_sim_mode', 'off'); // 'off', 'target', 'stop'
     const [isTimelineModalOpen, setIsTimelineModalOpen] = useState(false);
@@ -8077,10 +8102,36 @@ const handleSellSubmit = () => {
             </div>
    
         
-          {visibleSections.table && (
-                <div className={`w-full custom-scrollbar bg-slate-900/50 border border-slate-400 rounded-xl fade-in shadow-[0_0_20px_rgba(0,0,0,0.5)] ${
-                    noScroll ? 'max-h-none overflow-x-auto overflow-y-hidden' : 'max-h-[75vh] overflow-auto'
-                }`}>
+      {visibleSections.table && (
+            <div className="relative w-full">
+                {(tableScrollState.canScrollLeft || tableScrollState.canScrollRight) && (
+                    <div className="absolute left-1 top-1/2 -translate-y-1/2 z-[110] flex flex-col gap-1 pointer-events-auto shadow-2xl">
+                        {tableScrollState.canScrollLeft && (
+                            <button
+                                onClick={() => handleHorizontalScroll('left')}
+                                className="w-8 h-8 rounded-full bg-blue-600/90 hover:bg-blue-500 text-white flex items-center justify-center shadow-lg border border-white/20 transition-all active:scale-90"
+                                title="Desplazar a la izquierda"
+                            >
+                                ◀
+                            </button>
+                        )}
+                        {tableScrollState.canScrollRight && (
+                            <button
+                                onClick={() => handleHorizontalScroll('right')}
+                                className="w-8 h-8 rounded-full bg-blue-600/90 hover:bg-blue-500 text-white flex items-center justify-center shadow-lg border border-white/20 transition-all active:scale-90"
+                                title="Desplazar a la derecha"
+                            >
+                                ▶
+                            </button>
+                        )}
+                    </div>
+                )}
+                <div 
+                    ref={portfolioTableContainerRef}
+                    onScroll={checkTableScroll}
+                    className={`w-full custom-scrollbar bg-slate-900/50 border border-slate-400 rounded-xl fade-in shadow-[0_0_20px_rgba(0,0,0,0.5)] ${
+                        noScroll ? 'max-h-none overflow-x-auto overflow-y-hidden' : 'max-h-[75vh] overflow-auto'
+                    }`}>
                     <table className={`w-full text-left text-sm border-separate border-spacing-0 ${simplifiedMode ? 'min-w-[1050px]' : 'min-w-[1700px]'}`}>
 
                         <thead className="bg-slate-800 text-slate-400 text-[10px] uppercase font-bold sticky top-0 z-[90]">
@@ -8790,7 +8841,7 @@ const handleSellSubmit = () => {
                           </tbody>
                
                       </table>
-                  </div>
+                  </div> </div>
               )}
 
             {visibleSections.diverging && (
