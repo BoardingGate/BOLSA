@@ -6528,6 +6528,94 @@ const getMarketStatus = (p) => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isSellModalOpen, setIsSellModalOpen] = useState(false);
     const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
+
+    
+const [isAiReportChoiceModalOpen, setIsAiReportChoiceModalOpen] = useState(false);
+    const [isExternalPromptModalOpen, setIsExternalPromptModalOpen] = useState(false);
+    const [externalPromptText, setExternalPromptText] = useState('');
+    const [promptCopied, setPromptCopied] = useState(false);
+
+    const handleGenerateExternalPrompt = () => {
+        setIsAiReportChoiceModalOpen(false);
+        const dataToAnalyze = visiblePortfolio;
+        if (dataToAnalyze.length === 0) {
+            setInfoModal({ isOpen: true, title: 'Aviso', msg: 'No hay registros visibles en pantalla para generar el prompt.', type: 'info' });
+            return;
+        }
+
+        const today = new Date().toLocaleDateString('es-ES');
+        let totalCost = 0;
+        let totalVal = 0;
+        let totalDivs = 0;
+
+        const itemsSummary = dataToAnalyze.map((p, idx) => {
+            const isS = !!p.sellDate;
+            const curP = isS ? p.sellPrice : (p.isIndex ? p.currentPrice / (p.indexDivisor || 1) : p.currentPrice);
+            const curF = isS ? p.sellFx : (p.isIndex ? p.buyFx : p.currentFx);
+            const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+            const val = (curP * p.shares * curF) - (isS ? (p.sellFeesIncludedInPrice ? 0 : (p.sellFees || 0)) + (p.sellAdjustments || 0) : 0);
+            const divs = (p.dividends || []).reduce((a, b) => a + (parseFloat(b.net) || 0), 0);
+            const pl = val - cost;
+            const plTotal = pl + divs;
+            const plPct = cost > 0 ? (pl / cost) * 100 : 0;
+            const plTotalPct = cost > 0 ? (plTotal / cost) * 100 : 0;
+            const days = calculateDays(p.buyDate, p.sellDate || new Date());
+
+            totalCost += cost;
+            totalVal += val;
+            totalDivs += divs;
+
+            return `${idx + 1}. [${isS ? 'VENDIDA / CERRADA' : 'ACTIVA EN CARTERA'}] ${p.name} (Ticker: ${p.ticker}${p.group ? ' | Grupo: ' + p.group : ''})
+   - Títulos: ${formatN(p.shares)} ${p.stockCurrency}
+   - Fecha Compra: ${p.buyDate} | Precio Compra: ${formatN(p.buyPrice, 3)} | FX Compra: ${formatN(p.buyFx, 4)}
+   - Coste Total Invertido: ${formatMoney(cost, baseCurrency)}
+   - ${isS ? 'Fecha Venta' : 'Cotización Actual'}: ${isS ? p.sellDate : 'Hoy'} | ${isS ? 'Precio Venta' : 'Precio Mercado'}: ${formatN(curP, 3)} | FX Actual: ${formatN(curF, 4)}
+   - Valoración Actual / Liquidación: ${formatMoney(val, baseCurrency)}
+   - Dividendos Netos Percibidos: ${formatMoney(divs, baseCurrency)}
+   - Resultado por Precio: ${pl >= 0 ? '+' : ''}${formatMoney(pl, baseCurrency)} (${pl >= 0 ? '+' : ''}${formatN(plPct)}%)
+   - Retorno Total (con Dividendos): ${plTotal >= 0 ? '+' : ''}${formatMoney(plTotal, baseCurrency)} (${plTotal >= 0 ? '+' : ''}${formatN(plTotalPct)}%)
+   - Tiempo en Cartera: ${days} días (~${(days / 365.25).toFixed(1)} años)`;
+        }).join('\n\n');
+
+        const totalPl = totalVal - totalCost;
+        const totalReturn = totalPl + totalDivs;
+        const totalReturnPct = totalCost > 0 ? (totalReturn / totalCost) * 100 : 0;
+
+        const fullPrompt = `Actúa como un Gestor de Carteras Senior y Analista Financiero de Wall Street.
+A continuación te facilito los datos completos y actualizados de mi cartera de inversiones (posiciones actualmente filtradas en pantalla a fecha ${today}):
+
+============================================================
+RESUMEN GLOBAL DE LA CARTERA FILTRADA (${dataToAnalyze.length} POSICIONES):
+- Capital Invertido: ${formatMoney(totalCost, baseCurrency)}
+- Valoración Actual de Mercado: ${formatMoney(totalVal, baseCurrency)}
+- Dividendos Cobrados: ${formatMoney(totalDivs, baseCurrency)}
+- Retorno Total Neto: ${totalReturn >= 0 ? '+' : ''}${formatMoney(totalReturn, baseCurrency)} (${totalReturn >= 0 ? '+' : ''}${formatN(totalReturnPct)}%)
+============================================================
+
+DETALLE COMPLETO DE POSICIONES:
+
+${itemsSummary}
+
+============================================================
+INSTRUCCIONES PARA TU ANÁLISIS:
+1. Realiza una auditoría exhaustiva de la composición de mi cartera, evaluando la concentración de riesgo, diversificación y calidad de los activos.
+2. Analiza el rendimiento histórico y actual de las posiciones ganadoras frente a las perdedoras.
+3. Evalúa si hay posiciones que recomiendas recortar, liquidar o reforzar según las valoraciones actuales de mercado.
+4. Identifica fortalezas, debilidades, riesgos macroeconómicos y oportunidades de optimización.
+5. Dame tu opinión experta y recomendaciones estratégicas claras de cara a los próximos meses.`;
+
+        setExternalPromptText(fullPrompt);
+        setPromptCopied(true);
+
+        // Copiar por defecto al portapapeles de forma inmediata
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(fullPrompt).catch(() => {});
+        }
+
+        setIsExternalPromptModalOpen(true);
+    };
+
+
     const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', msg: '', onConfirm: null });
     const [infoModal, _setInfoModal] = useState({ isOpen: false, title: '', msg: '', type: 'info' });
     const setInfoModal = (val) => {
@@ -7834,7 +7922,7 @@ const handleSellSubmit = () => {
                     </div>
                     
                     <button onClick={onManualSync} className={`shrink-0 px-3 h-9 rounded-lg text-[10px] font-bold border flex items-center gap-2 transition-all ${syncStatus === 'unsaved' ? 'bg-orange-600 border-orange-500 text-white animate-pulse' : syncStatus === 'uploading' || syncStatus === 'downloading' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-green-400'}`}>{syncStatus === 'uploading' || syncStatus === 'downloading' ? <Icons.Loader/> : <Icons.Upload size={14}/>} {syncStatus === 'unsaved' ? 'GUARDAR' : 'SYNC OK'}</button>
-                    <button onClick={analyzePortfolio} className="shrink-0 bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 transition-colors flex items-center gap-2"><Icons.Wand/> INFORME iA</button>
+                    <button onClick={() => setIsAiReportChoiceModalOpen(true)} className="shrink-0 bg-purple-900/80 px-3 h-9 rounded-lg text-[10px] font-bold border border-purple-500/50 hover:bg-purple-800 transition-colors flex items-center gap-2"><Icons.Wand/> INFORME iA</button>
                     <button onClick={() => setIsConsultasModalOpen(true)} className="shrink-0 bg-teal-800 px-3 h-9 rounded-lg text-[10px] font-bold border border-teal-500/50 hover:bg-teal-700 transition-colors flex items-center gap-2"><Icons.MessageCircle size={14}/> CONSULTAS</button>
                     <button onClick={() => setIsNewsSelectionModalOpen(true)} className="shrink-0 bg-blue-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-blue-500/50 hover:bg-blue-600 transition-colors flex items-center gap-2"><Icons.Globe size={14}/> NOTICIAS</button>  
                     <button onClick={() => setIsTimelineModalOpen(true)} className="shrink-0 bg-emerald-700 px-3 h-9 rounded-lg text-[10px] font-bold border border-emerald-500/50 hover:bg-emerald-600 transition-colors flex items-center gap-2"><Icons.Network size={14}/> TIMELINE</button>
@@ -9799,6 +9887,90 @@ const handleSellSubmit = () => {
                     <button onClick={handlePrintAI} className="bg-slate-700 px-4 py-2 rounded-lg text-xs font-bold text-white flex items-center gap-2 hover:bg-slate-600"><Icons.ExternalLink size={14}/> IMPRIMIR</button> 
                 </div> 
             </Modal>
+
+
+            {/* MODAL DE SELECCIÓN DE TIPO DE INFORME */}
+            <Modal isOpen={isAiReportChoiceModalOpen} title="Informe de Cartera con IA" onClose={() => setIsAiReportChoiceModalOpen(false)} size="sm">
+                <div className="space-y-4 p-1">
+                    <div className="bg-purple-900/20 border border-purple-500/30 p-3.5 rounded-xl text-xs text-purple-200 leading-relaxed font-sans">
+                        ¿Cómo deseas realizar el análisis de las <strong>{visiblePortfolio.length}</strong> posiciones visibles en pantalla?
+                    </div>
+                    <div className="flex flex-col gap-3">
+                        <button 
+                            onClick={() => { setIsAiReportChoiceModalOpen(false); analyzePortfolio(); }}
+                            className="p-4 bg-slate-800 hover:bg-purple-900/40 border border-slate-700 hover:border-purple-500 rounded-xl transition-all text-left flex items-start gap-3 group shadow-md"
+                        >
+                            <div className="p-2.5 bg-purple-600/20 rounded-lg text-purple-400 group-hover:scale-110 transition-transform shrink-0">
+                                <Icons.Wand size={20} />
+                            </div>
+                            <div>
+                                <div className="text-sm font-bold text-white uppercase font-sans">Informe Integrado</div>
+                                <div className="text-[11px] text-slate-400 mt-0.5 leading-snug">Ejecutar la auditoría directamente aquí usando el modelo de IA configurado en la terminal.</div>
+                            </div>
+                        </button>
+
+                        <button 
+                            onClick={handleGenerateExternalPrompt}
+                            className="p-4 bg-slate-800 hover:bg-blue-900/40 border border-slate-700 hover:border-blue-500 rounded-xl transition-all text-left flex items-start gap-3 group shadow-md"
+                        >
+                            <div className="p-2.5 bg-blue-600/20 rounded-lg text-blue-400 group-hover:scale-110 transition-transform shrink-0">
+                                <Icons.Copy size={20} />
+                            </div>
+                            <div>
+                                <div className="text-sm font-bold text-white uppercase font-sans">Generar Prompt Externo</div>
+                                <div className="text-[11px] text-slate-400 mt-0.5 leading-snug">Copia al portapapeles los datos completos de compra y valoración actual listos para pegar en ChatGPT, Claude, etc.</div>
+                            </div>
+                        </button>
+                    </div>
+                </div>
+            </Modal>
+
+            {/* MODAL CON EL TEXTO DEL PROMPT GENERADO */}
+            <Modal isOpen={isExternalPromptModalOpen} title="Prompt para IA Externa (Copiado)" onClose={() => setIsExternalPromptModalOpen(false)} size="lg">
+                <div className="space-y-4 p-1">
+                    {promptCopied && (
+                        <div className="bg-green-950/70 border border-green-500/50 p-3.5 rounded-xl flex items-center justify-between text-green-300 text-xs font-bold shadow-md">
+                            <span className="flex items-center gap-2">
+                                <Icons.CheckCircle size={16} className="text-green-400 shrink-0" />
+                                ¡Copiado automáticamente al portapapeles! Ya puedes pegarlo (Ctrl+V) en ChatGPT, Claude o DeepSeek.
+                            </span>
+                        </div>
+                    )}
+
+                    <textarea 
+                        readOnly 
+                        value={externalPromptText} 
+                        className="w-full h-96 bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs font-mono text-slate-200 leading-relaxed custom-scrollbar focus:outline-none select-all shadow-inner"
+                    />
+
+                    <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-2 border-t border-slate-800">
+                        <span className="text-[10px] text-slate-500 font-mono">
+                            {visiblePortfolio.length} posiciones incluidas con compras, valoraciones y dividendos
+                        </span>
+                        <div className="flex gap-2 w-full sm:w-auto">
+                            <button 
+                                onClick={() => {
+                                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                                        navigator.clipboard.writeText(externalPromptText);
+                                        setPromptCopied(true);
+                                    }
+                                }}
+                                className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-500 text-white font-black text-xs uppercase px-5 py-2.5 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 active:scale-95"
+                            >
+                                <Icons.Copy size={14} /> Re-Copiar al Portapapeles
+                            </button>
+                            <button 
+                                onClick={() => setIsExternalPromptModalOpen(false)} 
+                                className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs uppercase px-5 py-2.5 rounded-xl transition-all border border-slate-700"
+                            >
+                                Cerrar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </Modal>
+             
+            
 
             <Modal isOpen={isNotesModalOpen} title="Block de Notas de la Cartera" onClose={() => setIsNotesModalOpen(false)} size="lg">
                 <div className="flex flex-col gap-4">
