@@ -16029,10 +16029,10 @@ const InteractiveTour = ({ isOpen, onClose, activeTab, setActiveTab }) => {
 
 
 // =====================================================================
-// PESTAÑA AUDITAR: AUDITORÍA Y SIMULADOR DINÁMICO DE CARTERA (ACTUALIZADA)
+// PESTAÑA AUDITAR: AUDITORÍA Y SIMULADOR DINÁMICO DE CARTERA (REAJUSTADA)
 // =====================================================================
 const AuditTab = ({ portfolio, baseCurrency }) => {
-    // Lectura sincronizada de los filtros de la pestaña Cartera
+    // Sincronización con filtros de Cartera
     const [filterText] = usePersistentState('bg_port_filter_text', '');
     const [filterDateStart] = usePersistentState('bg_port_filter_start', '');
     const [filterDateEnd] = usePersistentState('bg_port_filter_end', '');
@@ -16047,10 +16047,13 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
     const [manualBaseRate, setManualBaseRate] = useState(null);
     const [manualInitialCap, setManualInitialCap] = useState(null);
 
-    // Formateador estándar a 2 decimales
+    // Estados para tooltips flotantes al pasar el ratón
+    const [scatterTooltip, setScatterTooltip] = useState(null);
+    const [simTooltip, setSimTooltip] = useState(null);
+
     const f2 = (v) => formatN(v, 2);
 
-    // 1. Filtrado de activos según los controles activos en Cartera
+    // 1. Filtrado de activos
     const auditedPositions = useMemo(() => {
         return portfolio.filter(p => {
             if (hideInactive && p.isActive === false) return false;
@@ -16071,7 +16074,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
         });
     }, [portfolio, filterText, filterDateStart, filterDateEnd, filterType, hideInactive]);
 
-    // 2. Cálculo de métricas básicas de activos individuales
+    // 2. Métricas de activos individuales
     const rawMetrics = useMemo(() => {
         let totalCost = 0;
         let totalVal = 0;
@@ -16128,7 +16131,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
         };
     }, [auditedPositions]);
 
-    // 3. Cálculo de Capitales Medios (circulante) y Rentabilidad Histórica Real
+    // 3. Métricas de Capital Medio y Rentabilidad Histórica
     const histMetrics = useMemo(() => {
         if (auditedPositions.length === 0) {
             return { avgCap: 0, profit: 0, diffDays: 1, roi: 0, annualRoi: 0 };
@@ -16166,7 +16169,6 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
         return { avgCap, profit: totalProfit, diffDays: totalPeriodDays, roi, annualRoi };
     }, [auditedPositions]);
 
-    // 4. Selección condicional de métricas: Activas vs Consolidada/Cerradas (Capital Medio)
     const isOnlyActive = filterType === 'active';
 
     const displayCapitalInvertido = isOnlyActive ? rawMetrics.totalCost : histMetrics.avgCap;
@@ -16175,13 +16177,12 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
     const displayReturnPct = isOnlyActive ? rawMetrics.totalPlPct : histMetrics.roi;
     const displayAnnualReturnPct = isOnlyActive ? rawMetrics.weightedAnnualReturn : histMetrics.annualRoi;
 
-    // Parámetros efectivos del simulador
     const initialCapEffective = manualInitialCap !== null ? manualInitialCap : displayValoracionActual;
     const baseRateEffective = manualBaseRate !== null ? manualBaseRate : Number(displayAnnualReturnPct.toFixed(2));
     const optRate = Number((baseRateEffective + Number(optimisticDelta)).toFixed(2));
     const pesRate = Number((baseRateEffective - Number(pessimisticDelta)).toFixed(2));
 
-    // 5. Simulación dinámica futura mes a mes con aportaciones
+    // 4. Simulación con aportaciones mensuales
     const simulationData = useMemo(() => {
         const years = Math.max(1, parseInt(horizonYears) || 1);
         const pmt = Math.max(0, parseFloat(monthlyContribution) || 0);
@@ -16216,7 +16217,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
 
     return (
         <div className="w-full p-4 md:p-6 flex flex-col gap-6 max-w-7xl mx-auto pb-16 font-sans">
-            {/* ENCABEZADO DE AUDITORÍA */}
+            {/* ENCABEZADO */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-900/80 p-5 rounded-2xl border border-slate-800 shadow-xl gap-4">
                 <div>
                     <h2 className="text-xl md:text-2xl font-display font-bold text-emerald-400 flex items-center gap-2">
@@ -16236,7 +16237,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                 </div>
             </div>
 
-            {/* 6 TARJETAS KPI (ESTILO TERMINAL CON REDONDEO A 2 DECIMALES) */}
+            {/* 6 TARJETAS KPI REDONDEADAS A 2 DECIMALES */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                 <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 text-center">
                     <span className="text-[9px] font-black uppercase text-slate-500 tracking-wider">
@@ -16277,7 +16278,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                 </div>
             </div>
 
-            {/* GRÁFICA 1: PESO EN CARTERA (%) VS RENTABILIDAD TOTAL (%) -> ALTURA AMPLIADA */}
+            {/* GRÁFICA 1: PESO EN CARTERA (%) VS RENTABILIDAD TOTAL (%) (ALTURA REAJUSTADA -10%) */}
             <div className="bg-slate-900/60 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-800 pb-3">
                     <div>
@@ -16285,7 +16286,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                             <span>⚖️</span> Peso en Cartera (%) vs Rentabilidad Total (%)
                         </h3>
                         <p className="text-[10px] text-slate-500 mt-0.5">
-                            Eje X = Ponderación sobre el valor total (%) · Eje Y = Rentabilidad total acumulada (%) · Área proporcional al volumen
+                            Pasa el ratón por encima de cualquier posición para auditar sus importes en euros.
                         </p>
                     </div>
                     {/* Leyenda */}
@@ -16297,16 +16298,41 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                     </div>
                 </div>
 
-                {/* Lienzo SVG interactivo con altura ampliada a 560px */}
-                <div className="w-full h-[520px] md:h-[580px] relative overflow-hidden bg-slate-950/80 rounded-xl border border-slate-800/80 p-2">
+                {/* Contenedor relativo con tooltip */}
+                <div 
+                    className="w-full h-[470px] md:h-[520px] relative bg-slate-950/80 rounded-xl border border-slate-800/80 p-2 overflow-hidden"
+                    onMouseLeave={() => setScatterTooltip(null)}
+                >
+                    {scatterTooltip && (
+                        <div 
+                            className="absolute z-30 pointer-events-none bg-slate-900/95 border border-slate-700 p-3 rounded-xl shadow-2xl text-xs backdrop-blur-md transform -translate-x-1/2 -translate-y-full -mt-3 font-mono border-t-2"
+                            style={{ 
+                                left: Math.max(130, Math.min(scatterTooltip.x, 870)), 
+                                top: Math.max(10, scatterTooltip.y),
+                                borderTopColor: scatterTooltip.item.plTotal >= 0 ? '#10b981' : '#ef4444'
+                            }}
+                        >
+                            <div className="font-bold text-white font-sans text-sm mb-1">{scatterTooltip.item.name} ({scatterTooltip.item.ticker})</div>
+                            <div className="text-slate-300">Valor Mercado: <b className="text-white">{formatMoney(scatterTooltip.item.val, baseCurrency)}</b></div>
+                            <div className="text-slate-400">Coste Invertido: {formatMoney(scatterTooltip.item.cost, baseCurrency)}</div>
+                            <div className={`mt-0.5 font-bold ${scatterTooltip.item.plTotal >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                Rendimiento: {scatterTooltip.item.plTotal >= 0 ? '+' : ''}{formatMoney(scatterTooltip.item.plTotal, baseCurrency)} ({f2(scatterTooltip.item.retPct)}%)
+                            </div>
+                            <div className="text-slate-400 text-[10px] mt-1 pt-1 border-t border-slate-800 flex justify-between gap-4">
+                                <span>Ponderación: <b className="text-amber-400">{f2(scatterTooltip.item.weightPct)}%</b></span>
+                                <span>Tasa Anual: <b>{f2(scatterTooltip.item.annualRet)}%</b></span>
+                            </div>
+                        </div>
+                    )}
+
                     {(() => {
                         if (rawMetrics.items.length === 0) {
                             return <div className="flex items-center justify-center h-full text-xs text-slate-500">Sin posiciones visibles</div>;
                         }
 
-                        const pad = { top: 35, right: 45, bottom: 45, left: 60 };
+                        const pad = { top: 30, right: 40, bottom: 40, left: 60 };
                         const W = 1000;
-                        const H = 560; // Altura interna ampliada para evitar dispersión achatada
+                        const H = 500; // Reducido ~10% (de 560 a 500)
                         const innerW = W - pad.left - pad.right;
                         const innerH = H - pad.top - pad.bottom;
 
@@ -16320,8 +16346,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                         const getX = (w) => pad.left + (w / maxWeight) * innerW;
                         const getY = (r) => pad.top + innerH - ((r - minRet) / retRange) * innerH;
 
-                        // Líneas de cuadrícula automáticas bien espaciadas
-                        const stepGrid = retRange > 300 ? 50 : retRange > 150 ? 25 : 10;
+                        const stepGrid = retRange > 300 ? 50 : retRange > 150 ? 25 : 15;
                         const gridTicks = [];
                         for (let val = Math.ceil(minRet / stepGrid) * stepGrid; val <= maxRet; val += stepGrid) {
                             gridTicks.push(val);
@@ -16333,7 +16358,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                                 {gridTicks.map(val => (
                                     <g key={val}>
                                         <line x1={pad.left} y1={getY(val)} x2={W - pad.right} y2={getY(val)} stroke={val === 0 ? "#64748b" : "#334155"} strokeWidth={val === 0 ? 1.5 : 1} strokeDasharray={val === 0 ? "none" : "3"} opacity="0.6" />
-                                        <text x={pad.left - 8} y={getY(val) + 4} textAnchor="end" fill={val === 0 ? "#94a3b8" : "#64748b"} fontSize="11" fontFamily="monospace" fontWeight={val === 0 ? "bold" : "normal"}>{f2(val)}%</text>
+                                        <text x={pad.left - 8} y={getY(val) + 4} textAnchor="end" fill={val === 0 ? "#94a3b8" : "#64748b"} fontSize="10" fontFamily="monospace">{f2(val)}%</text>
                                     </g>
                                 ))}
 
@@ -16341,15 +16366,15 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                                 {[5, 10, 15, 20, 25, 30].filter(v => v <= maxWeight).map(val => (
                                     <g key={val}>
                                         <line x1={getX(val)} y1={pad.top} x2={getX(val)} y2={H - pad.bottom} stroke="#334155" strokeWidth="1" strokeDasharray="3" opacity="0.4" />
-                                        <text x={getX(val)} y={H - pad.bottom + 16} textAnchor="middle" fill="#64748b" fontSize="11" fontFamily="monospace">{f2(val)}%</text>
+                                        <text x={getX(val)} y={H - pad.bottom + 15} textAnchor="middle" fill="#64748b" fontSize="10" fontFamily="monospace">{f2(val)}%</text>
                                     </g>
                                 ))}
 
-                                {/* Burbujas de activos */}
+                                {/* Burbujas de activos con fuentes pequeñas y eventos de hover */}
                                 {rawMetrics.items.map((item, idx) => {
                                     const cx = getX(item.weightPct);
                                     const cy = getY(item.retPct);
-                                    const r = Math.max(8, Math.min(26, (item.val / (rawMetrics.totalVal || 1)) * 40));
+                                    const r = Math.max(7, Math.min(22, (item.val / (rawMetrics.totalVal || 1)) * 36));
 
                                     let fill = '#3b82f6';
                                     if (item.weightPct > 20) fill = '#f59e0b';
@@ -16357,9 +16382,49 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                                     else if (item.retPct > 30) fill = '#10b981';
 
                                     return (
-                                        <g key={idx} className="cursor-pointer group">
-                                            <circle cx={cx} cy={cy} r={r} fill={fill} opacity="0.85" stroke="#ffffff" strokeWidth="1.5" className="hover:opacity-100 hover:scale-125 transition-transform origin-center" />
-                                            <text x={cx} y={cy - r - 5} textAnchor="middle" fill="#ffffff" fontSize="11" fontWeight="bold" fontFamily="monospace" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.95)' }}>
+                                        <g 
+                                            key={idx} 
+                                            className="cursor-pointer group"
+                                            onMouseEnter={(e) => {
+                                                const container = e.currentTarget.closest('div');
+                                                const rect = container.getBoundingClientRect();
+                                                setScatterTooltip({
+                                                    x: e.clientX - rect.left,
+                                                    y: e.clientY - rect.top,
+                                                    item
+                                                });
+                                            }}
+                                            onMouseMove={(e) => {
+                                                const container = e.currentTarget.closest('div');
+                                                const rect = container.getBoundingClientRect();
+                                                setScatterTooltip({
+                                                    x: e.clientX - rect.left,
+                                                    y: e.clientY - rect.top,
+                                                    item
+                                                });
+                                            }}
+                                        >
+                                            <circle 
+                                                cx={cx} 
+                                                cy={cy} 
+                                                r={r} 
+                                                fill={fill} 
+                                                opacity="0.85" 
+                                                stroke="#ffffff" 
+                                                strokeWidth="1.5" 
+                                                className="hover:opacity-100 hover:scale-125 transition-transform origin-center" 
+                                            />
+                                            {/* FUENTE PEQUEÑA (8.5px) PARA EVITAR QUE SE PISEN */}
+                                            <text 
+                                                x={cx} 
+                                                y={cy - r - 4} 
+                                                textAnchor="middle" 
+                                                fill="#e2e8f0" 
+                                                fontSize="8.5" 
+                                                fontWeight="600" 
+                                                fontFamily="monospace" 
+                                                style={{ textShadow: '0 1px 3px rgba(0,0,0,0.95)' }}
+                                            >
                                                 {item.ticker} ({f2(item.retPct)}%)
                                             </text>
                                         </g>
@@ -16371,18 +16436,18 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                 </div>
             </div>
 
-            {/* GRÁFICA 2 & SIMULADOR DINÁMICO -> ALTURA AMPLIADA */}
+            {/* GRÁFICA 2 & SIMULADOR DINÁMICO (ALTURA REAJUSTADA -10%) */}
             <div className="bg-slate-900/60 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-6">
                 <div className="border-b border-slate-800 pb-3">
                     <h3 className="text-sm font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
                         <span>📈</span> Simulador Dinámico de Rendimiento Futuro
                     </h3>
                     <p className="text-[10px] text-slate-400 mt-0.5">
-                        Proyección compuesta considerando rentabilidad periódica ajustada y acumulación mensual de ahorro ({formatMoney(monthlyContribution, baseCurrency)}/mes).
+                        Pasa el ratón por los puntos de la gráfica para ver las cifras monetarias exactas estimadas para cada año.
                     </p>
                 </div>
 
-                {/* CONTROLES TOTALMENTE EDITABLES */}
+                {/* CONTROLES EDITABLES */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 bg-slate-950/70 p-4 rounded-xl border border-slate-800">
                     <div>
                         <label className="text-[9px] font-black uppercase text-slate-400 block mb-1">Horizonte (Años)</label>
@@ -16447,13 +16512,43 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                     </div>
                 </div>
 
-                {/* GRÁFICA DE LÍNEAS DE EVOLUCIÓN (ALTURA AMPLIADA A 480px) */}
-                <div className="w-full h-[450px] md:h-[490px] relative bg-slate-950/80 rounded-xl border border-slate-800/80 p-2">
+                {/* Contenedor relativo con tooltip */}
+                <div 
+                    className="w-full h-[400px] md:h-[440px] relative bg-slate-950/80 rounded-xl border border-slate-800/80 p-2 overflow-hidden"
+                    onMouseLeave={() => setSimTooltip(null)}
+                >
+                    {simTooltip && (
+                        <div 
+                            className="absolute z-30 pointer-events-none bg-slate-900/95 border border-slate-700 p-3 rounded-xl shadow-2xl text-xs backdrop-blur-md transform -translate-x-1/2 -translate-y-full -mt-3 font-mono"
+                            style={{ 
+                                left: Math.max(130, Math.min(simTooltip.x, 870)), 
+                                top: Math.max(10, simTooltip.y) 
+                            }}
+                        >
+                            <div className="font-bold text-white font-sans text-sm mb-1.5 border-b border-slate-800 pb-1 flex justify-between gap-4">
+                                <span>{simTooltip.label}</span>
+                                <span className="text-[10px] text-slate-400">Proyección Estimada</span>
+                            </div>
+                            <div className="text-emerald-400 flex justify-between gap-4">
+                                <span>Optimista ({f2(optRate)}%):</span>
+                                <b>{formatMoney(simTooltip.optVal, baseCurrency)}</b>
+                            </div>
+                            <div className="text-blue-400 flex justify-between gap-4">
+                                <span>Base ({f2(baseRateEffective)}%):</span>
+                                <b>{formatMoney(simTooltip.baseVal, baseCurrency)}</b>
+                            </div>
+                            <div className="text-red-400 flex justify-between gap-4">
+                                <span>Pesimista ({f2(pesRate)}%):</span>
+                                <b>{formatMoney(simTooltip.pesVal, baseCurrency)}</b>
+                            </div>
+                        </div>
+                    )}
+
                     {(() => {
                         const { years, baseValues, optValues, pesValues } = simulationData;
-                        const pad = { top: 30, right: 40, bottom: 45, left: 75 };
+                        const pad = { top: 30, right: 40, bottom: 40, left: 75 };
                         const W = 1000;
-                        const H = 480; // Altura interna ampliada
+                        const H = 430; // Reducido ~10% (de 480 a 430)
                         const innerW = W - pad.left - pad.right;
                         const innerH = H - pad.top - pad.bottom;
 
@@ -16476,30 +16571,58 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                                     return (
                                         <g key={pct}>
                                             <line x1={pad.left} y1={y} x2={W - pad.right} y2={y} stroke="#334155" strokeWidth="1" strokeDasharray="4" opacity="0.5" />
-                                            <text x={pad.left - 10} y={y + 4} textAnchor="end" fill="#64748b" fontSize="11" fontFamily="monospace">
+                                            <text x={pad.left - 10} y={y + 4} textAnchor="end" fill="#64748b" fontSize="10" fontFamily="monospace">
                                                 {formatMoney(val, baseCurrency)}
                                             </text>
                                         </g>
                                     );
                                 })}
 
-                                {/* Línea Optimista (Verde) */}
+                                {/* Líneas de escenarios */}
                                 <polyline fill="none" stroke="#10b981" strokeWidth="2.5" points={buildPoints(optValues)} />
-                                {/* Línea Base (Azul) */}
                                 <polyline fill="none" stroke="#3b82f6" strokeWidth="3" points={buildPoints(baseValues)} />
-                                {/* Línea Pesimista (Roja) */}
                                 <polyline fill="none" stroke="#ef4444" strokeWidth="2.5" points={buildPoints(pesValues)} />
 
-                                {/* Puntos y etiquetas de años */}
+                                {/* Puntos interactivos con hit-area para tooltip */}
                                 {simulationData.labels.map((lbl, i) => (
-                                    <g key={i}>
-                                        <line x1={getX(i)} y1={H - pad.bottom} x2={getX(i)} y2={H - pad.bottom + 6} stroke="#64748b" />
-                                        <text x={getX(i)} y={H - pad.bottom + 18} textAnchor="middle" fill="#94a3b8" fontSize="11" fontWeight="bold">
+                                    <g 
+                                        key={i}
+                                        className="cursor-pointer group"
+                                        onMouseEnter={(e) => {
+                                            const container = e.currentTarget.closest('div');
+                                            const rect = container.getBoundingClientRect();
+                                            setSimTooltip({
+                                                x: e.clientX - rect.left,
+                                                y: e.clientY - rect.top,
+                                                label: lbl,
+                                                baseVal: baseValues[i],
+                                                optVal: optValues[i],
+                                                pesVal: pesValues[i]
+                                            });
+                                        }}
+                                        onMouseMove={(e) => {
+                                            const container = e.currentTarget.closest('div');
+                                            const rect = container.getBoundingClientRect();
+                                            setSimTooltip({
+                                                x: e.clientX - rect.left,
+                                                y: e.clientY - rect.top,
+                                                label: lbl,
+                                                baseVal: baseValues[i],
+                                                optVal: optValues[i],
+                                                pesVal: pesValues[i]
+                                            });
+                                        }}
+                                    >
+                                        {/* Eje X y línea guía vertical transparente para capturar hover fácilmente */}
+                                        <line x1={getX(i)} y1={pad.top} x2={getX(i)} y2={H - pad.bottom} stroke="#38bdf8" strokeWidth="1" strokeDasharray="2" opacity="0.15" />
+                                        <line x1={getX(i)} y1={H - pad.bottom} x2={getX(i)} y2={H - pad.bottom + 5} stroke="#64748b" />
+                                        <text x={getX(i)} y={H - pad.bottom + 16} textAnchor="middle" fill="#94a3b8" fontSize="10" fontWeight="bold">
                                             {lbl}
                                         </text>
-                                        <circle cx={getX(i)} cy={getY(optValues[i])} r="4" fill="#10b981" />
-                                        <circle cx={getX(i)} cy={getY(baseValues[i])} r="4.5" fill="#3b82f6" />
-                                        <circle cx={getX(i)} cy={getY(pesValues[i])} r="4" fill="#ef4444" />
+                                        {/* Puntos visibles */}
+                                        <circle cx={getX(i)} cy={getY(optValues[i])} r="3.5" fill="#10b981" />
+                                        <circle cx={getX(i)} cy={getY(baseValues[i])} r="4" fill="#3b82f6" />
+                                        <circle cx={getX(i)} cy={getY(pesValues[i])} r="3.5" fill="#ef4444" />
                                     </g>
                                 ))}
                             </svg>
@@ -16507,7 +16630,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                     })()}
                 </div>
 
-                {/* TABLA DE EVOLUCIÓN ANUAL ESTIMADA A 2 DECIMALES */}
+                {/* TABLA DE EVOLUCIÓN ANUAL A 2 DECIMALES */}
                 <div className="overflow-x-auto rounded-xl border border-slate-800">
                     <table className="w-full text-xs text-right font-mono border-collapse">
                         <thead className="bg-slate-950 text-[10px] uppercase font-bold text-slate-400">
@@ -16588,6 +16711,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
         </div>
     );
 };
+
 
 
 const App = () => {
