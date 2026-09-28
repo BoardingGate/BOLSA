@@ -16028,8 +16028,9 @@ const InteractiveTour = ({ isOpen, onClose, activeTab, setActiveTab }) => {
 };
 
 
+
 // =====================================================================
-// PESTAÑA AUDITAR: AUDITORÍA Y SIMULADOR DINÁMICO DE CARTERA (REAJUSTADA)
+// PESTAÑA AUDITAR: AUDITORÍA Y SIMULADOR (TOOLTIPS AUTO-ADAPTABLES)
 // =====================================================================
 const AuditTab = ({ portfolio, baseCurrency }) => {
     // Sincronización con filtros de Cartera
@@ -16047,11 +16048,46 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
     const [manualBaseRate, setManualBaseRate] = useState(null);
     const [manualInitialCap, setManualInitialCap] = useState(null);
 
-    // Estados para tooltips flotantes al pasar el ratón
+    // Estados de tooltips flotantes
     const [scatterTooltip, setScatterTooltip] = useState(null);
     const [simTooltip, setSimTooltip] = useState(null);
 
     const f2 = (v) => formatN(v, 2);
+
+    // FUNCIÓN DE POSICIONAMIENTO INTELIGENTE (EVITA SALIRSE DE LOS BORDES)
+    const getSmartPlacement = (tt) => {
+        if (!tt) return { style: {}, className: "" };
+        const isNearTop = tt.y < 150;
+        const isNearLeft = tt.x < 150;
+        const isNearRight = tt.cWidth && (tt.x > tt.cWidth - 170);
+
+        let transformClass = "transform ";
+        let left = tt.x;
+        let top = tt.y;
+
+        // Control horizontal
+        if (isNearLeft) {
+            left = Math.max(12, tt.x - 10);
+            transformClass += "translate-x-0 ";
+        } else if (isNearRight) {
+            left = Math.min(tt.cWidth - 12, tt.x + 10);
+            transformClass += "-translate-x-full ";
+        } else {
+            transformClass += "-translate-x-1/2 ";
+        }
+
+        // Control vertical (si está muy arriba, se dibuja debajo del punto)
+        if (isNearTop) {
+            transformClass += "translate-y-0 mt-4";
+        } else {
+            transformClass += "-translate-y-full -mt-4";
+        }
+
+        return {
+            style: { left: `${left}px`, top: `${top}px` },
+            className: transformClass.trim()
+        };
+    };
 
     // 1. Filtrado de activos
     const auditedPositions = useMemo(() => {
@@ -16278,7 +16314,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                 </div>
             </div>
 
-            {/* GRÁFICA 1: PESO EN CARTERA (%) VS RENTABILIDAD TOTAL (%) (ALTURA REAJUSTADA -10%) */}
+            {/* GRÁFICA 1: PESO EN CARTERA (%) VS RENTABILIDAD TOTAL (%) */}
             <div className="bg-slate-900/60 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-800 pb-3">
                     <div>
@@ -16298,32 +16334,34 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                     </div>
                 </div>
 
-                {/* Contenedor relativo con tooltip */}
+                {/* Contenedor relativo con tooltip inteligente anti-desborde */}
                 <div 
                     className="w-full h-[470px] md:h-[520px] relative bg-slate-950/80 rounded-xl border border-slate-800/80 p-2 overflow-hidden"
                     onMouseLeave={() => setScatterTooltip(null)}
                 >
-                    {scatterTooltip && (
-                        <div 
-                            className="absolute z-30 pointer-events-none bg-slate-900/95 border border-slate-700 p-3 rounded-xl shadow-2xl text-xs backdrop-blur-md transform -translate-x-1/2 -translate-y-full -mt-3 font-mono border-t-2"
-                            style={{ 
-                                left: Math.max(130, Math.min(scatterTooltip.x, 870)), 
-                                top: Math.max(10, scatterTooltip.y),
-                                borderTopColor: scatterTooltip.item.plTotal >= 0 ? '#10b981' : '#ef4444'
-                            }}
-                        >
-                            <div className="font-bold text-white font-sans text-sm mb-1">{scatterTooltip.item.name} ({scatterTooltip.item.ticker})</div>
-                            <div className="text-slate-300">Valor Mercado: <b className="text-white">{formatMoney(scatterTooltip.item.val, baseCurrency)}</b></div>
-                            <div className="text-slate-400">Coste Invertido: {formatMoney(scatterTooltip.item.cost, baseCurrency)}</div>
-                            <div className={`mt-0.5 font-bold ${scatterTooltip.item.plTotal >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                                Rendimiento: {scatterTooltip.item.plTotal >= 0 ? '+' : ''}{formatMoney(scatterTooltip.item.plTotal, baseCurrency)} ({f2(scatterTooltip.item.retPct)}%)
+                    {scatterTooltip && (() => {
+                        const placement = getSmartPlacement(scatterTooltip);
+                        return (
+                            <div 
+                                className={`absolute z-30 pointer-events-none bg-slate-900/95 border border-slate-700 p-3 rounded-xl shadow-2xl text-xs backdrop-blur-md font-mono border-t-2 ${placement.className}`}
+                                style={{ 
+                                    ...placement.style,
+                                    borderTopColor: scatterTooltip.item.plTotal >= 0 ? '#10b981' : '#ef4444'
+                                }}
+                            >
+                                <div className="font-bold text-white font-sans text-sm mb-1">{scatterTooltip.item.name} ({scatterTooltip.item.ticker})</div>
+                                <div className="text-slate-300">Valor Mercado: <b className="text-white">{formatMoney(scatterTooltip.item.val, baseCurrency)}</b></div>
+                                <div className="text-slate-400">Coste Invertido: {formatMoney(scatterTooltip.item.cost, baseCurrency)}</div>
+                                <div className={`mt-0.5 font-bold ${scatterTooltip.item.plTotal >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                    Rendimiento: {scatterTooltip.item.plTotal >= 0 ? '+' : ''}{formatMoney(scatterTooltip.item.plTotal, baseCurrency)} ({f2(scatterTooltip.item.retPct)}%)
+                                </div>
+                                <div className="text-slate-400 text-[10px] mt-1 pt-1 border-t border-slate-800 flex justify-between gap-4">
+                                    <span>Ponderación: <b className="text-amber-400">{f2(scatterTooltip.item.weightPct)}%</b></span>
+                                    <span>Tasa Anual: <b>{f2(scatterTooltip.item.annualRet)}%</b></span>
+                                </div>
                             </div>
-                            <div className="text-slate-400 text-[10px] mt-1 pt-1 border-t border-slate-800 flex justify-between gap-4">
-                                <span>Ponderación: <b className="text-amber-400">{f2(scatterTooltip.item.weightPct)}%</b></span>
-                                <span>Tasa Anual: <b>{f2(scatterTooltip.item.annualRet)}%</b></span>
-                            </div>
-                        </div>
-                    )}
+                        );
+                    })()}
 
                     {(() => {
                         if (rawMetrics.items.length === 0) {
@@ -16332,7 +16370,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
 
                         const pad = { top: 30, right: 40, bottom: 40, left: 60 };
                         const W = 1000;
-                        const H = 500; // Reducido ~10% (de 560 a 500)
+                        const H = 500;
                         const innerW = W - pad.left - pad.right;
                         const innerH = H - pad.top - pad.bottom;
 
@@ -16351,6 +16389,18 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                         for (let val = Math.ceil(minRet / stepGrid) * stepGrid; val <= maxRet; val += stepGrid) {
                             gridTicks.push(val);
                         }
+
+                        const updateTooltipPos = (e, item) => {
+                            const container = e.currentTarget.ownerSVGElement?.parentElement || e.currentTarget.closest('div');
+                            const rect = container.getBoundingClientRect();
+                            setScatterTooltip({
+                                x: e.clientX - rect.left,
+                                y: e.clientY - rect.top,
+                                cWidth: rect.width,
+                                cHeight: rect.height,
+                                item
+                            });
+                        };
 
                         return (
                             <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full" preserveAspectRatio="none">
@@ -16385,24 +16435,8 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                                         <g 
                                             key={idx} 
                                             className="cursor-pointer group"
-                                            onMouseEnter={(e) => {
-                                                const container = e.currentTarget.closest('div');
-                                                const rect = container.getBoundingClientRect();
-                                                setScatterTooltip({
-                                                    x: e.clientX - rect.left,
-                                                    y: e.clientY - rect.top,
-                                                    item
-                                                });
-                                            }}
-                                            onMouseMove={(e) => {
-                                                const container = e.currentTarget.closest('div');
-                                                const rect = container.getBoundingClientRect();
-                                                setScatterTooltip({
-                                                    x: e.clientX - rect.left,
-                                                    y: e.clientY - rect.top,
-                                                    item
-                                                });
-                                            }}
+                                            onMouseEnter={(e) => updateTooltipPos(e, item)}
+                                            onMouseMove={(e) => updateTooltipPos(e, item)}
                                         >
                                             <circle 
                                                 cx={cx} 
@@ -16414,7 +16448,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                                                 strokeWidth="1.5" 
                                                 className="hover:opacity-100 hover:scale-125 transition-transform origin-center" 
                                             />
-                                            {/* FUENTE PEQUEÑA (8.5px) PARA EVITAR QUE SE PISEN */}
+                                            {/* FUENTE PEQUEÑA (8.5px) */}
                                             <text 
                                                 x={cx} 
                                                 y={cy - r - 4} 
@@ -16436,7 +16470,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                 </div>
             </div>
 
-            {/* GRÁFICA 2 & SIMULADOR DINÁMICO (ALTURA REAJUSTADA -10%) */}
+            {/* GRÁFICA 2 & SIMULADOR DINÁMICO */}
             <div className="bg-slate-900/60 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-6">
                 <div className="border-b border-slate-800 pb-3">
                     <h3 className="text-sm font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
@@ -16512,43 +16546,43 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                     </div>
                 </div>
 
-                {/* Contenedor relativo con tooltip */}
+                {/* Contenedor relativo con tooltip inteligente anti-desborde */}
                 <div 
                     className="w-full h-[400px] md:h-[440px] relative bg-slate-950/80 rounded-xl border border-slate-800/80 p-2 overflow-hidden"
                     onMouseLeave={() => setSimTooltip(null)}
                 >
-                    {simTooltip && (
-                        <div 
-                            className="absolute z-30 pointer-events-none bg-slate-900/95 border border-slate-700 p-3 rounded-xl shadow-2xl text-xs backdrop-blur-md transform -translate-x-1/2 -translate-y-full -mt-3 font-mono"
-                            style={{ 
-                                left: Math.max(130, Math.min(simTooltip.x, 870)), 
-                                top: Math.max(10, simTooltip.y) 
-                            }}
-                        >
-                            <div className="font-bold text-white font-sans text-sm mb-1.5 border-b border-slate-800 pb-1 flex justify-between gap-4">
-                                <span>{simTooltip.label}</span>
-                                <span className="text-[10px] text-slate-400">Proyección Estimada</span>
+                    {simTooltip && (() => {
+                        const placement = getSmartPlacement(simTooltip);
+                        return (
+                            <div 
+                                className={`absolute z-30 pointer-events-none bg-slate-900/95 border border-slate-700 p-3 rounded-xl shadow-2xl text-xs backdrop-blur-md font-mono ${placement.className}`}
+                                style={placement.style}
+                            >
+                                <div className="font-bold text-white font-sans text-sm mb-1.5 border-b border-slate-800 pb-1 flex justify-between gap-4">
+                                    <span>{simTooltip.label}</span>
+                                    <span className="text-[10px] text-slate-400">Proyección Estimada</span>
+                                </div>
+                                <div className="text-emerald-400 flex justify-between gap-3">
+                                    <span>Optimista ({f2(optRate)}%):</span>
+                                    <b>{formatMoney(simTooltip.optVal, baseCurrency)}</b>
+                                </div>
+                                <div className="text-blue-400 flex justify-between gap-3">
+                                    <span>Base ({f2(baseRateEffective)}%):</span>
+                                    <b>{formatMoney(simTooltip.baseVal, baseCurrency)}</b>
+                                </div>
+                                <div className="text-red-400 flex justify-between gap-3">
+                                    <span>Pesimista ({f2(pesRate)}%):</span>
+                                    <b>{formatMoney(simTooltip.pesVal, baseCurrency)}</b>
+                                </div>
                             </div>
-                            <div className="text-emerald-400 flex justify-between gap-4">
-                                <span>Optimista ({f2(optRate)}%):</span>
-                                <b>{formatMoney(simTooltip.optVal, baseCurrency)}</b>
-                            </div>
-                            <div className="text-blue-400 flex justify-between gap-4">
-                                <span>Base ({f2(baseRateEffective)}%):</span>
-                                <b>{formatMoney(simTooltip.baseVal, baseCurrency)}</b>
-                            </div>
-                            <div className="text-red-400 flex justify-between gap-4">
-                                <span>Pesimista ({f2(pesRate)}%):</span>
-                                <b>{formatMoney(simTooltip.pesVal, baseCurrency)}</b>
-                            </div>
-                        </div>
-                    )}
+                        );
+                    })()}
 
                     {(() => {
                         const { years, baseValues, optValues, pesValues } = simulationData;
                         const pad = { top: 30, right: 40, bottom: 40, left: 75 };
                         const W = 1000;
-                        const H = 430; // Reducido ~10% (de 480 a 430)
+                        const H = 430;
                         const innerW = W - pad.left - pad.right;
                         const innerH = H - pad.top - pad.bottom;
 
@@ -16561,6 +16595,21 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                         const getY = (v) => pad.top + innerH - ((v - minVal) / range) * innerH;
 
                         const buildPoints = (arr) => arr.map((v, i) => `${getX(i)},${getY(v)}`).join(' ');
+
+                        const updateSimTooltip = (e, i, lbl) => {
+                            const container = e.currentTarget.ownerSVGElement?.parentElement || e.currentTarget.closest('div');
+                            const rect = container.getBoundingClientRect();
+                            setSimTooltip({
+                                x: e.clientX - rect.left,
+                                y: e.clientY - rect.top,
+                                cWidth: rect.width,
+                                cHeight: rect.height,
+                                label: lbl,
+                                baseVal: baseValues[i],
+                                optVal: optValues[i],
+                                pesVal: pesValues[i]
+                            });
+                        };
 
                         return (
                             <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full" preserveAspectRatio="none">
@@ -16588,38 +16637,16 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                                     <g 
                                         key={i}
                                         className="cursor-pointer group"
-                                        onMouseEnter={(e) => {
-                                            const container = e.currentTarget.closest('div');
-                                            const rect = container.getBoundingClientRect();
-                                            setSimTooltip({
-                                                x: e.clientX - rect.left,
-                                                y: e.clientY - rect.top,
-                                                label: lbl,
-                                                baseVal: baseValues[i],
-                                                optVal: optValues[i],
-                                                pesVal: pesValues[i]
-                                            });
-                                        }}
-                                        onMouseMove={(e) => {
-                                            const container = e.currentTarget.closest('div');
-                                            const rect = container.getBoundingClientRect();
-                                            setSimTooltip({
-                                                x: e.clientX - rect.left,
-                                                y: e.clientY - rect.top,
-                                                label: lbl,
-                                                baseVal: baseValues[i],
-                                                optVal: optValues[i],
-                                                pesVal: pesValues[i]
-                                            });
-                                        }}
+                                        onMouseEnter={(e) => updateSimTooltip(e, i, lbl)}
+                                        onMouseMove={(e) => updateSimTooltip(e, i, lbl)}
                                     >
-                                        {/* Eje X y línea guía vertical transparente para capturar hover fácilmente */}
                                         <line x1={getX(i)} y1={pad.top} x2={getX(i)} y2={H - pad.bottom} stroke="#38bdf8" strokeWidth="1" strokeDasharray="2" opacity="0.15" />
-                                        <line x1={getX(i)} y1={H - pad.bottom} x2={getX(i)} y2={H - pad.bottom + 5} stroke="#64748b" />
-                                        <text x={getX(i)} y={H - pad.bottom + 16} textAnchor="middle" fill="#94a3b8" fontSize="10" fontWeight="bold">
+                                        <line x1={getX(i)} y1={H - pad.bottom} x2={getX(i)} y2={H - pad.bottom + 6} stroke="#64748b" />
+                                        <text x={getX(i)} y={H - pad.bottom + 18} textAnchor="middle" fill="#94a3b8" fontSize="10" fontWeight="bold">
                                             {lbl}
                                         </text>
-                                        {/* Puntos visibles */}
+                                        {/* Área transparente de captura táctil/ratón */}
+                                        <circle cx={getX(i)} cy={getY(baseValues[i])} r="18" fill="transparent" />
                                         <circle cx={getX(i)} cy={getY(optValues[i])} r="3.5" fill="#10b981" />
                                         <circle cx={getX(i)} cy={getY(baseValues[i])} r="4" fill="#3b82f6" />
                                         <circle cx={getX(i)} cy={getY(pesValues[i])} r="3.5" fill="#ef4444" />
@@ -16711,7 +16738,6 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
         </div>
     );
 };
-
 
 
 const App = () => {
