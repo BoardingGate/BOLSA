@@ -6614,12 +6614,48 @@ const handleGenerateExternalPrompt = (promptType = 'standard') => {
         const totalReturn = totalPl + totalDivs;
         const totalReturnPct = totalCost > 0 ? (totalReturn / totalCost) * 100 : 0;
 
-        const dataBlock = `============================================================
-RESUMEN GLOBAL DE LA CARTERA FILTRADA (${dataToAnalyze.length} POSICIONES A FECHA ${today}):
+        // Comprobación: ¿es exclusivamente cartera activa?
+        const isPurelyActive = dataToAnalyze.every(p => !p.sellDate);
+
+        let headerBlock = '';
+
+        if (isPurelyActive) {
+            // Solo cartera activa: usa Capital Invertido y Valoración Actual
+            headerBlock = `RESUMEN GLOBAL DE LA CARTERA ACTIVA (${dataToAnalyze.length} POSICIONES ACTIVAS A FECHA ${today}):
 - Capital Invertido: ${formatMoney(totalCost, baseCurrency)}
 - Valoración Actual de Mercado: ${formatMoney(totalVal, baseCurrency)}
 - Dividendos Cobrados: ${formatMoney(totalDivs, baseCurrency)}
-- Retorno Total Neto: ${totalReturn >= 0 ? '+' : ''}${formatMoney(totalReturn, baseCurrency)} (${totalReturn >= 0 ? '+' : ''}${formatN(totalReturnPct)}%)
+- Retorno Total Neto: ${totalReturn >= 0 ? '+' : ''}${formatMoney(totalReturn, baseCurrency)} (${totalReturn >= 0 ? '+' : ''}${formatN(totalReturnPct)}%)`;
+        } else {
+            // Movimientos mixtos (abiertos y cerrados) o solo ventas: calcula Capital Medio ponderado histórico
+            const sortedByBuy = [...dataToAnalyze].sort((a, b) => new Date(a.buyDate) - new Date(b.buyDate));
+            const firstDate = sortedByBuy.length > 0 ? new Date(sortedByBuy[0].buyDate) : new Date();
+            let lastDate = new Date();
+            if (dataToAnalyze.every(p => p.sellDate)) {
+                const sortedBySell = [...dataToAnalyze].sort((a, b) => new Date(b.sellDate) - new Date(a.sellDate));
+                lastDate = new Date(sortedBySell[0].sellDate);
+            }
+            const totalPeriodDays = Math.max(1, (lastDate - firstDate) / (1000 * 60 * 60 * 24));
+            let weightedSum = 0;
+            dataToAnalyze.forEach(p => {
+                const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+                const endDate = p.sellDate ? new Date(p.sellDate) : new Date();
+                const daysHeld = Math.max(0, (endDate - new Date(p.buyDate)) / (1000 * 60 * 60 * 24));
+                weightedSum += (cost * daysHeld);
+            });
+            const avgCapital = weightedSum / totalPeriodDays;
+            const roiOnAvgCap = avgCapital > 0 ? (totalReturn / avgCapital) * 100 : 0;
+
+            headerBlock = `RESUMEN HISTÓRICO GLOBAL (${dataToAnalyze.length} OPERACIONES EN TOTAL A FECHA ${today}):
+- Capital Medio Invertido (Histórico Ponderado por Tiempo): ${formatMoney(avgCapital, baseCurrency)}
+- Beneficio Neto Total: ${totalReturn >= 0 ? '+' : ''}${formatMoney(totalReturn, baseCurrency)}
+- Dividendos Cobrados: ${formatMoney(totalDivs, baseCurrency)}
+- Rentabilidad Real sobre Capital Medio: ${roiOnAvgCap >= 0 ? '+' : ''}${formatN(roiOnAvgCap)}%
+- Periodo Temporal: ${firstDate.toLocaleDateString('es-ES')} a ${lastDate.toLocaleDateString('es-ES')} (${Math.round(totalPeriodDays)} días)`;
+        }
+
+        const dataBlock = `============================================================
+${headerBlock}
 ============================================================
 
 DETALLE COMPLETO DE POSICIONES:
@@ -7497,7 +7533,7 @@ const analyzePortfolio = async () => {
       try {
         const today = new Date().toLocaleString('es-ES');
         const monthNames = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
-        let winningTrades = 0, losingTrades = 0; let grossProfit = 0, grossLoss = 0; let totalReturn = 0, totalInvested = 0; let operations = []; let firstDate = new Date(); 
+        let winningTrades = 0, losingTrades = 0; let grossProfit = 0, grossLoss = 0; let totalReturn = 0; let totalInvested = 0; let totalCurrentValuation = 0; let operations = []; let firstDate = new Date(); 
 
         dataToAnalyze.forEach(p => {
              const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
@@ -7507,7 +7543,7 @@ const analyzePortfolio = async () => {
              const netPL = (value - cost) + divs;
              
              if (netPL > 0) { winningTrades++; grossProfit += netPL; } else { losingTrades++; grossLoss += Math.abs(netPL); }
-             totalReturn += netPL; totalInvested += cost;
+             totalReturn += netPL; totalInvested += cost; totalCurrentValuation += value;
              if(new Date(p.buyDate) < firstDate) firstDate = new Date(p.buyDate);
 
              const bDate = new Date(p.buyDate).toISOString().split('T')[0];
@@ -7534,10 +7570,45 @@ const analyzePortfolio = async () => {
         const totalTrades = winningTrades + losingTrades;
         const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
         const profitFactor = grossLoss > 0 ? (grossProfit / grossLoss) : grossProfit;
-        const totalROI = totalInvested > 0 ? (totalReturn / totalInvested) * 100 : 0;
         const yearsActive = Math.max(0.5, (new Date() - firstDate) / (1000 * 60 * 60 * 24 * 365));
 
-        const prompt = `Contexto: Actúa como Portfolio Manager. Audita mi cartera a fecha (${today}). DATOS (Reales): Total Op: ${totalTrades}, Win Rate: ${winRate.toFixed(1)}%, Profit Factor: ${profitFactor.toFixed(2)}, ROI: ${totalROI.toFixed(2)}%, Años Activo: ${yearsActive.toFixed(1)}. Operaciones: \n${operations.join('\n')} \n\nInstrucciones: 1. Atribución Retornos. 2. Riesgo (Drawdown est). 3. Auditoría Sesgos. 4. Costo Oportunidad (vs S&P500). 5. Análisis Temporal. FORMATO HTML LIMPIO (h3, p, table, ul).`;
+        // Comprobación si es estrictamente cartera activa o mixta/cerrada
+        const isPurelyActive = dataToAnalyze.every(p => !p.sellDate);
+        let headerMetricsText = '';
+
+        if (isPurelyActive) {
+            const totalROI = totalInvested > 0 ? (totalReturn / totalInvested) * 100 : 0;
+            headerMetricsText = `Capital Invertido: ${formatMoney(totalInvested, baseCurrency)}, Valoración Actual: ${formatMoney(totalCurrentValuation, baseCurrency)}, ROI Total: ${totalROI.toFixed(2)}%`;
+        } else {
+            // Cálculo del Capital Medio Ponderado para movimientos mixtos/cerrados
+            const sortedByBuy = [...dataToAnalyze].sort((a, b) => new Date(a.buyDate) - new Date(b.buyDate));
+            const startD = sortedByBuy.length > 0 ? new Date(sortedByBuy[0].buyDate) : new Date();
+            let endD = new Date();
+            if (dataToAnalyze.every(p => p.sellDate)) {
+                const sortedBySell = [...dataToAnalyze].sort((a, b) => new Date(b.sellDate) - new Date(a.sellDate));
+                endD = new Date(sortedBySell[0].sellDate);
+            }
+            const periodDays = Math.max(1, (endD - startD) / (1000 * 60 * 60 * 24));
+            let weightedSum = 0;
+            dataToAnalyze.forEach(p => {
+                const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+                const endDate = p.sellDate ? new Date(p.sellDate) : new Date();
+                const daysHeld = Math.max(0, (endDate - new Date(p.buyDate)) / (1000 * 60 * 60 * 24));
+                weightedSum += (cost * daysHeld);
+            });
+            const avgCapital = weightedSum / periodDays;
+            const roiOnAvgCap = avgCapital > 0 ? (totalReturn / avgCapital) * 100 : 0;
+
+            headerMetricsText = `Capital Medio Invertido (Histórico Ponderado): ${formatMoney(avgCapital, baseCurrency)}, Beneficio Neto Total: ${formatMoney(totalReturn, baseCurrency)}, Rentabilidad Real s/Cap. Medio: ${roiOnAvgCap.toFixed(2)}% (Al haber operaciones cerradas, no usar suma de costes acumulados ni valoración actual ficticia)`;
+        }
+
+        const prompt = `Contexto: Actúa como Portfolio Manager. Audita mi cartera a fecha (${today}). 
+DATOS CONSOLIDADOS: Total Operaciones: ${totalTrades}, Win Rate: ${winRate.toFixed(1)}%, Profit Factor: ${profitFactor.toFixed(2)}, Años Activo: ${yearsActive.toFixed(1)}, ${headerMetricsText}. 
+
+OPERACIONES:
+${operations.join('\n')}
+
+Instrucciones: 1. Atribución Retornos. 2. Riesgo (Drawdown est). 3. Auditoría Sesgos. 4. Costo Oportunidad (vs S&P500). 5. Análisis Temporal. FORMATO HTML LIMPIO (h3, p, table, ul).`;
 
         const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
         let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
