@@ -16030,7 +16030,7 @@ const InteractiveTour = ({ isOpen, onClose, activeTab, setActiveTab }) => {
 
 
 // =====================================================================
-// PESTAÑA AUDITAR: AUDITORÍA Y SIMULADOR COMPLETO PERSISTENTE
+// PESTAÑA AUDITAR: TOTALMENTE COHERENTE CON TARJETONES DE CARTERA
 // =====================================================================
 const AuditTab = ({ portfolio, baseCurrency }) => {
     // Sincronización con filtros de Cartera
@@ -16040,7 +16040,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
     const [filterType] = usePersistentState('bg_port_filter_type', 'active');
     const [hideInactive] = usePersistentState('bg_hide_inactive', false);
 
-    // Controles del simulador persistentes (se guardan automáticamente en localStorage)
+    // Controles del simulador persistentes (se guardan en localStorage)
     const [horizonYears, setHorizonYears] = usePersistentState('bg_audit_horizon_years', 5);
     const [monthlyContribution, setMonthlyContribution] = usePersistentState('bg_audit_monthly_contrib', 300);
     const [optimisticDelta, setOptimisticDelta] = usePersistentState('bg_audit_opt_delta', 5.0);
@@ -16054,7 +16054,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
 
     const f2 = (v) => formatN(v, 2);
 
-    // FUNCIÓN DE POSICIONAMIENTO INTELIGENTE (EVITA SALIRSE DE LOS BORDES)
+    // Posicionamiento inteligente anti-desborde
     const getSmartPlacement = (tt) => {
         if (!tt) return { style: {}, className: "" };
         const isNearTop = tt.y < 150;
@@ -16065,7 +16065,6 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
         let left = tt.x;
         let top = tt.y;
 
-        // Control horizontal
         if (isNearLeft) {
             left = Math.max(12, tt.x - 10);
             transformClass += "translate-x-0 ";
@@ -16076,7 +16075,6 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
             transformClass += "-translate-x-1/2 ";
         }
 
-        // Control vertical (si está muy arriba, se dibuja debajo del punto)
         if (isNearTop) {
             transformClass += "translate-y-0 mt-4";
         } else {
@@ -16089,7 +16087,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
         };
     };
 
-    // 1. Filtrado de activos
+    // 1. Filtrado de activos según filtros de Cartera
     const auditedPositions = useMemo(() => {
         return portfolio.filter(p => {
             if (hideInactive && p.isActive === false) return false;
@@ -16110,11 +16108,12 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
         });
     }, [portfolio, filterText, filterDateStart, filterDateEnd, filterType, hideInactive]);
 
-    // 2. Métricas de activos individuales
+    // 2. Métricas de Cartera Activa (IDÉNTICO A LA FÓRMULA DEL TARJETÓN DE CARTERA)
     const rawMetrics = useMemo(() => {
         let totalCost = 0;
         let totalVal = 0;
         let totalDivs = 0;
+        let weightedDays = 0;
 
         const items = auditedPositions.map(p => {
             const isS = !!p.sellDate;
@@ -16131,6 +16130,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
             totalCost += cost;
             totalVal += val;
             totalDivs += divs;
+            weightedDays += (days * cost);
 
             return {
                 ticker: p.ticker,
@@ -16148,12 +16148,16 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
         const totalPl = (totalVal - totalCost) + totalDivs;
         const totalPlPct = totalCost > 0 ? (totalPl / totalCost) * 100 : 0;
 
-        let sumWeightedAnnual = 0;
-        const itemsWithWeight = items.map(item => {
-            const weightPct = totalVal > 0 ? (item.val / totalVal) * 100 : 0;
-            sumWeightedAnnual += (item.annualRet * (weightPct / 100));
-            return { ...item, weightPct };
-        });
+        // Días medios ponderados por coste (Idéntico a PortfolioTab)
+        const avgPortfolioDays = totalCost > 0 ? (weightedDays / totalCost) : 0;
+        
+        // Tasa Anualizada Global idéntica al tarjetón de Cartera: calcReturns(inv, cur + divN, avgD).annual
+        const globalAnnualReturn = calcReturns(totalCost, totalVal + totalDivs, avgPortfolioDays).annual;
+
+        const itemsWithWeight = items.map(item => ({
+            ...item,
+            weightPct: totalVal > 0 ? (item.val / totalVal) * 100 : 0
+        }));
 
         return {
             items: itemsWithWeight,
@@ -16163,11 +16167,11 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
             totalPl,
             totalPlPct,
             count: auditedPositions.length,
-            weightedAnnualReturn: sumWeightedAnnual
+            globalAnnualReturn: globalAnnualReturn // <-- Exactamente igual al tarjetón de Cartera
         };
     }, [auditedPositions]);
 
-    // 3. Métricas de Capital Medio y Rentabilidad Histórica
+    // 3. Métricas de Capital Medio Histórico (Idéntico al cuadro de Rentabilidad Histórica)
     const histMetrics = useMemo(() => {
         if (auditedPositions.length === 0) {
             return { avgCap: 0, profit: 0, diffDays: 1, roi: 0, annualRoi: 0 };
@@ -16207,11 +16211,14 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
 
     const isOnlyActive = filterType === 'active';
 
+    // Selección de métricas:
+    // Si es "active" -> Coste real y Tasa anual del tarjetón de Cartera.
+    // Si es "all" o "sold" -> Capital medio circulante y Rentabilidad anual del cuadro histórico.
     const displayCapitalInvertido = isOnlyActive ? rawMetrics.totalCost : histMetrics.avgCap;
     const displayTotalPl = isOnlyActive ? rawMetrics.totalPl : histMetrics.profit;
     const displayValoracionActual = isOnlyActive ? rawMetrics.totalVal : (histMetrics.avgCap + histMetrics.profit);
     const displayReturnPct = isOnlyActive ? rawMetrics.totalPlPct : histMetrics.roi;
-    const displayAnnualReturnPct = isOnlyActive ? rawMetrics.weightedAnnualReturn : histMetrics.annualRoi;
+    const displayAnnualReturnPct = isOnlyActive ? rawMetrics.globalAnnualReturn : histMetrics.annualRoi;
 
     // Valores efectivos para el simulador con opción de reset "Auto"
     const initialCapEffective = manualInitialCap !== null && !isNaN(manualInitialCap) ? manualInitialCap : displayValoracionActual;
@@ -16262,7 +16269,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                     </h2>
                     <p className="text-xs text-slate-400 mt-1 font-mono">
                         {isOnlyActive ? (
-                            <span>Auditoría de <b>{rawMetrics.count}</b> posiciones abiertas (Capital real en mercado)</span>
+                            <span>Auditoría de <b>{rawMetrics.count}</b> posiciones abiertas (Tasa anualizada sincronizada con el tarjetón de Cartera)</span>
                         ) : (
                             <span>Auditoría basada en <b>Capital Medio Circulante</b> y <b>Rentabilidad Histórica Real</b> ({rawMetrics.count} operaciones filtradas)</span>
                         )}
@@ -16307,7 +16314,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                 </div>
                 <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 text-center">
                     <span className="text-[9px] font-black uppercase text-slate-500 tracking-wider">
-                        {isOnlyActive ? 'Rent. Anual Ponderada' : 'Rent. Histórica Real (Anual)'}
+                        {isOnlyActive ? 'Rent. Anualizada Cartera' : 'Rent. Histórica Real (Anual)'}
                     </span>
                     <div className={`text-lg font-black font-mono mt-1 ${displayAnnualReturnPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                         {displayAnnualReturnPct >= 0 ? '+' : ''}{f2(displayAnnualReturnPct)}%
@@ -16498,7 +16505,7 @@ const AuditTab = ({ portfolio, baseCurrency }) => {
                     </p>
                 </div>
 
-                {/* CONTROLES EDITABLES Y PERSISTENTES (CON BOTONES AUTO) */}
+                {/* CONTROLES EDITABLES Y PERSISTENTES */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 bg-slate-950/70 p-4 rounded-xl border border-slate-800">
                     <div>
                         <label className="text-[9px] font-black uppercase text-slate-400 block mb-1">Horizonte (Años)</label>
