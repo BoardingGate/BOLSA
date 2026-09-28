@@ -6536,6 +6536,8 @@ const [isAiReportChoiceModalOpen, setIsAiReportChoiceModalOpen] = useState(false
     const [externalPromptText, setExternalPromptText] = useState('');
     const [promptCopied, setPromptCopied] = useState(false);
     const [includeLotsInAiReport, setIncludeLotsInAiReport] = useState(false);
+    const [includeDivsInAiReport, setIncludeDivsInAiReport] = useState(false);
+
 const handleGenerateExternalPrompt = (promptType = 'standard') => {
         setIsAiReportChoiceModalOpen(false);
         const dataToAnalyze = visiblePortfolio;
@@ -6545,6 +6547,7 @@ const handleGenerateExternalPrompt = (promptType = 'standard') => {
         }
 
         const today = new Date().toLocaleDateString('es-ES');
+        const monthNames = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
         let totalCost = 0;
         let totalVal = 0;
         let totalDivs = 0;
@@ -6566,7 +6569,7 @@ const handleGenerateExternalPrompt = (promptType = 'standard') => {
             totalVal += val;
             totalDivs += divs;
 
-            // Desglose de lotes si el checkbox está activo
+            // Desglose opcional de lotes de compra
             let lotsSummary = '';
             if (includeLotsInAiReport && p.lots && p.lots.length > 0) {
                 lotsSummary = '\n   - Desglose de Lotes de Compra:' + p.lots.map((l, lIdx) => {
@@ -6579,7 +6582,23 @@ const handleGenerateExternalPrompt = (promptType = 'standard') => {
                 }).join('');
             }
 
-            return `${idx + 1}. [${isS ? 'VENDIDA / CERRADA' : 'ACTIVA EN CARTERA'}] ${p.name} (Ticker: ${p.ticker}${p.group ? ' | Grupo: ' + p.group : ''})${lotsSummary}
+            // Desglose opcional de movimientos de cobro de dividendos
+            let divsSummary = '';
+            if (includeDivsInAiReport && p.dividends && p.dividends.length > 0) {
+                const validDivs = p.dividends.filter(d => (parseFloat(d.net) || 0) > 0 || (parseFloat(d.taxOrigin) || 0) > 0 || (parseFloat(d.taxDest) || 0) > 0);
+                if (validDivs.length > 0) {
+                    divsSummary = '\n   - Desglose de Cobros de Dividendos:' + validDivs.map((d) => {
+                        const n = parseFloat(d.net) || 0;
+                        const o = parseFloat(d.taxOrigin) || 0;
+                        const dst = parseFloat(d.taxDest) || 0;
+                        const bruto = n + o + dst;
+                        const mName = (d.month !== undefined && d.month >= 0 && d.month < 12) ? monthNames[d.month] : `Mes ${d.month}`;
+                        return `\n     * ${mName} ${d.year}: Bruto ${formatMoney(bruto, baseCurrency)} | Ret.Origen ${formatMoney(o, baseCurrency)} | Ret.Destino ${formatMoney(dst, baseCurrency)} | Neto: ${formatMoney(n, baseCurrency)}`;
+                    }).join('');
+                }
+            }
+
+            return `${idx + 1}. [${isS ? 'VENDIDA / CERRADA' : 'ACTIVA EN CARTERA'}] ${p.name} (Ticker: ${p.ticker}${p.group ? ' | Grupo: ' + p.group : ''})${lotsSummary}${divsSummary}
    - Títulos: ${formatN(p.shares)} ${p.stockCurrency}
    - Fecha Compra: ${p.buyDate} | Precio Compra: ${formatN(p.buyPrice, 3)} | FX Compra: ${formatN(p.buyFx, 4)}
    - Coste Total Invertido: ${formatMoney(cost, baseCurrency)}
@@ -7477,6 +7496,7 @@ const analyzePortfolio = async () => {
       setAnalyzing(true);
       try {
         const today = new Date().toLocaleString('es-ES');
+        const monthNames = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
         let winningTrades = 0, losingTrades = 0; let grossProfit = 0, grossLoss = 0; let totalReturn = 0, totalInvested = 0; let operations = []; let firstDate = new Date(); 
 
         dataToAnalyze.forEach(p => {
@@ -7493,13 +7513,22 @@ const analyzePortfolio = async () => {
              const bDate = new Date(p.buyDate).toISOString().split('T')[0];
              const sDate = isS ? new Date(p.sellDate).toISOString().split('T')[0] : 'Actualidad';
 
-             // Desglose de lotes para el informe interno si está activado
+             // Desglose opcional de lotes
              let lotsInfo = '';
              if (includeLotsInAiReport && p.lots && p.lots.length > 0) {
                  lotsInfo = ' [Lotes: ' + p.lots.map((l, li) => `L${li+1}(${l.date || bDate}): ${l.shares}acc@${l.price}`).join(', ') + ']';
              }
 
-             operations.push(`- ${p.ticker} (${p.name}): ${isS ? 'CERRADA' : 'ACTIVA'}${lotsInfo}. Invertido: ${cost.toFixed(0)}. Valor/Liq: ${value.toFixed(0)}. Res: ${netPL.toFixed(0)} (${divs>0?`incl ${divs.toFixed(0)} div`:''}). Fechas: ${bDate} a ${sDate}. Grp: ${p.group || 'N/A'}`);
+             // Desglose opcional de dividendos
+             let divsInfo = '';
+             if (includeDivsInAiReport && p.dividends && p.dividends.length > 0) {
+                 const validDivs = p.dividends.filter(d => (parseFloat(d.net) || 0) > 0);
+                 if (validDivs.length > 0) {
+                     divsInfo = ' [Divs: ' + validDivs.map(d => `${monthNames[d.month] || d.month}/${d.year}: ${d.net}€`).join(', ') + ']';
+                 }
+             }
+
+             operations.push(`- ${p.ticker} (${p.name}): ${isS ? 'CERRADA' : 'ACTIVA'}${lotsInfo}${divsInfo}. Invertido: ${cost.toFixed(0)}. Valor/Liq: ${value.toFixed(0)}. Res: ${netPL.toFixed(0)} (${divs>0?`incl ${divs.toFixed(0)} div`:''}). Fechas: ${bDate} a ${sDate}. Grp: ${p.group || 'N/A'}`);
         });
 
         const totalTrades = winningTrades + losingTrades;
@@ -9940,30 +9969,53 @@ const handleSellSubmit = () => {
                 </div> 
             </Modal>
 
-{/* 1. MODAL SELECTOR CON LAS 3 OPCIONES DE EXPORTACIÓN */}
+{/* 1. MODAL SELECTOR CON LAS OPCIONES DE EXPORTACIÓN */}
             <Modal isOpen={isAiReportChoiceModalOpen} title="Generar Informe de Cartera con IA" onClose={() => setIsAiReportChoiceModalOpen(false)} size="md">
                 <div className="space-y-4 p-1">
                     <div className="bg-purple-900/20 border border-purple-500/30 p-3.5 rounded-xl text-xs text-purple-200 leading-relaxed font-sans">
                         Posiciones seleccionadas: <strong>{visiblePortfolio.length}</strong> activos filtrados en pantalla. Selecciona el tipo de informe o prompt que deseas generar:
                     </div>
 
-                    {/* CHECKBOX PARA INCLUIR/DESMARCAR DESGLOSE DE LOTES */}
-                    <label className="flex items-center gap-3 bg-slate-950/80 p-3 rounded-xl border border-slate-700/80 cursor-pointer hover:border-purple-500/50 transition-colors select-none">
-                        <input 
-                            type="checkbox" 
-                            checked={includeLotsInAiReport} 
-                            onChange={e => setIncludeLotsInAiReport(e.target.checked)} 
-                            className="custom-checkbox w-4 h-4 accent-purple-500 cursor-pointer" 
-                        />
-                        <div className="flex flex-col">
-                            <span className="text-xs font-bold text-slate-200 uppercase">
-                                Incluir desglose de lotes por valor
-                            </span>
-                            <span className="text-[10px] text-slate-400">
-                                Desglosa fechas, precios de compra individuales y títulos de cada lote en el prompt.
-                            </span>
-                        </div>
-                    </label>
+                    {/* BLOQUE DE OPCIONES ADICIONALES (LOTES Y DIVIDENDOS) */}
+                    <div className="space-y-2 bg-slate-950/70 p-3 rounded-xl border border-slate-800">
+                        {/* CHECKBOX PARA INCLUIR/DESMARCAR DESGLOSE DE LOTES */}
+                        <label className="flex items-center gap-3 cursor-pointer select-none">
+                            <input 
+                                type="checkbox" 
+                                checked={includeLotsInAiReport} 
+                                onChange={e => setIncludeLotsInAiReport(e.target.checked)} 
+                                className="custom-checkbox w-4 h-4 accent-purple-500 cursor-pointer" 
+                            />
+                            <div className="flex flex-col">
+                                <span className="text-xs font-bold text-slate-200 uppercase">
+                                    Incluir desglose de lotes por valor
+                                </span>
+                                <span className="text-[10px] text-slate-400">
+                                    Detalla fechas, precios de compra individuales y títulos de cada lote.
+                                </span>
+                            </div>
+                        </label>
+
+                        <div className="border-t border-slate-800/80"></div>
+
+                        {/* CHECKBOX PARA INCLUIR/DESMARCAR DESGLOSE DE DIVIDENDOS */}
+                        <label className="flex items-center gap-3 cursor-pointer select-none">
+                            <input 
+                                type="checkbox" 
+                                checked={includeDivsInAiReport} 
+                                onChange={e => setIncludeDivsInAiReport(e.target.checked)} 
+                                className="custom-checkbox w-4 h-4 accent-purple-500 cursor-pointer" 
+                            />
+                            <div className="flex flex-col">
+                                <span className="text-xs font-bold text-slate-200 uppercase">
+                                    Incluir desglose de cobro de dividendos
+                                </span>
+                                <span className="text-[10px] text-slate-400">
+                                    Detalla cada cobro (mes, año, bruto, retención en origen/destino y neto).
+                                </span>
+                            </div>
+                        </label>
+                    </div>
 
                     <div className="flex flex-col gap-2.5">
                         {/* INFORME DIRECTO EN TERMINAL */}
