@@ -5270,45 +5270,9 @@ const calculateDeterministicDCF = (fcf, cash, debt, shares, growth, discountRate
     return Math.max(0, intrinsicValuePerShare);
 };
 
-// --- FUNCIÓN ESTADO DE MERCADO ---
-const getMarketStatus = (p) => {
-    if (p.isIndex) return { open: true, status: 'OPEN' };
-    const t = (p.ticker || "").toUpperCase();
-    const euPrefix = ["BME:", "BIT:", "XETRA:", "EPA:", "AMS:", "MIL:", "EBR:", "ELI:", "LSE:", "FRA:"];
-    const euSuffix = [".MC", ".DE", ".PA", ".AS", ".MI", ".BR", ".LS", ".MA", ".L"];
-    const isEurope = euPrefix.some(pre => t.startsWith(pre)) || euSuffix.some(suf => t.endsWith(suf));
-
-    const now = new Date();
-    const dia = now.getDay();
-    if (dia === 0 || dia === 6) return { open: false, msg: "CERRADO", status: 'CLOSED' };
-    
-    if (isEurope) {
-        const madrid = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', hour: 'numeric', minute: 'numeric', hour12: false }).formatToParts(now);
-        const h = parseInt(madrid.find(x => x.type === 'hour').value);
-        const m = parseInt(madrid.find(x => x.type === 'minute').value);
-        const horaReloj = h * 100 + m;
-
-        if (horaReloj < 900) return { open: false, msg: "PRE-MARKET", status: 'PRE' };
-        if (horaReloj >= 1735) return { open: false, msg: "CERRADO", status: 'CLOSED_TODAY' }; 
-        return { open: true, msg: "ABIERTO", status: 'OPEN' };
-    } 
-    else {
-        const ny = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hour12: false }).formatToParts(now);
-        const h = parseInt(ny.find(x => x.type === 'hour').value);
-        const m = parseInt(ny.find(x => x.type === 'minute').value);
-        const horaRelojNY = h * 100 + m; 
-        
-        if (horaRelojNY < 930) return { open: false, msg: "PRE-MARKET", status: 'PRE' };
-        if (horaRelojNY >= 1605) return { open: false, msg: "CERRADO", status: 'CLOSED_TODAY' }; 
-        return { open: true, msg: "ABIERTO", status: 'OPEN' };
-    }
-};
-
 
 const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCurrency, refreshInterval, lastUpdate, setLastUpdate, resultsData, syncStatus, onManualSync, isAppReady, _x_lim, _x_trig, globalNotes, setGlobalNotes, onAnalyze, aiModel, setAiModel, availableModels, gScriptUrl, onGoToDividends, hideInactive, setHideInactive, noScroll, setNoScroll, customConsultas, setCustomConsultas, openConsultasOnLoad, setOpenConsultasOnLoad, showFilters, setShowFilters, handleAiModelChange, AIStatusIndicator, aiStatus }) => {
     const [showDivBreakdown, setShowDivBreakdown] = useState(false);
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [editingId, setEditingId] = useState(null);
     const [recalcModal, setRecalcModal] = useState({ isOpen: false, isSell: false });
     const portfolioTableContainerRef = useRef(null);
     const [tableScrollState, setTableScrollState] = useState({ canScrollLeft: false, canScrollRight: false });
@@ -6389,6 +6353,188 @@ useEffect(() => {
     };
 
 
+     const handleGenerateStrategy = async () => {
+        if (!apiKey) return setInfoModal({ isOpen: true, title: 'Error', msg: 'Falta API Key. Configúrala en Ajustes.', type: 'error' });
+        if (strategyInputs.capital <= 0 || strategyInputs.risk <= 0 || strategyInputs.marginOfSafety <= 0) return alert("El capital, riesgo y margen deben ser mayores a 0");
+        
+        setIsGeneratingStrategy(true);
+        try {
+            const currentP = strategyItem.isIndex ? (strategyItem.currentPrice / (strategyItem.indexDivisor || 1)) : strategyItem.currentPrice;
+            const riskMoney = (strategyInputs.capital * strategyInputs.risk / 100).toFixed(2);
+
+            const prompt = `
+            ROL: Gestor de Riesgos y Analista Cuantitativo Institucional de Wall Street.
+            HERRAMIENTA OBLIGATORIA: Usa "google_search" para buscar el Valor Intrínseco de consenso (Fair Value / DCF) actual y los Soportes/Resistencias REALES del ticker ${strategyItem.ticker}. NO INVENTES NINGÚN DATO.
+            
+            VALOR INTRÍNSECO DETERMINISTA CALCULADO POR LA FÓRMULA MATEMÁTICA DEL SISTEMA (Fórmula DCF): ${calculatedIntrinsic > 0 ? calculatedIntrinsic.toFixed(2) : "No calculado (utiliza valoración estándar)"}
+            
+            DATOS DEL CLIENTE:
+            - Ticker: ${strategyItem.ticker}
+            - Precio Actual de Mercado: ${currentP}
+            - Capital dispuesto a invertir: ${strategyInputs.capital}
+            - Riesgo Máximo: ${strategyInputs.risk}% (${riskMoney} en pérdida máxima si salta el Stop Loss).
+            - Margen de Seguridad Exigido: ${strategyInputs.marginOfSafety}%.      
+
+            LÓGICA MATEMÁTICA Y REGLAS ESTRICTAS QUE DEBES CUMPLIR O SERÁS PENALIZADO:
+            1. VALOR INTRÍNSECO Y ENTRADA: Busca el "Fair Value" real en internet. Calcula tu "precio ideal" aplicando un descuento del ${strategyInputs.marginOfSafety}% sobre ese valor intrínseco (si no hay datos de DCF, aplícalo sobre el precio actual de mercado). 
+            2. REGLA DE SENTIDO COMÚN: El "precio ideal" resultante NUNCA puede ser superior al Precio Actual de Mercado (${currentP}). Si el cálculo da superior, toma directamente el Precio Actual de Mercado como tu nuevo "precio ideal".
+            3. AJUSTE TÉCNICO: Ajusta tu "precio ideal" al SOPORTE HISTÓRICO REAL INMEDIATO INFERIOR más cercano que hayas encontrado en internet. Esa será obligatoriamente tu "entryZone". NUNCA sugieras una "entryZone" superior al precio de cotización actual.
+            4. STOP LOSS: Coloca el Stop Loss 1 por debajo de ese soporte técnico crítico.
+            5. TAMAÑO DE POSICIÓN (FÓRMULA SAGRADA): Calcula "optimalShares" garantizando que: (entryZone - stopLoss1.price) * optimalShares <= ${riskMoney}. NUNCA superes el riesgo monetario permitido. Si el número de acciones da decimales, redondéalo hacia ABAJO al número entero más cercano.
+            6. OBJETIVOS (TAKE PROFIT): Sitúalos estrictamente en las RESISTENCIAS REALES que hayas recabado en tu búsqueda web.
+          
+            RESPONDE ÚNICA Y EXCLUSIVAMENTE CON UN JSON VÁLIDO (SIN TEXTO EXTRA, SIN MARKDOWN):
+            {
+               "entryZone": 150.50,
+               "stopLoss1": {"price": 145.0, "pct": -3.6, "lossMoney": 55},
+               "stopLoss2": {"price": 140.0, "pct": -6.9, "lossMoney": 105},
+               "target1": {"price": 160.0, "pct": 6.3},
+               "target2": {"price": 170.0, "pct": 12.9},
+               "target3": {"price": 185.0, "pct": 22.9},
+               "optimalShares": 6,
+               "successProb": "65%",
+               "technicalContext": "Escribe aquí: 1) El Valor Intrínseco hallado online, 2) Cómo has aplicado el margen del ${strategyInputs.marginOfSafety}%, y 3) Los soportes y resistencias REALES en los que te has apoyado.",
+               "recommendation": "Veredicto final breve de la operación."
+            }
+            `;
+
+            const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
+            const json = extractJSON(res);
+            
+            if (!json || !json.entryZone) throw new Error("La IA no pudo estructurar la respuesta tras analizar los datos. Vuelve a intentarlo.");
+            
+            setStrategyResult(json);
+            setPortfolio(prev => prev.map(x => x.id === strategyItem.id ? { ...x, strategyCache: { capital: strategyInputs.capital, risk: strategyInputs.risk, marginOfSafety: strategyInputs.marginOfSafety, result: json } } : x));
+
+        } catch (e) {
+            setInfoModal({ isOpen: true, title: 'Error de IA', msg: e.message || 'Se agotó el tiempo de espera. Inténtalo de nuevo.', type: 'error' });
+        } finally {
+            setIsGeneratingStrategy(false);
+        }
+    };
+
+    const transferStrategyToSimLot = () => {
+        if (!strategyResult) return;
+        setSimLot(prev => ({ ...prev, shares: strategyResult.optimalShares || '', price: strategyResult.entryZone || '' }));
+    };
+
+    const handleAddSimulatedLot = () => {
+        const sShares = parseFloat(simLot.shares);
+        if (isNaN(sShares) || sShares <= 0) return alert("Introduce un número de acciones válido.");
+        
+        let currentLots = strategyItem.lots || [];
+        if (currentLots.length === 0 && strategyItem.shares > 0) {
+            currentLots.push({ id: Date.now() - 1000, date: strategyItem.buyDate, shares: strategyItem.shares, price: strategyItem.buyPrice, fx: strategyItem.buyFx, fees: strategyItem.fees, adj: strategyItem.adjustments, pe: strategyItem.buyPE });
+        }
+
+        const newLot = { id: Date.now(), date: simLot.date, shares: sShares, price: parseFloat(simLot.price) || 0, fx: parseFloat(simLot.fx) || 1, fees: parseFloat(simLot.fees) || 0, adj: parseFloat(simLot.adj) || 0, pe: strategyItem.currentPE || 0 };
+        currentLots.push(newLot);
+
+        let tShares = 0, tCostBase = 0, tCostFx = 0, tFees = 0, tAdj = 0, tPE = 0;
+        let oldestDate = null;
+
+        currentLots.forEach(l => {
+            const ls = parseFloat(l.shares) || 0;
+            const lp = parseFloat(l.price) || 0;
+            const lfx = parseFloat(l.fx) || 1;
+            tShares += ls; tCostBase += (ls * lp); tCostFx += (ls * lp * lfx); tFees += (parseFloat(l.fees) || 0); tAdj += (parseFloat(l.adj) || 0); tPE += (ls * (parseFloat(l.pe) || 0));
+            if (l.date && l.date.length === 10) { if (!oldestDate || new Date(l.date) < new Date(oldestDate)) oldestDate = l.date; }
+        });
+
+        const newAvgPrice = tShares > 0 ? tCostBase / tShares : 0;
+        const newAvgFx = tCostBase > 0 ? tCostFx / tCostBase : 1;
+        const newAvgPE = tShares > 0 ? tPE / tShares : 0;
+
+        const updatedItem = {
+            ...strategyItem, lots: currentLots, shares: Math.round(tShares * 1000000) / 1000000,
+            buyPrice: Math.round(newAvgPrice * 1000000) / 1000000, buyFx: Math.round(newAvgFx * 1000000) / 1000000,
+            buyPE: Math.round(newAvgPE * 100) / 100, fees: Math.round(tFees * 100) / 100,
+            adjustments: Math.round(tAdj * 100) / 100, buyDate: oldestDate || strategyItem.buyDate
+        };
+
+        setPortfolio(prev => prev.map(x => x.id === strategyItem.id ? updatedItem : x));
+        setIsStrategyModalOpen(false);
+        setInfoModal({ isOpen: true, title: 'Lote Añadido', msg: 'El nuevo lote ha sido incorporado y los promedios recalculados con éxito.', type: 'success' });
+    };
+
+
+const getMarketStatus = (p) => {
+        if (p.isIndex) return { open: true, status: 'OPEN' };
+        const t = (p.ticker || "").toUpperCase();
+        const euPrefix = ["BME:", "BIT:", "XETRA:", "EPA:", "AMS:", "MIL:", "EBR:", "ELI:", "LSE:", "FRA:"];
+        const euSuffix = [".MC", ".DE", ".PA", ".AS", ".MI", ".BR", ".LS", ".MA", ".L"];
+        const isEurope = euPrefix.some(pre => t.startsWith(pre)) || euSuffix.some(suf => t.endsWith(suf));
+
+        const now = new Date();
+        const dia = now.getDay();
+        if (dia === 0 || dia === 6) return { open: false, msg: "CERRADO", status: 'CLOSED' };
+        
+        if (isEurope) {
+            const madrid = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', hour: 'numeric', minute: 'numeric', hour12: false }).formatToParts(now);
+            const h = parseInt(madrid.find(x => x.type === 'hour').value);
+            const m = parseInt(madrid.find(x => x.type === 'minute').value);
+            const horaReloj = h * 100 + m;
+
+            if (horaReloj < 900) return { open: false, msg: "PRE-MARKET", status: 'PRE' };
+            if (horaReloj >= 1735) return { open: false, msg: "CERRADO", status: 'CLOSED_TODAY' }; 
+            return { open: true, msg: "ABIERTO", status: 'OPEN' };
+        } 
+        else {
+            const ny = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hour12: false }).formatToParts(now);
+            const h = parseInt(ny.find(x => x.type === 'hour').value);
+            const m = parseInt(ny.find(x => x.type === 'minute').value);
+            const horaRelojNY = h * 100 + m; 
+            
+            if (horaRelojNY < 930) return { open: false, msg: "PRE-MARKET", status: 'PRE' };
+            if (horaRelojNY >= 1605) return { open: false, msg: "CERRADO", status: 'CLOSED_TODAY' }; 
+            return { open: true, msg: "ABIERTO", status: 'OPEN' };
+        }
+};
+
+
+    const [visibleSections, setVisibleSections] = usePersistentState('bg_visible_sections', { table: true, diverging: true, stats: true, charts: true, chartTV: true });
+    const checkTableScroll = () => {
+        const el = portfolioTableContainerRef.current;
+        if (!el) return;
+        const canScroll = el.scrollWidth > el.clientWidth + 10;
+        setTableScrollState({
+            canScrollLeft: canScroll && el.scrollLeft > 20,
+            canScrollRight: canScroll && el.scrollLeft < (el.scrollWidth - el.clientWidth - 20)
+        });
+    };
+
+    useEffect(() => {
+        checkTableScroll();
+        window.addEventListener('resize', checkTableScroll);
+        return () => window.removeEventListener('resize', checkTableScroll);
+    }, [filteredPortfolio, simplifiedMode, visibleSections?.table]);
+
+    const handleHorizontalScroll = (direction) => {
+        const el = portfolioTableContainerRef.current;
+        if (!el) return;
+        const scrollAmount = direction === 'right' ? (el.scrollWidth - el.clientWidth) : -(el.scrollWidth - el.clientWidth);
+        el.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+    };
+
+    const [updating, setUpdating] = useState(false);
+    const [updateProgress, setUpdateProgress] = useState(0); 
+    const [updateText, setUpdateText] = useState('');
+    const [pendingTickersList, setPendingTickersList] = useState([]);
+    const [failedTickersInfo, setFailedTickersInfo] = useState([]);
+    const [analyzing, setAnalyzing] = useState(false);
+
+    const [fetchingSingle, setFetchingSingle] = useState(false);
+    const [analysisResult, setAnalysisResult] = useState(null);
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isSellModalOpen, setIsSellModalOpen] = useState(false);
+    const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
+
+    
+const [isAiReportChoiceModalOpen, setIsAiReportChoiceModalOpen] = useState(false);
+    const [isExternalPromptModalOpen, setIsExternalPromptModalOpen] = useState(false);
+    const [externalPromptText, setExternalPromptText] = useState('');
+    const [promptCopied, setPromptCopied] = useState(false);
+
 const handleGenerateExternalPrompt = (promptType = 'standard') => {
         setIsAiReportChoiceModalOpen(false);
         const dataToAnalyze = visiblePortfolio;
@@ -6503,7 +6649,6 @@ INSTRUCCIONES PARA TU ANÁLISIS:
         setIsExternalPromptModalOpen(true);
     };
 
-
     const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', msg: '', onConfirm: null });
     const [infoModal, _setInfoModal] = useState({ isOpen: false, title: '', msg: '', type: 'info' });
     const setInfoModal = (val) => {
@@ -6511,7 +6656,7 @@ INSTRUCCIONES PARA TU ANÁLISIS:
         _setInfoModal(val);
     };
     const [noteToast, setNoteToast] = useState(null);
-   
+    const [editingId, setEditingId] = useState(null);
     const [sellItem, setSellItem] = useState(null);
     const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
 
@@ -9777,7 +9922,7 @@ const handleSellSubmit = () => {
             </Modal>
 
 
-             {/* MODAL DE SELECCIÓN DE TIPO DE INFORME */}
+{/* MODAL DE SELECCIÓN DE TIPO DE INFORME */}
             <Modal isOpen={isAiReportChoiceModalOpen} title="Generar Informe de Cartera con IA" onClose={() => setIsAiReportChoiceModalOpen(false)} size="md">
                 <div className="space-y-4 p-1">
                     <div className="bg-purple-900/20 border border-purple-500/30 p-3.5 rounded-xl text-xs text-purple-200 leading-relaxed font-sans">
@@ -9847,52 +9992,6 @@ const handleSellSubmit = () => {
                     </div>
                 </div>
             </Modal>
-
-            {/* MODAL CON EL TEXTO DEL PROMPT GENERADO */}
-            <Modal isOpen={isExternalPromptModalOpen} title="Prompt para IA Externa (Copiado)" onClose={() => setIsExternalPromptModalOpen(false)} size="lg">
-                <div className="space-y-4 p-1">
-                    {promptCopied && (
-                        <div className="bg-green-950/70 border border-green-500/50 p-3.5 rounded-xl flex items-center justify-between text-green-300 text-xs font-bold shadow-md">
-                            <span className="flex items-center gap-2">
-                                <Icons.CheckCircle size={16} className="text-green-400 shrink-0" />
-                                ¡Copiado automáticamente al portapapeles! Ya puedes pegarlo (Ctrl+V) en ChatGPT, Claude o DeepSeek.
-                            </span>
-                        </div>
-                    )}
-
-                    <textarea 
-                        readOnly 
-                        value={externalPromptText} 
-                        className="w-full h-96 bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs font-mono text-slate-200 leading-relaxed custom-scrollbar focus:outline-none select-all shadow-inner"
-                    />
-
-                    <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-2 border-t border-slate-800">
-                        <span className="text-[10px] text-slate-500 font-mono">
-                            {visiblePortfolio.length} posiciones incluidas con compras, valoraciones y dividendos
-                        </span>
-                        <div className="flex gap-2 w-full sm:w-auto">
-                            <button 
-                                onClick={() => {
-                                    if (navigator.clipboard && navigator.clipboard.writeText) {
-                                        navigator.clipboard.writeText(externalPromptText);
-                                        setPromptCopied(true);
-                                    }
-                                }}
-                                className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-500 text-white font-black text-xs uppercase px-5 py-2.5 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 active:scale-95"
-                            >
-                                <Icons.Copy size={14} /> Re-Copiar al Portapapeles
-                            </button>
-                            <button 
-                                onClick={() => setIsExternalPromptModalOpen(false)} 
-                                className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs uppercase px-5 py-2.5 rounded-xl transition-all border border-slate-700"
-                            >
-                                Cerrar
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </Modal>
-             
             
 
             <Modal isOpen={isNotesModalOpen} title="Block de Notas de la Cartera" onClose={() => setIsNotesModalOpen(false)} size="lg">
