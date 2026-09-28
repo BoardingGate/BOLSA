@@ -14745,6 +14745,7 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
     const [activeSubTab, setActiveSubTab] = useState('links');
 
 // --- 1. CALCULADORA DE INTERÉS COMPUESTO CON DESACUMULACIÓN, AÑO CALENDARIO Y EDAD ---
+// --- 1. CALCULADORA DE INTERÉS COMPUESTO CON DESACUMULACIÓN Y GRÁFICA DE EVOLUCIÓN ---
     const CompoundCalculator = () => {
         const [compState, setCompState] = usePersistentState('bg_compoundCalc', {
             startYear: new Date().getFullYear(),
@@ -14759,9 +14760,10 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
         });
         const [showCompTable, setShowCompTable] = useState(false);
         const [showDrawdownTable, setShowDrawdownTable] = useState(false);
+        const [chartTooltip, setChartTooltip] = useState(null); // Estado del tooltip flotante de la gráfica
 
         const [drawdownState, setDrawdownState] = usePersistentState('bg_compoundDrawdown', {
-            mode: 'byMonthly', // 'byMonthly' o 'byYears'
+            mode: 'byMonthly',
             desiredMonthly: 2000,
             desiredYears: 25,
             rate: 6.0,
@@ -14830,14 +14832,13 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
         const endAccumYear = sYear + Math.round(compState.years);
         const endAccumAge = sAge > 0 ? sAge + Math.round(compState.years) : null;
 
-        // CÁLCULO GENERAL DE DESACUMULACIÓN (Fase de Retiro)
+        // Desacumulación
         const startCapital = drawdownState.useRealBalance ? compResult.finalRealBalance : compResult.finalBalance;
         const rAnual = (parseFloat(drawdownState.rate) || 0) / 100;
         const rMes = rAnual / 12;
         const wDesired = parseFloat(drawdownState.desiredMonthly) || 0;
         const yDesired = Math.max(1, parseFloat(drawdownState.desiredYears) || 1);
 
-        // 1. Duración fijando cuota mensual
         let durationMonths = 0;
         let isPerpetual = false;
         if (startCapital > 0 && wDesired > 0) {
@@ -14856,7 +14857,6 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
         const exhaustYear = endAccumYear + Math.floor(durationYearsTotal);
         const exhaustAge = endAccumAge ? endAccumAge + Math.floor(durationYearsTotal) : null;
 
-        // 2. Cuota mensual fijando años
         const totalMonthsDesired = yDesired * 12;
         let obtainableMonthly = 0;
         if (startCapital > 0 && totalMonthsDesired > 0) {
@@ -14872,7 +14872,6 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
         const effectiveMonthlyPayout = drawdownState.mode === 'byMonthly' ? wDesired : obtainableMonthly;
         const perpetualMonthlyInterest = startCapital * rMes;
 
-        // Simulación mes a mes agrupada por años para la tabla de desacumulación
         const drawdownHistory = useMemo(() => {
             if (startCapital <= 0 || effectiveMonthlyPayout <= 0) return [];
             const rows = [];
@@ -14915,6 +14914,20 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
             return rows;
         }, [startCapital, effectiveMonthlyPayout, rMes, isPerpetual, durationYearsTotal, yDesired, drawdownState.mode, endAccumYear, endAccumAge]);
 
+        // Serie completa de puntos para la gráfica de evolución (Año 0 a Año N)
+        const accumulationChartPoints = useMemo(() => {
+            const initialPoint = {
+                year: 0,
+                calYear: sYear,
+                age: sAge || null,
+                principal: compState.principal,
+                interest: 0,
+                balance: compState.principal,
+                realBalance: compState.principal
+            };
+            return [initialPoint, ...compResult.history];
+        }, [compState.principal, compResult.history, sYear, sAge]);
+
         return (
             <div className="max-w-5xl mx-auto space-y-6 fade-in pb-10">
                 <div className="bg-slate-900/80 p-8 rounded-2xl border border-slate-700 shadow-2xl">
@@ -14946,7 +14959,7 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                         </div>
                     </div>
 
-                    {/* DATOS FINANCIEROS INICIALES */}
+                    {/* DATOS FINANCIEROS */}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
                         <div><label className="text-xs font-bold text-slate-400 block mb-2 uppercase tracking-wider">Capital Inicial</label><FormattedInput value={compState.principal} onChange={v => handleCompChange('principal', v)} grouped={true} /></div>
                         <div><label className="text-xs font-bold text-slate-400 block mb-2 uppercase tracking-wider">Aportación Anual</label><FormattedInput value={compState.annualAddition} onChange={v => handleCompChange('annualAddition', v)} grouped={true} /></div>
@@ -14985,7 +14998,7 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                                 {compResult.crossoverYear && (
                                     <div className="text-[10px] font-bold text-blue-300 bg-blue-900/20 border border-blue-500/30 px-3 py-1.5 rounded-lg font-sans">
                                         <Icons.TrendingUp size={12} className="inline mr-1 -mt-0.5"/>
-                                        Punto de Inflexión: En el Año {compResult.crossoverYear} (Año {sYear + compResult.crossoverYear}{sAge > 0 ? ` · ${sAge + compResult.crossoverYear} años` : ''}) los intereses acumulados superan al capital total aportado.
+                                        Punto de Inflexión: En el Año {compResult.crossoverYear} (Año {sYear + compResult.crossoverYear}{sAge > 0 ? ` · ${sAge + compResult.crossoverYear} años` : ''}) los intereses superan al capital aportado.
                                     </div>
                                 )}
                                 {compResult.baggers && compResult.baggers.length > 0 && (
@@ -15002,7 +15015,7 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                         </div>
                     </div>
 
-                    {/* SUBPANEL: ESTIMACIÓN DE RENTA MENSUAL A FIN DE PERIODO Y DISPONIBILIDAD */}
+                    {/* SUBPANEL: RENTA Y DISPONIBILIDAD */}
                     <div className="mt-8 bg-slate-950/90 rounded-2xl p-6 border-2 border-cyan-500/40 shadow-2xl relative overflow-hidden space-y-6">
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
                             <div>
@@ -15011,21 +15024,19 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                                     ESTIMACIÓN DE RENTA MENSUAL A FIN DE PERIODO Y DISPONIBILIDAD
                                 </h4>
                                 <p className="text-[10px] text-slate-400 mt-1 font-sans">
-                                    Inicio de la desacumulación: <strong className="text-white">Año {endAccumYear}</strong> {endAccumAge ? `(a los ${endAccumAge} años de edad)` : ''}. Saldo vivo revalorizándose periódicamente en mercado.
+                                    Inicio de la desacumulación: <strong className="text-white">Año {endAccumYear}</strong> {endAccumAge ? `(a los ${endAccumAge} años de edad)` : ''}.
                                 </p>
                             </div>
                             <div className="flex items-center gap-2 bg-slate-900 p-1 rounded-xl border border-slate-700 shrink-0">
                                 <button 
                                     onClick={() => setDrawdownState(p => ({ ...p, useRealBalance: true }))}
                                     className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${drawdownState.useRealBalance ? 'bg-cyan-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
-                                    title="Usa el poder adquisitivo ajustado por la inflación simulada"
                                 >
                                     Capital Real (Aj. Inflación)
                                 </button>
                                 <button 
                                     onClick={() => setDrawdownState(p => ({ ...p, useRealBalance: false }))}
                                     className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${!drawdownState.useRealBalance ? 'bg-cyan-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
-                                    title="Usa el valor total nominal"
                                 >
                                     Capital Nominal
                                 </button>
@@ -15033,7 +15044,6 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            {/* Parámetro: Capital Base */}
                             <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 flex flex-col justify-between">
                                 <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Capital Inicial al Retiro</span>
                                 <div className="text-2xl font-black text-white font-mono mt-2">
@@ -15044,7 +15054,6 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                                 </span>
                             </div>
 
-                            {/* Parámetro: Rentabilidad en fase de retiro */}
                             <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 flex flex-col justify-between">
                                 <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Rendimiento Anual en Retiro (%)</span>
                                 <div className="mt-2">
@@ -15059,7 +15068,6 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                                 </span>
                             </div>
 
-                            {/* Selector de Enfoque */}
                             <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 flex flex-col justify-between">
                                 <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Modo de Cálculo</span>
                                 <div className="flex gap-2 mt-2">
@@ -15082,7 +15090,6 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                             </div>
                         </div>
 
-                        {/* Resultados según el modo activo */}
                         {drawdownState.mode === 'byMonthly' ? (
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center bg-gradient-to-r from-blue-950/40 to-slate-900 p-5 rounded-xl border border-blue-500/30">
                                 <div>
@@ -15103,7 +15110,7 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                                         <>
                                             <div className="text-2xl font-black text-green-400 font-display">VITALICIA / INDEFINIDA</div>
                                             <p className="text-[10px] text-green-300/80 mt-1 font-sans">
-                                                Los rendimientos mensuales ({formatMoney(perpetualMonthlyInterest)} {baseCurrency}) superan o igualan el retiro ({formatMoney(wDesired)} {baseCurrency}). <b>El capital principal no se agota jamás.</b>
+                                                Los rendimientos mensuales ({formatMoney(perpetualMonthlyInterest)} {baseCurrency}) cubren el retiro ({formatMoney(wDesired)} {baseCurrency}). <b>El capital principal no se agota.</b>
                                             </p>
                                         </>
                                     ) : durationMonths > 0 ? (
@@ -15115,7 +15122,7 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                                                 ~ {Math.floor(durationMonths)} meses (Cubre hasta el Año {exhaustYear}{exhaustAge ? ` · ${exhaustAge} años de edad` : ''})
                                             </span>
                                             <p className="text-[9px] text-slate-400 mt-2 font-sans">
-                                                Desde el Año {endAccumYear} {endAccumAge ? `(${endAccumAge} años)` : ''} hasta el Año {exhaustYear} {exhaustAge ? `(${exhaustAge} años)` : ''} disponiendo de {formatMoney(wDesired)} al mes.
+                                                Disponiendo de {formatMoney(wDesired)} al mes.
                                             </p>
                                         </>
                                     ) : (
@@ -15145,15 +15152,12 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                                     <span className="text-xs font-bold text-purple-300 font-mono block mt-1">
                                         {formatMoney(obtainableMonthly * 12)} {baseCurrency} anuales
                                     </span>
-                                    <p className="text-[9px] text-slate-400 mt-2 font-sans">
-                                        Extrayendo esta cuota mensual durante {yDesired} años, el capital se consumirá de forma constante hasta los {fixedEndAge ? `${fixedEndAge} años de edad` : `finalizar en ${fixedEndYear}`}.
-                                    </p>
                                 </div>
                             </div>
                         )}
                     </div>
 
-                    {/* BOTONERA DOBLE AL PIE: DESGLOSE ACUMULACIÓN Y DESGLOSE DESACUMULACIÓN */}
+                    {/* BOTONERA DOBLE AL PIE */}
                     <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <button 
                             onClick={() => { setShowCompTable(!showCompTable); if(!showCompTable) setShowDrawdownTable(false); }} 
@@ -15163,7 +15167,7 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                                     : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300'
                             }`}
                         >
-                            <Icons.Table size={16} /> {showCompTable ? 'Ocultar Desglose Acumulación' : 'Ver Desglose Acumulación (Aportes)'}
+                            <Icons.Table size={16} /> {showCompTable ? 'Ocultar Desglose y Gráfica' : 'Ver Desglose y Gráfica de Acumulación'}
                         </button>
 
                         <button 
@@ -15178,68 +15182,259 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
                         </button>
                     </div>
 
-                    {/* TABLA 1: DESGLOSE DE ACUMULACIÓN */}
+                    {/* SECCIÓN DESPLEGABLE: TABLA + GRÁFICA DE LÍNEAS AL PIE */}
                     {showCompTable && (
-                        <div className="mt-4 overflow-x-auto rounded-xl border border-slate-800 animate-fade-in max-h-[500px] overflow-y-auto custom-scrollbar">
-                            <div className="bg-slate-900 p-2.5 text-[10px] font-black uppercase tracking-wider text-blue-300 border-b border-slate-800 text-center">
-                                Plan de Acumulación y Creación de Patrimonio (Años {sYear} a {endAccumYear})
+                        <div className="space-y-6 mt-4 animate-fade-in">
+                            {/* TABLA DE DESGLOSE */}
+                            <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[460px] overflow-y-auto custom-scrollbar">
+                                <div className="bg-slate-900 p-2.5 text-[10px] font-black uppercase tracking-wider text-blue-300 border-b border-slate-800 text-center">
+                                    Plan de Acumulación y Creación de Patrimonio (Años {sYear} a {endAccumYear})
+                                </div>
+                                <table className="w-full text-sm border-collapse text-right">
+                                    <thead className="bg-slate-900 sticky top-0 z-10 text-[10px] uppercase font-bold text-slate-400">
+                                        <tr>
+                                            <th className="p-3 text-center">Periodo</th>
+                                            <th className="p-3 text-center text-cyan-300">Año / Edad</th>
+                                            <th className="p-3">Aportado</th>
+                                            <th className="p-3">Interés</th>
+                                            <th className="p-3 text-slate-300">Total Nominal</th>
+                                            <th className="p-3 text-white border-l border-slate-700">Valor Real (Aj. Inflación)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="bg-slate-900/50 divide-y divide-slate-800 font-mono">
+                                        {compResult.history.map((row, idx) => {
+                                            const isCrossover = compResult.crossoverYear === row.year;
+                                            const yearBaggers = row.yearBaggers || [];
+                                            const pctAcum = row.principal > 0 ? (row.interest / row.principal) * 100 : 0;
+                                            
+                                            let prevPctAcum = 0;
+                                            if (idx > 0) {
+                                                const prevRow = compResult.history[idx - 1];
+                                                prevPctAcum = prevRow.principal > 0 ? (prevRow.interest / prevRow.principal) * 100 : 0;
+                                            }
+                                            const incrementPct = pctAcum - prevPctAcum;
+                                            
+                                            return (
+                                                <tr key={row.year} className={`${isCrossover ? 'bg-blue-900/20 border-l-4 border-l-blue-500 shadow-inner' : yearBaggers.length > 0 ? 'bg-green-900/10 border-l-4 border-l-green-500 shadow-inner' : 'hover:bg-slate-800/50'} transition-colors`}>
+                                                    <td className="p-3 font-bold text-center relative">
+                                                        <span className={isCrossover ? 'text-blue-400' : yearBaggers.length > 0 ? 'text-green-400' : 'text-slate-400'}>Año {row.year}</span>
+                                                        {isCrossover && <div className="text-[7px] text-blue-400 uppercase tracking-tighter mt-0.5 font-sans leading-none">Inflexión</div>}
+                                                        {yearBaggers.map(b => (
+                                                            <div key={b} className="text-[7px] text-green-400 uppercase tracking-tighter mt-0.5 font-sans leading-none font-black">{b}-Bagger (+{b * 100}%)</div>
+                                                        ))}
+                                                    </td>
+                                                    <td className="p-3 text-center font-sans font-bold text-cyan-300">
+                                                        <div>{row.calYear}</div>
+                                                        {row.age && <div className="text-[9px] text-slate-400 font-normal">{row.age} años</div>}
+                                                    </td>
+                                                    <td className="p-3 text-slate-300">{formatMoney(row.principal)}</td>
+                                                    <td className="p-3 text-green-400 text-right">
+                                                        <div className="font-bold">+{formatMoney(row.interest)}</div>
+                                                        <div className="text-[9px] text-slate-500 font-sans mt-0.5 leading-tight">
+                                                            Acumulado: <span className="text-slate-400 font-bold">{formatN(pctAcum)}%</span><br/>
+                                                            Incr. Anual: <span className="text-slate-400 font-bold">+{formatN(incrementPct)}%</span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-3 font-bold text-slate-300">{formatMoney(row.balance)}</td>
+                                                    <td className="p-3 font-bold text-white text-base border-l border-slate-700">{formatMoney(row.realBalance)}</td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>                        
+                                </table>
                             </div>
-                            <table className="w-full text-sm border-collapse text-right">
-                                <thead className="bg-slate-900 sticky top-0 z-10 text-[10px] uppercase font-bold text-slate-400">
-                                    <tr>
-                                        <th className="p-3 text-center">Periodo</th>
-                                        <th className="p-3 text-center text-cyan-300">Año / Edad</th>
-                                        <th className="p-3">Aportado</th>
-                                        <th className="p-3">Interés</th>
-                                        <th className="p-3 text-slate-300">Total Nominal</th>
-                                        <th className="p-3 text-white border-l border-slate-700">Valor Real (Aj. Inflación)</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="bg-slate-900/50 divide-y divide-slate-800 font-mono">
-                                    {compResult.history.map((row, idx) => {
-                                        const isCrossover = compResult.crossoverYear === row.year;
-                                        const yearBaggers = row.yearBaggers || [];
-                                        const pctAcum = row.principal > 0 ? (row.interest / row.principal) * 100 : 0;
-                                        
-                                        let prevPctAcum = 0;
-                                        if (idx > 0) {
-                                            const prevRow = compResult.history[idx - 1];
-                                            prevPctAcum = prevRow.principal > 0 ? (prevRow.interest / prevRow.principal) * 100 : 0;
+
+                            {/* NUEVA GRÁFICA DE LÍNEAS AL PIE: CAPITAL APORTADO VS ACUMULADO */}
+                            <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-6 shadow-2xl relative overflow-hidden">
+                                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-800 pb-3 mb-4">
+                                    <div>
+                                        <h4 className="text-sm font-bold uppercase tracking-wider text-green-400 flex items-center gap-2">
+                                            <Icons.TrendingUp size={16} /> Evolución: Capital Aportado vs Capital Acumulado
+                                        </h4>
+                                        <p className="text-[10px] text-slate-400 mt-0.5 font-sans">
+                                            Pasa el ratón por los puntos para auditar los importes exactos año a año.
+                                        </p>
+                                    </div>
+                                    <div className="flex flex-wrap gap-4 text-[10px] font-bold uppercase">
+                                        <span className="flex items-center gap-1.5 text-cyan-400">
+                                            <span className="w-3 h-0.5 bg-cyan-400"></span> Total Aportado
+                                        </span>
+                                        <span className="flex items-center gap-1.5 text-emerald-400">
+                                            <span className="w-3 h-0.5 bg-emerald-400"></span> Total Acumulado
+                                        </span>
+                                        <span className="flex items-center gap-1.5 text-purple-300">
+                                            <span className="w-3 h-0.5 bg-purple-400 border-b border-dashed border-purple-400"></span> Real (Aj. Inflación)
+                                        </span>
+                                    </div>
+                                </div>
+
+                                {/* Contenedor SVG con tooltip auto-adaptable */}
+                                <div 
+                                    className="w-full h-[380px] md:h-[420px] relative bg-slate-950/80 rounded-xl border border-slate-800/80 p-2 overflow-hidden"
+                                    onMouseLeave={() => setChartTooltip(null)}
+                                >
+                                    {/* TOOLTIP FLOTANTE INTELIGENTE */}
+                                    {chartTooltip && (() => {
+                                        const isNearTop = chartTooltip.y < 150;
+                                        const isNearLeft = chartTooltip.x < 160;
+                                        const isNearRight = chartTooltip.cWidth && (chartTooltip.x > chartTooltip.cWidth - 180);
+
+                                        let transformClass = "transform ";
+                                        let left = chartTooltip.x;
+                                        let top = chartTooltip.y;
+
+                                        if (isNearLeft) {
+                                            left = Math.max(12, chartTooltip.x - 10);
+                                            transformClass += "translate-x-0 ";
+                                        } else if (isNearRight) {
+                                            left = Math.min(chartTooltip.cWidth - 12, chartTooltip.x + 10);
+                                            transformClass += "-translate-x-full ";
+                                        } else {
+                                            transformClass += "-translate-x-1/2 ";
                                         }
-                                        const incrementPct = pctAcum - prevPctAcum;
-                                        
+
+                                        if (isNearTop) {
+                                            transformClass += "translate-y-0 mt-4";
+                                        } else {
+                                            transformClass += "-translate-y-full -mt-4";
+                                        }
+
+                                        const pt = chartTooltip.point;
+
                                         return (
-                                            <tr key={row.year} className={`${isCrossover ? 'bg-blue-900/20 border-l-4 border-l-blue-500 shadow-inner' : yearBaggers.length > 0 ? 'bg-green-900/10 border-l-4 border-l-green-500 shadow-inner' : 'hover:bg-slate-800/50'} transition-colors`}>
-                                                <td className="p-3 font-bold text-center relative">
-                                                    <span className={isCrossover ? 'text-blue-400' : yearBaggers.length > 0 ? 'text-green-400' : 'text-slate-400'}>Año {row.year}</span>
-                                                    {isCrossover && <div className="text-[7px] text-blue-400 uppercase tracking-tighter mt-0.5 font-sans leading-none">Inflexión</div>}
-                                                    {yearBaggers.map(b => (
-                                                        <div key={b} className="text-[7px] text-green-400 uppercase tracking-tighter mt-0.5 font-sans leading-none font-black">{b}-Bagger (+{b * 100}%)</div>
-                                                    ))}
-                                                </td>
-                                                <td className="p-3 text-center font-sans font-bold text-cyan-300">
-                                                    <div>{row.calYear}</div>
-                                                    {row.age && <div className="text-[9px] text-slate-400 font-normal">{row.age} años</div>}
-                                                </td>
-                                                <td className="p-3 text-slate-300">{formatMoney(row.principal)}</td>
-                                                <td className="p-3 text-green-400 text-right">
-                                                    <div className="font-bold">+{formatMoney(row.interest)}</div>
-                                                    <div className="text-[9px] text-slate-500 font-sans mt-0.5 leading-tight">
-                                                        Acumulado: <span className="text-slate-400 font-bold">{formatN(pctAcum)}%</span><br/>
-                                                        Incr. Anual: <span className="text-slate-400 font-bold">+{formatN(incrementPct)}%</span>
+                                            <div 
+                                                className={`absolute z-30 pointer-events-none bg-slate-900/95 border border-slate-700 p-3 rounded-xl shadow-2xl text-xs backdrop-blur-md font-mono border-t-2 border-t-emerald-400 min-w-[230px] ${transformClass.trim()}`}
+                                                style={{ left: `${left}px`, top: `${top}px` }}
+                                            >
+                                                <div className="font-bold text-white font-sans text-sm mb-1.5 border-b border-slate-800 pb-1 flex justify-between gap-4">
+                                                    <span>{pt.year === 0 ? 'Inicio (Año 0)' : `Año ${pt.year} (${pt.calYear})`}</span>
+                                                    {pt.age && <span className="text-[10px] text-cyan-300">{pt.age} años</span>}
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <div className="flex justify-between text-cyan-300">
+                                                        <span>Total Aportado:</span>
+                                                        <b>{formatMoney(pt.principal)} {baseCurrency}</b>
                                                     </div>
-                                                </td>
-                                                <td className="p-3 font-bold text-slate-300">{formatMoney(row.balance)}</td>
-                                                <td className="p-3 font-bold text-white text-base border-l border-slate-700">{formatMoney(row.realBalance)}</td>
-                                            </tr>
+                                                    <div className="flex justify-between text-green-400 font-bold">
+                                                        <span>Intereses:</span>
+                                                        <span>+{formatMoney(pt.interest)} {baseCurrency}</span>
+                                                    </div>
+                                                    <div className="flex justify-between text-white font-bold pt-1 border-t border-slate-800 text-sm">
+                                                        <span>Total Acumulado:</span>
+                                                        <span className="text-emerald-400">{formatMoney(pt.balance)} {baseCurrency}</span>
+                                                    </div>
+                                                    <div className="flex justify-between text-[10px] text-purple-300 pt-0.5">
+                                                        <span>Real (Aj. Inflación):</span>
+                                                        <b>{formatMoney(pt.realBalance)} {baseCurrency}</b>
+                                                    </div>
+                                                </div>
+                                            </div>
                                         );
-                                    })}
-                                </tbody>                        
-                            </table>
+                                    })()}
+
+                                    {/* LIENZO SVG */}
+                                    {(() => {
+                                        const pts = accumulationChartPoints;
+                                        const totalPts = pts.length - 1;
+                                        if (totalPts <= 0) return null;
+
+                                        const pad = { top: 30, right: 40, bottom: 40, left: 75 };
+                                        const W = 1000;
+                                        const H = 400;
+                                        const innerW = W - pad.left - pad.right;
+                                        const innerH = H - pad.top - pad.bottom;
+
+                                        const maxVal = Math.max(...pts.map(p => p.balance)) * 1.05 || 1;
+                                        const minVal = 0;
+                                        const range = maxVal - minVal;
+
+                                        const getX = (i) => pad.left + (i / totalPts) * innerW;
+                                        const getY = (v) => pad.top + innerH - ((v - minVal) / range) * innerH;
+
+                                        const buildPoints = (key) => pts.map((p, i) => `${getX(i)},${getY(p[key])}`).join(' ');
+
+                                        const updateTooltip = (e, point) => {
+                                            const container = e.currentTarget.ownerSVGElement?.parentElement || e.currentTarget.closest('div');
+                                            const rect = container.getBoundingClientRect();
+                                            setChartTooltip({
+                                                x: e.clientX - rect.left,
+                                                y: e.clientY - rect.top,
+                                                cWidth: rect.width,
+                                                cHeight: rect.height,
+                                                point
+                                            });
+                                        };
+
+                                        return (
+                                            <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full" preserveAspectRatio="none">
+                                                {/* Cuadrícula horizontal */}
+                                                {[0, 0.25, 0.5, 0.75, 1].map(pct => {
+                                                    const val = minVal + range * pct;
+                                                    const y = getY(val);
+                                                    return (
+                                                        <g key={pct}>
+                                                            <line x1={pad.left} y1={y} x2={W - pad.right} y2={y} stroke="#334155" strokeWidth="1" strokeDasharray="4" opacity="0.5" />
+                                                            <text x={pad.left - 10} y={y + 4} textAnchor="end" fill="#64748b" fontSize="11" fontFamily="monospace">
+                                                                {formatMoney(val)}
+                                                            </text>
+                                                        </g>
+                                                    );
+                                                })}
+
+                                                {/* Área bajo la curva de Total Acumulado */}
+                                                <polygon
+                                                    points={`${getX(0)},${getY(0)} ${buildPoints('balance')} ${getX(totalPts)},${getY(0)}`}
+                                                    fill="rgba(16, 185, 129, 0.08)"
+                                                />
+
+                                                {/* Línea 1: Capital Aportado (Cian) */}
+                                                <polyline fill="none" stroke="#06b6d4" strokeWidth="2.5" points={buildPoints('principal')} />
+
+                                                {/* Línea 2: Capital Real Ajustado (Púrpura discontinua) */}
+                                                <polyline fill="none" stroke="#c084fc" strokeWidth="2" strokeDasharray="4" points={buildPoints('realBalance')} opacity="0.8" />
+
+                                                {/* Línea 3: Capital Acumulado (Verde Esmeralda) */}
+                                                <polyline fill="none" stroke="#10b981" strokeWidth="3" points={buildPoints('balance')} />
+
+                                                {/* Puntos interactivos con hit-area para tooltip */}
+                                                {pts.map((point, i) => (
+                                                    <g 
+                                                        key={i}
+                                                        className="cursor-pointer group"
+                                                        onMouseEnter={(e) => updateTooltip(e, point)}
+                                                        onMouseMove={(e) => updateTooltip(e, point)}
+                                                    >
+                                                        {/* Línea guía vertical al pasar el ratón */}
+                                                        <line x1={getX(i)} y1={pad.top} x2={getX(i)} y2={H - pad.bottom} stroke="#38bdf8" strokeWidth="1" strokeDasharray="2" opacity="0.15" />
+                                                        
+                                                        {/* Etiquetas de años (mostradas espaciadas para evitar solapes) */}
+                                                        {(i === 0 || i === totalPts || i % Math.max(1, Math.floor(totalPts / 10)) === 0) && (
+                                                            <g>
+                                                                <line x1={getX(i)} y1={H - pad.bottom} x2={getX(i)} y2={H - pad.bottom + 6} stroke="#64748b" />
+                                                                <text x={getX(i)} y={H - pad.bottom + 18} textAnchor="middle" fill="#94a3b8" fontSize="10" fontWeight="bold">
+                                                                    {point.year === 0 ? '0' : `A${point.year}`}
+                                                                </text>
+                                                            </g>
+                                                        )}
+
+                                                        {/* Área transparente de captura táctil/ratón */}
+                                                        <circle cx={getX(i)} cy={getY(point.balance)} r="18" fill="transparent" />
+                                                        
+                                                        {/* Círculos visibles en cada línea */}
+                                                        <circle cx={getX(i)} cy={getY(point.principal)} r="3.5" fill="#06b6d4" />
+                                                        <circle cx={getX(i)} cy={getY(point.realBalance)} r="3" fill="#c084fc" />
+                                                        <circle cx={getX(i)} cy={getY(point.balance)} r="4.5" fill="#10b981" stroke="#ffffff" strokeWidth="1" />
+                                                    </g>
+                                                ))}
+                                            </svg>
+                                        );
+                                    })()}
+                                </div>
+                            </div>
                         </div>
                     )}
 
-                    {/* TABLA 2: DESGLOSE DE DESACUMULACIÓN (RETIRO) */}
+                    {/* TABLA 2: DESGLOSE DESACUMULACIÓN */}
                     {showDrawdownTable && (
                         <div className="mt-4 overflow-x-auto rounded-xl border border-slate-800 animate-fade-in max-h-[500px] overflow-y-auto custom-scrollbar">
                             <div className="bg-slate-900 p-2.5 text-[10px] font-black uppercase tracking-wider text-cyan-300 border-b border-slate-800 text-center flex justify-between items-center px-4">
@@ -15283,7 +15478,6 @@ const UtilsTab = ({ baseCurrency, customLinks = [], setCustomLinks }) => {
             </div>
         );
     };
-
 
     // --- 2. CALCULADORA RENTING VS COMPRA (Mantenido intacto) ---
     const RentingCalculator = () => {
