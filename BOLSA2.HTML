@@ -6535,6 +6535,8 @@ const [isAiReportChoiceModalOpen, setIsAiReportChoiceModalOpen] = useState(false
     const [isExternalPromptModalOpen, setIsExternalPromptModalOpen] = useState(false);
     const [externalPromptText, setExternalPromptText] = useState('');
     const [promptCopied, setPromptCopied] = useState(false);
+    const [includeLotsInAiReport, setIncludeLotsInAiReport] = useState(false);
+    const [includeDivsInAiReport, setIncludeDivsInAiReport] = useState(false);
 
 const handleGenerateExternalPrompt = (promptType = 'standard') => {
         setIsAiReportChoiceModalOpen(false);
@@ -6545,6 +6547,7 @@ const handleGenerateExternalPrompt = (promptType = 'standard') => {
         }
 
         const today = new Date().toLocaleDateString('es-ES');
+        const monthNames = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
         let totalCost = 0;
         let totalVal = 0;
         let totalDivs = 0;
@@ -6566,7 +6569,36 @@ const handleGenerateExternalPrompt = (promptType = 'standard') => {
             totalVal += val;
             totalDivs += divs;
 
-            return `${idx + 1}. [${isS ? 'VENDIDA / CERRADA' : 'ACTIVA EN CARTERA'}] ${p.name} (Ticker: ${p.ticker}${p.group ? ' | Grupo: ' + p.group : ''})
+            // Desglose opcional de lotes de compra
+            let lotsSummary = '';
+            if (includeLotsInAiReport && p.lots && p.lots.length > 0) {
+                lotsSummary = '\n   - Desglose de Lotes de Compra:' + p.lots.map((l, lIdx) => {
+                    const lShares = parseFloat(l.shares) || 0;
+                    const lPrice = parseFloat(l.price) || 0;
+                    const lFx = parseFloat(l.fx) || 1;
+                    const lFees = (p.feesIncludedInPrice ? 0 : (parseFloat(l.fees) || 0)) + (parseFloat(l.adj) || 0);
+                    const lCost = (lShares * lPrice * lFx) + lFees;
+                    return `\n     * Lote ${lIdx + 1}: Fecha ${l.date || p.buyDate} | ${formatN(lShares)} acc @ ${formatN(lPrice, 3)} ${p.stockCurrency} (FX: ${formatN(lFx, 4)}) | Coste: ${formatMoney(lCost, baseCurrency)}`;
+                }).join('');
+            }
+
+            // Desglose opcional de movimientos de cobro de dividendos
+            let divsSummary = '';
+            if (includeDivsInAiReport && p.dividends && p.dividends.length > 0) {
+                const validDivs = p.dividends.filter(d => (parseFloat(d.net) || 0) > 0 || (parseFloat(d.taxOrigin) || 0) > 0 || (parseFloat(d.taxDest) || 0) > 0);
+                if (validDivs.length > 0) {
+                    divsSummary = '\n   - Desglose de Cobros de Dividendos:' + validDivs.map((d) => {
+                        const n = parseFloat(d.net) || 0;
+                        const o = parseFloat(d.taxOrigin) || 0;
+                        const dst = parseFloat(d.taxDest) || 0;
+                        const bruto = n + o + dst;
+                        const mName = (d.month !== undefined && d.month >= 0 && d.month < 12) ? monthNames[d.month] : `Mes ${d.month}`;
+                        return `\n     * ${mName} ${d.year}: Bruto ${formatMoney(bruto, baseCurrency)} | Ret.Origen ${formatMoney(o, baseCurrency)} | Ret.Destino ${formatMoney(dst, baseCurrency)} | Neto: ${formatMoney(n, baseCurrency)}`;
+                    }).join('');
+                }
+            }
+
+            return `${idx + 1}. [${isS ? 'VENDIDA / CERRADA' : 'ACTIVA EN CARTERA'}] ${p.name} (Ticker: ${p.ticker}${p.group ? ' | Grupo: ' + p.group : ''})${lotsSummary}${divsSummary}
    - Títulos: ${formatN(p.shares)} ${p.stockCurrency}
    - Fecha Compra: ${p.buyDate} | Precio Compra: ${formatN(p.buyPrice, 3)} | FX Compra: ${formatN(p.buyFx, 4)}
    - Coste Total Invertido: ${formatMoney(cost, baseCurrency)}
@@ -6582,12 +6614,48 @@ const handleGenerateExternalPrompt = (promptType = 'standard') => {
         const totalReturn = totalPl + totalDivs;
         const totalReturnPct = totalCost > 0 ? (totalReturn / totalCost) * 100 : 0;
 
-        const dataBlock = `============================================================
-RESUMEN GLOBAL DE LA CARTERA FILTRADA (${dataToAnalyze.length} POSICIONES A FECHA ${today}):
+        // Comprobación: ¿es exclusivamente cartera activa?
+        const isPurelyActive = dataToAnalyze.every(p => !p.sellDate);
+
+        let headerBlock = '';
+
+        if (isPurelyActive) {
+            // Solo cartera activa: usa Capital Invertido y Valoración Actual
+            headerBlock = `RESUMEN GLOBAL DE LA CARTERA ACTIVA (${dataToAnalyze.length} POSICIONES ACTIVAS A FECHA ${today}):
 - Capital Invertido: ${formatMoney(totalCost, baseCurrency)}
 - Valoración Actual de Mercado: ${formatMoney(totalVal, baseCurrency)}
 - Dividendos Cobrados: ${formatMoney(totalDivs, baseCurrency)}
-- Retorno Total Neto: ${totalReturn >= 0 ? '+' : ''}${formatMoney(totalReturn, baseCurrency)} (${totalReturn >= 0 ? '+' : ''}${formatN(totalReturnPct)}%)
+- Retorno Total Neto: ${totalReturn >= 0 ? '+' : ''}${formatMoney(totalReturn, baseCurrency)} (${totalReturn >= 0 ? '+' : ''}${formatN(totalReturnPct)}%)`;
+        } else {
+            // Movimientos mixtos (abiertos y cerrados) o solo ventas: calcula Capital Medio ponderado histórico
+            const sortedByBuy = [...dataToAnalyze].sort((a, b) => new Date(a.buyDate) - new Date(b.buyDate));
+            const firstDate = sortedByBuy.length > 0 ? new Date(sortedByBuy[0].buyDate) : new Date();
+            let lastDate = new Date();
+            if (dataToAnalyze.every(p => p.sellDate)) {
+                const sortedBySell = [...dataToAnalyze].sort((a, b) => new Date(b.sellDate) - new Date(a.sellDate));
+                lastDate = new Date(sortedBySell[0].sellDate);
+            }
+            const totalPeriodDays = Math.max(1, (lastDate - firstDate) / (1000 * 60 * 60 * 24));
+            let weightedSum = 0;
+            dataToAnalyze.forEach(p => {
+                const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+                const endDate = p.sellDate ? new Date(p.sellDate) : new Date();
+                const daysHeld = Math.max(0, (endDate - new Date(p.buyDate)) / (1000 * 60 * 60 * 24));
+                weightedSum += (cost * daysHeld);
+            });
+            const avgCapital = weightedSum / totalPeriodDays;
+            const roiOnAvgCap = avgCapital > 0 ? (totalReturn / avgCapital) * 100 : 0;
+
+            headerBlock = `RESUMEN HISTÓRICO GLOBAL (${dataToAnalyze.length} OPERACIONES EN TOTAL A FECHA ${today}):
+- Capital Medio Invertido (Histórico Ponderado por Tiempo): ${formatMoney(avgCapital, baseCurrency)}
+- Beneficio Neto Total: ${totalReturn >= 0 ? '+' : ''}${formatMoney(totalReturn, baseCurrency)}
+- Dividendos Cobrados: ${formatMoney(totalDivs, baseCurrency)}
+- Rentabilidad Real sobre Capital Medio: ${roiOnAvgCap >= 0 ? '+' : ''}${formatN(roiOnAvgCap)}%
+- Periodo Temporal: ${firstDate.toLocaleDateString('es-ES')} a ${lastDate.toLocaleDateString('es-ES')} (${Math.round(totalPeriodDays)} días)`;
+        }
+
+        const dataBlock = `============================================================
+${headerBlock}
 ============================================================
 
 DETALLE COMPLETO DE POSICIONES:
@@ -6597,10 +6665,8 @@ ${itemsSummary}`;
         let fullPrompt = '';
 
         if (promptType === 'data_only') {
-            // OPCIÓN 1: Solo datos financieros puros
             fullPrompt = dataBlock;
         } else if (promptType === 'dynamic_charts') {
-            // OPCIÓN 2: Gráficas dinámicas y escenarios
             fullPrompt = `Actúa como un Gestor Cuantitativo de Inversiones y Experto en Análisis Visual de Datos Financieros.
 A continuación te facilito los datos completos de mi cartera de inversiones a fecha ${today}:
 
@@ -6626,7 +6692,6 @@ INSTRUCCIONES OBLIGATORIAS DE ANÁLISIS Y GENERACIÓN DE GRÁFICAS:
 3. CONCLUSIONES ESTRATÉGICAS:
    - Añade un dictamen analítico sobre la sostenibilidad de las tendencias y las acciones prioritarias de rebalanceo.`;
         } else {
-            // OPCIÓN 3: Instrucciones estándar (por defecto)
             fullPrompt = `Actúa como un Gestor de Carteras Senior y Analista Financiero de Wall Street.
 A continuación te facilito los datos completos y actualizados de mi cartera de inversiones (posiciones actualmente filtradas en pantalla a fecha ${today}):
 
@@ -7460,14 +7525,15 @@ INSTRUCCIONES PARA TU ANÁLISIS:
         }
     };
 
-    const analyzePortfolio = async () => {
+const analyzePortfolio = async () => {
       const dataToAnalyze = visiblePortfolio;
       if (dataToAnalyze.length === 0) return setInfoModal({ isOpen: true, title: 'Info', msg: 'No hay datos visibles para analizar.', type: 'info' });
       
       setAnalyzing(true);
       try {
         const today = new Date().toLocaleString('es-ES');
-        let winningTrades = 0, losingTrades = 0; let grossProfit = 0, grossLoss = 0; let totalReturn = 0, totalInvested = 0; let operations = []; let firstDate = new Date(); 
+        const monthNames = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
+        let winningTrades = 0, losingTrades = 0; let grossProfit = 0, grossLoss = 0; let totalReturn = 0; let totalInvested = 0; let totalCurrentValuation = 0; let operations = []; let firstDate = new Date(); 
 
         dataToAnalyze.forEach(p => {
              const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
@@ -7477,21 +7543,72 @@ INSTRUCCIONES PARA TU ANÁLISIS:
              const netPL = (value - cost) + divs;
              
              if (netPL > 0) { winningTrades++; grossProfit += netPL; } else { losingTrades++; grossLoss += Math.abs(netPL); }
-             totalReturn += netPL; totalInvested += cost;
+             totalReturn += netPL; totalInvested += cost; totalCurrentValuation += value;
              if(new Date(p.buyDate) < firstDate) firstDate = new Date(p.buyDate);
 
              const bDate = new Date(p.buyDate).toISOString().split('T')[0];
              const sDate = isS ? new Date(p.sellDate).toISOString().split('T')[0] : 'Actualidad';
-             operations.push(`- ${p.ticker} (${p.name}): ${isS ? 'CERRADA' : 'ACTIVA'}. Invertido: ${cost.toFixed(0)}. Valor/Liq: ${value.toFixed(0)}. Res: ${netPL.toFixed(0)} (${divs>0?`incl ${divs.toFixed(0)} div`:''}). Fechas: ${bDate} a ${sDate}. Grp: ${p.group || 'N/A'}`);
+
+             // Desglose opcional de lotes
+             let lotsInfo = '';
+             if (includeLotsInAiReport && p.lots && p.lots.length > 0) {
+                 lotsInfo = ' [Lotes: ' + p.lots.map((l, li) => `L${li+1}(${l.date || bDate}): ${l.shares}acc@${l.price}`).join(', ') + ']';
+             }
+
+             // Desglose opcional de dividendos
+             let divsInfo = '';
+             if (includeDivsInAiReport && p.dividends && p.dividends.length > 0) {
+                 const validDivs = p.dividends.filter(d => (parseFloat(d.net) || 0) > 0);
+                 if (validDivs.length > 0) {
+                     divsInfo = ' [Divs: ' + validDivs.map(d => `${monthNames[d.month] || d.month}/${d.year}: ${d.net}€`).join(', ') + ']';
+                 }
+             }
+
+             operations.push(`- ${p.ticker} (${p.name}): ${isS ? 'CERRADA' : 'ACTIVA'}${lotsInfo}${divsInfo}. Invertido: ${cost.toFixed(0)}. Valor/Liq: ${value.toFixed(0)}. Res: ${netPL.toFixed(0)} (${divs>0?`incl ${divs.toFixed(0)} div`:''}). Fechas: ${bDate} a ${sDate}. Grp: ${p.group || 'N/A'}`);
         });
 
         const totalTrades = winningTrades + losingTrades;
         const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
         const profitFactor = grossLoss > 0 ? (grossProfit / grossLoss) : grossProfit;
-        const totalROI = totalInvested > 0 ? (totalReturn / totalInvested) * 100 : 0;
         const yearsActive = Math.max(0.5, (new Date() - firstDate) / (1000 * 60 * 60 * 24 * 365));
 
-        const prompt = `Contexto: Actúa como Portfolio Manager. Audita mi cartera a fecha (${today}). DATOS (Reales): Total Op: ${totalTrades}, Win Rate: ${winRate.toFixed(1)}%, Profit Factor: ${profitFactor.toFixed(2)}, ROI: ${totalROI.toFixed(2)}%, Años Activo: ${yearsActive.toFixed(1)}. Operaciones: \n${operations.join('\n')} \n\nInstrucciones: 1. Atribución Retornos. 2. Riesgo (Drawdown est). 3. Auditoría Sesgos. 4. Costo Oportunidad (vs S&P500). 5. Análisis Temporal. FORMATO HTML LIMPIO (h3, p, table, ul).`;
+        // Comprobación si es estrictamente cartera activa o mixta/cerrada
+        const isPurelyActive = dataToAnalyze.every(p => !p.sellDate);
+        let headerMetricsText = '';
+
+        if (isPurelyActive) {
+            const totalROI = totalInvested > 0 ? (totalReturn / totalInvested) * 100 : 0;
+            headerMetricsText = `Capital Invertido: ${formatMoney(totalInvested, baseCurrency)}, Valoración Actual: ${formatMoney(totalCurrentValuation, baseCurrency)}, ROI Total: ${totalROI.toFixed(2)}%`;
+        } else {
+            // Cálculo del Capital Medio Ponderado para movimientos mixtos/cerrados
+            const sortedByBuy = [...dataToAnalyze].sort((a, b) => new Date(a.buyDate) - new Date(b.buyDate));
+            const startD = sortedByBuy.length > 0 ? new Date(sortedByBuy[0].buyDate) : new Date();
+            let endD = new Date();
+            if (dataToAnalyze.every(p => p.sellDate)) {
+                const sortedBySell = [...dataToAnalyze].sort((a, b) => new Date(b.sellDate) - new Date(a.sellDate));
+                endD = new Date(sortedBySell[0].sellDate);
+            }
+            const periodDays = Math.max(1, (endD - startD) / (1000 * 60 * 60 * 24));
+            let weightedSum = 0;
+            dataToAnalyze.forEach(p => {
+                const cost = (p.buyPrice * p.shares * p.buyFx) + (p.feesIncludedInPrice ? 0 : (p.fees || 0)) + (p.adjustments || 0);
+                const endDate = p.sellDate ? new Date(p.sellDate) : new Date();
+                const daysHeld = Math.max(0, (endDate - new Date(p.buyDate)) / (1000 * 60 * 60 * 24));
+                weightedSum += (cost * daysHeld);
+            });
+            const avgCapital = weightedSum / periodDays;
+            const roiOnAvgCap = avgCapital > 0 ? (totalReturn / avgCapital) * 100 : 0;
+
+            headerMetricsText = `Capital Medio Invertido (Histórico Ponderado): ${formatMoney(avgCapital, baseCurrency)}, Beneficio Neto Total: ${formatMoney(totalReturn, baseCurrency)}, Rentabilidad Real s/Cap. Medio: ${roiOnAvgCap.toFixed(2)}% (Al haber operaciones cerradas, no usar suma de costes acumulados ni valoración actual ficticia)`;
+        }
+
+        const prompt = `Contexto: Actúa como Portfolio Manager. Audita mi cartera a fecha (${today}). 
+DATOS CONSOLIDADOS: Total Operaciones: ${totalTrades}, Win Rate: ${winRate.toFixed(1)}%, Profit Factor: ${profitFactor.toFixed(2)}, Años Activo: ${yearsActive.toFixed(1)}, ${headerMetricsText}. 
+
+OPERACIONES:
+${operations.join('\n')}
+
+Instrucciones: 1. Atribución Retornos. 2. Riesgo (Drawdown est). 3. Auditoría Sesgos. 4. Costo Oportunidad (vs S&P500). 5. Análisis Temporal. FORMATO HTML LIMPIO (h3, p, table, ul).`;
 
         const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
         let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
@@ -9923,14 +10040,52 @@ const handleSellSubmit = () => {
                 </div> 
             </Modal>
 
-
-
-
-            {/* 1. MODAL SELECTOR CON LAS 3 OPCIONES DE EXPORTACIÓN */}
+{/* 1. MODAL SELECTOR CON LAS OPCIONES DE EXPORTACIÓN */}
             <Modal isOpen={isAiReportChoiceModalOpen} title="Generar Informe de Cartera con IA" onClose={() => setIsAiReportChoiceModalOpen(false)} size="md">
                 <div className="space-y-4 p-1">
                     <div className="bg-purple-900/20 border border-purple-500/30 p-3.5 rounded-xl text-xs text-purple-200 leading-relaxed font-sans">
                         Posiciones seleccionadas: <strong>{visiblePortfolio.length}</strong> activos filtrados en pantalla. Selecciona el tipo de informe o prompt que deseas generar:
+                    </div>
+
+                    {/* BLOQUE DE OPCIONES ADICIONALES (LOTES Y DIVIDENDOS) */}
+                    <div className="space-y-2 bg-slate-950/70 p-3 rounded-xl border border-slate-800">
+                        {/* CHECKBOX PARA INCLUIR/DESMARCAR DESGLOSE DE LOTES */}
+                        <label className="flex items-center gap-3 cursor-pointer select-none">
+                            <input 
+                                type="checkbox" 
+                                checked={includeLotsInAiReport} 
+                                onChange={e => setIncludeLotsInAiReport(e.target.checked)} 
+                                className="custom-checkbox w-4 h-4 accent-purple-500 cursor-pointer" 
+                            />
+                            <div className="flex flex-col">
+                                <span className="text-xs font-bold text-slate-200 uppercase">
+                                    Incluir desglose de lotes por valor
+                                </span>
+                                <span className="text-[10px] text-slate-400">
+                                    Detalla fechas, precios de compra individuales y títulos de cada lote.
+                                </span>
+                            </div>
+                        </label>
+
+                        <div className="border-t border-slate-800/80"></div>
+
+                        {/* CHECKBOX PARA INCLUIR/DESMARCAR DESGLOSE DE DIVIDENDOS */}
+                        <label className="flex items-center gap-3 cursor-pointer select-none">
+                            <input 
+                                type="checkbox" 
+                                checked={includeDivsInAiReport} 
+                                onChange={e => setIncludeDivsInAiReport(e.target.checked)} 
+                                className="custom-checkbox w-4 h-4 accent-purple-500 cursor-pointer" 
+                            />
+                            <div className="flex flex-col">
+                                <span className="text-xs font-bold text-slate-200 uppercase">
+                                    Incluir desglose de cobro de dividendos
+                                </span>
+                                <span className="text-[10px] text-slate-400">
+                                    Detalla cada cobro (mes, año, bruto, retención en origen/destino y neto).
+                                </span>
+                            </div>
+                        </label>
                     </div>
 
                     <div className="flex flex-col gap-2.5">
@@ -9996,6 +10151,7 @@ const handleSellSubmit = () => {
                     </div>
                 </div>
             </Modal>
+
 
             {/* 2. MODAL MAXIMIZADO A PANTALLA COMPLETA CON EL TEXTO COPIADO */}
             <Modal 
