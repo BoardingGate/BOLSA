@@ -6620,12 +6620,15 @@ const handleGenerateExternalPrompt = (promptType = 'standard') => {
    - Retorno Total (con Dividendos): ${plTotal >= 0 ? '+' : ''}${formatMoney(plTotal, baseCurrency)} (${plTotal >= 0 ? '+' : ''}${formatN(plTotalPct)}%)`;
             }
 
-            return `${idx + 1}. [${isS ? 'VENDIDA / CERRADA' : 'ACTIVA EN CARTERA'}] ${p.name} (Ticker: ${p.ticker}${p.group ? ' | Grupo: ' + p.group : ''})${indexDivisorNote}${lotsSummary}${divsSummary}
+          const timeHeldLine = (!excludeValuationInAiReport || isS) 
+                ? `\n   - Tiempo en Cartera: ${days} días (~${(days / 365.25).toFixed(1)} años)` 
+                : '';
+
+   return `${idx + 1}. [${isS ? 'VENDIDA / CERRADA' : 'ACTIVA EN CARTERA'}] ${p.name} (Ticker: ${p.ticker}${p.group ? ' | Grupo: ' + p.group : ''})${indexDivisorNote}${lotsSummary}${divsSummary}
    - Títulos: ${formatN(p.shares)} ${p.stockCurrency}
    - Fecha Compra: ${p.buyDate} | Precio Compra: ${formatN(p.buyPrice, 3)} | FX Compra: ${formatN(p.buyFx, 4)}
    - Coste Total Invertido: ${formatMoney(cost, baseCurrency)}${valuationLines}
-   - Dividendos Netos Percibidos: ${formatMoney(divs, baseCurrency)}
-   - Tiempo en Cartera: ${days} días (~${(days / 365.25).toFixed(1)} años)`;
+   - Dividendos Netos Percibidos: ${formatMoney(divs, baseCurrency)}${timeHeldLine}`;
         }).join('\n\n');
 
         const totalPl = totalVal - totalCost;
@@ -6635,8 +6638,8 @@ const handleGenerateExternalPrompt = (promptType = 'standard') => {
 
         let headerBlock = '';
 
-        if (excludeValuationInAiReport) {
-            headerBlock = `RESUMEN GLOBAL DE LA CARTERA (${dataToAnalyze.length} POSICIONES - SIN VALORACIÓN ACTUAL A LA FECHA):
+if (excludeValuationInAiReport) {
+            headerBlock = `RESUMEN GLOBAL DE LA CARTERA (${dataToAnalyze.length} POSICIONES - SIN VALORACIÓN ACTUAL NI REFERENCIAS TEMPORALES):
 - Capital Total Invertido (Coste de adquisición): ${formatMoney(totalCost, baseCurrency)}
 - Dividendos Netos Cobrados: ${formatMoney(totalDivs, baseCurrency)}`;
         } else if (isPurelyActive) {
@@ -7595,8 +7598,9 @@ const analyzePortfolio = async () => {
                  valText = ` Valor Actual: ${value.toFixed(0)}. Res Latente: ${netPL.toFixed(0)}.`;
              }
 
-             operations.push(`- ${p.ticker} (${p.name}): ${isS ? 'CERRADA' : 'ACTIVA'}${indexNote}${lotsInfo}${divsInfo}. Invertido: ${cost.toFixed(0)}.${valText} (${divs>0?`incl ${divs.toFixed(0)} div`:''}). Fechas: ${bDate} a ${sDate}. Grp: ${p.group || 'N/A'}`);
-        });
+             const datesText = (!excludeValuationInAiReport || isS) ? ` Fechas: ${bDate} a ${sDate}.` : ` Fecha Compra: ${bDate}.`;
+             operations.push(`- ${p.ticker} (${p.name}): ${isS ? 'CERRADA' : 'ACTIVA'}${indexNote}${lotsInfo}${divsInfo}. Invertido: ${cost.toFixed(0)}.${valText} (${divs>0?`incl ${divs.toFixed(0)} div`:''}).${datesText} Grp: ${p.group || 'N/A'}`);             
+});
 
         const totalTrades = winningTrades + losingTrades;
         const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
@@ -7633,13 +7637,16 @@ const analyzePortfolio = async () => {
             headerMetricsText = `Capital Medio Invertido (Histórico Ponderado): ${formatMoney(avgCapital, baseCurrency)}, Beneficio Neto Total: ${formatMoney(totalReturn, baseCurrency)}, Rentabilidad Real s/Cap. Medio: ${roiOnAvgCap.toFixed(2)}%`;
         }
 
+       const consolidatedTime = !excludeValuationInAiReport ? `, Años Activo: ${yearsActive.toFixed(1)}` : '';
+        const temporalInstruction = !excludeValuationInAiReport ? ' 5. Análisis Temporal.' : '';
+
         const prompt = `Contexto: Actúa como Portfolio Manager. Audita mi cartera a fecha (${today}). 
-DATOS CONSOLIDADOS: Total Operaciones: ${totalTrades}, Win Rate: ${winRate.toFixed(1)}%, Profit Factor: ${profitFactor.toFixed(2)}, Años Activo: ${yearsActive.toFixed(1)}, ${headerMetricsText}. 
+DATOS CONSOLIDADOS: Total Operaciones: ${totalTrades}, Win Rate: ${winRate.toFixed(1)}%, Profit Factor: ${profitFactor.toFixed(2)}${consolidatedTime}, ${headerMetricsText}. 
 
 OPERACIONES:
 ${operations.join('\n')}
 
-Instrucciones: 1. Atribución Retornos y Costes. 2. Riesgo (Drawdown est). 3. Auditoría Sesgos. 4. Costo Oportunidad. 5. Análisis Temporal. FORMATO HTML LIMPIO (h3, p, table, ul).`;
+Instrucciones: 1. Atribución Retornos y Costes. 2. Riesgo (Drawdown est). 3. Auditoría Sesgos. 4. Costo Oportunidad.${temporalInstruction} FORMATO HTML LIMPIO (h3, p, table, ul).`;
 
         const res = await askAI(apiKey, secondaryApiKey, prompt, aiModel);
         let cleanHtml = res.trim().replace(/```html/g, '').replace(/```/g, '');
@@ -10133,7 +10140,7 @@ const handleSellSubmit = () => {
                                     No incluir datos de valoración actual
                                 </span>
                                 <span className="text-[10px] text-slate-400">
-                                    Omite precios de mercado y valoraciones a la fecha tanto por posición como de la cartera global.
+                                    Omite precios de mercado, valoraciones a la fecha y tiempo de permanencia de las posiciones abiertas.
                                 </span>
                             </div>
                         </label>
