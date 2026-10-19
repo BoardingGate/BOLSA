@@ -70,7 +70,7 @@
             padding: 0; 
             width: 100%; 
             height: 100dvh; 
-            overflow: auto; 
+            overflow: hidden; 
             background-color: #0a0a0a; 
             font-family: 'Inter', sans-serif; 
             color: #e5e5e5; 
@@ -205,6 +205,16 @@
       input[type=number] {
           -moz-appearance: textfield;
       } 
+
+/* Aceleración de scroll por hardware nativo para el modal */
+.custom-scrollbar {
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Evita que los inputs y acordeones fuercen repintados de todo el modal */
+.bg-yellow-900\/20, .bg-yellow-900\/50, .bg-orange-900\/10 {
+    contain: content;
+}
    
     </style>
 </head>
@@ -495,33 +505,46 @@ const askAI = async (geminiKey, secondaryApiKey, prompt, model, isSilent = false
          
     
 const Modal = ({ isOpen, title, onClose, children, size = "md", closeLabel = "" }) => {
-          if (!isOpen) return null;
+    if (!isOpen) return null;
 
-          let maxWidth = "max-w-xl"; // default
-          if (size === "lg") maxWidth = "max-w-6xl";
-          if (size === "sm") maxWidth = "max-w-sm";
-          if (size === "850px") maxWidth = "max-w-[850px]";
-          if (size === "max" || size === "full") maxWidth = "max-w-[97vw] w-[97vw] h-[94vh]"; 
+    let maxWidth = "max-w-xl";
+    if (size === "lg") maxWidth = "max-w-6xl";
+    if (size === "sm") maxWidth = "max-w-sm";
+    if (size === "850px") maxWidth = "max-w-[850px]";
+    if (size === "max" || size === "full") maxWidth = "max-w-[97vw] w-[97vw] h-[94vh]"; 
 
-          return (
-              <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[100] p-2 md:p-4 fade-in backdrop-blur-sm" onClick={onClose}>
-                  <div className={`bg-slate-900 border border-slate-700 w-full ${maxWidth} rounded-2xl flex flex-col max-h-[96vh] shadow-2xl fade-in`} onClick={e => e.stopPropagation()}>
-                      <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50 rounded-t-2xl">
-                          <h3 className="text-lg font-bold font-display text-white">{title}</h3>
-                          {closeLabel ? (
-                              <button onClick={onClose} className="bg-red-600 hover:bg-red-500 text-white font-black text-[10px] px-3.5 py-1.5 rounded-lg uppercase tracking-wider transition-colors shadow-lg shrink-0">
-                                  {closeLabel}
-                              </button>
-                          ) : (
-                              <button onClick={onClose} className="text-slate-400 hover:text-white"><Icons.X size={22}/></button>
-                          )}
-                      </div>
-                      <div className="p-4 md:p-6 overflow-y-auto custom-scrollbar flex-1 flex flex-col">{children}</div>
-                  </div>
-              </div>
-          );
-      };
+    return (
+        <div 
+            className="fixed inset-0 z-[300] bg-black/80 flex items-center justify-center p-3 sm:p-4" 
+            onClick={onClose}
+        >
+            <div 
+                className={`bg-slate-900 border border-slate-700 w-full ${maxWidth} rounded-2xl flex flex-col max-h-[90vh] shadow-2xl relative overflow-hidden`} 
+                onClick={e => e.stopPropagation()}
+            >
+                {/* Cabecera fija que nunca desaparece */}
+                <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900 rounded-t-2xl shrink-0 z-10">
+                    <h3 className="text-lg font-bold font-display text-white">{title}</h3>
+                    {closeLabel ? (
+                        <button onClick={onClose} className="bg-red-600 hover:bg-red-500 text-white font-black text-[10px] px-3.5 py-1.5 rounded-lg uppercase tracking-wider transition-colors shadow-lg shrink-0">
+                            {closeLabel}
+                        </button>
+                    ) : (
+                        <button onClick={onClose} className="text-slate-400 hover:text-white"><Icons.X size={22}/></button>
+                    )}
+                </div>
 
+                {/* Contenedor interior con scroll independiente */}
+                <div 
+                    className="p-4 md:p-6 overflow-y-auto custom-scrollbar flex-1 flex flex-col space-y-4"
+                    style={{ overscrollBehavior: 'contain' }}
+                >
+                    {children}
+                </div>
+            </div>
+        </div>
+    );
+};
 
       const _0x8f = (k) => {
             try {
@@ -5297,6 +5320,9 @@ const PortfolioTab = ({ portfolio, setPortfolio, apiKey, secondaryApiKey, baseCu
        7: false   
    });
    
+
+   const [isModalOpen, setIsModalOpen] = useState(false);
+
    const toggleEditSection = (num) => {
        setEditSections(prev => ({ ...prev, [num]: !prev[num] }));
    };
@@ -5612,6 +5638,7 @@ const formatAbbreviated = (value, currency = "") => {
     const [simLot, setSimLot] = useState({ date: new Date().toISOString().slice(0,10), shares: '', price: '', fx: 1, fees: '', adj: '' });
     
     const [targetSim, setTargetSim] = useState({ shares: '', price: '', fx: 1, fees: '', adj: '' });
+    const [editingId, setEditingId] = useState(null); 
     const [viewSoldAsCurrent, setViewSoldAsCurrent] = useState(false);
     const [isFetchingCurrent, setIsFetchingCurrent] = useState(false);
     useEffect(() => { setViewSoldAsCurrent(false); setIsFetchingCurrent(false); }, [isModalOpen, editingId]);
@@ -5994,30 +6021,6 @@ const handleRebuildHistory = async () => {
             alert("Error al obtener datos históricos. Reinténtalo.");
         } finally { setIsRebuildingHistory(false); }
     };
-
-
-useEffect(() => {
-        if (!stats || !stats.active) return;
-        const todayStr = new Date().toISOString().slice(0, 10);
-        const currentValuation = stats.active.cur; // Valor total actual
-
-        if (currentValuation > 0) {
-            setDailyHistory(prev => {
-                const newHistory = [...prev];
-                const existingIndex = newHistory.findIndex(h => h.date === todayStr);
-                
-                if (existingIndex >= 0) {
-                    newHistory[existingIndex].val = currentValuation; // Actualiza si ya hay dato hoy
-                } else {
-                    newHistory.push({ date: todayStr, val: currentValuation }); // Nuevo día
-                }
-                
-               if (newHistory.length > 30) return newHistory.slice(newHistory.length - 30);
-                return newHistory;
-            });
-        }
-    }, [stats?.active?.cur]);
-
 
 
    
@@ -6494,21 +6497,6 @@ const getMarketStatus = (p) => {
 
 
     const [visibleSections, setVisibleSections] = usePersistentState('bg_visible_sections', { table: true, diverging: true, stats: true, charts: true, chartTV: true });
-    const checkTableScroll = () => {
-        const el = portfolioTableContainerRef.current;
-        if (!el) return;
-        const canScroll = el.scrollWidth > el.clientWidth + 10;
-        setTableScrollState({
-            canScrollLeft: canScroll && el.scrollLeft > 20,
-            canScrollRight: canScroll && el.scrollLeft < (el.scrollWidth - el.clientWidth - 20)
-        });
-    };
-
-    useEffect(() => {
-        checkTableScroll();
-        window.addEventListener('resize', checkTableScroll);
-        return () => window.removeEventListener('resize', checkTableScroll);
-    }, [filteredPortfolio, simplifiedMode, visibleSections?.table]);
 
     const handleHorizontalScroll = (direction) => {
         const el = portfolioTableContainerRef.current;
@@ -6526,7 +6514,7 @@ const getMarketStatus = (p) => {
 
     const [fetchingSingle, setFetchingSingle] = useState(false);
     const [analysisResult, setAnalysisResult] = useState(null);
-    const [isModalOpen, setIsModalOpen] = useState(false);
+   
     const [isSellModalOpen, setIsSellModalOpen] = useState(false);
     const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
 
@@ -6744,7 +6732,7 @@ INSTRUCCIONES PARA TU ANÁLISIS:
         _setInfoModal(val);
     };
     const [noteToast, setNoteToast] = useState(null);
-    const [editingId, setEditingId] = useState(null);
+   
     const [sellItem, setSellItem] = useState(null);
     const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
 
@@ -6874,6 +6862,21 @@ INSTRUCCIONES PARA TU ANÁLISIS:
         });
     }, [effectivePortfolio, filterText, filterDateStart, filterDateEnd, filterType, sortConfig, hideInactive]);
 
+        const checkTableScroll = () => {
+        const el = portfolioTableContainerRef.current;
+        if (!el) return;
+        const canScroll = el.scrollWidth > el.clientWidth + 10;
+        setTableScrollState({
+            canScrollLeft: canScroll && el.scrollLeft > 20,
+            canScrollRight: canScroll && el.scrollLeft < (el.scrollWidth - el.clientWidth - 20)
+        });
+    };
+
+    useEffect(() => {
+        checkTableScroll();
+        window.addEventListener('resize', checkTableScroll);
+        return () => window.removeEventListener('resize', checkTableScroll);
+    }, [filteredPortfolio, simplifiedMode, visibleSections?.table]);
 
     const visiblePortfolio = useMemo(() => filteredPortfolio.filter(p => p.isActive !== false), [filteredPortfolio]);
 
@@ -7027,6 +7030,34 @@ INSTRUCCIONES PARA TU ANÁLISIS:
 
     const stats = globalMetrics.stats;
     const gridTotals = { tFx: globalMetrics.gridMetrics.fX, tCost: globalMetrics.gridMetrics.inv, tVal: globalMetrics.gridMetrics.cur, tRes: globalMetrics.gridMetrics.plTotal, tPct: globalMetrics.gridMetrics.plT_S, tIntra: globalMetrics.gridMetrics.intra, tIntraPct: globalMetrics.gridMetrics.intraPct, avgBuyPE: globalMetrics.gridMetrics.avgBuyPE, avgCurPE: globalMetrics.gridMetrics.avgCurPE, tFeesAdj: globalMetrics.gridMetrics.totalFeesAdj };
+
+   useEffect(() => {
+        const isDataMissing = dailyHistory.length < 30 || dailyHistory.some(d => d.date === '---');
+        if (showEvolution && isDataMissing && !isRebuildingHistory && apiKey) {
+            handleRebuildHistory();
+        }
+    }, [showEvolution]); 
+
+    useEffect(() => {
+        if (!stats || !stats.active) return;
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const currentValuation = stats.active.cur;
+
+        if (currentValuation > 0) {
+            setDailyHistory(prev => {
+                const newHistory = [...prev];
+                const existingIndex = newHistory.findIndex(h => h.date === todayStr);
+                if (existingIndex >= 0) {
+                    newHistory[existingIndex].val = currentValuation;
+                } else {
+                    newHistory.push({ date: todayStr, val: currentValuation });
+                }
+                if (newHistory.length > 30) return newHistory.slice(newHistory.length - 30);
+                return newHistory;
+            });
+        }
+    }, [stats?.active?.cur]);
+
  
     const historicalStats = useMemo(() => {
         const activeP = baseFilteredPortfolio.filter(p => !p.sellDate);
@@ -8056,14 +8087,6 @@ const handleSellSubmit = () => {
         );
     };
 
-
-    useEffect(() => {
-        const isDataMissing = dailyHistory.length < 30 || dailyHistory.some(d => d.date === '---');
-        
-        if (showEvolution && isDataMissing && !isRebuildingHistory && apiKey) {
-            handleRebuildHistory();
-        }
-    }, [showEvolution]); 
 
     return (
         <div className="w-full p-4 md:p-6 flex flex-col gap-6">
@@ -9805,8 +9828,7 @@ const handleSellSubmit = () => {
                             </button>                             
                         </div>                         
                     ) : (       
-
-                        <div key={form.lots.length} className="space-y-2">
+                       <div key={form.lots.length} className="space-y-2">                              
                             <div className="overflow-x-auto custom-scrollbar pb-1">                                     
                                 <div className="min-w-[490px]">      
                                     <div className="grid grid-cols-[115px_80px_80px_60px_65px_70px_65px_80px_30px] gap-1 text-[8px] uppercase font-bold text-slate-500 text-center mb-1">
@@ -12275,19 +12297,6 @@ const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, portfolio, setPort
         setActiveSubTab('cribado');
     };
 
-     useEffect(() => {
-        if (!loading && (specificAnswer || data)) {
-            setTimeout(() => {
-               const mainContainer = document.querySelector('main');
-                if (mainContainer) {
-                   mainContainer.scrollTo({
-                        top: mainContainer.scrollHeight,
-                        behavior: 'smooth'
-                    });
-                }
-            }, 400);
-        }
-    }, [loading, specificAnswer, data]);
 
     const [graphData, setGraphData] = useState(null);
     const [generatingGraph, setGeneratingGraph] = useState(false);
@@ -12319,6 +12328,20 @@ const AnalysisTab = ({ apiKey, secondaryApiKey, baseCurrency, portfolio, setPort
     const [loading, setLoading] = useState(false);
     const [data, setData] = useState(null);
     const [specificAnswer, setSpecificAnswer] = useState(null);
+
+        useEffect(() => {
+        if (!loading && (specificAnswer || data)) {
+            setTimeout(() => {
+               const mainContainer = document.querySelector('main');
+                if (mainContainer) {
+                   mainContainer.scrollTo({
+                        top: mainContainer.scrollHeight,
+                        behavior: 'smooth'
+                    });
+                }
+            }, 400);
+        }
+    }, [loading, specificAnswer, data]);
 
     const [screenerTrend, setScreenerTrend] = useState('none'); // 'none', 'ath', 'drop'
     const [screenerDropConfig, setScreenerDropConfig] = useState({ pct: 20, months: 6 });
@@ -17934,12 +17957,11 @@ const App = () => {
       window.addEventListener('DOMContentLoaded', () => {
         const code = document.getElementById('react-app').textContent;
         try {
-          const transformed = Babel.transform(code, { 
+        const transformed = Babel.transform(code, { 
             presets: [
-              ['react', { "runtime": "classic" }],
-              ['env', { "modules": false }]
+              ['react', { "runtime": "classic" }]
             ]
-          }).code;
+        }).code;
           eval(transformed);
         } catch (err) {
           console.error("❌ Error crítico de BoardingGate:", err);
