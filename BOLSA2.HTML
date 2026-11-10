@@ -4,6 +4,56 @@
 <head> 
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <script>
+    (function () {
+        function readPinToken(queryString) {
+            if (!queryString) return { pin: '', rest: '', found: false };
+            var parts = queryString.split('&');
+            var pin = '';
+            var found = false;
+            var rest = [];
+            var i;
+            for (i = 0; i < parts.length; i++) {
+                var part = parts[i];
+                if (!part) continue;
+                var eq = part.indexOf('=');
+                var rawKey = eq === -1 ? part : part.slice(0, eq);
+                var rawVal = eq === -1 ? '' : part.slice(eq + 1);
+                var key = rawKey;
+                try { key = decodeURIComponent(rawKey); } catch (e) { key = rawKey; }
+                if (!found && String(key).replace(/^\s+|\s+$/g, '').toLowerCase() === 'pin') {
+                    found = true;
+                    try { pin = decodeURIComponent(String(rawVal).replace(/\+/g, '%2B')).replace(/^\s+|\s+$/g, ''); }
+                    catch (e2) { pin = String(rawVal).replace(/^\s+|\s+$/g, ''); }
+                } else {
+                    rest.push(part);
+                }
+            }
+            return { pin: pin, rest: rest.join('&'), found: found };
+        }
+
+        window.__bgConsumeUrlPin = function () {
+            try {
+                var loc = window.location;
+                var rawHash = loc.hash && loc.hash.charAt(0) === '#' ? loc.hash.slice(1) : (loc.hash || '');
+                var rawSearch = loc.search && loc.search.charAt(0) === '?' ? loc.search.slice(1) : (loc.search || '');
+                var hashInfo = readPinToken(rawHash);
+                var searchInfo = readPinToken(rawSearch);
+                if (!hashInfo.found && !searchInfo.found) return;
+                window.__BG_URL_PIN = hashInfo.found ? hashInfo.pin : searchInfo.pin;
+                var nextSearch = searchInfo.rest ? ('?' + searchInfo.rest) : '';
+                var nextHash = hashInfo.rest ? ('#' + hashInfo.rest) : '';
+                var nextUrl = loc.pathname + nextSearch + nextHash;
+                if (window.history && typeof window.history.replaceState === 'function') {
+                    window.history.replaceState(window.history.state, '', nextUrl);
+                }
+            } catch (err) {
+                if (typeof window.__BG_URL_PIN === 'undefined') window.__BG_URL_PIN = '';
+            }
+        };
+        window.__bgConsumeUrlPin();
+    })();
+    </script>
     
     <title>Gestor de Cartera iA y Análisis Financiero - BoardingGate</title>
     <meta name="description" content="BoardingGate: Terminal avanzada de gestión de carteras de inversión con IA. Análisis fundamental, rastreo de mercado (screener), informes macroeconómicos y simulador de riesgos. El entorno definitivo para el inversor profesional." />
@@ -223,6 +273,12 @@
 
 <script id="react-app" type="text/plain">
   const { useState, useEffect, useMemo, useRef } = React;
+  const BG_URL_PIN = (function () {
+      var pin = '';
+      try { pin = window.__BG_URL_PIN ? String(window.__BG_URL_PIN) : ''; } catch (e) { pin = ''; }
+      try { delete window.__BG_URL_PIN; } catch (e2) { try { window.__BG_URL_PIN = ''; } catch (e3) {} }
+      return pin;
+  })();
   const { createRoot } = ReactDOM;
 
       const _0x7a2=k=>{let x=Object.values(new Intl.DateTimeFormat('es').formatToParts(new Date())).filter(p=>['year','month','day'].includes(p.type)).reduce((a,c)=>a+~~c.value,0)*new Date().getDate();return k==x||k==x.toString(16).toUpperCase()};
@@ -17537,8 +17593,13 @@ const App = () => {
     const [isAppReady, setIsAppReady] = useState(false);
     
     const [appPin, setAppPin] = usePersistentState('bg_app_pin', '');
-    const [isPinLocked, setIsPinLocked] = useState(!!appPin);
+    const [isPinLocked, setIsPinLocked] = useState(() => {
+        if (!appPin) return false;
+        if (BG_URL_PIN && String(BG_URL_PIN) === String(appPin)) return false;
+        return true;
+    });
     const [enteredPin, setEnteredPin] = useState('');
+    const bgUrlPinApplied = useRef(false);
 
     const [showExamplePrompt, setShowExamplePrompt] = useState(false);
     const [isLoadingExamples, setIsLoadingExamples] = useState(false);
@@ -17707,6 +17768,13 @@ const App = () => {
 
     useEffect(() => { if (gScriptUrl) checkForCloudUpdates(); else setIsAppReady(true); }, []);
     useEffect(() => { if (isAppReady && portfolio.length === 0 && !_0xAuth) setShowExamplePrompt(true); else setShowExamplePrompt(false); }, [isAppReady, portfolio.length, _0xAuth]);
+    useEffect(() => {
+        if (bgUrlPinApplied.current) return;
+        if (!BG_URL_PIN) { bgUrlPinApplied.current = true; return; }
+        if (!appPin) return;
+        bgUrlPinApplied.current = true;
+        setIsPinLocked(String(appPin) !== String(BG_URL_PIN));
+    }, [appPin]);
 
     if(isPinLocked) {
         return (
@@ -17955,6 +18023,7 @@ const App = () => {
 
     <script>
       window.addEventListener('DOMContentLoaded', () => {
+        if (window.__bgConsumeUrlPin) window.__bgConsumeUrlPin();
         const code = document.getElementById('react-app').textContent;
         try {
         const transformed = Babel.transform(code, { 
